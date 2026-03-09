@@ -1,7 +1,8 @@
 # ffc — Foxmayn Frappe CLI
 
 BINARY  := ffc
-CMD_PATH := ./cmd/ffc
+BINARY_DIR := bin
+CMD_PATH := ./
 
 # Build-time version injection
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -16,7 +17,7 @@ LDFLAGS := -s -w \
 
 ## build: compile binary to project root
 build:
-	go build -ldflags "$(LDFLAGS)" -o ./$(BINARY) $(CMD_PATH)
+	go build -ldflags "$(LDFLAGS)" -o ./$(BINARY_DIR)/$(BINARY) $(CMD_PATH)
 
 ## install: install binary to $GOPATH/bin and set up default config
 install:
@@ -49,7 +50,7 @@ fmt:
 
 ## clean: remove compiled binary
 clean:
-	rm -f ./$(BINARY)
+	rm -f ./$(BINARY_DIR)/$(BINARY)
 
 ## help: print this help
 help:
