@@ -4,7 +4,17 @@ A minimal, installable Go CLI for managing Frappe ERP sites from the command lin
 
 ## Install
 
+Install from source:
+
 ```bash
+go install github.com/nasroykh/foxmayn_frappe_cli/cmd/ffc@latest
+```
+
+Or clone the repo then:
+
+```bash
+cd foxmayn_frappe_cli
+
 # Install binary to $GOPATH/bin (or ~/go/bin)
 make install
 ```
@@ -13,7 +23,7 @@ Or build a local binary:
 
 ```bash
 make build
-./ffc --help
+./bin/ffc --help
 ```
 
 ## First-time Setup

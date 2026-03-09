@@ -2,16 +2,16 @@
 
 BINARY  := ffc
 BINARY_DIR := bin
-CMD_PATH := ./
+CMD_PATH := ./cmd/ffc
 
 # Build-time version injection
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w \
-	-X foxmayn_frappe_cli/internal/version.Version=$(VERSION) \
-	-X foxmayn_frappe_cli/internal/version.Commit=$(COMMIT) \
-	-X foxmayn_frappe_cli/internal/version.Date=$(DATE)
+	-X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Version=$(VERSION) \
+	-X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Commit=$(COMMIT) \
+	-X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Date=$(DATE)
 
 .PHONY: build install clean deps tidy vet fmt help skills-init skills-init-claude skills-init-cursor skills-init-agent
 
