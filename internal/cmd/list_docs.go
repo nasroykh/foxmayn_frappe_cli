@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"foxmayn_frappe_cli/internal/client"
-	"foxmayn_frappe_cli/internal/config"
-	"foxmayn_frappe_cli/internal/output"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
+	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -33,10 +34,6 @@ Examples:
   ffc list-docs --doctype "Sales Invoice" --limit 5 --json
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if ldDoctype == "" {
-			return fmt.Errorf("--doctype is required")
-		}
-
 		// Load site config
 		cfg, err := config.Load(siteName, configPath)
 		if err != nil {
@@ -60,11 +57,18 @@ Examples:
 			OrderBy: ldOrderBy,
 		}
 
-		// Call the API
+		// Call the API with a spinner for feedback.
+		var rows []map[string]interface{}
+		var apiErr error
 		c := client.New(cfg)
-		rows, err := c.GetList(ldDoctype, opts)
-		if err != nil {
-			return err
+		_ = spinner.New().
+			Title(fmt.Sprintf("Fetching %s…", ldDoctype)).
+			Action(func() {
+				rows, apiErr = c.GetList(ldDoctype, opts)
+			}).
+			Run()
+		if apiErr != nil {
+			return apiErr
 		}
 
 		// Output

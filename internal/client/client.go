@@ -7,15 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 
 	"github.com/go-resty/resty/v2"
 )
 
 // FrappeClient wraps a resty client configured for a specific Frappe site.
 type FrappeClient struct {
-	r    *resty.Client
-	base string
+	r *resty.Client
 }
 
 // New creates a FrappeClient from the given site config.
@@ -27,14 +26,15 @@ func New(cfg *config.SiteConfig) *FrappeClient {
 		SetRetryWaitTime(500 * time.Millisecond)
 
 	// Frappe token auth: Authorization: token <api_key>:<api_secret>
-	if cfg.APIKey != "" || cfg.APISecret != "" {
+	// Both key and secret are required for a valid token.
+	if cfg.APIKey != "" && cfg.APISecret != "" {
 		r.SetHeader("Authorization", fmt.Sprintf("token %s:%s", cfg.APIKey, cfg.APISecret))
 	}
 
 	// Frappe returns JSON
 	r.SetHeader("Accept", "application/json")
 
-	return &FrappeClient{r: r, base: cfg.URL}
+	return &FrappeClient{r: r}
 }
 
 // ListOptions contains query parameters for listing documents.
@@ -49,6 +49,71 @@ type ListOptions struct {
 type listResponse struct {
 	Data    []map[string]interface{} `json:"data"`
 	Message []map[string]interface{} `json:"message"` // v1 variant
+}
+
+// frappeErrorResponse represents a Frappe server-side error JSON body.
+type frappeErrorResponse struct {
+	Exception      string `json:"exception"`        // e.g. "frappe.exceptions.DataError: ..."
+	ExcType        string `json:"exc_type"`         // e.g. "DataError"
+	ServerMessages string `json:"_server_messages"` // JSON-encoded list of message objects
+}
+
+// serverMessage is a single entry inside _server_messages.
+type serverMessage struct {
+	Message string `json:"message"`
+	Title   string `json:"title"`
+}
+
+// parseFrappeError turns the raw Frappe error JSON body into a human-friendly error.
+//
+// Frappe errors contain a lot of noise: a full Python traceback nested inside
+// JSON strings. This function extracts only what the user actually needs:
+//   - The exception type   (exc_type)         e.g. "DataError"
+//   - The human message    (_server_messages)  e.g. "Field not permitted in query: total_credita"
+func parseFrappeError(statusCode int, body []byte) error {
+	var fe frappeErrorResponse
+	if err := json.Unmarshal(body, &fe); err != nil {
+		// Body is not valid JSON — return it trimmed.
+		return fmt.Errorf("server error %d: %s", statusCode, strings.TrimSpace(string(body)))
+	}
+
+	// 1. Try _server_messages first — it carries the already-translated user message.
+	userMessage := ""
+	if fe.ServerMessages != "" {
+		// _server_messages value is itself a JSON-encoded array of JSON-encoded objects.
+		var rawMsgs []string
+		if err := json.Unmarshal([]byte(fe.ServerMessages), &rawMsgs); err == nil {
+			for _, raw := range rawMsgs {
+				var sm serverMessage
+				if err := json.Unmarshal([]byte(raw), &sm); err == nil && sm.Message != "" {
+					userMessage = sm.Message
+					break
+				}
+			}
+		}
+	}
+
+	// 2. Fall back to the exception field, stripping the Python module prefix.
+	if userMessage == "" && fe.Exception != "" {
+		// "frappe.exceptions.DataError: Field not permitted in query: total_credita"
+		// Keep only the part after the first ": ".
+		parts := strings.SplitN(fe.Exception, ": ", 2)
+		if len(parts) == 2 {
+			userMessage = parts[1]
+		} else {
+			userMessage = fe.Exception
+		}
+	}
+
+	excType := fe.ExcType
+	if excType == "" {
+		excType = "ServerError"
+	}
+
+	if userMessage != "" {
+		return fmt.Errorf("[%s] %s (HTTP %d)", excType, userMessage, statusCode)
+	}
+	return fmt.Errorf("server error %d (%s)", statusCode, excType)
 }
 
 // GetList calls GET /api/resource/<doctype> and returns the document rows.
@@ -88,17 +153,16 @@ func (c *FrappeClient) GetList(doctype string, opts ListOptions) ([]map[string]i
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
 
-	if resp.StatusCode() == http.StatusUnauthorized {
+	switch resp.StatusCode() {
+	case http.StatusUnauthorized:
 		return nil, fmt.Errorf("authentication failed (401): check api_key and api_secret in your config")
-	}
-	if resp.StatusCode() == http.StatusForbidden {
+	case http.StatusForbidden:
 		return nil, fmt.Errorf("permission denied (403): your user may not have read access to %s", doctype)
-	}
-	if resp.StatusCode() == http.StatusNotFound {
+	case http.StatusNotFound:
 		return nil, fmt.Errorf("doctype %q not found on this site (404)", doctype)
 	}
 	if resp.StatusCode() >= 400 {
-		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode(), resp.String())
+		return nil, parseFrappeError(resp.StatusCode(), resp.Body())
 	}
 
 	// Parse response — Frappe v14/v15 wraps list in "data", older in "message"
@@ -111,4 +175,35 @@ func (c *FrappeClient) GetList(doctype string, opts ListOptions) ([]map[string]i
 		return result.Data, nil
 	}
 	return result.Message, nil
+}
+
+// GetDoc calls GET /api/resource/<doctype>/<name> and returns the document fields.
+func (c *FrappeClient) GetDoc(doctype, name string) (map[string]interface{}, error) {
+	endpoint := fmt.Sprintf("/api/resource/%s/%s", doctype, name)
+
+	resp, err := c.r.R().Get(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+
+	switch resp.StatusCode() {
+	case http.StatusUnauthorized:
+		return nil, fmt.Errorf("authentication failed (401): check api_key and api_secret in your config")
+	case http.StatusForbidden:
+		return nil, fmt.Errorf("permission denied (403): your user may not have read access to %s", doctype)
+	case http.StatusNotFound:
+		return nil, fmt.Errorf("%s %q not found (404)", doctype, name)
+	}
+	if resp.StatusCode() >= 400 {
+		return nil, parseFrappeError(resp.StatusCode(), resp.Body())
+	}
+
+	var result struct {
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body(), &result); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+
+	return result.Data, nil
 }

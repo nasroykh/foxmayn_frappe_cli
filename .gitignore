@@ -23,6 +23,7 @@
 # Project specific binaries
 /bin/
 /dist/
+/ffc
 foxmayn_frappe_cli
 
 # Environment files
@@ -38,3 +39,4 @@ Thumbs.db
 # AI Agent folders (if ephemeral)
 .agent/
 .claude/
+.cursor/
