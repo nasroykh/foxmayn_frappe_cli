@@ -50,6 +50,8 @@ Generate API keys on your Frappe site: **User → API Access → Generate Keys**
 
 ```yaml
 default_site: dev
+number_format: french
+date_format: yyyy-mm-dd
 
 sites:
   dev:
@@ -57,11 +59,24 @@ sites:
     api_key: "your_api_key"
     api_secret: "your_api_secret"
 
-  # production:
-  #   url: "https://erp.company.com"
-  #   api_key: "prod_api_key"
-  #   api_secret: "prod_api_secret"
+  # production: ...
 ```
+
+**Settings Management (`ffc config`)**
+
+Manage CLI settings interactively or directly from the command line:
+
+```bash
+ffc config                                          # interactive TUI
+ffc config get                                      # show all settings (table)
+ffc config get --json                               # show as JSON
+ffc config get --yaml                               # show as YAML
+ffc config set --default-site prod                  # set default site
+ffc config set --number-format us --date-format dd/mm/yyyy
+```
+
+*   **Number Formats:** `french` (default: 1 000 000,00), `us`, `german`, `plain`.
+*   **Date Formats:** `yyyy-mm-dd` (ISO), `dd-mm-yyyy` (European), `dd/mm/yyyy` (Euro Slash), `mm/dd/yyyy` (US).
 
 **Environment variable overrides** (useful in CI):
 
@@ -90,70 +105,115 @@ ffc [--site <name>] [--config <path>] [--json] <command> [flags]
 
 ---
 
-### `init`
+### Basic Setup & Settings
 
-Interactive setup wizard — creates `~/.config/ffc/config.yaml`.
-
-```bash
-ffc init
-```
-
-You will be prompted for the site name, URL, API key, and API secret. If a config file already exists, you will be asked to confirm before overwriting.
+*   **`init`**: Interactive setup wizard — creates your initial config.
+*   **`config`**: Interactive TUI to tweak settings, or non-interactive via subcommands:
+    *   `ffc config get [--json|--yaml]` — print all settings
+    *   `ffc config set --default-site <name> --number-format <fmt> --date-format <fmt>` — update settings
+*   **`ping`**: Quickly check connection to the active Frappe site.
 
 ---
 
-### `get-doc`
+### Document Operations (CRUD)
 
-Get a single document by name.
-
+**1. `get-doc`** (Read a document)
 ```bash
-ffc get-doc --doctype "Company" --name "My Company"
-ffc get-doc -d "User" -n "jane@example.com" --fields '["name","email","enabled"]'
-ffc get-doc -d "ToDo" -n "TDP-2024-001" --json
+ffc get-doc -d "Company" -n "My Company"
+ffc get-doc -d "User" -n "jane@example.com" -f '["name","email"]'
 ```
 
-| Flag        | Short | Required | Default | Description                                             |
-| ----------- | ----- | -------- | ------- | ------------------------------------------------------- |
-| `--doctype` | `-d`  | ✅       | —       | Frappe DocType                                          |
-| `--name`    | `-n`  | ✅       | —       | Name (ID) of the document                               |
-| `--fields`  | `-f`  | ❌       | all     | JSON array or CSV: `'["name","email"]'` or `name,email` |
+**2. `list-docs`** (List documents)
+```bash
+ffc list-docs -d "ToDo" --filters '{"status":"Open"}' -o "modified desc"
+```
+
+**3. `create-doc`** (Create a document)
+```bash
+ffc create-doc -d "ToDo" --data '{"description":"Update CLI README","status":"Open"}'
+```
+
+**4. `update-doc`** (Update a document)
+```bash
+ffc update-doc -d "ToDo" -n "83a12bf99c" --data '{"status":"Closed"}'
+```
+
+**5. `delete-doc`** (Delete a document)
+```bash
+ffc delete-doc -d "ToDo" -n "83a12bf99c" --yes
+```
+*(The `--yes` / `-y` flag skips the interactive confirmation prompt).*
+
+**6. `count-docs`** (Count documents)
+```bash
+ffc count-docs -d "Sales Invoice" --filters '{"status":"Unpaid"}'
+```
 
 ---
 
-### `list-docs`
+### Schema & Introspection
 
-List documents of a DocType.
-
+**1. `list-doctypes`** (List available DocTypes)
 ```bash
-ffc list-docs --doctype "Company"
-ffc list-docs --doctype "User" --fields '["name","email","enabled"]' --limit 10
-ffc list-docs --doctype "ToDo" --filters '{"status":"Open"}' --order-by "modified desc"
-ffc list-docs --doctype "Sales Invoice" --limit 5 --json
+ffc list-doctypes --module "Accounts"
 ```
 
-| Flag         | Short | Required | Default | Description                                             |
-| ------------ | ----- | -------- | ------- | ------------------------------------------------------- |
-| `--doctype`  | `-d`  | ✅       | —       | Frappe DocType to query                                 |
-| `--fields`   | `-f`  | ❌       | all     | JSON array or CSV: `'["name","email"]'` or `name,email` |
-| `--filters`  | —     | ❌       | —       | JSON filter: `'{"status":"Open"}'`                      |
-| `--limit`    | `-l`  | ❌       | 20      | Max records                                             |
-| `--order-by` | `-o`  | ❌       | —       | Order field, e.g. `"modified desc"`                     |
+**2. `get-schema`** (View DocType fields and structure)
+```bash
+ffc get-schema -d "Sales Invoice"
+```
+
+---
+
+### RPC calling
+
+**`call-method`** (Execute a whitelisted server script)
+```bash
+ffc call-method --method "frappe.ping"
+ffc call-method --method "my_app.api.custom_action" --args '{"user":"john"}'
+```
+
+---
+
+### Reports
+
+**1. `list-reports`** (List available query and script reports)
+```bash
+ffc list-reports --module "Accounts"
+```
+
+**2. `run-report`** (Execute a report)
+```bash
+ffc run-report -n "General Ledger" --filters '{"company":"Acme","from_date":"2026-01-01"}' -l 10
+```
+*(The `--limit` / `-l` flag truncates long report outputs in the terminal).*
 
 ---
 
 ## Project Structure
 
-```
+```text
 foxmayn_frappe_cli/
 ├── cmd/ffc/main.go           # Entry point
 ├── internal/
 │   ├── cmd/                  # Cobra command definitions
 │   │   ├── root.go           # Root command + global flags
-│   │   ├── init.go           # init subcommand (huh form wizard)
-│   │   ├── get_doc.go        # get-doc subcommand
-│   │   └── list_docs.go      # list-docs subcommand
-│   ├── client/client.go      # Frappe REST API client (resty)
-│   ├── config/config.go      # Config loading (viper + env vars)
+│   │   ├── init.go           # Interactive setup wizard
+│   │   ├── config_cmd.go     # Interactive settings menu
+│   │   ├── ping.go           # ping
+│   │   ├── get_doc.go        # get-doc
+│   │   ├── list_docs.go      # list-docs
+│   │   ├── create_doc.go     # create-doc
+│   │   ├── update_doc.go     # update-doc
+│   │   ├── delete_doc.go     # delete-doc
+│   │   ├── count_docs.go     # count-docs
+│   │   ├── get_schema.go     # get-schema
+│   │   ├── list_doctypes.go  # list-doctypes
+│   │   ├── list_reports.go   # list-reports
+│   │   ├── run_report.go     # run-report
+│   │   └── call_method.go    # call-method
+│   ├── client/client.go      # Frappe REST API client methods (resty)
+│   ├── config/config.go      # Config loading and number/date formatting logic
 │   ├── output/output.go      # Table (lipgloss) and JSON formatters
 │   └── version/version.go    # Build-time version injection
 ├── config.example.yaml       # Example config

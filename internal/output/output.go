@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
 )
@@ -185,6 +187,10 @@ func formatValue(v interface{}) string {
 	}
 
 	switch val := v.(type) {
+	case float64:
+		return config.FormatNumber(val)
+	case string:
+		return config.FormatDate(val)
 	case map[string]interface{}, []interface{}, []map[string]interface{}:
 		b, err := json.MarshalIndent(val, "", "  ")
 		if err == nil {

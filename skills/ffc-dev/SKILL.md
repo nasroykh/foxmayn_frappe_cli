@@ -16,14 +16,14 @@ Build and extend the ffc CLI — a Go tool for interacting with Frappe ERP sites
 
 ## Tech Stack
 
-| Component        | Library     | Import                                                    |
-| ---------------- | ----------- | --------------------------------------------------------- |
-| CLI framework    | cobra       | `github.com/spf13/cobra`                                  |
-| Config           | viper       | `github.com/spf13/viper`                                  |
-| HTTP client      | resty       | `github.com/go-resty/resty/v2`                            |
+| Component | Library | Import |
+|-----------|---------|--------|
+| CLI framework | cobra | `github.com/spf13/cobra` |
+| Config | viper | `github.com/spf13/viper` |
+| HTTP client | resty | `github.com/go-resty/resty/v2` |
 | Tables & styling | lipgloss v2 | `charm.land/lipgloss/v2` + `charm.land/lipgloss/v2/table` |
-| Forms & prompts  | huh v1.0.0  | `github.com/charmbracelet/huh`                            |
-| Spinner          | huh/spinner | `github.com/charmbracelet/huh/spinner`                    |
+| Forms & prompts | huh v1.0.0 | `github.com/charmbracelet/huh` |
+| Spinner | huh/spinner | `github.com/charmbracelet/huh/spinner` |
 
 ## Project Layout
 
@@ -210,14 +210,13 @@ func (c *FrappeClient) CreateDoc(doctype string, data map[string]interface{}) (m
 
 The `output` package provides three rendering functions. Choose based on what you're displaying:
 
-| Function                     | Use for                | Output                                   |
-| ---------------------------- | ---------------------- | ---------------------------------------- |
-| `PrintTable(rows, fields)`   | Multi-row lists        | Styled table with alternating row colors |
-| `PrintDocTable(doc, fields)` | Single document        | Two-column FIELD \| VALUE table          |
-| `PrintJSON(data)`            | Any data when `--json` | Pretty-printed JSON to stdout            |
+| Function | Use for | Output |
+|----------|---------|--------|
+| `PrintTable(rows, fields)` | Multi-row lists | Styled table with alternating row colors |
+| `PrintDocTable(doc, fields)` | Single document | Two-column FIELD \| VALUE table |
+| `PrintJSON(data)` | Any data when `--json` | Pretty-printed JSON to stdout |
 
 Helper functions for stderr messages:
-
 - `output.PrintError("message")` — red bold with cross mark
 - `output.PrintSuccess("message")` — green with check mark
 
@@ -311,7 +310,6 @@ if errors.Is(err, huh.ErrUserAborted) {
 ## Field Parsing
 
 `parseFields()` in `list_docs.go` accepts two formats:
-
 - JSON array: `'["name","email"]'`
 - CSV: `name,email`
 

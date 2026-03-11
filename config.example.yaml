@@ -8,6 +8,20 @@
 
 default_site: dev
 
+# Number format for displaying amounts in tables and reports.
+# Run `ffc set-format` to change interactively.
+# Options: french (default) | us | german | plain
+#   french  →  1 000 000,00
+#   us      →  1,000,000.00
+#   german  →  1.000.000,00
+#   plain   →  1000000.00
+number_format: french
+
+# Date format for displaying dates in tables and reports.
+# Run `ffc config` to change interactively.
+# Options: yyyy-mm-dd (default) | dd-mm-yyyy | mm/dd/yyyy
+date_format: yyyy-mm-dd
+
 sites:
   dev:
     url: "http://mysite.localhost:8000"

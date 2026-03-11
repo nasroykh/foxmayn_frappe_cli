@@ -30,15 +30,26 @@ Version info is injected at build time via ldflags (see Makefile).
 ## Architecture
 
 ```
-cmd/ffc/main.go         → Entry point, calls cmd.Execute()
-internal/cmd/root.go    → Root cobra command, global flags (--site, --config, --json)
-internal/cmd/init.go    → init subcommand (huh form wizard)
-internal/cmd/get_doc    → get-doc subcommand
-internal/cmd/list_docs  → list-docs subcommand
-internal/client/        → Frappe REST API client (auth, request building, error parsing)
-internal/config/        → Config loading: YAML file (~/.config/ffc/config.yaml) + FFC_* env vars
-internal/output/        → Formatters: ASCII table (tablewriter) and JSON
-internal/version/       → Build-time version variables (ldflags)
+cmd/ffc/main.go              → Entry point, calls cmd.Execute()
+internal/cmd/root.go         → Root cobra command, global flags (--site, --config, --json)
+internal/cmd/init.go         → init subcommand (huh form wizard)
+internal/cmd/config_cmd.go   → config subcommand: TUI (no args), config get, config set
+internal/cmd/ping.go         → ping subcommand
+internal/cmd/get_doc.go      → get-doc subcommand
+internal/cmd/list_docs.go    → list-docs subcommand
+internal/cmd/create_doc.go   → create-doc subcommand
+internal/cmd/update_doc.go   → update-doc subcommand
+internal/cmd/delete_doc.go   → delete-doc subcommand
+internal/cmd/count_docs.go   → count-docs subcommand
+internal/cmd/get_schema.go   → get-schema subcommand
+internal/cmd/list_doctypes.go → list-doctypes subcommand
+internal/cmd/list_reports.go → list-reports subcommand
+internal/cmd/run_report.go   → run-report subcommand
+internal/cmd/call_method.go  → call-method subcommand
+internal/client/             → Frappe REST API client (auth, request building, error parsing)
+internal/config/             → Config loading: YAML file (~/.config/ffc/config.yaml) + FFC_* env vars
+internal/output/             → Formatters: lipgloss table and JSON
+internal/version/            → Build-time version variables (ldflags)
 ```
 
 ## Conventions
@@ -60,3 +71,6 @@ Env var fallback: `FFC_URL`, `FFC_API_KEY`, `FFC_API_SECRET`
 - The `config.yaml` in the project root is gitignored — it's for local dev only. Do not commit credentials.
 - Frappe API wraps list results in `"data"` (v14+) or `"message"` (older). The client handles both.
 - Frappe error responses contain nested JSON strings with Python tracebacks. The `parseFrappeError` function extracts user-friendly messages from this noise.
+- `Config` and `SiteConfig` structs carry **both** `mapstructure` and `yaml` struct tags. `mapstructure` is needed by viper; `yaml` is needed by `go.yaml.in/yaml/v3` for direct unmarshal in `config_cmd.go`. Always add both when extending these structs.
+- `config_cmd.go` has a `saveConfig` helper (marshals YAML node → file). `init.go` has its own `writeConfig` (generates fresh YAML from scratch). The names are intentionally different to avoid a package-level collision.
+- In huh v1.0.0, only `ctrl+c` is bound to Quit by default — Escape does nothing. All `huh.NewForm` calls in `config_cmd.go` use `WithKeyMap(escQuitKeyMap())` to add Escape support.
