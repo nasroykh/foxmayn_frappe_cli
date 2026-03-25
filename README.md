@@ -4,13 +4,23 @@ A minimal, installable Go CLI for managing Frappe ERP sites from the command lin
 
 ## Install
 
-**One-liner (Linux & macOS):**
+**Linux & macOS:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install.sh | sh
 ```
 
-This detects your OS and architecture, downloads the correct pre-built binary from the latest GitHub Release, verifies its checksum, and installs it to `/usr/local/bin` (or `~/.local/bin` as a fallback).
+Installs to `/usr/local/bin` (or `~/.local/bin` as a fallback).
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install.ps1 | iex"
+```
+
+Works from PowerShell or `cmd.exe`. Installs to `%LOCALAPPDATA%\Programs\ffc` and adds it to your user `PATH` automatically — restart your terminal after running.
+
+Both scripts detect your architecture (amd64/arm64), download the correct binary from the latest GitHub Release, and verify the SHA256 checksum before installing.
 
 **Manually** — download a pre-built binary from the [Releases page](https://github.com/nasroykh/foxmayn_frappe_cli/releases), extract it, and place `ffc` somewhere on your `PATH`.
 
@@ -221,7 +231,8 @@ foxmayn_frappe_cli/
 ├── config.example.yaml       # Example config
 ├── Makefile                  # Build, install, deps, tidy, vet, fmt
 ├── .goreleaser.yaml          # Cross-compilation and release config
-├── install.sh                # One-liner install script for end users
+├── install.sh                # One-liner install script (Linux/macOS)
+├── install.ps1               # One-liner install script (Windows PowerShell)
 ├── go.mod
 └── go.sum
 ```

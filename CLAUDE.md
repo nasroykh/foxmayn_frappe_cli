@@ -43,13 +43,18 @@ GitHub Actions will cross-compile for linux/darwin/windows × amd64/arm64, creat
 End users install with:
 
 ```bash
+# Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install.sh | sh
+
+# Windows (PowerShell or cmd.exe)
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install.ps1 | iex"
 ```
 
 **Key files:**
 - `.goreleaser.yaml` — build matrix, archive naming, checksum config
 - `.github/workflows/release.yml` — triggers on `v*` tags, runs GoReleaser
-- `install.sh` — detects OS/arch, downloads binary, verifies SHA256, installs to `/usr/local/bin` or `~/.local/bin`
+- `install.sh` — Linux/macOS: detects OS/arch, downloads tarball, verifies SHA256, installs to `/usr/local/bin` or `~/.local/bin`
+- `install.ps1` — Windows: detects arch, downloads zip, verifies SHA256, installs to `%LOCALAPPDATA%\Programs\ffc`, adds to user PATH
 
 ## Architecture
 
