@@ -4,26 +4,28 @@ A minimal, installable Go CLI for managing Frappe ERP sites from the command lin
 
 ## Install
 
-Install from source:
+**One-liner (Linux & macOS):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install.sh | sh
+```
+
+This detects your OS and architecture, downloads the correct pre-built binary from the latest GitHub Release, verifies its checksum, and installs it to `/usr/local/bin` (or `~/.local/bin` as a fallback).
+
+**Manually** — download a pre-built binary from the [Releases page](https://github.com/nasroykh/foxmayn_frappe_cli/releases), extract it, and place `ffc` somewhere on your `PATH`.
+
+**From source:**
 
 ```bash
 go install github.com/nasroykh/foxmayn_frappe_cli/cmd/ffc@latest
 ```
 
-Or clone the repo then:
+Or clone and build locally:
 
 ```bash
+git clone https://github.com/nasroykh/foxmayn_frappe_cli.git
 cd foxmayn_frappe_cli
-
-# Install binary to $GOPATH/bin (or ~/go/bin)
-make install
-```
-
-Or build a local binary:
-
-```bash
-make build
-./bin/ffc --help
+make install   # installs to $GOPATH/bin and creates ~/.config/ffc/config.yaml
 ```
 
 ## First-time Setup
@@ -218,6 +220,8 @@ foxmayn_frappe_cli/
 │   └── version/version.go    # Build-time version injection
 ├── config.example.yaml       # Example config
 ├── Makefile                  # Build, install, deps, tidy, vet, fmt
+├── .goreleaser.yaml          # Cross-compilation and release config
+├── install.sh                # One-liner install script for end users
 ├── go.mod
 └── go.sum
 ```

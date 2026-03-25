@@ -17,7 +17,7 @@
 ## Build & Run
 
 ```bash
-make build          # Compile binary to ./ffc
+make build          # Compile binary to ./bin/ffc
 make install        # Install to $GOPATH/bin + set up config
 make tidy           # go mod tidy
 make vet            # go vet ./...
@@ -26,6 +26,30 @@ make clean          # Remove binary
 ```
 
 Version info is injected at build time via ldflags (see Makefile).
+
+## Release
+
+Releases are automated via GoReleaser + GitHub Actions (`.github/workflows/release.yml`).
+
+To cut a release:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GitHub Actions will cross-compile for linux/darwin/windows × amd64/arm64, create a GitHub Release, upload the tarballs, and generate `checksums.txt`.
+
+End users install with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install.sh | sh
+```
+
+**Key files:**
+- `.goreleaser.yaml` — build matrix, archive naming, checksum config
+- `.github/workflows/release.yml` — triggers on `v*` tags, runs GoReleaser
+- `install.sh` — detects OS/arch, downloads binary, verifies SHA256, installs to `/usr/local/bin` or `~/.local/bin`
 
 ## Architecture
 
