@@ -1,3 +1,7 @@
+<div align="center">
+  <img width="150" height="150" alt="logo-foxmayn" src="https://github.com/user-attachments/assets/fa9f3727-dd5c-4748-92e9-f527a740366a" />
+</div>
+
 # ffc — Foxmayn Frappe CLI
 
 A minimal, installable Go CLI for managing Frappe ERP sites from the command line.
