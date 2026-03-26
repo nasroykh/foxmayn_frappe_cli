@@ -385,6 +385,28 @@ Then call `registerMyTool(s, fc)` inside `registerTools()` in `mcp_tools.go`.
 - Never log and return. Return the error; let the caller (cobra's `RunE`) decide.
 - HTTP errors: Use the status code switch pattern from existing client methods. Specific messages for 401, 403, 404; `parseFrappeError` for anything else >= 400.
 
+## get-schema Compact Output
+
+`get-schema --json` returns a compact view by default, not the raw Frappe response. The filtering is done in `get_schema.go` via four helpers:
+
+- `compactSchema(doc)` — filters the top-level DocType map
+- `compactField(f)` — filters a single DocField map
+- `filterSchemaKeys(doc, keys)` — keeps only the specified top-level keys (for `--keys` flag)
+- `isTruthy(v)` — returns true for non-zero float64, int, or bool true
+
+**Kept DocType keys (always):** `name`, `module`, `autoname`, `naming_rule`, `is_submittable`, `issingle`, `istable`, `is_tree`, `is_virtual`, `read_only`, `custom`
+**Kept DocType keys (if truthy):** `allow_rename`, `track_changes`
+**Kept DocType keys (if non-empty array):** `actions`, `links`, `states`
+
+**Kept DocField keys (always):** `fieldname`, `label`, `fieldtype`
+**Kept DocField keys (if truthy):** `reqd`, `read_only`, `hidden`, `unique`, `is_virtual`, `non_negative`, `allow_on_submit`, `in_list_view`, `in_standard_filter`, `set_only_once`, `translatable`, `ignore_user_permissions`
+**Kept DocField keys (if non-empty string):** `options`, `default`, `description`, `fetch_from`, `depends_on`, `mandatory_depends_on`, `read_only_depends_on`
+**Kept DocField keys (if > 0):** `length`, `permlevel`
+
+Use `--full` to bypass compaction and return the raw Frappe response. Use `--keys name,fields` to filter which top-level keys appear. Do not duplicate these helpers elsewhere.
+
+The MCP `get_schema` tool defaults to compact but exposes two optional parameters so the LLM can control the output: `full` (bool, returns raw Frappe response) and `keys` (comma-separated string, filters top-level keys). `compactReportResult` in `mcp_tools.go` applies the same noise-stripping principle to `run_report`: keeps `columns`, `result`, and `report_summary` (if non-null), strips `execution_time`, `chart`, `add_total_row`, `message`.
+
 ## Field Parsing
 
 `parseFields()` in `list_docs.go` accepts two formats:

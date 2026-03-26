@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -17,6 +18,7 @@ var (
 	udDoctype string
 	udName    string
 	udData    string
+	udKeys    string
 )
 
 var updateDocCmd = &cobra.Command{
@@ -55,7 +57,11 @@ Examples:
 		}
 
 		if jsonOutput {
-			output.PrintJSON(doc)
+			result := map[string]interface{}(doc)
+			if udKeys != "" {
+				result = filterSchemaKeys(result, strings.Split(udKeys, ","))
+			}
+			output.PrintJSON(result)
 		} else {
 			output.PrintSuccess(fmt.Sprintf("Updated %s %s", udDoctype, udName))
 			output.PrintDocTable(doc, nil)
@@ -69,6 +75,7 @@ func init() {
 	updateDocCmd.Flags().StringVarP(&udDoctype, "doctype", "d", "", "Frappe DocType (required)")
 	updateDocCmd.Flags().StringVarP(&udName, "name", "n", "", "Name of the document (required)")
 	updateDocCmd.Flags().StringVar(&udData, "data", "", `JSON object of fields to update, e.g. '{"status":"Closed"}' (required)`)
+	updateDocCmd.Flags().StringVar(&udKeys, "keys", "", "Comma-separated keys to include in JSON output, e.g. name,status")
 
 	_ = updateDocCmd.MarkFlagRequired("doctype")
 	_ = updateDocCmd.MarkFlagRequired("name")

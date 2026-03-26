@@ -184,8 +184,15 @@ ffc list-doctypes --module "Accounts"
 ```
 
 **2. `get-schema`** (View DocType fields and structure)
+
+`--json` returns a **compact view** by default — only meaningful DocType properties and field attributes (zero-value noise and metadata are stripped). Use `--full` for the raw Frappe response, or `--keys` to select specific top-level keys.
+
 ```bash
 ffc get-schema -d "Sales Invoice"
+ffc get-schema -d "Sales Invoice" --json
+ffc get-schema -d "Sales Invoice" --json --full
+ffc get-schema -d "Sales Invoice" --json --keys fields
+ffc get-schema -d "Sales Invoice" --json --keys name,module,fields
 ```
 
 ---

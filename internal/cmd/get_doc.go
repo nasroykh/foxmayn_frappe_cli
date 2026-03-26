@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -16,6 +17,7 @@ var (
 	gdDoctype string
 	gdName    string
 	gdFields  string
+	gdKeys    string
 )
 
 var getDocCmd = &cobra.Command{
@@ -28,6 +30,7 @@ Examples:
   ffc get-doc --doctype "Company" --name "My Company"
   ffc get-doc -d "User" -n "jane@example.com" --fields '["name","email","enabled"]'
   ffc get-doc -d "ToDo" -n "TDP-2024-001" --json
+  ffc get-doc -d "Sales Invoice" -n "SINV-0001" --json --keys name,status,grand_total
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Load site config
@@ -62,7 +65,11 @@ Examples:
 
 		// Output
 		if jsonOutput {
-			output.PrintJSON(doc)
+			result := map[string]interface{}(doc)
+			if gdKeys != "" {
+				result = filterSchemaKeys(result, strings.Split(gdKeys, ","))
+			}
+			output.PrintJSON(result)
 		} else {
 			output.PrintDocTable(doc, fields)
 		}
@@ -75,6 +82,7 @@ func init() {
 	getDocCmd.Flags().StringVarP(&gdDoctype, "doctype", "d", "", "Frappe DocType (required)")
 	getDocCmd.Flags().StringVarP(&gdName, "name", "n", "", "Name of the document (required)")
 	getDocCmd.Flags().StringVarP(&gdFields, "fields", "f", "", `Fields to fetch (JSON array or CSV)`)
+	getDocCmd.Flags().StringVar(&gdKeys, "keys", "", "Comma-separated keys to include in JSON output, e.g. name,status,grand_total")
 
 	_ = getDocCmd.MarkFlagRequired("doctype")
 	_ = getDocCmd.MarkFlagRequired("name")

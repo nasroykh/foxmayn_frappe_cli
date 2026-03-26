@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -19,6 +20,19 @@ func marshalResult(data interface{}) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultError(fmt.Sprintf("encoding result: %s", err)), nil
 	}
 	return mcp.NewToolResultText(string(b)), nil
+}
+
+// compactReportResult strips execution noise from a RunReport response,
+// keeping only columns, result, and report_summary (if non-nil).
+func compactReportResult(r map[string]interface{}) map[string]interface{} {
+	out := map[string]interface{}{
+		"columns": r["columns"],
+		"result":  r["result"],
+	}
+	if s, ok := r["report_summary"]; ok && s != nil {
+		out["report_summary"] = s
+	}
+	return out
 }
 
 // registerTools adds all Frappe API tools to the MCP server.
@@ -256,10 +270,16 @@ func registerCountDocs(s *server.MCPServer, fc *client.FrappeClient) {
 
 func registerGetSchema(s *server.MCPServer, fc *client.FrappeClient) {
 	tool := mcp.NewTool("get_schema",
-		mcp.WithDescription("Get the full definition of a Frappe DocType, including all field metadata (names, types, labels, required flags, options, defaults). Use this to understand a DocType's structure before creating or updating documents."),
+		mcp.WithDescription("Get the definition of a Frappe DocType: module, naming rule, submittability, and all field metadata (fieldname, label, fieldtype, required, options, defaults, constraints). By default returns a compact view with zero-value noise and internal Frappe metadata stripped. Pass full=true for the raw response, or keys to select specific top-level properties."),
 		mcp.WithString("doctype",
 			mcp.Required(),
 			mcp.Description("The DocType to inspect, e.g. 'Sales Invoice', 'Customer'"),
+		),
+		mcp.WithBoolean("full",
+			mcp.Description("Set to true to return the complete unfiltered Frappe response instead of the compact view."),
+		),
+		mcp.WithString("keys",
+			mcp.Description("Comma-separated top-level keys to include, e.g. 'fields' or 'name,module,fields'. Applied after compact/full filtering."),
 		),
 	)
 	s.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -271,7 +291,15 @@ func registerGetSchema(s *server.MCPServer, fc *client.FrappeClient) {
 		if apiErr != nil {
 			return mcp.NewToolResultError(apiErr.Error()), nil
 		}
-		return marshalResult(doc)
+
+		result := map[string]interface{}(doc)
+		if !req.GetBool("full", false) {
+			result = compactSchema(doc)
+		}
+		if keys := req.GetString("keys", ""); keys != "" {
+			result = filterSchemaKeys(result, strings.Split(keys, ","))
+		}
+		return marshalResult(result)
 	})
 }
 
@@ -345,7 +373,7 @@ func registerListReports(s *server.MCPServer, fc *client.FrappeClient) {
 
 func registerRunReport(s *server.MCPServer, fc *client.FrappeClient) {
 	tool := mcp.NewTool("run_report",
-		mcp.WithDescription("Execute a Frappe query report and return its results. Returns columns and data rows. Use list_reports first to discover available report names."),
+		mcp.WithDescription("Execute a Frappe query report and return its columns and data rows. Strips execution metadata (timing, chart config). Includes report_summary if the report provides one. Use list_reports first to discover available report names."),
 		mcp.WithString("report_name",
 			mcp.Required(),
 			mcp.Description("The name of the report to run, e.g. 'General Ledger', 'Accounts Receivable'"),
@@ -372,7 +400,7 @@ func registerRunReport(s *server.MCPServer, fc *client.FrappeClient) {
 		if apiErr != nil {
 			return mcp.NewToolResultError(apiErr.Error()), nil
 		}
-		return marshalResult(result)
+		return marshalResult(compactReportResult(result))
 	})
 }
 

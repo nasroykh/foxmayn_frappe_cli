@@ -175,15 +175,29 @@ ffc count-docs -d "Sales Invoice" --filters '{"status":"Unpaid"}' --json
 
 #### `ffc get-schema` — View DocType field definitions
 
-Shows all fields: fieldname, label, type, required flag, options, and default.
+Returns a **compact view** by default when using `--json`: only the meaningful DocType properties and field attributes are included. Zero-value booleans, metadata, and internal Frappe fields are stripped. Use `--full` for the raw response or `--keys` to select specific top-level keys.
 
 ```bash
 ffc get-schema -d "Sales Invoice" --json
+ffc get-schema -d "Sales Invoice" --json --full
+ffc get-schema -d "Sales Invoice" --json --keys fields
+ffc get-schema -d "Sales Invoice" --json --keys name,module,fields
 ```
 
-| Flag        | Short | Required | Description        |
-| ----------- | ----- | -------- | ------------------ |
-| `--doctype` | `-d`  | Yes      | DocType to inspect |
+| Flag        | Short | Required | Description                                              |
+| ----------- | ----- | -------- | -------------------------------------------------------- |
+| `--doctype` | `-d`  | Yes      | DocType to inspect                                       |
+| `--full`    | —     | No       | Return the complete unfiltered Frappe response           |
+| `--keys`    | —     | No       | Comma-separated top-level keys to include, e.g. `fields` |
+
+**Compact JSON keeps:**
+- DocType level (always): `name`, `module`, `autoname`, `naming_rule`, `is_submittable`, `issingle`, `istable`, `is_tree`, `is_virtual`, `read_only`, `custom`
+- DocType level (if truthy): `allow_rename`, `track_changes`
+- DocType level (if non-empty): `actions`, `links`, `states`
+- DocField level (always): `fieldname`, `label`, `fieldtype`
+- DocField level (if truthy): `reqd`, `read_only`, `hidden`, `unique`, `is_virtual`, `non_negative`, `allow_on_submit`, `in_list_view`, `in_standard_filter`, `set_only_once`, `translatable`, `ignore_user_permissions`
+- DocField level (if non-empty string): `options`, `default`, `description`, `fetch_from`, `depends_on`, `mandatory_depends_on`, `read_only_depends_on`
+- DocField level (if > 0): `length`, `permlevel`
 
 #### `ffc list-doctypes` — List available DocTypes
 
@@ -269,29 +283,33 @@ ffc mcp status    # PID, URL, site, uptime, log file path
 ffc mcp stop      # send SIGTERM + clean up state file
 ```
 
-| Flag       | Short | Description                                                         |
-| ---------- | ----- | ------------------------------------------------------------------- |
-| `--detach` | `-d`  | Run as a background HTTP server                                     |
-| `--port`   | `-p`  | Port for HTTP mode (default: 8765, implies HTTP transport)          |
+| Flag       | Short | Description                                                |
+| ---------- | ----- | ---------------------------------------------------------- |
+| `--detach` | `-d`  | Run as a background HTTP server                            |
+| `--port`   | `-p`  | Port for HTTP mode (default: 8765, implies HTTP transport) |
 
 **Available MCP tools** (used by the AI agent, not called directly):
 
-| Tool             | Equivalent ffc command            |
-| ---------------- | --------------------------------- |
-| `ping`           | `ffc ping`                        |
-| `get_doc`        | `ffc get-doc`                     |
-| `list_docs`      | `ffc list-docs`                   |
-| `create_doc`     | `ffc create-doc`                  |
-| `update_doc`     | `ffc update-doc`                  |
-| `delete_doc`     | `ffc delete-doc`                  |
-| `count_docs`     | `ffc count-docs`                  |
-| `get_schema`     | `ffc get-schema`                  |
-| `list_doctypes`  | `ffc list-doctypes`               |
-| `list_reports`   | `ffc list-reports`                |
-| `run_report`     | `ffc run-report`                  |
-| `call_method`    | `ffc call-method`                 |
+| Tool            | Equivalent ffc command |
+| --------------- | ---------------------- |
+| `ping`          | `ffc ping`             |
+| `get_doc`       | `ffc get-doc`          |
+| `list_docs`     | `ffc list-docs`        |
+| `create_doc`    | `ffc create-doc`       |
+| `update_doc`    | `ffc update-doc`       |
+| `delete_doc`    | `ffc delete-doc`       |
+| `count_docs`    | `ffc count-docs`       |
+| `get_schema`    | `ffc get-schema`       |
+| `list_doctypes` | `ffc list-doctypes`    |
+| `list_reports`  | `ffc list-reports`     |
+| `run_report`    | `ffc run-report`       |
+| `call_method`   | `ffc call-method`      |
 
 MCP tools always return JSON — no `--json` flag needed.
+
+**MCP-specific output behaviour (differs from CLI defaults):**
+- `get_schema` returns the compact view by default (same as `ffc get-schema --json`). The LLM can pass `full=true` for the raw Frappe response, or `keys="fields"` / `keys="name,module,fields"` to select specific top-level properties.
+- `run_report` returns only `columns`, `result`, and `report_summary` (if non-null) — strips `execution_time`, `chart`, `add_total_row`, `message`.
 
 **Example Claude Desktop config** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 ```json

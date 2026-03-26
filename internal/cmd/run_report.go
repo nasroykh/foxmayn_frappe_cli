@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -17,6 +18,7 @@ var (
 	rrName    string
 	rrFilters string
 	rrLimit   int
+	rrKeys    string
 )
 
 var runReportCmd = &cobra.Command{
@@ -57,7 +59,11 @@ Examples:
 		}
 
 		if jsonOutput {
-			output.PrintJSON(result)
+			out := map[string]interface{}(result)
+			if rrKeys != "" {
+				out = filterSchemaKeys(out, strings.Split(rrKeys, ","))
+			}
+			output.PrintJSON(out)
 			return nil
 		}
 
@@ -122,6 +128,7 @@ func init() {
 	runReportCmd.Flags().StringVarP(&rrName, "name", "n", "", "Report name (required)")
 	runReportCmd.Flags().StringVar(&rrFilters, "filters", "", `Report filters as a JSON object, e.g. '{"company":"Acme","from_date":"2025-01-01"}'`)
 	runReportCmd.Flags().IntVarP(&rrLimit, "limit", "l", 0, "Limit number of rows displayed")
+	runReportCmd.Flags().StringVar(&rrKeys, "keys", "", "Comma-separated top-level keys to include in JSON output, e.g. columns,result")
 	_ = runReportCmd.MarkFlagRequired("name")
 	rootCmd.AddCommand(runReportCmd)
 }

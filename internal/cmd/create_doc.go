@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -16,6 +17,7 @@ import (
 var (
 	cdDoctype string
 	cdData    string
+	cdKeys    string
 )
 
 var createDocCmd = &cobra.Command{
@@ -54,7 +56,11 @@ Examples:
 		}
 
 		if jsonOutput {
-			output.PrintJSON(doc)
+			result := map[string]interface{}(doc)
+			if cdKeys != "" {
+				result = filterSchemaKeys(result, strings.Split(cdKeys, ","))
+			}
+			output.PrintJSON(result)
 		} else {
 			if name, ok := doc["name"].(string); ok {
 				output.PrintSuccess(fmt.Sprintf("Created %s %s", cdDoctype, name))
@@ -69,6 +75,7 @@ Examples:
 func init() {
 	createDocCmd.Flags().StringVarP(&cdDoctype, "doctype", "d", "", "Frappe DocType (required)")
 	createDocCmd.Flags().StringVar(&cdData, "data", "", `JSON object of field values, e.g. '{"title":"Hello"}' (required)`)
+	createDocCmd.Flags().StringVar(&cdKeys, "keys", "", "Comma-separated keys to include in JSON output, e.g. name,status")
 
 	_ = createDocCmd.MarkFlagRequired("doctype")
 	_ = createDocCmd.MarkFlagRequired("data")
