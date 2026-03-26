@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,16 +30,17 @@ API keys can be generated at: User → API Access → Generate Keys.
 		// Warn if a config already exists.
 		var overwrite bool
 		if _, err := os.Stat(cfgPath); err == nil {
-			if err := huh.NewConfirm().
+			err := huh.NewConfirm().
 				Title(fmt.Sprintf("Config already exists at %s", cfgPath)).
 				Description("Do you want to overwrite it?").
 				Value(&overwrite).
-				Run(); err != nil {
-				return err
-			}
-			if !overwrite {
+				Run()
+			if errors.Is(err, huh.ErrUserAborted) || !overwrite {
 				fmt.Fprintln(os.Stderr, "Aborted. Existing config kept.")
 				return nil
+			}
+			if err != nil {
+				return err
 			}
 		}
 
@@ -50,60 +52,103 @@ API keys can be generated at: User → API Access → Generate Keys.
 			apiSecret string
 		)
 
-		form := huh.NewForm(
-			huh.NewGroup(
-				huh.NewInput().
-					Title("Site name").
-					Description("A short identifier, e.g. dev or production").
-					Placeholder("dev").
-					Validate(func(s string) error {
-						s = strings.TrimSpace(s)
-						if s == "" {
-							return fmt.Errorf("site name cannot be empty")
-						}
-						if strings.ContainsAny(s, " \t") {
-							return fmt.Errorf("site name must not contain spaces")
-						}
-						return nil
-					}).
-					Value(&siteName),
+	initLoop:
+		for {
+			// Rebuild the form each iteration so huh's internal state is fresh
+			// (a completed form cannot be re-run correctly).
+			form := huh.NewForm(
+				huh.NewGroup(
+					huh.NewInput().
+						Title("Site name").
+						Description("A short identifier, e.g. dev or production").
+						Placeholder("dev").
+						Validate(func(s string) error {
+							s = strings.TrimSpace(s)
+							if s == "" {
+								return fmt.Errorf("site name cannot be empty")
+							}
+							if strings.ContainsAny(s, " \t") {
+								return fmt.Errorf("site name must not contain spaces")
+							}
+							return nil
+						}).
+						Value(&siteName),
 
-				huh.NewInput().
-					Title("Site URL").
-					Description("Base URL of your Frappe site").
-					Placeholder("https://mysite.example.com").
-					Validate(func(s string) error {
-						s = strings.TrimSpace(s)
-						if s == "" {
-							return fmt.Errorf("URL cannot be empty")
-						}
-						if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
-							return fmt.Errorf("URL must start with http:// or https://")
-						}
-						return nil
-					}).
-					Value(&siteURL),
-			),
-			huh.NewGroup(
-				huh.NewInput().
-					Title("API Key").
-					Description("From User → API Access → Generate Keys").
-					Placeholder("21393a7e100ae26").
-					Value(&apiKey),
+					huh.NewInput().
+						Title("Site URL").
+						Description("Base URL of your Frappe site (https:// added if you omit the scheme)").
+						Placeholder("mysite.example.com").
+						Validate(func(s string) error {
+							if strings.TrimSpace(s) == "" {
+								return fmt.Errorf("URL cannot be empty")
+							}
+							return nil
+						}).
+						Value(&siteURL),
+				),
+				huh.NewGroup(
+					huh.NewInput().
+						Title("API Key").
+						Description("From User → API Access → Generate Keys").
+						Placeholder("21393a7e100ae26").
+						Value(&apiKey),
 
-				huh.NewInput().
-					Title("API Secret").
-					EchoMode(huh.EchoModePassword).
-					Value(&apiSecret),
-			),
-		)
+					huh.NewInput().
+						Title("API Secret").
+						EchoMode(huh.EchoModePassword).
+						Value(&apiSecret),
+				),
+			)
 
-		if err := form.Run(); err != nil {
-			return err
+			err := form.WithKeyMap(escQuitKeyMap()).Run()
+			if errors.Is(err, huh.ErrUserAborted) {
+				fmt.Fprintln(os.Stderr, "Aborted. No config written.")
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+
+			siteName = strings.TrimSpace(siteName)
+			siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
+			if !strings.HasPrefix(siteURL, "http://") && !strings.HasPrefix(siteURL, "https://") {
+				siteURL = "https://" + siteURL
+			}
+
+			secretSummary := "(empty)"
+			if strings.TrimSpace(apiSecret) != "" {
+				secretSummary = fmt.Sprintf("(%d characters)", len(apiSecret))
+			}
+
+			var reviewChoice string
+			reviewErr := huh.NewForm(
+				huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("Review configuration").
+						Description(fmt.Sprintf(
+							"Site name:  %s\nSite URL:   %s\nAPI key:    %s\nAPI secret: %s",
+							siteName, siteURL, apiKey, secretSummary,
+						)).
+						Options(
+							huh.NewOption("Confirm", "confirm"),
+							huh.NewOption("Edit", "edit"),
+							huh.NewOption("Cancel", "cancel"),
+						).
+						Value(&reviewChoice),
+				),
+			).WithKeyMap(escQuitKeyMap()).Run()
+			if errors.Is(reviewErr, huh.ErrUserAborted) || reviewChoice == "cancel" {
+				fmt.Fprintln(os.Stderr, "Aborted. No config written.")
+				return nil
+			}
+			if reviewErr != nil {
+				return reviewErr
+			}
+			if reviewChoice == "edit" {
+				continue
+			}
+			break initLoop
 		}
-
-		siteName = strings.TrimSpace(siteName)
-		siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
 
 		// Write config file with a spinner.
 		var writeErr error
