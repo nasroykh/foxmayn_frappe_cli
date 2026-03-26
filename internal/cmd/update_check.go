@@ -114,8 +114,9 @@ func waitForUpdateCheck() {
 
 func init() {
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		// Skip the check when the user is already running `ffc update`.
-		if cmd.Name() != "update" {
+		// Skip the check when the user is already running `ffc update` or `ffc mcp`
+		// (stderr output from the update notice would corrupt the MCP JSON-RPC stream).
+		if cmd.Name() != "update" && cmd.Name() != "mcp" {
 			runUpdateCheck()
 		}
 		return nil

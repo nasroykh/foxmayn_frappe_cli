@@ -215,6 +215,45 @@ ffc run-report -n "General Ledger" --filters '{"company":"Acme","from_date":"202
 
 ---
 
+### MCP Server (AI Agent Integration)
+
+**`mcp`**: Start an MCP (Model Context Protocol) server so AI agents and LLMs can interact with your Frappe site directly.
+
+**Stdio mode** — use this in your MCP client config (Claude Desktop, Cursor, etc.):
+```bash
+ffc mcp --site mysite
+```
+
+**HTTP mode** — foreground, useful for testing with the MCP Inspector:
+```bash
+ffc mcp --port 8765 --site mysite
+```
+
+**Detached mode** — background HTTP server, doesn't block the terminal:
+```bash
+ffc mcp --detach [--port 8765] [--site mysite]
+ffc mcp status   # show PID, URL, uptime, log path
+ffc mcp stop     # send SIGTERM and clean up
+```
+
+The HTTP endpoint is `http://localhost:<port>/mcp` (Streamable HTTP transport).
+
+Available MCP tools: `ping`, `get_doc`, `list_docs`, `create_doc`, `update_doc`, `delete_doc`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `call_method`.
+
+**Example Claude Desktop config:**
+```json
+{
+  "mcpServers": {
+    "frappe": {
+      "command": "ffc",
+      "args": ["mcp", "--site", "mysite"]
+    }
+  }
+}
+```
+
+---
+
 ## Project Structure
 
 ```text
@@ -238,7 +277,12 @@ foxmayn_frappe_cli/
 │   │   ├── run_report.go     # run-report
 │   │   ├── call_method.go    # call-method
 │   │   ├── update.go         # update (self-update)
-│   │   └── update_check.go   # background update check + PersistentPreRunE
+│   │   ├── update_check.go   # background update check + PersistentPreRunE
+│   │   ├── mcp.go            # mcp subcommand (stdio/HTTP/detach modes)
+│   │   ├── mcp_tools.go      # 12 MCP tool definitions + handlers
+│   │   ├── mcp_daemon.go     # detach logic, status/stop subcommands, state file
+│   │   ├── mcp_detach_unix.go    # setSysProcAttr (Setsid, Linux/macOS)
+│   │   └── mcp_detach_windows.go # setSysProcAttr no-op (Windows)
 │   ├── client/client.go      # Frappe REST API client methods (resty)
 │   ├── config/config.go      # Config loading and number/date formatting logic
 │   ├── output/output.go      # Table (lipgloss) and JSON formatters

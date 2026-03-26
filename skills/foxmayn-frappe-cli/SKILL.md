@@ -67,7 +67,7 @@ export FFC_API_SECRET="your_secret"
 
 **MANDATORY for AI/LLM usage:** Always append `--json` (or `-j`) to every ffc command that supports it. The default table output is formatted for human reading and is not reliably parseable. JSON output is structured, complete, and easy to process.
 
-Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `count-docs`, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `ping`. (`call-method` always outputs JSON regardless. `delete-doc` has no data output — `--json` is not applicable to either.)
+Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `count-docs`, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `ping`. (`call-method` always outputs JSON regardless. `delete-doc` has no data output — `--json` is not applicable. MCP tools always return JSON by design.)
 
 ```bash
 # Always do this:
@@ -240,6 +240,70 @@ ffc call-method --method "frappe.client.get_count" --args '{"doctype":"ToDo","fi
 | ---------- | ----- | -------- | -------------------------------------- |
 | `--method` | —     | Yes      | Frappe method path, e.g. `frappe.ping` |
 | `--args`   | —     | No       | JSON object of method arguments        |
+
+---
+
+### MCP Server (AI Agent Integration)
+
+#### `ffc mcp` — Start an MCP server for AI agents
+
+Exposes all Frappe API operations as MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
+
+**Three modes:**
+
+**Stdio (default)** — use this in your MCP client config. The client manages the process lifecycle:
+```bash
+ffc mcp --site mysite
+```
+
+**HTTP foreground** — useful for testing with the MCP Inspector:
+```bash
+ffc mcp --port 8765 --site mysite
+# endpoint: http://localhost:8765/mcp
+```
+
+**Detached background** — runs as a background HTTP server, doesn't block the terminal:
+```bash
+ffc mcp --detach [--port 8765] [--site mysite]
+ffc mcp status    # PID, URL, site, uptime, log file path
+ffc mcp stop      # send SIGTERM + clean up state file
+```
+
+| Flag       | Short | Description                                                         |
+| ---------- | ----- | ------------------------------------------------------------------- |
+| `--detach` | `-d`  | Run as a background HTTP server                                     |
+| `--port`   | `-p`  | Port for HTTP mode (default: 8765, implies HTTP transport)          |
+
+**Available MCP tools** (used by the AI agent, not called directly):
+
+| Tool             | Equivalent ffc command            |
+| ---------------- | --------------------------------- |
+| `ping`           | `ffc ping`                        |
+| `get_doc`        | `ffc get-doc`                     |
+| `list_docs`      | `ffc list-docs`                   |
+| `create_doc`     | `ffc create-doc`                  |
+| `update_doc`     | `ffc update-doc`                  |
+| `delete_doc`     | `ffc delete-doc`                  |
+| `count_docs`     | `ffc count-docs`                  |
+| `get_schema`     | `ffc get-schema`                  |
+| `list_doctypes`  | `ffc list-doctypes`               |
+| `list_reports`   | `ffc list-reports`                |
+| `run_report`     | `ffc run-report`                  |
+| `call_method`    | `ffc call-method`                 |
+
+MCP tools always return JSON — no `--json` flag needed.
+
+**Example Claude Desktop config** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+```json
+{
+  "mcpServers": {
+    "frappe": {
+      "command": "ffc",
+      "args": ["mcp", "--site", "mysite"]
+    }
+  }
+}
+```
 
 ---
 

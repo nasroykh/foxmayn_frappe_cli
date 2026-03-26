@@ -13,6 +13,7 @@
 - **Table & styling:** [lipgloss v2](https://charm.land/lipgloss/v2) + built-in `table` sub-package
 - **Forms & prompts:** [huh](https://github.com/charmbracelet/huh)
 - **Spinner:** [huh/spinner](https://github.com/charmbracelet/huh) (standalone, no bubbletea loop needed)
+- **MCP server:** [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) v0.46.0 (stdio + StreamableHTTP transports)
 
 ## Build & Run
 
@@ -75,8 +76,13 @@ internal/cmd/list_doctypes.go → list-doctypes subcommand
 internal/cmd/list_reports.go → list-reports subcommand
 internal/cmd/run_report.go   → run-report subcommand
 internal/cmd/call_method.go  → call-method subcommand
-internal/cmd/update.go       → update subcommand (self-update from GitHub releases)
-internal/cmd/update_check.go → background update check; owns rootCmd.PersistentPreRunE
+internal/cmd/update.go           → update subcommand (self-update from GitHub releases)
+internal/cmd/update_check.go     → background update check; owns rootCmd.PersistentPreRunE
+internal/cmd/mcp.go              → mcp subcommand (stdio/HTTP/detach mode routing, --detach, --port flags)
+internal/cmd/mcp_tools.go        → 12 MCP tool definitions + handlers (registerTools, marshalResult)
+internal/cmd/mcp_daemon.go       → detach logic (startDetached, runHTTPServer), status/stop subcommands, state file I/O
+internal/cmd/mcp_detach_unix.go  → setSysProcAttr with Setsid=true (Linux/macOS build tag: !windows)
+internal/cmd/mcp_detach_windows.go → setSysProcAttr no-op (Windows build tag)
 internal/client/             → Frappe REST API client (auth, request building, error parsing)
 internal/config/             → Config loading: YAML file (~/.config/ffc/config.yaml) + FFC_* env vars
 internal/output/             → Formatters: lipgloss table and JSON
@@ -107,3 +113,7 @@ Env var fallback: `FFC_URL`, `FFC_API_KEY`, `FFC_API_SECRET`
 - In huh v1.0.0, only `ctrl+c` is bound to Quit by default — Escape does nothing. All `huh.NewForm` calls in `config_cmd.go` and `update.go` use `WithKeyMap(escQuitKeyMap())` to add Escape support. `escQuitKeyMap()` is defined in `config_cmd.go` and is available package-wide.
 - `update_check.go` sets `rootCmd.PersistentPreRunE` in its `init()`. Do not set `PersistentPreRunE` on `rootCmd` anywhere else — it would silently overwrite the update check hook. Add new pre-run logic inside the existing hook in `update_check.go`.
 - The self-update state file lives at `~/.config/ffc/.update_check.json` (JSON with `checked_at` and `latest` fields). It is refreshed in a background goroutine at most once per day. `Execute()` in `root.go` waits up to 2 seconds for that goroutine before exiting.
+- `update_check.go` skips the update check for both `update` and `mcp` commands. The MCP server takes over stdin/stdout for JSON-RPC; any stderr output (including the update notice) would corrupt the stream. Do not remove `mcp` from this skip condition.
+- The MCP detached-server state file lives at `~/.config/ffc/mcp.json` (JSON with `pid`, `port`, `site`, `started_at`, `log_path`). The log file is at `~/.config/ffc/mcp.log`. These are managed by `mcp_daemon.go` — `ffc mcp stop` removes the state file.
+- `mcp_detach_unix.go` and `mcp_detach_windows.go` use build tags (`!windows` / `windows`) to provide platform-specific `setSysProcAttr(*exec.Cmd)`. The Unix version sets `Setsid: true` to detach from the terminal's process group. Do not add `syscall.SysProcAttr` fields directly in non-platform-tagged files — they won't compile cross-platform.
+- MCP tool handlers in `mcp_tools.go` must never write to stdout or call `output.Print*` functions. Stdout is the MCP JSON-RPC channel. Return results via `mcp.NewToolResultText(json)` and errors via `mcp.NewToolResultError(msg)` with a `nil` Go error (so the LLM sees the failure, not a protocol crash).

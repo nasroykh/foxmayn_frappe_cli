@@ -16,14 +16,15 @@ Build and extend the ffc CLI — a Go tool for interacting with Frappe ERP sites
 
 ## Tech Stack
 
-| Component        | Library     | Import                                                    |
-| ---------------- | ----------- | --------------------------------------------------------- |
-| CLI framework    | cobra       | `github.com/spf13/cobra`                                  |
-| Config           | viper       | `github.com/spf13/viper`                                  |
-| HTTP client      | resty       | `github.com/go-resty/resty/v2`                            |
-| Tables & styling | lipgloss v2 | `charm.land/lipgloss/v2` + `charm.land/lipgloss/v2/table` |
-| Forms & prompts  | huh v1.0.0  | `github.com/charmbracelet/huh`                            |
-| Spinner          | huh/spinner | `github.com/charmbracelet/huh/spinner`                    |
+| Component        | Library        | Import                                                    |
+| ---------------- | -------------- | --------------------------------------------------------- |
+| CLI framework    | cobra          | `github.com/spf13/cobra`                                  |
+| Config           | viper          | `github.com/spf13/viper`                                  |
+| HTTP client      | resty          | `github.com/go-resty/resty/v2`                            |
+| Tables & styling | lipgloss v2    | `charm.land/lipgloss/v2` + `charm.land/lipgloss/v2/table` |
+| Forms & prompts  | huh v1.0.0     | `github.com/charmbracelet/huh`                            |
+| Spinner          | huh/spinner    | `github.com/charmbracelet/huh/spinner`                    |
+| MCP server       | mcp-go v0.46.0 | `github.com/mark3labs/mcp-go/mcp` + `.../server`          |
 
 ## Project Layout
 
@@ -44,9 +45,14 @@ internal/cmd/list_doctypes.go → list-doctypes subcommand
 internal/cmd/list_reports.go  → list-reports subcommand
 internal/cmd/run_report.go    → run-report subcommand
 internal/cmd/call_method.go   → call-method subcommand
-internal/cmd/update.go        → update subcommand: GitHub release fetch, archive extraction, binary swap
-internal/cmd/update_check.go  → background update check; owns rootCmd.PersistentPreRunE + state file
-internal/client/client.go     → FrappeClient (resty), GetDoc, GetList, …
+internal/cmd/update.go            → update subcommand: GitHub release fetch, archive extraction, binary swap
+internal/cmd/update_check.go      → background update check; owns rootCmd.PersistentPreRunE + state file
+internal/cmd/mcp.go               → mcp subcommand: stdio/HTTP/detach routing, --detach and --port flags
+internal/cmd/mcp_tools.go         → 12 MCP tool definitions + handlers; marshalResult helper; registerTools()
+internal/cmd/mcp_daemon.go        → startDetached(), runHTTPServer(), mcpStatusCmd, mcpStopCmd, state file I/O
+internal/cmd/mcp_detach_unix.go   → setSysProcAttr (Setsid=true) — build tag: !windows
+internal/cmd/mcp_detach_windows.go → setSysProcAttr no-op — build tag: windows
+internal/client/client.go         → FrappeClient (resty), GetDoc, GetList, …
 internal/config/config.go     → viper config loading, number/date formatting, env var fallback
 internal/output/output.go     → PrintTable, PrintDocTable, PrintJSON, PrintError, PrintSuccess
 internal/version/version.go   → build-time ldflags (Version, Commit, Date)
@@ -315,6 +321,63 @@ if errors.Is(err, huh.ErrUserAborted) {
 - `updateYAMLValue(root *yaml.Node, key, value string)` — updates a scalar value in a YAML mapping node (appends if key doesn't exist)
 
 **Note**: `init.go` has its own `writeConfig(path, siteName, url, apiKey, apiSecret string) error` which generates a fresh config from scratch. The names are intentionally different to avoid a package-level collision — do not rename either.
+
+## MCP Server Pattern
+
+The `mcp` command is structurally different from all other ffc commands — it's a long-running server, not a one-shot CLI action. Key constraints:
+
+### Tool handlers (`mcp_tools.go`)
+
+- **Never write to stdout** from a tool handler. Stdout is the MCP JSON-RPC channel.
+- **Never call `output.Print*`** — those write to stdout/stderr for human consumption.
+- Return results via `mcp.NewToolResultText(jsonString)` and errors via `mcp.NewToolResultError(msg)` with a **nil** Go error.
+- Use `marshalResult(data)` (defined in `mcp_tools.go`) for any structured response — it JSON-marshals and wraps in `NewToolResultText`.
+- A non-nil Go error from a handler is a protocol-level crash. Reserve that for truly unexpected failures. Frappe API errors go through `NewToolResultError`.
+
+### Adding a new MCP tool
+
+```go
+func registerMyTool(s *server.MCPServer, fc *client.FrappeClient) {
+    tool := mcp.NewTool("my_tool",
+        mcp.WithDescription("What it does, what it returns, when to use it."),
+        mcp.WithString("doctype", mcp.Required(), mcp.Description("The DocType")),
+        mcp.WithNumber("limit", mcp.Description("Max results. Default: 20")),
+    )
+    s.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        doctype, err := req.RequireString("doctype")
+        if err != nil {
+            return mcp.NewToolResultError(err.Error()), nil
+        }
+        limit := int(req.GetFloat("limit", 20))
+        // ... call fc method ...
+        result, apiErr := fc.GetList(doctype, client.ListOptions{Limit: limit})
+        if apiErr != nil {
+            return mcp.NewToolResultError(apiErr.Error()), nil
+        }
+        return marshalResult(result)
+    })
+}
+```
+
+Then call `registerMyTool(s, fc)` inside `registerTools()` in `mcp_tools.go`.
+
+**Argument extraction methods** (from `mcp.CallToolRequest`):
+- `req.RequireString("key")` → `(string, error)` — errors if missing or wrong type
+- `req.GetString("key", "default")` → `string`
+- `req.GetFloat("key", 0)` → `float64` (use for numbers — JSON numbers decode as float64)
+- `req.GetInt("key", 0)` → `int`
+
+### Daemon/detach pattern (`mcp_daemon.go`)
+
+- State file: `~/.config/ffc/mcp.json` — JSON with `pid`, `port`, `site`, `started_at`, `log_path`
+- Log file: `~/.config/ffc/mcp.log` — stderr of detached child process
+- `startDetached(port)` re-execs `os.Args[0]` with `mcp --port PORT [--site X] [--config X]` (no `--detach`), sets `Setsid: true` via `setSysProcAttr`, writes state file, releases child
+- `isProcessRunning(pid)` uses `syscall.Signal(0)` to check liveness without sending a real signal
+- Platform-specific daemonization is isolated in `mcp_detach_unix.go` (`!windows`) and `mcp_detach_windows.go`. **Do not use `syscall.SysProcAttr` fields in non-tagged files** — they won't compile cross-platform.
+
+### Update check skip
+
+`update_check.go`'s `PersistentPreRunE` skips the update check for both `"update"` and `"mcp"`. The stderr update notice would corrupt the MCP JSON-RPC stream. Do not remove `mcp` from that condition.
 
 ## Error Handling
 
