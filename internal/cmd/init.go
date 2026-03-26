@@ -12,13 +12,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	initOAuth  bool
+	initAPIKey bool
+)
+
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Interactive setup wizard for ~/.config/ffc/config.yaml",
 	Long: `Create or update the ffc configuration file interactively.
 
-You will be prompted for your Frappe site URL and API credentials.
+Without flags, a menu lets you choose the authentication method.
+Use --oauth   to go directly to the OAuth 2.0 browser flow (Authorization Code + PKCE).
+Use --apikey  to go directly to the API key / secret flow.
+
 API keys can be generated at: User → API Access → Generate Keys.
+OAuth clients can be created at: Integrations → OAuth Client → New.
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgDir, err := defaultConfigDir()
@@ -30,11 +39,14 @@ API keys can be generated at: User → API Access → Generate Keys.
 		// Warn if a config already exists.
 		var overwrite bool
 		if _, err := os.Stat(cfgPath); err == nil {
-			err := huh.NewConfirm().
-				Title(fmt.Sprintf("Config already exists at %s", cfgPath)).
-				Description("Do you want to overwrite it?").
-				Value(&overwrite).
-				Run()
+			err := huh.NewForm(
+				huh.NewGroup(
+					huh.NewConfirm().
+						Title(fmt.Sprintf("Config already exists at %s", cfgPath)).
+						Description("This will replace your entire config.\nTo add a site instead, use: ffc site add").
+						Value(&overwrite),
+				),
+			).WithKeyMap(escQuitKeyMap()).Run()
 			if errors.Is(err, huh.ErrUserAborted) || !overwrite {
 				fmt.Fprintln(os.Stderr, "Aborted. Existing config kept.")
 				return nil
@@ -44,7 +56,36 @@ API keys can be generated at: User → API Access → Generate Keys.
 			}
 		}
 
-		// Collect site details.
+		// Resolve auth method: flag → interactive menu.
+		useOAuth := initOAuth
+		if !initOAuth && !initAPIKey {
+			var method string
+			menuErr := huh.NewForm(
+				huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("How do you want to connect to your Frappe site?").
+						Options(
+							huh.NewOption("OAuth 2.0  — browser login, no credentials stored", "oauth"),
+							huh.NewOption("API Key    — paste your API key and secret", "apikey"),
+						).
+						Value(&method),
+				),
+			).WithKeyMap(escQuitKeyMap()).Run()
+			if errors.Is(menuErr, huh.ErrUserAborted) {
+				fmt.Fprintln(os.Stderr, "Aborted. No config written.")
+				return nil
+			}
+			if menuErr != nil {
+				return menuErr
+			}
+			useOAuth = method == "oauth"
+		}
+
+		if useOAuth {
+			return runOAuthInitFlow(cfgPath)
+		}
+
+		// ── API key flow ─────────────────────────────────────────────────────
 		var (
 			siteName  string
 			siteURL   string
@@ -164,12 +205,15 @@ API keys can be generated at: User → API Access → Generate Keys.
 		}
 
 		fmt.Fprintf(os.Stderr, "\n✓ Config written to %s\n", cfgPath)
-		fmt.Fprintf(os.Stderr, "  Run: ffc --site %s list-docs --doctype Sales Invoice\n", siteName)
+		fmt.Fprintf(os.Stderr, "  Run: ffc --site %s list-docs --doctype \"Sales Invoice\"\n", siteName)
 		return nil
 	},
 }
 
 func init() {
+	initCmd.Flags().BoolVar(&initOAuth, "oauth", false, "Use OAuth 2.0 browser flow (Authorization Code + PKCE)")
+	initCmd.Flags().BoolVar(&initAPIKey, "apikey", false, "Use API key / secret flow")
+	initCmd.MarkFlagsMutuallyExclusive("oauth", "apikey")
 	rootCmd.AddCommand(initCmd)
 }
 

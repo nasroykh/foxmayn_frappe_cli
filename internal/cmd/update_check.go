@@ -119,6 +119,11 @@ func init() {
 		if cmd.Name() != "update" && cmd.Name() != "mcp" {
 			runUpdateCheck()
 		}
+		// Silently refresh an expired OAuth access token before the command runs.
+		// Skip for init (no site configured yet) and mcp (stdout is the JSON-RPC channel).
+		if cmd.Name() != "init" && cmd.Name() != "update" && cmd.Name() != "mcp" {
+			tryRefreshOAuthToken()
+		}
 		return nil
 	}
 }

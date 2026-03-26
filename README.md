@@ -44,25 +44,28 @@ make install   # installs to $GOPATH/bin and creates ~/.config/ffc/config.yaml
 
 ## First-time Setup
 
-Copy the example config and fill in your site details:
-
-```bash
-mkdir -p ~/.config/ffc
-cp config.example.yaml ~/.config/ffc/config.yaml
-$EDITOR ~/.config/ffc/config.yaml
-```
-
-Or use the interactive setup wizard:
+Use the interactive setup wizard — it creates `~/.config/ffc/config.yaml`:
 
 ```bash
 ffc init
 ```
 
-Generate API keys on your Frappe site: **User → API Access → Generate Keys**.
+The wizard lets you choose between two authentication methods:
+
+- **OAuth 2.0** (`--oauth`) — browser login, PKCE flow, no credentials stored. You create an OAuth Client on Frappe once and authorize via the browser.
+- **API Key** (`--apikey`) — paste your API key and secret from **User → API Access → Generate Keys**.
+
+```bash
+ffc init            # menu to choose auth method
+ffc init --oauth    # go straight to the OAuth browser flow
+ffc init --apikey   # go straight to the API key form
+```
 
 ## Configuration
 
 **`~/.config/ffc/config.yaml`**
+
+API key authentication:
 
 ```yaml
 default_site: dev
@@ -74,8 +77,36 @@ sites:
     url: "http://mysite.localhost:8000"
     api_key: "your_api_key"
     api_secret: "your_api_secret"
+```
 
-  # production: ...
+OAuth 2.0 authentication (tokens are written automatically by `ffc init --oauth`):
+
+```yaml
+default_site: dev
+
+sites:
+  dev:
+    url: "https://mysite.example.com"
+    oauth_client_id: "your_client_id"
+    oauth_client_secret: "your_client_secret"   # omit for public clients
+    access_token: "..."
+    refresh_token: "..."
+    token_expiry: 1234567890
+```
+
+OAuth access tokens are refreshed automatically before every command when they expire — you don't need to re-run `ffc init`.
+
+**Site Management (`ffc site`)**
+
+Add, list, remove, or switch between sites without touching the config file manually:
+
+```bash
+ffc site list                   # show all configured sites
+ffc site add                    # add a new site (menu to choose auth method)
+ffc site add --oauth            # add a new site via OAuth browser flow
+ffc site add --apikey           # add a new site via API key form
+ffc site use [name]             # set the default site (interactive menu if name omitted)
+ffc site remove [name]          # remove a site (interactive menu if name omitted)
 ```
 
 **Settings Management (`ffc config`)**
@@ -123,7 +154,12 @@ ffc [--site <name>] [--config <path>] [--json] <command> [flags]
 
 ### Basic Setup & Settings
 
-*   **`init`**: Interactive setup wizard — creates your initial config (auto-adds `https://` if you omit the scheme).
+*   **`init`**: Interactive setup wizard — creates your initial config. Choose between OAuth 2.0 browser flow (`--oauth`) or API key/secret (`--apikey`). Auto-adds `https://` if you omit the scheme.
+*   **`site`**: Manage multiple Frappe sites without editing the config file:
+    *   `ffc site list` — show all configured sites (name, URL, auth method, default)
+    *   `ffc site add [--oauth|--apikey]` — add a new site interactively
+    *   `ffc site use [name]` — set the default site (shows selection menu if name omitted)
+    *   `ffc site remove [name]` — remove a site (shows selection menu if name omitted)
 *   **`config`**: Interactive TUI to tweak settings, or non-interactive via subcommands:
     *   `ffc config get [--json|--yaml]` — print all settings
     *   `ffc config set --default-site <name> --number-format <fmt> --date-format <fmt>` — update settings
@@ -269,7 +305,9 @@ foxmayn_frappe_cli/
 ├── internal/
 │   ├── cmd/                  # Cobra command definitions
 │   │   ├── root.go           # Root command + global flags
-│   │   ├── init.go           # Interactive setup wizard
+│   │   ├── init.go           # Interactive setup wizard (API key or OAuth)
+│   │   ├── oauth_flow.go     # OAuth PKCE flow, token refresh, site YAML helpers
+│   │   ├── site.go           # ffc site list/add/remove/use
 │   │   ├── config_cmd.go     # Interactive settings menu
 │   │   ├── ping.go           # ping
 │   │   ├── get_doc.go        # get-doc
@@ -290,8 +328,10 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_daemon.go     # detach logic, status/stop subcommands, state file
 │   │   ├── mcp_detach_unix.go    # setSysProcAttr (Setsid, Linux/macOS)
 │   │   └── mcp_detach_windows.go # setSysProcAttr no-op (Windows)
-│   ├── client/client.go      # Frappe REST API client methods (resty)
-│   ├── config/config.go      # Config loading and number/date formatting logic
+│   ├── client/
+│   │   ├── client.go         # Frappe REST API client (resty, Bearer + token auth)
+│   │   └── oauth.go          # ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser
+│   ├── config/config.go      # Config loading, OAuth fields, number/date formatting
 │   ├── output/output.go      # Table (lipgloss) and JSON formatters
 │   └── version/version.go    # Build-time version injection
 ├── config.example.yaml       # Example config

@@ -25,9 +25,10 @@ func New(cfg *config.SiteConfig) *FrappeClient {
 		SetRetryCount(2).
 		SetRetryWaitTime(500 * time.Millisecond)
 
-	// Frappe token auth: Authorization: token <api_key>:<api_secret>
-	// Both key and secret are required for a valid token.
-	if cfg.APIKey != "" && cfg.APISecret != "" {
+	// OAuth Bearer token takes priority; fall back to Frappe token auth.
+	if cfg.AccessToken != "" {
+		r.SetHeader("Authorization", "Bearer "+cfg.AccessToken)
+	} else if cfg.APIKey != "" && cfg.APISecret != "" {
 		r.SetHeader("Authorization", fmt.Sprintf("token %s:%s", cfg.APIKey, cfg.APISecret))
 	}
 
@@ -155,7 +156,7 @@ func (c *FrappeClient) GetList(doctype string, opts ListOptions) ([]map[string]i
 
 	switch resp.StatusCode() {
 	case http.StatusUnauthorized:
-		return nil, fmt.Errorf("authentication failed (401): check api_key and api_secret in your config")
+		return nil, fmt.Errorf("authentication failed (401): check your credentials or run 'ffc init' to reconfigure")
 	case http.StatusForbidden:
 		return nil, fmt.Errorf("permission denied (403): your user may not have read access to %s", doctype)
 	case http.StatusNotFound:
@@ -190,7 +191,7 @@ func (c *FrappeClient) CreateDoc(doctype string, data map[string]interface{}) (m
 
 	switch resp.StatusCode() {
 	case http.StatusUnauthorized:
-		return nil, fmt.Errorf("authentication failed (401): check api_key and api_secret in your config")
+		return nil, fmt.Errorf("authentication failed (401): check your credentials or run 'ffc init' to reconfigure")
 	case http.StatusForbidden:
 		return nil, fmt.Errorf("permission denied (403): your user may not have write access to %s", doctype)
 	case http.StatusNotFound:
@@ -222,7 +223,7 @@ func (c *FrappeClient) UpdateDoc(doctype, name string, data map[string]interface
 
 	switch resp.StatusCode() {
 	case http.StatusUnauthorized:
-		return nil, fmt.Errorf("authentication failed (401): check api_key and api_secret in your config")
+		return nil, fmt.Errorf("authentication failed (401): check your credentials or run 'ffc init' to reconfigure")
 	case http.StatusForbidden:
 		return nil, fmt.Errorf("permission denied (403): your user may not have write access to %s", doctype)
 	case http.StatusNotFound:
@@ -252,7 +253,7 @@ func (c *FrappeClient) DeleteDoc(doctype, name string) error {
 
 	switch resp.StatusCode() {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("authentication failed (401): check api_key and api_secret in your config")
+		return fmt.Errorf("authentication failed (401): check your credentials or run 'ffc init' to reconfigure")
 	case http.StatusForbidden:
 		return fmt.Errorf("permission denied (403): your user may not have write access to %s", doctype)
 	case http.StatusNotFound:
@@ -280,7 +281,7 @@ func (c *FrappeClient) CallMethod(method string, args map[string]interface{}) (i
 
 	switch resp.StatusCode() {
 	case http.StatusUnauthorized:
-		return nil, fmt.Errorf("authentication failed (401): check api_key and api_secret in your config")
+		return nil, fmt.Errorf("authentication failed (401): check your credentials or run 'ffc init' to reconfigure")
 	case http.StatusForbidden:
 		return nil, fmt.Errorf("permission denied (403): your user may not have access to method %s", method)
 	case http.StatusNotFound:
@@ -313,7 +314,7 @@ func (c *FrappeClient) GetCount(doctype, filters string) (int, error) {
 
 	switch resp.StatusCode() {
 	case http.StatusUnauthorized:
-		return 0, fmt.Errorf("authentication failed (401): check api_key and api_secret in your config")
+		return 0, fmt.Errorf("authentication failed (401): check your credentials or run 'ffc init' to reconfigure")
 	case http.StatusForbidden:
 		return 0, fmt.Errorf("permission denied (403): your user may not have read access to %s", doctype)
 	}
@@ -340,7 +341,7 @@ func (c *FrappeClient) Ping() (string, error) {
 
 	switch resp.StatusCode() {
 	case http.StatusUnauthorized:
-		return "", fmt.Errorf("authentication failed (401): check api_key and api_secret in your config")
+		return "", fmt.Errorf("authentication failed (401): check your credentials or run 'ffc init' to reconfigure")
 	}
 	if resp.StatusCode() >= 400 {
 		return "", parseFrappeError(resp.StatusCode(), resp.Body())
@@ -381,7 +382,7 @@ func (c *FrappeClient) RunReport(reportName string, filters map[string]interface
 
 	switch resp.StatusCode() {
 	case http.StatusUnauthorized:
-		return nil, fmt.Errorf("authentication failed (401): check api_key and api_secret in your config")
+		return nil, fmt.Errorf("authentication failed (401): check your credentials or run 'ffc init' to reconfigure")
 	case http.StatusForbidden:
 		return nil, fmt.Errorf("permission denied (403): your user may not have access to report %q", reportName)
 	case http.StatusNotFound:
@@ -411,7 +412,7 @@ func (c *FrappeClient) GetDoc(doctype, name string) (map[string]interface{}, err
 
 	switch resp.StatusCode() {
 	case http.StatusUnauthorized:
-		return nil, fmt.Errorf("authentication failed (401): check api_key and api_secret in your config")
+		return nil, fmt.Errorf("authentication failed (401): check your credentials or run 'ffc init' to reconfigure")
 	case http.StatusForbidden:
 		return nil, fmt.Errorf("permission denied (403): your user may not have read access to %s", doctype)
 	case http.StatusNotFound:

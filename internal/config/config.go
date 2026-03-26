@@ -191,9 +191,33 @@ func groupDigits(n int64, sep string) string {
 
 // SiteConfig holds connection details for a single Frappe site.
 type SiteConfig struct {
+	// Name is populated by Load at runtime; it is not persisted to YAML.
+	Name string `mapstructure:"-" yaml:"-"`
+
 	URL       string `mapstructure:"url" yaml:"url"`
-	APIKey    string `mapstructure:"api_key" yaml:"api_key"`
-	APISecret string `mapstructure:"api_secret" yaml:"api_secret"`
+	APIKey    string `mapstructure:"api_key" yaml:"api_key,omitempty"`
+	APISecret string `mapstructure:"api_secret" yaml:"api_secret,omitempty"`
+
+	// OAuth 2.0 fields (Authorization Code + PKCE).
+	OAuthClientID     string `mapstructure:"oauth_client_id" yaml:"oauth_client_id,omitempty"`
+	OAuthClientSecret string `mapstructure:"oauth_client_secret" yaml:"oauth_client_secret,omitempty"`
+	AccessToken       string `mapstructure:"access_token" yaml:"access_token,omitempty"`
+	RefreshToken      string `mapstructure:"refresh_token" yaml:"refresh_token,omitempty"`
+	TokenExpiry       int64  `mapstructure:"token_expiry" yaml:"token_expiry,omitempty"`
+}
+
+// IsOAuth reports whether this site uses OAuth Bearer tokens for authentication.
+func (s *SiteConfig) IsOAuth() bool {
+	return s.AccessToken != ""
+}
+
+// IsTokenExpired reports whether the OAuth access token has expired
+// (with a 60-second safety margin).
+func (s *SiteConfig) IsTokenExpired() bool {
+	if s.TokenExpiry == 0 {
+		return false
+	}
+	return time.Now().Unix() > s.TokenExpiry-60
 }
 
 // Config is the top-level config structure.
@@ -283,6 +307,7 @@ func Load(siteFlag, configPath string) (*SiteConfig, error) {
 		site.APISecret = secret
 	}
 
+	site.Name = siteName
 	return &site, nil
 }
 
