@@ -39,7 +39,11 @@ Example config:
 
 // Execute is the single entry point called from main.
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+	err := rootCmd.Execute()
+	// Wait for any background update-check goroutine to finish writing the
+	// state file before the process exits (capped at 2 s).
+	waitForUpdateCheck()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

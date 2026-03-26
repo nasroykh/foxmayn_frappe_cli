@@ -83,11 +83,11 @@ ffc get-doc -d "Sales Invoice" -n "SINV-0001"
 
 ### Global Flags
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--site` | `-s` | Select a site from config (default: `default_site`) |
-| `--config` | `-c` | Custom config file path |
-| `--json` | `-j` | Output raw JSON instead of a table |
+| Flag       | Short | Description                                         |
+| ---------- | ----- | --------------------------------------------------- |
+| `--site`   | `-s`  | Select a site from config (default: `default_site`) |
+| `--config` | `-c`  | Custom config file path                             |
+| `--json`   | `-j`  | Output raw JSON instead of a table                  |
 
 ---
 
@@ -100,11 +100,11 @@ ffc get-doc -d "Company" -n "My Company" --json
 ffc get-doc -d "User" -n "jane@example.com" -f "name,email,enabled" --json
 ```
 
-| Flag | Short | Required | Description |
-|------|-------|----------|-------------|
-| `--doctype` | `-d` | Yes | Frappe DocType |
-| `--name` | `-n` | Yes | Document name (ID) |
-| `--fields` | `-f` | No | Fields to fetch: `'["name","email"]'` or `name,email` |
+| Flag        | Short | Required | Description                                           |
+| ----------- | ----- | -------- | ----------------------------------------------------- |
+| `--doctype` | `-d`  | Yes      | Frappe DocType                                        |
+| `--name`    | `-n`  | Yes      | Document name (ID)                                    |
+| `--fields`  | `-f`  | No       | Fields to fetch: `'["name","email"]'` or `name,email` |
 
 #### `ffc list-docs` — List documents
 
@@ -113,13 +113,13 @@ ffc list-docs -d "User" -f "name,email,enabled" --limit 10 --json
 ffc list-docs -d "ToDo" --filters '{"status":"Open"}' -o "modified desc" --json
 ```
 
-| Flag | Short | Required | Default | Description |
-|------|-------|----------|---------|-------------|
-| `--doctype` | `-d` | Yes | — | Frappe DocType to query |
-| `--fields` | `-f` | No | all | Fields: `'["name","email"]'` or `name,email` |
-| `--filters` | — | No | — | JSON filter: `'{"status":"Open"}'` or `'[["status","=","Open"]]'` |
-| `--limit` | `-l` | No | 20 | Max records to return |
-| `--order-by` | `-o` | No | — | Sort: `"modified desc"`, `"name asc"` |
+| Flag         | Short | Required | Default | Description                                                       |
+| ------------ | ----- | -------- | ------- | ----------------------------------------------------------------- |
+| `--doctype`  | `-d`  | Yes      | —       | Frappe DocType to query                                           |
+| `--fields`   | `-f`  | No       | all     | Fields: `'["name","email"]'` or `name,email`                      |
+| `--filters`  | —     | No       | —       | JSON filter: `'{"status":"Open"}'` or `'[["status","=","Open"]]'` |
+| `--limit`    | `-l`  | No       | 20      | Max records to return                                             |
+| `--order-by` | `-o`  | No       | —       | Sort: `"modified desc"`, `"name asc"`                             |
 
 #### `ffc create-doc` — Create a document
 
@@ -127,10 +127,10 @@ ffc list-docs -d "ToDo" --filters '{"status":"Open"}' -o "modified desc" --json
 ffc create-doc -d "ToDo" --data '{"description":"Fix bug","priority":"Medium"}' --json
 ```
 
-| Flag | Short | Required | Description |
-|------|-------|----------|-------------|
-| `--doctype` | `-d` | Yes | Frappe DocType |
-| `--data` | — | Yes | JSON object of field values |
+| Flag        | Short | Required | Description                 |
+| ----------- | ----- | -------- | --------------------------- |
+| `--doctype` | `-d`  | Yes      | Frappe DocType              |
+| `--data`    | —     | Yes      | JSON object of field values |
 
 #### `ffc update-doc` — Update a document
 
@@ -138,11 +138,11 @@ ffc create-doc -d "ToDo" --data '{"description":"Fix bug","priority":"Medium"}' 
 ffc update-doc -d "ToDo" -n "TD-0001" --data '{"status":"Closed"}' --json
 ```
 
-| Flag | Short | Required | Description |
-|------|-------|----------|-------------|
-| `--doctype` | `-d` | Yes | Frappe DocType |
-| `--name` | `-n` | Yes | Document name (ID) |
-| `--data` | — | Yes | JSON object of fields to update |
+| Flag        | Short | Required | Description                     |
+| ----------- | ----- | -------- | ------------------------------- |
+| `--doctype` | `-d`  | Yes      | Frappe DocType                  |
+| `--name`    | `-n`  | Yes      | Document name (ID)              |
+| `--data`    | —     | Yes      | JSON object of fields to update |
 
 #### `ffc delete-doc` — Delete a document
 
@@ -152,11 +152,11 @@ Prompts for confirmation unless `--yes` is passed.
 ffc delete-doc -d "ToDo" -n "TD-0001" --yes
 ```
 
-| Flag | Short | Required | Description |
-|------|-------|----------|-------------|
-| `--doctype` | `-d` | Yes | Frappe DocType |
-| `--name` | `-n` | Yes | Document name (ID) |
-| `--yes` | `-y` | No | Skip confirmation prompt |
+| Flag        | Short | Required | Description              |
+| ----------- | ----- | -------- | ------------------------ |
+| `--doctype` | `-d`  | Yes      | Frappe DocType           |
+| `--name`    | `-n`  | Yes      | Document name (ID)       |
+| `--yes`     | `-y`  | No       | Skip confirmation prompt |
 
 #### `ffc count-docs` — Count documents
 
@@ -164,10 +164,10 @@ ffc delete-doc -d "ToDo" -n "TD-0001" --yes
 ffc count-docs -d "Sales Invoice" --filters '{"status":"Unpaid"}' --json
 ```
 
-| Flag | Short | Required | Description |
-|------|-------|----------|-------------|
-| `--doctype` | `-d` | Yes | Frappe DocType |
-| `--filters` | — | No | JSON filter expression |
+| Flag        | Short | Required | Description            |
+| ----------- | ----- | -------- | ---------------------- |
+| `--doctype` | `-d`  | Yes      | Frappe DocType         |
+| `--filters` | —     | No       | JSON filter expression |
 
 ---
 
@@ -181,9 +181,9 @@ Shows all fields: fieldname, label, type, required flag, options, and default.
 ffc get-schema -d "Sales Invoice" --json
 ```
 
-| Flag | Short | Required | Description |
-|------|-------|----------|-------------|
-| `--doctype` | `-d` | Yes | DocType to inspect |
+| Flag        | Short | Required | Description        |
+| ----------- | ----- | -------- | ------------------ |
+| `--doctype` | `-d`  | Yes      | DocType to inspect |
 
 #### `ffc list-doctypes` — List available DocTypes
 
@@ -191,10 +191,10 @@ ffc get-schema -d "Sales Invoice" --json
 ffc list-doctypes --module "Accounts" --json
 ```
 
-| Flag | Short | Required | Default | Description |
-|------|-------|----------|---------|-------------|
-| `--module` | `-m` | No | — | Filter by module name |
-| `--limit` | `-l` | No | 50 | Max records to return |
+| Flag       | Short | Required | Default | Description           |
+| ---------- | ----- | -------- | ------- | --------------------- |
+| `--module` | `-m`  | No       | —       | Filter by module name |
+| `--limit`  | `-l`  | No       | 50      | Max records to return |
 
 ---
 
@@ -206,10 +206,10 @@ ffc list-doctypes --module "Accounts" --json
 ffc list-reports --module "Accounts" --json
 ```
 
-| Flag | Short | Required | Default | Description |
-|------|-------|----------|---------|-------------|
-| `--module` | `-m` | No | — | Filter by module name |
-| `--limit` | `-l` | No | 50 | Max records to return |
+| Flag       | Short | Required | Default | Description           |
+| ---------- | ----- | -------- | ------- | --------------------- |
+| `--module` | `-m`  | No       | —       | Filter by module name |
+| `--limit`  | `-l`  | No       | 50      | Max records to return |
 
 #### `ffc run-report` — Execute a report
 
@@ -217,11 +217,11 @@ ffc list-reports --module "Accounts" --json
 ffc run-report -n "General Ledger" --filters '{"company":"Acme","from_date":"2025-01-01"}' --json
 ```
 
-| Flag | Short | Required | Description |
-|------|-------|----------|-------------|
-| `--name` | `-n` | Yes | Report name |
-| `--filters` | — | No | JSON object of report filter values |
-| `--limit` | `-l` | No | Limit rows displayed (0 = all) |
+| Flag        | Short | Required | Description                         |
+| ----------- | ----- | -------- | ----------------------------------- |
+| `--name`    | `-n`  | Yes      | Report name                         |
+| `--filters` | —     | No       | JSON object of report filter values |
+| `--limit`   | `-l`  | No       | Limit rows displayed (0 = all)      |
 
 ---
 
@@ -236,10 +236,10 @@ ffc call-method --method "frappe.ping"
 ffc call-method --method "frappe.client.get_count" --args '{"doctype":"ToDo","filters":{"status":"Open"}}'
 ```
 
-| Flag | Short | Required | Description |
-|------|-------|----------|-------------|
-| `--method` | — | Yes | Frappe method path, e.g. `frappe.ping` |
-| `--args` | — | No | JSON object of method arguments |
+| Flag       | Short | Required | Description                            |
+| ---------- | ----- | -------- | -------------------------------------- |
+| `--method` | —     | Yes      | Frappe method path, e.g. `frappe.ping` |
+| `--args`   | —     | No       | JSON object of method arguments        |
 
 ---
 
@@ -250,6 +250,26 @@ ffc call-method --method "frappe.client.get_count" --args '{"doctype":"ToDo","fi
 ```bash
 ffc ping --json
 ffc ping --site production --json
+```
+
+---
+
+### Self-Update
+
+#### `ffc update` — Update ffc to the latest release
+
+Works regardless of how ffc was installed (curl, powershell, `go install`).
+
+```bash
+ffc update           # check and update (asks for confirmation)
+ffc update --check   # only print whether an update is available
+ffc update --yes     # update without confirmation
+```
+
+ffc also checks for updates automatically in the background at most once per day and prints a one-line notice to stderr before any command output when a newer version is available:
+
+```
+Update available: v1.2.0 → v1.3.0  (run: ffc update)
 ```
 
 ---
@@ -290,16 +310,19 @@ done
 
 ## Troubleshooting
 
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `authentication failed (401)` | Bad API key/secret | Regenerate keys: User > API Access |
-| `permission denied (403)` | User lacks read access | Check role permissions for the DocType |
-| `doctype "X" not found (404)` | Typo or module not installed | Verify the DocType name on the site |
-| `no config file found` | Missing config | Run `ffc init` or set `FFC_*` env vars |
-| `site "X" not found in config` | Wrong `--site` value | Check site names in config.yaml |
+| Error                          | Cause                        | Fix                                    |
+| ------------------------------ | ---------------------------- | -------------------------------------- |
+| `authentication failed (401)`  | Bad API key/secret           | Regenerate keys: User > API Access     |
+| `permission denied (403)`      | User lacks read access       | Check role permissions for the DocType |
+| `doctype "X" not found (404)`  | Typo or module not installed | Verify the DocType name on the site    |
+| `no config file found`         | Missing config               | Run `ffc init` or set `FFC_*` env vars |
+| `site "X" not found in config` | Wrong `--site` value         | Check site names in config.yaml        |
 
 ## Config Precedence
 
-1. Config file (`~/.config/ffc/config.yaml`)
+Highest wins:
+
+1. `--site` / `--config` flags
 2. `FFC_*` environment variables
-3. `--site` / `--config` flags
+3. Config file (`~/.config/ffc/config.yaml`)
+4. Defaults

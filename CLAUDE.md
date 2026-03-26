@@ -75,6 +75,8 @@ internal/cmd/list_doctypes.go → list-doctypes subcommand
 internal/cmd/list_reports.go → list-reports subcommand
 internal/cmd/run_report.go   → run-report subcommand
 internal/cmd/call_method.go  → call-method subcommand
+internal/cmd/update.go       → update subcommand (self-update from GitHub releases)
+internal/cmd/update_check.go → background update check; owns rootCmd.PersistentPreRunE
 internal/client/             → Frappe REST API client (auth, request building, error parsing)
 internal/config/             → Config loading: YAML file (~/.config/ffc/config.yaml) + FFC_* env vars
 internal/output/             → Formatters: lipgloss table and JSON
@@ -102,4 +104,6 @@ Env var fallback: `FFC_URL`, `FFC_API_KEY`, `FFC_API_SECRET`
 - Frappe error responses contain nested JSON strings with Python tracebacks. The `parseFrappeError` function extracts user-friendly messages from this noise.
 - `Config` and `SiteConfig` structs carry **both** `mapstructure` and `yaml` struct tags. `mapstructure` is needed by viper; `yaml` is needed by `go.yaml.in/yaml/v3` for direct unmarshal in `config_cmd.go`. Always add both when extending these structs.
 - `config_cmd.go` has a `saveConfig` helper (marshals YAML node → file). `init.go` has its own `writeConfig` (generates fresh YAML from scratch). The names are intentionally different to avoid a package-level collision.
-- In huh v1.0.0, only `ctrl+c` is bound to Quit by default — Escape does nothing. All `huh.NewForm` calls in `config_cmd.go` use `WithKeyMap(escQuitKeyMap())` to add Escape support.
+- In huh v1.0.0, only `ctrl+c` is bound to Quit by default — Escape does nothing. All `huh.NewForm` calls in `config_cmd.go` and `update.go` use `WithKeyMap(escQuitKeyMap())` to add Escape support. `escQuitKeyMap()` is defined in `config_cmd.go` and is available package-wide.
+- `update_check.go` sets `rootCmd.PersistentPreRunE` in its `init()`. Do not set `PersistentPreRunE` on `rootCmd` anywhere else — it would silently overwrite the update check hook. Add new pre-run logic inside the existing hook in `update_check.go`.
+- The self-update state file lives at `~/.config/ffc/.update_check.json` (JSON with `checked_at` and `latest` fields). It is refreshed in a background goroutine at most once per day. `Execute()` in `root.go` waits up to 2 seconds for that goroutine before exiting.

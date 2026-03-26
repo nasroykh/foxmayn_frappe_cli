@@ -118,7 +118,6 @@ Examples:
 	},
 }
 
-
 func init() {
 	runReportCmd.Flags().StringVarP(&rrName, "name", "n", "", "Report name (required)")
 	runReportCmd.Flags().StringVar(&rrFilters, "filters", "", `Report filters as a JSON object, e.g. '{"company":"Acme","from_date":"2025-01-01"}'`)

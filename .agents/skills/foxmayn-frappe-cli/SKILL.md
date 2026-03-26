@@ -254,6 +254,26 @@ ffc ping --site production --json
 
 ---
 
+### Self-Update
+
+#### `ffc update` — Update ffc to the latest release
+
+Works regardless of how ffc was installed (curl, powershell, `go install`).
+
+```bash
+ffc update           # check and update (asks for confirmation)
+ffc update --check   # only print whether an update is available
+ffc update --yes     # update without confirmation
+```
+
+ffc also checks for updates automatically in the background at most once per day and prints a one-line notice to stderr before any command output when a newer version is available:
+
+```
+Update available: v1.2.0 → v1.3.0  (run: ffc update)
+```
+
+---
+
 ## Common Recipes
 
 ### Pipe JSON into jq
@@ -300,6 +320,9 @@ done
 
 ## Config Precedence
 
-1. Config file (`~/.config/ffc/config.yaml`)
+Highest wins:
+
+1. `--site` / `--config` flags
 2. `FFC_*` environment variables
-3. `--site` / `--config` flags
+3. Config file (`~/.config/ffc/config.yaml`)
+4. Defaults

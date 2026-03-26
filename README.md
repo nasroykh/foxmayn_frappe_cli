@@ -123,11 +123,20 @@ ffc [--site <name>] [--config <path>] [--json] <command> [flags]
 
 ### Basic Setup & Settings
 
-*   **`init`**: Interactive setup wizard — creates your initial config.
+*   **`init`**: Interactive setup wizard — creates your initial config (auto-adds `https://` if you omit the scheme).
 *   **`config`**: Interactive TUI to tweak settings, or non-interactive via subcommands:
     *   `ffc config get [--json|--yaml]` — print all settings
     *   `ffc config set --default-site <name> --number-format <fmt> --date-format <fmt>` — update settings
 *   **`ping`**: Quickly check connection to the active Frappe site.
+*   **`update`**: Update ffc to the latest release in place — works regardless of how it was installed.
+
+```bash
+ffc update           # check for update and confirm before installing
+ffc update --check   # only print whether an update is available
+ffc update --yes     # update without confirmation
+```
+
+ffc also checks for updates automatically (at most once a day) and prints a one-line notice to stderr when a newer version is available.
 
 ---
 
@@ -227,13 +236,15 @@ foxmayn_frappe_cli/
 │   │   ├── list_doctypes.go  # list-doctypes
 │   │   ├── list_reports.go   # list-reports
 │   │   ├── run_report.go     # run-report
-│   │   └── call_method.go    # call-method
+│   │   ├── call_method.go    # call-method
+│   │   ├── update.go         # update (self-update)
+│   │   └── update_check.go   # background update check + PersistentPreRunE
 │   ├── client/client.go      # Frappe REST API client methods (resty)
 │   ├── config/config.go      # Config loading and number/date formatting logic
 │   ├── output/output.go      # Table (lipgloss) and JSON formatters
 │   └── version/version.go    # Build-time version injection
 ├── config.example.yaml       # Example config
-├── Makefile                  # Build, install, deps, tidy, vet, fmt
+├── Makefile                  # Build, install, tidy, vet, fmt
 ├── .goreleaser.yaml          # Cross-compilation and release config
 ├── install.sh                # One-liner install script (Linux/macOS)
 ├── install.ps1               # One-liner install script (Windows PowerShell)
@@ -244,7 +255,6 @@ foxmayn_frappe_cli/
 ## Development
 
 ```bash
-make deps       # Install Charmbracelet dependencies
 make tidy       # Install/update all dependencies
 make build      # Compile binary
 make vet        # Run go vet

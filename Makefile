@@ -13,7 +13,7 @@ LDFLAGS := -s -w \
 	-X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Commit=$(COMMIT) \
 	-X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Date=$(DATE)
 
-.PHONY: build install clean deps tidy vet fmt help skills-init skills-init-claude skills-init-cursor skills-init-agent
+.PHONY: build install clean tidy vet fmt help skills-init skills-init-claude skills-init-cursor skills-init-agent
 
 ## build: compile binary to project root
 build:
@@ -30,14 +30,8 @@ install:
 		echo "~/.config/ffc/config.yaml already exists, skipping copy."; \
 	fi
 
-## deps: add new dependencies (charmbracelet)
-deps:
-	go get charm.land/lipgloss/v2
-	go get github.com/charmbracelet/huh
-	go get github.com/charmbracelet/huh/spinner
-
 ## tidy: install/update all dependencies
-tidy: deps
+tidy:
 	go mod tidy
 
 ## vet: run go vet

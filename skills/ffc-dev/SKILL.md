@@ -16,14 +16,14 @@ Build and extend the ffc CLI — a Go tool for interacting with Frappe ERP sites
 
 ## Tech Stack
 
-| Component | Library | Import |
-|-----------|---------|--------|
-| CLI framework | cobra | `github.com/spf13/cobra` |
-| Config | viper | `github.com/spf13/viper` |
-| HTTP client | resty | `github.com/go-resty/resty/v2` |
+| Component        | Library     | Import                                                    |
+| ---------------- | ----------- | --------------------------------------------------------- |
+| CLI framework    | cobra       | `github.com/spf13/cobra`                                  |
+| Config           | viper       | `github.com/spf13/viper`                                  |
+| HTTP client      | resty       | `github.com/go-resty/resty/v2`                            |
 | Tables & styling | lipgloss v2 | `charm.land/lipgloss/v2` + `charm.land/lipgloss/v2/table` |
-| Forms & prompts | huh v1.0.0 | `github.com/charmbracelet/huh` |
-| Spinner | huh/spinner | `github.com/charmbracelet/huh/spinner` |
+| Forms & prompts  | huh v1.0.0  | `github.com/charmbracelet/huh`                            |
+| Spinner          | huh/spinner | `github.com/charmbracelet/huh/spinner`                    |
 
 ## Project Layout
 
@@ -44,6 +44,8 @@ internal/cmd/list_doctypes.go → list-doctypes subcommand
 internal/cmd/list_reports.go  → list-reports subcommand
 internal/cmd/run_report.go    → run-report subcommand
 internal/cmd/call_method.go   → call-method subcommand
+internal/cmd/update.go        → update subcommand: GitHub release fetch, archive extraction, binary swap
+internal/cmd/update_check.go  → background update check; owns rootCmd.PersistentPreRunE + state file
 internal/client/client.go     → FrappeClient (resty), GetDoc, GetList, …
 internal/config/config.go     → viper config loading, number/date formatting, env var fallback
 internal/output/output.go     → PrintTable, PrintDocTable, PrintJSON, PrintError, PrintSuccess
@@ -210,13 +212,14 @@ func (c *FrappeClient) CreateDoc(doctype string, data map[string]interface{}) (m
 
 The `output` package provides three rendering functions. Choose based on what you're displaying:
 
-| Function | Use for | Output |
-|----------|---------|--------|
-| `PrintTable(rows, fields)` | Multi-row lists | Styled table with alternating row colors |
-| `PrintDocTable(doc, fields)` | Single document | Two-column FIELD \| VALUE table |
-| `PrintJSON(data)` | Any data when `--json` | Pretty-printed JSON to stdout |
+| Function                     | Use for                | Output                                   |
+| ---------------------------- | ---------------------- | ---------------------------------------- |
+| `PrintTable(rows, fields)`   | Multi-row lists        | Styled table with alternating row colors |
+| `PrintDocTable(doc, fields)` | Single document        | Two-column FIELD \| VALUE table          |
+| `PrintJSON(data)`            | Any data when `--json` | Pretty-printed JSON to stdout            |
 
 Helper functions for stderr messages:
+
 - `output.PrintError("message")` — red bold with cross mark
 - `output.PrintSuccess("message")` — green with check mark
 
@@ -261,7 +264,19 @@ form := huh.NewForm(
 if err := form.Run(); err != nil { return err }
 ```
 
-For confirmations: `huh.NewConfirm().Title("...").Value(&boolVar).Run()`
+For confirmations, always wrap in `huh.NewForm` with `escQuitKeyMap()` so Escape works:
+
+```go
+var confirmed bool
+err := huh.NewForm(
+    huh.NewGroup(
+        huh.NewConfirm().Title("Are you sure?").Value(&confirmed),
+    ),
+).WithKeyMap(escQuitKeyMap()).Run()
+if err != nil || !confirmed {
+    // user pressed Escape, ctrl+c, or chose No
+}
+```
 
 ### Escape key in huh v1.0.0
 
@@ -290,7 +305,7 @@ if errors.Is(err, huh.ErrUserAborted) {
 }
 ```
 
-`escQuitKeyMap()` already exists in `config_cmd.go` — reuse it or move it to a shared location if needed elsewhere.
+`escQuitKeyMap()` is defined in `config_cmd.go` and is available to all files in the `cmd` package — call it directly from any command file.
 
 ## Config File Helpers (config_cmd.go)
 
@@ -310,6 +325,7 @@ if errors.Is(err, huh.ErrUserAborted) {
 ## Field Parsing
 
 `parseFields()` in `list_docs.go` accepts two formats:
+
 - JSON array: `'["name","email"]'`
 - CSV: `name,email`
 
@@ -327,11 +343,29 @@ make install  # → $GOPATH/bin + config setup
 
 Version is injected at build time via ldflags into `internal/version` (Version, Commit, Date).
 
+## Self-Update Mechanism
+
+`update.go` implements `ffc update` — it fetches the latest GitHub release, extracts the binary for the current OS/arch, and replaces the running binary in place.
+
+Key details:
+- **Asset naming** matches GoReleaser's template: `ffc_<version-without-v>_<goos>_<goarch>.tar.gz` (or `.zip` on Windows). Version comes from `release.TagName` with the `v` stripped.
+- **Binary swap (Unix)**: `os.Rename(tmp, current)` — atomic on the same filesystem.
+- **Binary swap (Windows)**: rename current → `ffc.exe.old` (allowed for running exe), rename new → `ffc.exe`. The `.old` file is cleaned up on the next update run.
+- **Permission error** on `os.CreateTemp` is caught and surfaces a `try running with sudo` message.
+- **Version comparison** in `newerThan()` strips any `v` prefix and pre-release suffix before comparing major.minor.patch integers — handles GoReleaser injecting without `v` and GitHub tags using `v`.
+
+`update_check.go` runs a background update check on every non-update command:
+- Reads `~/.config/ffc/.update_check.json` (instant, local file) and prints a notice if a newer version is cached.
+- If the cache is missing or older than 24 hours, starts a goroutine to fetch the latest release tag and write the state file.
+- `Execute()` in `root.go` waits up to 2 seconds for that goroutine before the process exits, so the file is written reliably.
+- **`PersistentPreRunE` on `rootCmd` is owned by `update_check.go`.** Do not set it anywhere else — it would silently overwrite the hook. Add new pre-run logic inside the existing function in `update_check.go`.
+
 ## Checklist for New Features
 
 1. Create `internal/cmd/<name>.go` with the cobra command pattern
 2. If it needs a new API call, add a method to `FrappeClient` in `client.go`
 3. If it needs new output formatting, extend `output.go` (or reuse existing functions)
 4. Register the command via `rootCmd.AddCommand()` (or `parentCmd.AddCommand()` for subcommands) in `init()`
-5. Run `make vet && make fmt && make build` to verify
-6. Update README.md, CLAUDE.md, and the skill files under `skills/` if adding user-facing commands
+5. If the command needs pre-run logic, add it inside `rootCmd.PersistentPreRunE` in `update_check.go` — do not reassign it
+6. Run `make vet && make fmt && make build` to verify
+7. Update README.md, CLAUDE.md, and the skill files under `.claude/skills/` if adding user-facing commands
