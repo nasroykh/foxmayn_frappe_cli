@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -53,6 +54,10 @@ Examples:
 			Title(fmt.Sprintf("Fetching schema for %s…", gsDoctype)).
 			Action(func() {
 				doc, apiErr = c.GetDoc("DocType", gsDoctype)
+				if apiErr != nil {
+					return
+				}
+				apiErr = applyPropertySetterOverrides(c, gsDoctype, doc)
 			}).
 			Run()
 		if apiErr != nil {
@@ -235,6 +240,50 @@ func filterSchemaKeys(doc map[string]interface{}, keys []string) map[string]inte
 		}
 	}
 	return out
+}
+
+// applyPropertySetterOverrides fetches all Property Setter records for the given
+// doctype where property="options" and patches the matching fields in doc in-place.
+// This corrects Select field options that have been customised via Frappe's
+// Customize Form / Property Setter, which are invisible in the raw DocType schema.
+func applyPropertySetterOverrides(fc *client.FrappeClient, doctype string, doc map[string]interface{}) error {
+	filters, _ := json.Marshal(map[string]interface{}{
+		"doc_type": doctype,
+		"property": "options",
+	})
+	rows, err := fc.GetList("Property Setter", client.ListOptions{
+		Fields:  []string{"field_name", "value"},
+		Filters: string(filters),
+		Limit:   500,
+	})
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+
+	overrides := make(map[string]string, len(rows))
+	for _, row := range rows {
+		fn, _ := row["field_name"].(string)
+		val, _ := row["value"].(string)
+		if fn != "" {
+			overrides[fn] = val
+		}
+	}
+
+	rawFields, ok := doc["fields"].([]interface{})
+	if !ok {
+		return nil
+	}
+	for _, rf := range rawFields {
+		f, ok := rf.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		fn, _ := f["fieldname"].(string)
+		if val, found := overrides[fn]; found {
+			f["options"] = val
+		}
+	}
+	return nil
 }
 
 // isTruthy reports whether v represents a non-zero numeric or boolean true.

@@ -291,6 +291,9 @@ func registerGetSchema(s *server.MCPServer, fc *client.FrappeClient) {
 		if apiErr != nil {
 			return mcp.NewToolResultError(apiErr.Error()), nil
 		}
+		if psErr := applyPropertySetterOverrides(fc, doctype, doc); psErr != nil {
+			return mcp.NewToolResultError(psErr.Error()), nil
+		}
 
 		result := map[string]interface{}(doc)
 		if !req.GetBool("full", false) {
