@@ -26,11 +26,15 @@ var getDocCmd = &cobra.Command{
 	Long: `Retrieve a single document from a Frappe DocType by its name.
 The output is displayed as a Field/Value table by default.
 
+For Single DocTypes (e.g. "System Settings", "HR Settings"), --name can be
+omitted — the DocType name is used as the document name automatically.
+
 Examples:
   ffc get-doc --doctype "Company" --name "My Company"
   ffc get-doc -d "User" -n "jane@example.com" --fields '["name","email","enabled"]'
   ffc get-doc -d "ToDo" -n "TDP-2024-001" --json
   ffc get-doc -d "Sales Invoice" -n "SINV-0001" --json --keys name,status,grand_total
+  ffc get-doc -d "System Settings" --json
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Load site config
@@ -48,14 +52,20 @@ Examples:
 			}
 		}
 
+		// For Single DocTypes the document name equals the DocType name.
+		name := gdName
+		if name == "" {
+			name = gdDoctype
+		}
+
 		// Call the API with a spinner
 		var doc map[string]interface{}
 		var apiErr error
 		c := client.New(cfg)
 		_ = spinner.New().
-			Title(fmt.Sprintf("Fetching %s %s…", gdDoctype, gdName)).
+			Title(fmt.Sprintf("Fetching %s %s…", gdDoctype, name)).
 			Action(func() {
-				doc, apiErr = c.GetDoc(gdDoctype, gdName)
+				doc, apiErr = c.GetDoc(gdDoctype, name)
 			}).
 			Run()
 
@@ -85,7 +95,6 @@ func init() {
 	getDocCmd.Flags().StringVar(&gdKeys, "keys", "", "Comma-separated keys to include in JSON output, e.g. name,status,grand_total")
 
 	_ = getDocCmd.MarkFlagRequired("doctype")
-	_ = getDocCmd.MarkFlagRequired("name")
 
 	rootCmd.AddCommand(getDocCmd)
 }

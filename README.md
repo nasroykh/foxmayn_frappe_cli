@@ -179,9 +179,13 @@ ffc also checks for updates automatically (at most once a day) and prints a one-
 ### Document Operations (CRUD)
 
 **1. `get-doc`** (Read a document)
+
+For Single DocTypes (e.g. `System Settings`, `HR Settings`), `--name` can be omitted — the DocType name is used as the document name automatically.
+
 ```bash
 ffc get-doc -d "Company" -n "My Company"
 ffc get-doc -d "User" -n "jane@example.com" -f '["name","email"]'
+ffc get-doc -d "System Settings" --json
 ```
 
 **2. `list-docs`** (List documents)
@@ -195,8 +199,12 @@ ffc create-doc -d "ToDo" --data '{"description":"Update CLI README","status":"Op
 ```
 
 **4. `update-doc`** (Update a document)
+
+For Single DocTypes, `--name` can be omitted — the DocType name is used automatically.
+
 ```bash
 ffc update-doc -d "ToDo" -n "83a12bf99c" --data '{"status":"Closed"}'
+ffc update-doc -d "System Settings" --data '{"default_currency":"USD"}'
 ```
 
 **5. `delete-doc`** (Delete a document)

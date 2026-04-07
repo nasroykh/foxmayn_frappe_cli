@@ -28,9 +28,13 @@ var updateDocCmd = &cobra.Command{
 
 The --data flag accepts a JSON object containing only the fields you want to change.
 
+For Single DocTypes (e.g. "System Settings", "HR Settings"), --name can be
+omitted — the DocType name is used as the document name automatically.
+
 Examples:
   ffc update-doc -d "ToDo" -n "TD-0001" --data '{"status":"Closed"}'
   ffc update-doc -d "Note" -n "My Note" --data '{"title":"Updated Title"}' --json
+  ffc update-doc -d "System Settings" --data '{"default_currency":"USD"}' --json
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load(siteName, configPath)
@@ -43,13 +47,19 @@ Examples:
 			return fmt.Errorf("--data: invalid JSON object: %w", err)
 		}
 
+		// For Single DocTypes the document name equals the DocType name.
+		name := udName
+		if name == "" {
+			name = udDoctype
+		}
+
 		var doc map[string]interface{}
 		var apiErr error
 		c := client.New(cfg)
 		_ = spinner.New().
-			Title(fmt.Sprintf("Updating %s %s…", udDoctype, udName)).
+			Title(fmt.Sprintf("Updating %s %s…", udDoctype, name)).
 			Action(func() {
-				doc, apiErr = c.UpdateDoc(udDoctype, udName, data)
+				doc, apiErr = c.UpdateDoc(udDoctype, name, data)
 			}).
 			Run()
 		if apiErr != nil {
@@ -63,7 +73,7 @@ Examples:
 			}
 			output.PrintJSON(result)
 		} else {
-			output.PrintSuccess(fmt.Sprintf("Updated %s %s", udDoctype, udName))
+			output.PrintSuccess(fmt.Sprintf("Updated %s %s", udDoctype, name))
 			output.PrintDocTable(doc, nil)
 		}
 
@@ -73,12 +83,11 @@ Examples:
 
 func init() {
 	updateDocCmd.Flags().StringVarP(&udDoctype, "doctype", "d", "", "Frappe DocType (required)")
-	updateDocCmd.Flags().StringVarP(&udName, "name", "n", "", "Name of the document (required)")
+	updateDocCmd.Flags().StringVarP(&udName, "name", "n", "", "Name of the document. Defaults to DocType name for Single DocTypes.")
 	updateDocCmd.Flags().StringVar(&udData, "data", "", `JSON object of fields to update, e.g. '{"status":"Closed"}' (required)`)
 	updateDocCmd.Flags().StringVar(&udKeys, "keys", "", "Comma-separated keys to include in JSON output, e.g. name,status")
 
 	_ = updateDocCmd.MarkFlagRequired("doctype")
-	_ = updateDocCmd.MarkFlagRequired("name")
 	_ = updateDocCmd.MarkFlagRequired("data")
 
 	rootCmd.AddCommand(updateDocCmd)

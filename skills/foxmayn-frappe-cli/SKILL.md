@@ -95,15 +95,18 @@ ffc get-doc -d "Sales Invoice" -n "SINV-0001"
 
 #### `ffc get-doc` — Get a single document
 
+For **Single DocTypes** (e.g. `System Settings`, `HR Settings`), `--name` can be omitted — the DocType name is used automatically.
+
 ```bash
 ffc get-doc -d "Company" -n "My Company" --json
 ffc get-doc -d "User" -n "jane@example.com" -f "name,email,enabled" --json
+ffc get-doc -d "System Settings" --json
 ```
 
 | Flag        | Short | Required | Description                                           |
 | ----------- | ----- | -------- | ----------------------------------------------------- |
 | `--doctype` | `-d`  | Yes      | Frappe DocType                                        |
-| `--name`    | `-n`  | Yes      | Document name (ID)                                    |
+| `--name`    | `-n`  | No       | Document name (ID). Defaults to DocType name for Single DocTypes. |
 | `--fields`  | `-f`  | No       | Fields to fetch: `'["name","email"]'` or `name,email` |
 
 #### `ffc list-docs` — List documents
@@ -134,15 +137,18 @@ ffc create-doc -d "ToDo" --data '{"description":"Fix bug","priority":"Medium"}' 
 
 #### `ffc update-doc` — Update a document
 
+For **Single DocTypes**, `--name` can be omitted — the DocType name is used automatically.
+
 ```bash
 ffc update-doc -d "ToDo" -n "TD-0001" --data '{"status":"Closed"}' --json
+ffc update-doc -d "System Settings" --data '{"default_currency":"USD"}' --json
 ```
 
-| Flag        | Short | Required | Description                     |
-| ----------- | ----- | -------- | ------------------------------- |
-| `--doctype` | `-d`  | Yes      | Frappe DocType                  |
-| `--name`    | `-n`  | Yes      | Document name (ID)              |
-| `--data`    | —     | Yes      | JSON object of fields to update |
+| Flag        | Short | Required | Description                                                        |
+| ----------- | ----- | -------- | ------------------------------------------------------------------ |
+| `--doctype` | `-d`  | Yes      | Frappe DocType                                                     |
+| `--name`    | `-n`  | No       | Document name (ID). Defaults to DocType name for Single DocTypes.  |
+| `--data`    | —     | Yes      | JSON object of fields to update                                    |
 
 #### `ffc delete-doc` — Delete a document
 

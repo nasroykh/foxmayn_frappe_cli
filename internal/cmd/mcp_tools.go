@@ -66,14 +66,13 @@ func registerPing(s *server.MCPServer, fc *client.FrappeClient) {
 
 func registerGetDoc(s *server.MCPServer, fc *client.FrappeClient) {
 	tool := mcp.NewTool("get_doc",
-		mcp.WithDescription("Retrieve a single Frappe document by its DocType and name. Returns all fields of the document. Use this when you know the exact document identifier."),
+		mcp.WithDescription("Retrieve a single Frappe document by its DocType and name. Returns all fields of the document. Use this when you know the exact document identifier. For Single DocTypes (e.g. 'System Settings', 'HR Settings'), omit name — the DocType name is used automatically."),
 		mcp.WithString("doctype",
 			mcp.Required(),
 			mcp.Description("The Frappe DocType, e.g. 'Sales Invoice', 'Customer', 'ToDo'"),
 		),
 		mcp.WithString("name",
-			mcp.Required(),
-			mcp.Description("The unique name/ID of the document, e.g. 'SINV-00001', 'jane@example.com'"),
+			mcp.Description("The unique name/ID of the document, e.g. 'SINV-00001', 'jane@example.com'. Omit for Single DocTypes."),
 		),
 	)
 	s.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -81,9 +80,9 @@ func registerGetDoc(s *server.MCPServer, fc *client.FrappeClient) {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		name, err := req.RequireString("name")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+		name := req.GetString("name", "")
+		if name == "" {
+			name = doctype
 		}
 		doc, apiErr := fc.GetDoc(doctype, name)
 		if apiErr != nil {
@@ -177,14 +176,13 @@ func registerCreateDoc(s *server.MCPServer, fc *client.FrappeClient) {
 
 func registerUpdateDoc(s *server.MCPServer, fc *client.FrappeClient) {
 	tool := mcp.NewTool("update_doc",
-		mcp.WithDescription("Update an existing Frappe document. Provide only the fields you want to change as a JSON object. Returns the full updated document."),
+		mcp.WithDescription("Update an existing Frappe document. Provide only the fields you want to change as a JSON object. Returns the full updated document. For Single DocTypes (e.g. 'System Settings'), omit name — the DocType name is used automatically."),
 		mcp.WithString("doctype",
 			mcp.Required(),
 			mcp.Description("The Frappe DocType"),
 		),
 		mcp.WithString("name",
-			mcp.Required(),
-			mcp.Description("The name/ID of the document to update"),
+			mcp.Description("The name/ID of the document to update. Omit for Single DocTypes."),
 		),
 		mcp.WithString("data",
 			mcp.Required(),
@@ -196,9 +194,9 @@ func registerUpdateDoc(s *server.MCPServer, fc *client.FrappeClient) {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		name, err := req.RequireString("name")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+		name := req.GetString("name", "")
+		if name == "" {
+			name = doctype
 		}
 		dataRaw, err := req.RequireString("data")
 		if err != nil {

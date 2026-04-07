@@ -418,6 +418,28 @@ Use `--full` to bypass compaction and return the raw Frappe response. Use `--key
 
 The MCP `get_schema` tool defaults to compact but exposes two optional parameters so the LLM can control the output: `full` (bool, returns raw Frappe response) and `keys` (comma-separated string, filters top-level keys). `compactReportResult` in `mcp_tools.go` applies the same noise-stripping principle to `run_report`: keeps `columns`, `result`, and `report_summary` (if non-null), strips `execution_time`, `chart`, `add_total_row`, `message`.
 
+## Single DocType Handling
+
+In Frappe, a Single DocType (e.g. `System Settings`, `HR Settings`) has exactly one record whose name equals the DocType name. The Frappe API treats it like any other document — `GET /api/resource/System Settings/System Settings` — but requiring users to repeat the DocType name as `--name` is poor UX.
+
+**Pattern:** For any command that accepts `--doctype` and `--name` to fetch/modify a single document, make `--name` optional and default it to the DocType name:
+
+```go
+name := xxName
+if name == "" {
+    name = xxDoctype
+}
+```
+
+Remove `MarkFlagRequired("name")` and update the flag description to note the default behaviour.
+
+**Which commands apply this:**
+- `get-doc` (`get_doc.go`) ✓
+- `update-doc` (`update_doc.go`) ✓
+- MCP `get_doc` and `update_doc` tools in `mcp_tools.go` ✓
+
+**`delete-doc` is intentionally excluded** — Frappe does not allow deleting Single DocTypes, so defaulting the name there would only produce a confusing API error with no valid use case.
+
 ## Field Parsing
 
 `parseFields()` in `list_docs.go` accepts two formats:
