@@ -177,6 +177,8 @@ ffc count-docs -d "Sales Invoice" --filters '{"status":"Unpaid"}' --json
 
 Returns a **compact view** by default when using `--json`: only the meaningful DocType properties and field attributes are included. Zero-value booleans, metadata, and internal Frappe fields are stripped. Use `--full` for the raw response or `--keys` to select specific top-level keys.
 
+**Custom fields are included.** Fields added via Frappe's Customize Form are fetched from the `Custom Field` DocType and merged into the schema at the correct positions (based on `insert_after`). No extra flags needed — custom fields appear automatically alongside standard fields.
+
 ```bash
 ffc get-schema -d "Sales Invoice" --json
 ffc get-schema -d "Sales Invoice" --json --full

@@ -57,6 +57,10 @@ Examples:
 				if apiErr != nil {
 					return
 				}
+				apiErr = mergeCustomFields(c, gsDoctype, doc)
+				if apiErr != nil {
+					return
+				}
 				apiErr = applyPropertySetterOverrides(c, gsDoctype, doc)
 			}).
 			Run()
@@ -240,6 +244,64 @@ func filterSchemaKeys(doc map[string]interface{}, keys []string) map[string]inte
 		}
 	}
 	return out
+}
+
+// mergeCustomFields fetches all Custom Field records for the given doctype and
+// inserts them into doc["fields"] at the positions indicated by their insert_after
+// field. Custom fields whose insert_after target doesn't exist in the base schema
+// are appended at the end. This is necessary because GetDoc("DocType", ...) only
+// returns the standard fields defined in the DocType itself — custom fields added
+// via Customize Form are stored separately in the Custom Field doctype.
+func mergeCustomFields(fc *client.FrappeClient, doctype string, doc map[string]interface{}) error {
+	filters, _ := json.Marshal(map[string]interface{}{"dt": doctype})
+	rows, err := fc.GetList("Custom Field", client.ListOptions{
+		Fields:  []string{"*"},
+		Filters: string(filters),
+		OrderBy: "idx asc",
+		Limit:   500,
+	})
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+
+	rawFields, _ := doc["fields"].([]interface{})
+
+	// Index existing fieldnames so we know where insert_after targets land.
+	existingNames := make(map[string]bool, len(rawFields))
+	for _, rf := range rawFields {
+		if f, ok := rf.(map[string]interface{}); ok {
+			if fn, ok := f["fieldname"].(string); ok {
+				existingNames[fn] = true
+			}
+		}
+	}
+
+	// Group custom fields by their insert_after target.
+	afterMap := make(map[string][]interface{})
+	var orphans []interface{}
+	for _, row := range rows {
+		insertAfter, _ := row["insert_after"].(string)
+		if existingNames[insertAfter] {
+			afterMap[insertAfter] = append(afterMap[insertAfter], row)
+		} else {
+			orphans = append(orphans, row)
+		}
+	}
+
+	// Rebuild the fields slice: standard fields in order, custom fields spliced in.
+	merged := make([]interface{}, 0, len(rawFields)+len(rows))
+	for _, rf := range rawFields {
+		merged = append(merged, rf)
+		if f, ok := rf.(map[string]interface{}); ok {
+			if fn, ok := f["fieldname"].(string); ok {
+				merged = append(merged, afterMap[fn]...)
+			}
+		}
+	}
+	merged = append(merged, orphans...)
+
+	doc["fields"] = merged
+	return nil
 }
 
 // applyPropertySetterOverrides fetches all Property Setter records for the given

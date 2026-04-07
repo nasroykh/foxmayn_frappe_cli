@@ -394,6 +394,17 @@ Then call `registerMyTool(s, fc)` inside `registerTools()` in `mcp_tools.go`.
 - `filterSchemaKeys(doc, keys)` — keeps only the specified top-level keys (for `--keys` flag)
 - `isTruthy(v)` — returns true for non-zero float64, int, or bool true
 
+## Custom Fields in get-schema
+
+`GetDoc("DocType", doctype)` only returns standard fields baked into the DocType — it does **not** include custom fields added via Customize Form or Property Setter. Custom fields are stored separately in the `Custom Field` DocType (filtered by `dt = doctype`).
+
+`mergeCustomFields(fc, doctype, doc)` in `get_schema.go` handles this. It:
+1. Calls `GetList("Custom Field", {fields: ["*"], filters: {dt: doctype}, order_by: "idx asc"})`
+2. Groups results by `insert_after` fieldname
+3. Rebuilds `doc["fields"]` by splicing each custom field in after its target; fields whose target doesn't exist are appended at the end
+
+It is called **before** `applyPropertySetterOverrides` in both `get_schema.go` (CLI) and `mcp_tools.go` (MCP `get_schema` tool). Do not remove or reorder these calls — Property Setter overrides must run after the full field list is assembled.
+
 **Kept DocType keys (always):** `name`, `module`, `autoname`, `naming_rule`, `is_submittable`, `issingle`, `istable`, `is_tree`, `is_virtual`, `read_only`, `custom`
 **Kept DocType keys (if truthy):** `allow_rename`, `track_changes`
 **Kept DocType keys (if non-empty array):** `actions`, `links`, `states`
