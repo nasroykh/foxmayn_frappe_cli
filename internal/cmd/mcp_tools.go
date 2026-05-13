@@ -49,6 +49,9 @@ func registerTools(s *server.MCPServer, fc *client.FrappeClient) {
 	registerListReports(s, fc)
 	registerRunReport(s, fc)
 	registerCallMethod(s, fc)
+	registerBulkCreate(s, fc)
+	registerBulkUpdate(s, fc)
+	registerBulkDelete(s, fc)
 }
 
 func registerPing(s *server.MCPServer, fc *client.FrappeClient) {
@@ -438,5 +441,200 @@ func registerCallMethod(s *server.MCPServer, fc *client.FrappeClient) {
 			return mcp.NewToolResultError(apiErr.Error()), nil
 		}
 		return marshalResult(result)
+	})
+}
+
+func registerBulkCreate(s *server.MCPServer, fc *client.FrappeClient) {
+	tool := mcp.NewTool("bulk_create",
+		mcp.WithDescription("Create multiple Frappe documents in one call. Each element of the data array is a JSON object of field values for one document. Returns per-item results with created names or error messages. Processing continues on individual failures."),
+		mcp.WithString("doctype",
+			mcp.Required(),
+			mcp.Description("The Frappe DocType, e.g. 'ToDo', 'Note'"),
+		),
+		mcp.WithString("data",
+			mcp.Required(),
+			mcp.Description(`JSON array of field-value objects, e.g. [{"description":"Task 1"},{"description":"Task 2"}]`),
+		),
+	)
+	s.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		doctype, err := req.RequireString("doctype")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		dataRaw, err := req.RequireString("data")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		var items []map[string]interface{}
+		if jsonErr := json.Unmarshal([]byte(dataRaw), &items); jsonErr != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid data JSON array: %s", jsonErr)), nil
+		}
+		if len(items) == 0 {
+			return mcp.NewToolResultError("data array is empty"), nil
+		}
+
+		type itemResult struct {
+			Index  int    `json:"index"`
+			Status string `json:"status"`
+			Name   string `json:"name,omitempty"`
+			Error  string `json:"error,omitempty"`
+		}
+		results := make([]itemResult, len(items))
+		succeeded, failed := 0, 0
+
+		for i, item := range items {
+			doc, apiErr := fc.CreateDoc(doctype, item)
+			r := itemResult{Index: i + 1}
+			if apiErr != nil {
+				r.Status = "error"
+				r.Error = apiErr.Error()
+				failed++
+			} else {
+				r.Status = "created"
+				if n, ok := doc["name"].(string); ok {
+					r.Name = n
+				}
+				succeeded++
+			}
+			results[i] = r
+		}
+
+		return marshalResult(map[string]interface{}{
+			"created": succeeded,
+			"failed":  failed,
+			"results": results,
+		})
+	})
+}
+
+func registerBulkUpdate(s *server.MCPServer, fc *client.FrappeClient) {
+	tool := mcp.NewTool("bulk_update",
+		mcp.WithDescription("Update multiple Frappe documents in one call. Each element of the data array must include a \"name\" field identifying the document plus any fields to change. Returns per-item results. Processing continues on individual failures."),
+		mcp.WithString("doctype",
+			mcp.Required(),
+			mcp.Description("The Frappe DocType"),
+		),
+		mcp.WithString("data",
+			mcp.Required(),
+			mcp.Description(`JSON array of objects; each must include "name" plus fields to update, e.g. [{"name":"TD-0001","status":"Closed"}]`),
+		),
+	)
+	s.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		doctype, err := req.RequireString("doctype")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		dataRaw, err := req.RequireString("data")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		var items []map[string]interface{}
+		if jsonErr := json.Unmarshal([]byte(dataRaw), &items); jsonErr != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid data JSON array: %s", jsonErr)), nil
+		}
+		if len(items) == 0 {
+			return mcp.NewToolResultError("data array is empty"), nil
+		}
+
+		for i, item := range items {
+			if n, _ := item["name"].(string); n == "" {
+				return mcp.NewToolResultError(fmt.Sprintf("item %d is missing a \"name\" field", i+1)), nil
+			}
+		}
+
+		type itemResult struct {
+			Index  int    `json:"index"`
+			Name   string `json:"name"`
+			Status string `json:"status"`
+			Error  string `json:"error,omitempty"`
+		}
+		results := make([]itemResult, len(items))
+		succeeded, failed := 0, 0
+
+		for i, item := range items {
+			name := item["name"].(string)
+			payload := make(map[string]interface{}, len(item)-1)
+			for k, v := range item {
+				if k != "name" {
+					payload[k] = v
+				}
+			}
+
+			r := itemResult{Index: i + 1, Name: name}
+			if _, apiErr := fc.UpdateDoc(doctype, name, payload); apiErr != nil {
+				r.Status = "error"
+				r.Error = apiErr.Error()
+				failed++
+			} else {
+				r.Status = "updated"
+				succeeded++
+			}
+			results[i] = r
+		}
+
+		return marshalResult(map[string]interface{}{
+			"updated": succeeded,
+			"failed":  failed,
+			"results": results,
+		})
+	})
+}
+
+func registerBulkDelete(s *server.MCPServer, fc *client.FrappeClient) {
+	tool := mcp.NewTool("bulk_delete",
+		mcp.WithDescription("Permanently delete multiple Frappe documents in one call. Provide document names as a JSON array of strings. Returns per-item results. Processing continues on individual failures. This action cannot be undone."),
+		mcp.WithString("doctype",
+			mcp.Required(),
+			mcp.Description("The Frappe DocType"),
+		),
+		mcp.WithString("names",
+			mcp.Required(),
+			mcp.Description(`JSON array of document names to delete, e.g. ["TD-0001","TD-0002"]`),
+		),
+	)
+	s.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		doctype, err := req.RequireString("doctype")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		namesRaw, err := req.RequireString("names")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		var names []string
+		if jsonErr := json.Unmarshal([]byte(namesRaw), &names); jsonErr != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("names must be a JSON array of strings: %s", jsonErr)), nil
+		}
+		if len(names) == 0 {
+			return mcp.NewToolResultError("names array is empty"), nil
+		}
+
+		type itemResult struct {
+			Index  int    `json:"index"`
+			Name   string `json:"name"`
+			Status string `json:"status"`
+			Error  string `json:"error,omitempty"`
+		}
+		results := make([]itemResult, len(names))
+		succeeded, failed := 0, 0
+
+		for i, name := range names {
+			r := itemResult{Index: i + 1, Name: name}
+			if apiErr := fc.DeleteDoc(doctype, name); apiErr != nil {
+				r.Status = "error"
+				r.Error = apiErr.Error()
+				failed++
+			} else {
+				r.Status = "deleted"
+				succeeded++
+			}
+			results[i] = r
+		}
+
+		return marshalResult(map[string]interface{}{
+			"deleted":  succeeded,
+			"failed":   failed,
+			"results":  results,
+		})
 	})
 }
