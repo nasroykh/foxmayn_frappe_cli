@@ -34,6 +34,10 @@ Examples:
 			return fmt.Errorf("config: %w", err)
 		}
 
+		if err := validateFiltersJSON(coFilters); err != nil {
+			return err
+		}
+
 		c, err := client.New(cmd.Context(), cfg)
 		if err != nil {
 			return err

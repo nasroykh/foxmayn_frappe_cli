@@ -49,6 +49,10 @@ Examples:
 			}
 		}
 
+		if err := validateFiltersJSON(ldFilters); err != nil {
+			return err
+		}
+
 		// --limit 0 means "no limit" (fetch all); the default is 20, so this only
 		// triggers when the user explicitly passes --limit 0 (M12).
 		limit := ldLimit

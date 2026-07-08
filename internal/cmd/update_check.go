@@ -24,12 +24,14 @@ type updateCheckState struct {
 	Latest    string    `json:"latest"`
 }
 
+// updateCheckPath returns ~/.config/ffc/.update_check.json — see the comment
+// on mcpStateDir for why this isn't os.UserConfigDir().
 func updateCheckPath() string {
-	dir, err := os.UserConfigDir()
+	dir, err := defaultConfigDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "ffc", ".update_check.json")
+	return filepath.Join(dir, ".update_check.json")
 }
 
 // runUpdateCheck reads the cached update state file and prints a one-line

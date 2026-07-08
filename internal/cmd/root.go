@@ -17,6 +17,7 @@ var (
 	siteName   string
 	configPath string
 	jsonOutput bool
+	quiet      bool
 )
 
 var rootCmd = &cobra.Command{
@@ -67,6 +68,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&siteName, "site", "s", "", "Site name from config (default: default_site)")
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "Path to config file (default: ~/.config/ffc/config.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&jsonOutput, "json", "j", false, "Output raw JSON instead of a table")
+	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress the progress spinner (also on when NO_COLOR or CI is set)")
 
 	// Version template: "ffc version v0.1.0 (abc1234, 2026-03-09)"
 	rootCmd.SetVersionTemplate(fmt.Sprintf("ffc version %s (%s, %s)\n", version.Version, version.Commit, version.Date))

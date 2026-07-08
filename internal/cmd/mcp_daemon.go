@@ -42,12 +42,17 @@ type mcpState struct {
 	Instance  string    `json:"instance"` // non-secret id used to verify process identity (M7/M15)
 }
 
+// mcpStateDir returns ~/.config/ffc — the same directory config.go and
+// init.go use for config.yaml. It intentionally does not use
+// os.UserConfigDir(), which resolves to ~/Library/Application Support on
+// macOS and would put mcp.json/mcp.log somewhere CLAUDE.md and the rest of
+// the app don't look.
 func mcpStateDir() string {
-	dir, err := os.UserConfigDir()
+	dir, err := defaultConfigDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "ffc")
+	return dir
 }
 
 func mcpStatePath() string {

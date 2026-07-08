@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -58,6 +59,22 @@ func docName(v interface{}) (string, bool) {
 	}
 }
 
+// validateFiltersJSON returns a clear client-side error when raw is a
+// non-empty, invalid JSON string, instead of letting it reach the server and
+// come back as a raw JSONDecodeError (500). Mirrors the validation create-doc,
+// update-doc, bulk-*, run-report, and the MCP tools already do for their own
+// JSON flags.
+func validateFiltersJSON(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	var v interface{}
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return fmt.Errorf("--filters: invalid JSON: %w", err)
+	}
+	return nil
+}
+
 // moduleFilter builds a Frappe list-filter JSON for an optional module name,
 // JSON-encoding the value so a module containing " or \ cannot break the
 // filter (L28). Returns "" when module is empty.
@@ -83,6 +100,10 @@ func moduleFilter(module string) (string, error) {
 // responsive because every fn issues a client call bound to the command's
 // context, which Ctrl+C cancels — aborting the in-flight request promptly.
 func runSpinner(title string, fn func()) error {
+	if quiet || os.Getenv("NO_COLOR") != "" || os.Getenv("CI") != "" {
+		fn()
+		return nil
+	}
 	done := make(chan struct{})
 	err := spinner.New().
 		Title(title).
