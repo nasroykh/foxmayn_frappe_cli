@@ -8,7 +8,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -16,6 +15,7 @@ import (
 var (
 	cmMethod string
 	cmArgs   string
+	cmGet    bool
 )
 
 var callMethodCmd = &cobra.Command{
@@ -46,25 +46,25 @@ Examples:
 
 		var result interface{}
 		var apiErr error
-		c := client.New(cfg)
-		_ = spinner.New().
-			Title(fmt.Sprintf("Calling %s…", cmMethod)).
-			Action(func() {
-				result, apiErr = c.CallMethod(cmMethod, methodArgs)
-			}).
-			Run()
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		_ = runSpinner(fmt.Sprintf("Calling %s…", cmMethod), func() {
+			result, apiErr = c.CallMethod(cmd.Context(), cmMethod, methodArgs, cmGet)
+		})
 		if apiErr != nil {
 			return apiErr
 		}
 
-		output.PrintJSON(result)
-		return nil
+		return output.PrintJSON(result)
 	},
 }
 
 func init() {
 	callMethodCmd.Flags().StringVar(&cmMethod, "method", "", "Frappe method path, e.g. frappe.ping (required)")
 	callMethodCmd.Flags().StringVar(&cmArgs, "args", "", `JSON object of method arguments, e.g. '{"doctype":"ToDo"}'`)
+	callMethodCmd.Flags().BoolVar(&cmGet, "get", false, "Send as a GET request (for methods whitelisted GET-only)")
 	_ = callMethodCmd.MarkFlagRequired("method")
 	rootCmd.AddCommand(callMethodCmd)
 }

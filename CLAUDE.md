@@ -62,12 +62,14 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 ```
 cmd/ffc/main.go              → Entry point, calls cmd.Execute()
 internal/cmd/root.go         → Root cobra command, global flags (--site, --config, --json)
-internal/cmd/init.go         → init subcommand (auth method menu, --oauth/--apikey flags, writeConfig)
+internal/cmd/init.go         → init subcommand (auth method menu, --oauth/--apikey/--password flags,
+                                writeConfig, runPasswordInitFlow, writeConfigSession)
 internal/cmd/oauth_flow.go   → OAuth PKCE flow (runOAuthInitFlow, callbackServer, PKCE helpers,
                                 writeConfigOAuth, saveOAuthTokens, tryRefreshOAuthToken,
                                 upsertSiteInConfig, removeSiteFromConfig, setDefaultSite,
-                                buildAPIKeySiteYAML, buildOAuthSiteYAML)
-internal/cmd/site.go         → site subcommand: list, add (OAuth/API key), remove, use; pickSite helper
+                                buildAPIKeySiteYAML, buildOAuthSiteYAML, buildSessionSiteYAML)
+internal/cmd/site.go         → site subcommand: list, add (OAuth/API key/username+password), remove, use;
+                                pickSite helper, siteAddPasswordFlow
 internal/cmd/config_cmd.go   → config subcommand: TUI (no args), config get, config set;
                                 escQuitKeyMap, saveConfig, updateYAMLValue, preserveHeader, resolveCfgPath
 internal/cmd/ping.go         → ping subcommand
@@ -86,13 +88,16 @@ internal/cmd/update.go           → update subcommand (self-update from GitHub 
 internal/cmd/update_check.go     → background update check; owns rootCmd.PersistentPreRunE;
                                     calls tryRefreshOAuthToken() before every non-init/update/mcp command
 internal/cmd/mcp.go              → mcp subcommand (stdio/HTTP/detach mode routing, --detach, --port flags)
-internal/cmd/mcp_tools.go        → 12 MCP tool definitions + handlers (registerTools, marshalResult)
+internal/cmd/mcp_tools.go        → 15 MCP tool definitions + handlers (registerTools, marshalResult)
 internal/cmd/mcp_daemon.go       → detach logic (startDetached, runHTTPServer), status/stop subcommands, state file I/O
 internal/cmd/mcp_detach_unix.go  → setSysProcAttr with Setsid=true (Linux/macOS build tag: !windows)
 internal/cmd/mcp_detach_windows.go → setSysProcAttr no-op (Windows build tag)
-internal/client/client.go    → FrappeClient (resty); Bearer auth for OAuth, token auth for API key
+internal/client/client.go    → FrappeClient (resty); New() is fallible — Bearer auth for OAuth, token auth
+                                for API key, live POST /api/method/login for username/password sites
 internal/client/oauth.go     → ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser (OAuthTokens struct)
-internal/config/config.go    → Config/SiteConfig structs (OAuth fields), viper loading, number/date formatting
+internal/client/session.go   → LoginPassword (POST /api/method/login, sid cookie extraction, 2FA detection)
+internal/config/config.go    → Config/SiteConfig structs (OAuth + Username/Password fields), viper loading,
+                                number/date formatting
 internal/output/             → Formatters: lipgloss table and JSON
 internal/version/            → Build-time version variables (ldflags)
 ```
@@ -102,7 +107,7 @@ internal/version/            → Build-time version variables (ldflags)
 - **Error handling:** Wrap with `fmt.Errorf("context: %w", err)`. Never log and return; return and let caller decide.
 - **Stdout vs stderr:** Data goes to stdout, diagnostics/errors go to stderr.
 - **Config precedence:** flags > env vars > config file > defaults.
-- **Auth:** Bearer token (`Authorization: Bearer <access_token>`) for OAuth sites; Frappe token auth (`Authorization: token key:secret`) for API key sites. `client.New()` picks the right header automatically based on `cfg.AccessToken`.
+- **Auth:** Bearer token (`Authorization: Bearer <access_token>`) for OAuth sites; Frappe token auth (`Authorization: token key:secret`) for API key sites; `Cookie: sid=<sid>` for username/password sites. `client.New()` picks the right auth automatically based on `cfg.AccessToken` / `cfg.APIKey`+`cfg.APISecret` / `cfg.IsSessionAuth()`, in that priority order. `client.New()` is **fallible** (`(*FrappeClient, error)`) because session-auth sites perform a live `POST /api/method/login` inside it — every one of its ~17 call sites must handle the error.
 - **Adding commands:** Create `internal/cmd/<name>.go`, define `*cobra.Command`, register via `rootCmd.AddCommand()` in `init()`.
 
 ## Config
@@ -117,13 +122,16 @@ Env var fallback: `FFC_URL`, `FFC_API_KEY`, `FFC_API_SECRET`
 - Frappe API wraps list results in `"data"` (v14+) or `"message"` (older). The client handles both.
 - Frappe error responses contain nested JSON strings with Python tracebacks. The `parseFrappeError` function extracts user-friendly messages from this noise.
 - `Config` and `SiteConfig` structs carry **both** `mapstructure` and `yaml` struct tags. `mapstructure` is needed by viper; `yaml` is needed by `go.yaml.in/yaml/v3` for direct unmarshal in `config_cmd.go`. Always add both when extending these structs.
-- `config_cmd.go` has a `saveConfig` helper (marshals YAML node → file). `init.go` has its own `writeConfig` (generates fresh YAML from scratch). `oauth_flow.go` has `writeConfigOAuth` (fresh OAuth config). The names are intentionally different to avoid package-level collisions.
+- `config_cmd.go` has a `saveConfig` helper (marshals YAML node → file). `init.go` has its own `writeConfig` (generates fresh YAML from scratch) and `writeConfigSession` (fresh username/password config). `oauth_flow.go` has `writeConfigOAuth` (fresh OAuth config). The names are intentionally different to avoid package-level collisions.
+- Username/password (session-cookie) auth intentionally has **no proactive refresh hook** and **no `sid` field in config** — unlike OAuth. Frappe's `/api/method/login` response never tells you when the session expires, so there's no cheap staleness check to hook into `PersistentPreRunE` the way `tryRefreshOAuthToken` does. Instead, `client.New()` logs in fresh (`LoginPassword`) every time it's called, using the persisted `username`/`password`. This costs one extra HTTP round-trip per `ffc` invocation for session-auth sites, but keeps `client.go`'s 9 request methods and all 17 `client.New()` call sites free of retry/relogin logic. Do not try to persist a `sid` to config — it would immediately go stale between invocations and add complexity for no benefit, since each `ffc` run is a fresh process anyway.
+- The plaintext `password` field in `SiteConfig` is stored in `config.yaml` at `0600` — the same protection level as the existing `api_secret` field. This is a deliberate parity choice with `kb_compta_app`'s password-auth mode (which uses the OS keychain, with a plaintext-file fallback); ffc has no OS-keychain integration, so plaintext-in-a-0600-file is the existing precedent to follow, not a new risk introduced by this feature.
 - In huh v1.0.0, only `ctrl+c` is bound to Quit by default — Escape does nothing. All `huh.NewForm` calls use `WithKeyMap(escQuitKeyMap())` to add Escape support. `escQuitKeyMap()` is defined in `config_cmd.go` and is available package-wide.
 - `update_check.go` sets `rootCmd.PersistentPreRunE` in its `init()`. Do not set `PersistentPreRunE` on `rootCmd` anywhere else — it would silently overwrite the hook. Add new pre-run logic inside the existing hook in `update_check.go`.
 - `PersistentPreRunE` also calls `tryRefreshOAuthToken()` (defined in `oauth_flow.go`) before every command except `init`, `update`, and `mcp`. This silently refreshes expired OAuth access tokens and writes the new tokens to disk before the command's own `config.Load()` call. All errors in `tryRefreshOAuthToken` are swallowed — commands handle 401s themselves.
 - OAuth PKCE flow: `generateCodeVerifier` (32 random bytes, base64url) + `generateCodeChallenge` (SHA-256 S256). The callback HTTP server (`callbackServer`) binds its port immediately via `net.Listen` before the user even fills in the OAuth form — this prevents port theft between "find free port" and "start listening". `cs.wait()` blocks up to 5 minutes.
 - Site management uses yaml.Node tree manipulation (not struct marshal/unmarshal) so leading `#` comments in config.yaml are preserved. `upsertSiteInConfig`, `removeSiteFromConfig`, `setDefaultSite` in `oauth_flow.go` + `preserveHeader` / `updateYAMLValue` in `config_cmd.go` are the relevant helpers. Do not duplicate these.
-- `IsOAuth()` on `SiteConfig` returns true only if `AccessToken != ""` — not just `OAuthClientID != ""`. A site with only a client ID but no token would produce unauthenticated requests.
+- `IsOAuth()` on `SiteConfig` returns true only if `AccessToken != ""` — not just `OAuthClientID != ""`. A site with only a client ID but no token would produce unauthenticated requests. `IsSessionAuth()` similarly requires both `Username != ""` and `Password != ""`.
+- `client.LoginPassword` (session.go) does not support Frappe's two-factor authentication — if the login response contains a `verification`/`tmp_id` payload (Frappe's 2FA challenge, returned as HTTP 200 instead of `"Logged In"`), it returns an error telling the user to use `ffc init --oauth` or an API key instead. This mirrors `kb_compta_app`'s password-auth mode, which has the same limitation.
 - `SiteConfig.Name` is a runtime-only field (`mapstructure:"-" yaml:"-"`) populated by `config.Load()`. `tryRefreshOAuthToken` uses `cfg.Name` as the site key when calling `saveOAuthTokens`.
 - The self-update state file lives at `~/.config/ffc/.update_check.json` (JSON with `checked_at` and `latest` fields). It is refreshed in a background goroutine at most once per day. `Execute()` in `root.go` waits up to 2 seconds for that goroutine before exiting.
 - `update_check.go` skips the update check for both `update` and `mcp` commands. The MCP server takes over stdin/stdout for JSON-RPC; any stderr output (including the update notice) would corrupt the stream. Do not remove `mcp` from this skip condition.

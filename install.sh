@@ -50,13 +50,18 @@ curl -fsSL "$URL" -o "$TMP/$ARCHIVE"
 curl -fsSL "$CHECKSUM_URL" -o "$TMP/checksums.txt"
 
 # --- verify checksum ---
+# grep -F: the archive name contains '.', which are regex metacharacters.
 cd "$TMP"
 if command -v sha256sum > /dev/null 2>&1; then
-  grep "$ARCHIVE" checksums.txt | sha256sum -c -
+  grep -F "$ARCHIVE" checksums.txt | sha256sum -c -
 elif command -v shasum > /dev/null 2>&1; then
-  grep "$ARCHIVE" checksums.txt | shasum -a 256 -c -
+  grep -F "$ARCHIVE" checksums.txt | shasum -a 256 -c -
+elif [ "${FFC_SKIP_CHECKSUM:-}" = "1" ]; then
+  echo "Warning: no sha256 tool found; skipping checksum verification (FFC_SKIP_CHECKSUM=1)." >&2
 else
-  echo "Warning: no sha256 tool found, skipping checksum verification." >&2
+  echo "Error: no sha256 tool (sha256sum or shasum) found; cannot verify the download." >&2
+  echo "Install one, or re-run with FFC_SKIP_CHECKSUM=1 to bypass at your own risk." >&2
+  exit 1
 fi
 cd - > /dev/null
 

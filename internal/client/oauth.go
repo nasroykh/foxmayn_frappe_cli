@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 )
+
+// oauthTimeout bounds every OAuth token/user HTTP call so a hung endpoint can
+// never hang a command (RefreshOAuthToken runs in PersistentPreRunE) — M14.
+const oauthTimeout = 30 * time.Second
 
 // OAuthTokens holds the tokens returned by the Frappe OAuth token endpoint.
 type OAuthTokens struct {
@@ -19,7 +24,7 @@ type OAuthTokens struct {
 // ExchangeOAuthCode exchanges an authorization code for access/refresh tokens
 // using PKCE (codeVerifier). clientSecret is optional for public clients.
 func ExchangeOAuthCode(siteURL, clientID, clientSecret, code, redirectURI, codeVerifier string) (*OAuthTokens, error) {
-	r := resty.New().SetBaseURL(strings.TrimRight(siteURL, "/"))
+	r := resty.New().SetBaseURL(strings.TrimRight(siteURL, "/")).SetTimeout(oauthTimeout)
 
 	body := map[string]string{
 		"grant_type":    "authorization_code",
@@ -55,7 +60,7 @@ func ExchangeOAuthCode(siteURL, clientID, clientSecret, code, redirectURI, codeV
 // RefreshOAuthToken uses a refresh token to obtain a new access token.
 // clientSecret is optional for public clients.
 func RefreshOAuthToken(siteURL, clientID, clientSecret, refreshToken string) (*OAuthTokens, error) {
-	r := resty.New().SetBaseURL(strings.TrimRight(siteURL, "/"))
+	r := resty.New().SetBaseURL(strings.TrimRight(siteURL, "/")).SetTimeout(oauthTimeout)
 
 	body := map[string]string{
 		"grant_type":    "refresh_token",
@@ -91,6 +96,7 @@ func RefreshOAuthToken(siteURL, clientID, clientSecret, refreshToken string) (*O
 func GetOAuthUser(siteURL, accessToken string) (string, error) {
 	r := resty.New().
 		SetBaseURL(strings.TrimRight(siteURL, "/")).
+		SetTimeout(oauthTimeout).
 		SetHeader("Authorization", "Bearer "+accessToken)
 
 	resp, err := r.R().Get("/api/method/frappe.auth.get_logged_user")

@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 
@@ -35,11 +38,22 @@ Example config:
 `,
 	Version: version.Version,
 	// No Run — shows help when called with no subcommand.
+	// Silence cobra's own error+usage printing: Execute below prints the error
+	// once to stderr. Without this, cobra prints "Error: <msg>" plus the full
+	// usage block on every runtime error, then Execute prints it again (L32).
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 // Execute is the single entry point called from main.
 func Execute() {
-	err := rootCmd.Execute()
+	// A context cancelled on Ctrl+C / SIGTERM, wired into every command via
+	// cmd.Context(), so long-running or bulk operations can be interrupted
+	// cleanly (M18, L14, L35).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	err := rootCmd.ExecuteContext(ctx)
 	// Wait for any background update-check goroutine to finish writing the
 	// state file before the process exits (capped at 2 s).
 	waitForUpdateCheck()

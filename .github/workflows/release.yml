@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write     # OIDC token for build-provenance attestation (M4)
+  attestations: write # publish the provenance attestation
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -33,3 +35,12 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Signed, verifiable provenance for every published archive + checksums (M4).
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt

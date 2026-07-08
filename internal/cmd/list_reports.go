@@ -7,7 +7,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -35,43 +34,46 @@ Examples:
 			return fmt.Errorf("config: %w", err)
 		}
 
-		filters := ""
-		if lrModule != "" {
-			filters = fmt.Sprintf(`{"module":"%s"}`, lrModule)
+		filters, err := moduleFilter(lrModule)
+		if err != nil {
+			return err
+		}
+
+		limit := lrLimit
+		if limit == 0 { // --limit 0 => no limit (M12)
+			limit = -1
 		}
 
 		opts := client.ListOptions{
 			Fields:  []string{"name", "report_type", "module", "is_standard", "ref_doctype"},
 			Filters: filters,
-			Limit:   lrLimit,
+			Limit:   limit,
 			OrderBy: "name asc",
 		}
 
 		var rows []map[string]interface{}
 		var apiErr error
-		c := client.New(cfg)
-		_ = spinner.New().
-			Title("Fetching reports…").
-			Action(func() {
-				rows, apiErr = c.GetList("Report", opts)
-			}).
-			Run()
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		_ = runSpinner("Fetching reports…", func() {
+			rows, apiErr = c.GetList(cmd.Context(), "Report", opts)
+		})
 		if apiErr != nil {
 			return apiErr
 		}
 
 		if jsonOutput {
-			output.PrintJSON(rows)
-		} else {
-			output.PrintTable(rows, []string{"name", "report_type", "module", "ref_doctype"})
+			return output.PrintJSON(rows)
 		}
-
+		output.PrintTable(rows, []string{"name", "report_type", "module", "ref_doctype"})
 		return nil
 	},
 }
 
 func init() {
 	listReportsCmd.Flags().StringVarP(&lrModule, "module", "m", "", "Filter by module name (e.g. \"Accounts\")")
-	listReportsCmd.Flags().IntVarP(&lrLimit, "limit", "l", 50, "Maximum number of reports to return")
+	listReportsCmd.Flags().IntVarP(&lrLimit, "limit", "l", 50, "Maximum reports to return (0 = no limit)")
 	rootCmd.AddCommand(listReportsCmd)
 }

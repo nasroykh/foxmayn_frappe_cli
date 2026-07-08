@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -40,6 +41,16 @@ func generateCodeChallenge(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
+// tokenExpiryFromNow returns the absolute Unix expiry for an access token,
+// defaulting to Frappe's 1-hour lifetime when the server omits expires_in — so
+// the token still has a real expiry and can be proactively refreshed (L5).
+func tokenExpiryFromNow(expiresIn int) int64 {
+	if expiresIn <= 0 {
+		expiresIn = 3600
+	}
+	return time.Now().Unix() + int64(expiresIn)
+}
+
 // ─── Browser ─────────────────────────────────────────────────────────────────
 
 func openBrowser(rawURL string) error {
@@ -48,7 +59,10 @@ func openBrowser(rawURL string) error {
 	case "darwin":
 		cmd = exec.Command("open", rawURL)
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "", rawURL)
+		// rundll32 takes the URL as a single argument; `cmd /c start "" <url>`
+		// would let cmd.exe treat the '&' in the query string as a command
+		// separator and truncate the auth URL, breaking login (L20).
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL)
 	default:
 		cmd = exec.Command("xdg-open", rawURL)
 	}
@@ -60,6 +74,7 @@ func openBrowser(rawURL string) error {
 // callbackServer holds a running local HTTP server waiting for the OAuth callback.
 type callbackServer struct {
 	port   int
+	state  string // expected OAuth state parameter (CSRF protection, M6)
 	codeCh chan string
 	errCh  chan error
 	srv    *http.Server
@@ -69,12 +84,31 @@ type callbackServer struct {
 // Call this before showing the redirect URI to the user so the port is guaranteed
 // to be held when Frappe redirects back.
 func startCallbackServer() (*callbackServer, error) {
-	// Bind the port first so we hold it for the lifetime of the flow.
-	ln, err := net.Listen("tcp", "localhost:0")
+	// Prefer a small set of fixed ports so the redirect URI stays stable across
+	// re-auths — Frappe validates redirect_uri against a registered allow-list,
+	// so a fresh random port each time forces re-registration (L17). Fall back
+	// to an ephemeral port if all preferred ports are taken.
+	var ln net.Listener
+	var err error
+	for _, p := range []int{53682, 53683, 53684, 0} {
+		ln, err = net.Listen("tcp", fmt.Sprintf("localhost:%d", p))
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("binding callback port: %w", err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
+
+	// Random state tying the auth request to this callback. A forged or
+	// cross-origin request carrying the wrong (or no) state is rejected without
+	// consuming the one-shot channels, so it can't hijack or DoS the login (M6).
+	state, err := generateCodeVerifier()
+	if err != nil {
+		ln.Close()
+		return nil, fmt.Errorf("generating state: %w", err)
+	}
 
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
@@ -86,6 +120,13 @@ func startCallbackServer() (*callbackServer, error) {
 	}
 
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		// Verify state first — a mismatch keeps the server listening for the
+		// legitimate redirect instead of consuming the channel.
+		if r.URL.Query().Get("state") != state {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Invalid request</h2><p>State mismatch; ignoring.</p></body></html>")
+			return
+		}
 		if errParam := r.URL.Query().Get("error"); errParam != "" {
 			desc := r.URL.Query().Get("error_description")
 			msg := errParam
@@ -94,7 +135,8 @@ func startCallbackServer() (*callbackServer, error) {
 			}
 			errCh <- fmt.Errorf("authorization denied — %s", msg)
 			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Authorization denied</h2><p>%s</p><p>You can close this tab.</p></body></html>", msg)
+			// html.EscapeString: never reflect raw query params into HTML (L1).
+			fmt.Fprintf(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Authorization denied</h2><p>%s</p><p>You can close this tab.</p></body></html>", html.EscapeString(msg))
 			return
 		}
 		code := r.URL.Query().Get("code")
@@ -118,17 +160,23 @@ func startCallbackServer() (*callbackServer, error) {
 		}
 	}()
 
-	return &callbackServer{port: port, codeCh: codeCh, errCh: errCh, srv: srv}, nil
+	return &callbackServer{port: port, state: state, codeCh: codeCh, errCh: errCh, srv: srv}, nil
 }
 
-// wait blocks until the OAuth callback delivers a code or the 5-minute timeout elapses.
-func (cs *callbackServer) wait() (string, error) {
+// wait blocks until the OAuth callback delivers a code, the context is cancelled
+// (Ctrl+C / SIGTERM), or the 5-minute timeout elapses.
+func (cs *callbackServer) wait(ctx context.Context) (string, error) {
 	defer cs.srv.Shutdown(context.Background()) //nolint:errcheck
 	select {
 	case code := <-cs.codeCh:
 		return code, nil
 	case err := <-cs.errCh:
 		return "", err
+	case <-ctx.Done():
+		// The root installs a SIGINT/SIGTERM-cancelled context, which disables
+		// Go's default terminate-on-signal — so this wait must honour it or the
+		// user can't abort the browser flow (regression guard).
+		return "", fmt.Errorf("cancelled")
 	case <-time.After(5 * time.Minute):
 		return "", fmt.Errorf("timed out waiting for browser authorization (5 minutes)")
 	}
@@ -138,7 +186,7 @@ func (cs *callbackServer) wait() (string, error) {
 
 // runOAuthInitFlow runs the full interactive OAuth setup wizard.
 // It handles the huh forms, browser launch, token exchange, and config writing.
-func runOAuthInitFlow(cfgPath string) error {
+func runOAuthInitFlow(ctx context.Context, cfgPath string) error {
 	// ── Step 1: site name + URL ──────────────────────────────────────────────
 	var siteName, siteURL string
 
@@ -257,6 +305,7 @@ OAuth Client setup (one-time, on your Frappe site)
 		"scope":                 {"openid all"},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
+		"state":                 {cs.state}, // CSRF protection (M6)
 	}
 	authURL := strings.TrimRight(siteURL, "/") + "/api/method/frappe.integrations.oauth2.authorize?" + params.Encode()
 
@@ -269,7 +318,7 @@ OAuth Client setup (one-time, on your Frappe site)
 
 	fmt.Fprintf(os.Stderr, "Waiting for authorization (timeout: 5 minutes)...\n")
 
-	code, err := cs.wait()
+	code, err := cs.wait(ctx)
 	if err != nil {
 		return fmt.Errorf("authorization: %w", err)
 	}
@@ -353,10 +402,7 @@ func writeConfigOAuth(path, siteName, siteURL, clientID, clientSecret string, to
 		return err
 	}
 
-	expiry := int64(0)
-	if tokens.ExpiresIn > 0 {
-		expiry = time.Now().Unix() + int64(tokens.ExpiresIn)
-	}
+	expiry := tokenExpiryFromNow(tokens.ExpiresIn)
 
 	var sb strings.Builder
 	sb.WriteString("# ffc configuration — generated by 'ffc init --oauth'\n")
@@ -373,7 +419,7 @@ func writeConfigOAuth(path, siteName, siteURL, clientID, clientSecret string, to
 	sb.WriteString(fmt.Sprintf("    refresh_token: %q\n", tokens.RefreshToken))
 	sb.WriteString(fmt.Sprintf("    token_expiry: %d\n", expiry))
 
-	return os.WriteFile(path, []byte(sb.String()), 0o600)
+	return atomicWriteFile(path, []byte(sb.String()), 0o600) // M9
 }
 
 // saveOAuthTokens updates only the OAuth token fields for a specific site in
@@ -401,7 +447,7 @@ func saveOAuthTokens(cfgPath, siteName string, tokens *client.OAuthTokens) error
 		return fmt.Errorf("serialising config: %w", err)
 	}
 
-	return os.WriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600)
+	return atomicWriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600) // M9
 }
 
 // updateSiteTokens finds sites.<siteName> in the YAML mapping and updates
@@ -423,10 +469,7 @@ func updateSiteTokens(mapping *yaml.Node, siteName string, tokens *client.OAuthT
 			if siteMap.Kind != yaml.MappingNode {
 				return fmt.Errorf("site %q is not a mapping node", siteName)
 			}
-			expiry := int64(0)
-			if tokens.ExpiresIn > 0 {
-				expiry = time.Now().Unix() + int64(tokens.ExpiresIn)
-			}
+			expiry := tokenExpiryFromNow(tokens.ExpiresIn)
 			setScalarNode(siteMap, "access_token", tokens.AccessToken, "!!str")
 			if tokens.RefreshToken != "" {
 				setScalarNode(siteMap, "refresh_token", tokens.RefreshToken, "!!str")
@@ -467,10 +510,7 @@ func buildAPIKeySiteYAML(siteURL, apiKey, apiSecret string) string {
 
 // buildOAuthSiteYAML returns the YAML block for an OAuth-authenticated site.
 func buildOAuthSiteYAML(siteURL, clientID, clientSecret string, tokens *client.OAuthTokens) string {
-	expiry := int64(0)
-	if tokens.ExpiresIn > 0 {
-		expiry = time.Now().Unix() + int64(tokens.ExpiresIn)
-	}
+	expiry := tokenExpiryFromNow(tokens.ExpiresIn)
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "url: %q\n", siteURL)
 	fmt.Fprintf(&sb, "oauth_client_id: %q\n", clientID)
@@ -480,6 +520,16 @@ func buildOAuthSiteYAML(siteURL, clientID, clientSecret string, tokens *client.O
 	fmt.Fprintf(&sb, "access_token: %q\n", tokens.AccessToken)
 	fmt.Fprintf(&sb, "refresh_token: %q\n", tokens.RefreshToken)
 	fmt.Fprintf(&sb, "token_expiry: %d\n", expiry)
+	return sb.String()
+}
+
+// buildSessionSiteYAML returns the YAML block for a username/password
+// (session-cookie) authenticated site.
+func buildSessionSiteYAML(siteURL, username, password string) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "url: %q\n", siteURL)
+	fmt.Fprintf(&sb, "username: %q\n", username)
+	fmt.Fprintf(&sb, "password: %q\n", password)
 	return sb.String()
 }
 
@@ -527,6 +577,14 @@ func upsertSiteInConfig(cfgPath, siteName, siteYAML string) error {
 	}
 	sitesMap := mapping.Content[sitesIdx]
 
+	// If `sites:` exists but is empty/null (a scalar node), yaml.Marshal ignores
+	// any children appended to it and the new site is silently dropped. Replace
+	// it with a fresh mapping node first (M8).
+	if sitesMap.Kind != yaml.MappingNode {
+		sitesMap = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		mapping.Content[sitesIdx] = sitesMap
+	}
+
 	// Replace existing entry or append a new one.
 	for j := 0; j+1 < len(sitesMap.Content); j += 2 {
 		if sitesMap.Content[j].Value == siteName {
@@ -535,7 +593,7 @@ func upsertSiteInConfig(cfgPath, siteName, siteYAML string) error {
 			if err != nil {
 				return fmt.Errorf("serialising config: %w", err)
 			}
-			return os.WriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600)
+			return atomicWriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600) // M9
 		}
 	}
 	sitesMap.Content = append(sitesMap.Content,
@@ -547,7 +605,7 @@ func upsertSiteInConfig(cfgPath, siteName, siteYAML string) error {
 	if err != nil {
 		return fmt.Errorf("serialising config: %w", err)
 	}
-	return os.WriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600)
+	return atomicWriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600) // M9
 }
 
 // removeSiteFromConfig removes a site entry from the config file.
@@ -579,7 +637,7 @@ func removeSiteFromConfig(cfgPath, siteName string) error {
 			if err != nil {
 				return fmt.Errorf("serialising config: %w", err)
 			}
-			return os.WriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600)
+			return atomicWriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600) // M9
 		}
 		return fmt.Errorf("site %q not found in config", siteName)
 	}
@@ -604,7 +662,7 @@ func setDefaultSite(cfgPath, siteName string) error {
 	if err != nil {
 		return fmt.Errorf("serialising config: %w", err)
 	}
-	return os.WriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600)
+	return atomicWriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600) // M9
 }
 
 // ─── Background token refresh ────────────────────────────────────────────────

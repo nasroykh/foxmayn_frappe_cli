@@ -7,7 +7,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -35,25 +34,24 @@ Examples:
 			return fmt.Errorf("config: %w", err)
 		}
 
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
+
 		var count int
 		var apiErr error
-		c := client.New(cfg)
-		_ = spinner.New().
-			Title(fmt.Sprintf("Counting %s…", coDoctype)).
-			Action(func() {
-				count, apiErr = c.GetCount(coDoctype, coFilters)
-			}).
-			Run()
+		_ = runSpinner(fmt.Sprintf("Counting %s…", coDoctype), func() {
+			count, apiErr = c.GetCount(cmd.Context(), coDoctype, coFilters)
+		})
 		if apiErr != nil {
 			return apiErr
 		}
 
 		if jsonOutput {
-			output.PrintJSON(map[string]interface{}{"doctype": coDoctype, "count": count})
-		} else {
-			fmt.Println(count)
+			return output.PrintJSON(map[string]interface{}{"doctype": coDoctype, "count": count})
 		}
-
+		fmt.Println(count)
 		return nil
 	},
 }

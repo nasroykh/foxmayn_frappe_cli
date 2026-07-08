@@ -5,8 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
+	"sync"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
@@ -14,6 +13,26 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 	"github.com/spf13/cobra"
 )
+
+// newMCPClientProvider returns a clientFn that builds a fresh FrappeClient for
+// each tool call: it first refreshes an expired OAuth token (and persists it),
+// then reloads config and constructs the client (which re-logs-in session-auth
+// sites). This keeps a long-running MCP server's credentials fresh instead of
+// pinning one client built at startup (H5). The config refresh/load is
+// serialized to avoid concurrent token-file writes.
+func newMCPClientProvider() clientFn {
+	var mu sync.Mutex
+	return func(ctx context.Context) (*client.FrappeClient, error) {
+		mu.Lock()
+		tryRefreshOAuthToken()
+		cfg, err := config.Load(siteName, configPath)
+		mu.Unlock()
+		if err != nil {
+			return nil, fmt.Errorf("config: %w", err)
+		}
+		return client.New(ctx, cfg)
+	}
+}
 
 var (
 	mcpDetach bool
@@ -40,32 +59,31 @@ All tools use the same authentication and site config as other ffc commands.
 	RunE: runMCP,
 }
 
-func runMCP(_ *cobra.Command, _ []string) error {
+func runMCP(cmd *cobra.Command, _ []string) error {
 	if mcpDetach {
 		port := mcpPort
 		if port == 0 {
 			port = defaultMCPPort
 		}
-		if err := startDetached(port); err != nil {
+		if err := startDetached(cmd.Context(), port); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "MCP server started in background on http://localhost:%d/mcp\n", port)
-		fmt.Fprintf(os.Stderr, "  ffc mcp status   — check status\n")
+		fmt.Fprintf(os.Stderr, "MCP server started in background on http://127.0.0.1:%d/mcp\n", port)
+		fmt.Fprintf(os.Stderr, "  ffc mcp status   — check status (shows the bearer token)\n")
 		fmt.Fprintf(os.Stderr, "  ffc mcp stop     — stop server\n")
 		return nil
 	}
 
 	if mcpPort != 0 {
-		return runHTTPServer(mcpPort)
+		return runHTTPServer(cmd.Context(), mcpPort)
 	}
 
 	// Default: stdio server.
-	cfg, err := config.Load(siteName, configPath)
-	if err != nil {
-		return fmt.Errorf("config: %w", err)
+	provider := newMCPClientProvider()
+	// Validate credentials once up front so misconfiguration fails immediately.
+	if _, err := provider(cmd.Context()); err != nil {
+		return err
 	}
-
-	fc := client.New(cfg)
 
 	s := server.NewMCPServer(
 		"ffc",
@@ -73,15 +91,12 @@ func runMCP(_ *cobra.Command, _ []string) error {
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 	)
-	registerTools(s, fc)
+	registerTools(s, provider)
 
 	fmt.Fprintf(os.Stderr, "ffc MCP server running (stdio). Press Ctrl+C to stop.\n")
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	if err := server.ServeStdio(s, server.WithStdioContextFunc(func(_ context.Context) context.Context {
-		return ctx
+		return cmd.Context()
 	})); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("mcp server: %w", err)
 	}

@@ -28,10 +28,13 @@ Examples:
 			return fmt.Errorf("config: %w", err)
 		}
 
-		c := client.New(cfg)
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
 
 		start := time.Now()
-		resp, apiErr := c.Ping()
+		resp, apiErr := c.Ping(cmd.Context())
 		elapsed := time.Since(start)
 
 		if apiErr != nil {
@@ -39,15 +42,13 @@ Examples:
 		}
 
 		if jsonOutput {
-			output.PrintJSON(map[string]interface{}{
+			return output.PrintJSON(map[string]interface{}{
 				"response": resp,
 				"url":      cfg.URL,
 				"latency":  elapsed.String(),
 			})
-		} else {
-			output.PrintSuccess(fmt.Sprintf("pong — %s (%s)", cfg.URL, elapsed.Round(time.Millisecond)))
 		}
-
+		output.PrintSuccess(fmt.Sprintf("pong — %s (%s)", cfg.URL, elapsed.Round(time.Millisecond)))
 		return nil
 	},
 }

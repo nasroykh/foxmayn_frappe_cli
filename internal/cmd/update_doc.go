@@ -9,7 +9,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -55,13 +54,13 @@ Examples:
 
 		var doc map[string]interface{}
 		var apiErr error
-		c := client.New(cfg)
-		_ = spinner.New().
-			Title(fmt.Sprintf("Updating %s %s…", udDoctype, name)).
-			Action(func() {
-				doc, apiErr = c.UpdateDoc(udDoctype, name, data)
-			}).
-			Run()
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		_ = runSpinner(fmt.Sprintf("Updating %s %s…", udDoctype, name), func() {
+			doc, apiErr = c.UpdateDoc(cmd.Context(), udDoctype, name, data)
+		})
 		if apiErr != nil {
 			return apiErr
 		}
@@ -71,12 +70,10 @@ Examples:
 			if udKeys != "" {
 				result = filterSchemaKeys(result, strings.Split(udKeys, ","))
 			}
-			output.PrintJSON(result)
-		} else {
-			output.PrintSuccess(fmt.Sprintf("Updated %s %s", udDoctype, name))
-			output.PrintDocTable(doc, nil)
+			return output.PrintJSON(result)
 		}
-
+		output.PrintSuccess(fmt.Sprintf("Updated %s %s", udDoctype, name))
+		output.PrintDocTable(doc, nil)
 		return nil
 	},
 }

@@ -7,7 +7,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -33,43 +32,46 @@ Examples:
 			return fmt.Errorf("config: %w", err)
 		}
 
-		filters := ""
-		if ltModule != "" {
-			filters = fmt.Sprintf(`{"module":"%s"}`, ltModule)
+		filters, err := moduleFilter(ltModule)
+		if err != nil {
+			return err
+		}
+
+		limit := ltLimit
+		if limit == 0 { // --limit 0 => no limit (M12)
+			limit = -1
 		}
 
 		opts := client.ListOptions{
 			Fields:  []string{"name", "module", "is_submittable", "is_tree", "description"},
 			Filters: filters,
-			Limit:   ltLimit,
+			Limit:   limit,
 			OrderBy: "name asc",
 		}
 
 		var rows []map[string]interface{}
 		var apiErr error
-		c := client.New(cfg)
-		_ = spinner.New().
-			Title("Fetching DocTypes…").
-			Action(func() {
-				rows, apiErr = c.GetList("DocType", opts)
-			}).
-			Run()
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		_ = runSpinner("Fetching DocTypes…", func() {
+			rows, apiErr = c.GetList(cmd.Context(), "DocType", opts)
+		})
 		if apiErr != nil {
 			return apiErr
 		}
 
 		if jsonOutput {
-			output.PrintJSON(rows)
-		} else {
-			output.PrintTable(rows, []string{"name", "module", "is_submittable", "description"})
+			return output.PrintJSON(rows)
 		}
-
+		output.PrintTable(rows, []string{"name", "module", "is_submittable", "description"})
 		return nil
 	},
 }
 
 func init() {
 	listDoctypesCmd.Flags().StringVarP(&ltModule, "module", "m", "", "Filter by module name (e.g. \"Accounts\")")
-	listDoctypesCmd.Flags().IntVarP(&ltLimit, "limit", "l", 50, "Maximum number of DocTypes to return")
+	listDoctypesCmd.Flags().IntVarP(&ltLimit, "limit", "l", 50, "Maximum DocTypes to return (0 = no limit)")
 	rootCmd.AddCommand(listDoctypesCmd)
 }

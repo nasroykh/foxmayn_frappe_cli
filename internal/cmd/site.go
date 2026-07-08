@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -20,8 +21,9 @@ import (
 // ─── flags ───────────────────────────────────────────────────────────────────
 
 var (
-	saOAuth  bool
-	saAPIKey bool
+	saOAuth    bool
+	saAPIKey   bool
+	saPassword bool
 )
 
 // ─── ffc site ────────────────────────────────────────────────────────────────
@@ -77,6 +79,8 @@ var siteListCmd = &cobra.Command{
 				authMode = "OAuth 2.0"
 			} else if site.APIKey != "" {
 				authMode = "API Key"
+			} else if site.Username != "" {
+				authMode = "Username/Password"
 			}
 			dflt := ""
 			if name == cfg.DefaultSite {
@@ -107,8 +111,9 @@ var siteAddCmd = &cobra.Command{
 	Long: `Add a new Frappe site to ~/.config/ffc/config.yaml.
 
 Without flags, a menu lets you choose the authentication method.
-Use --oauth   to use the OAuth 2.0 browser flow (Authorization Code + PKCE).
-Use --apikey  to use the API key / secret flow.
+Use --oauth    to use the OAuth 2.0 browser flow (Authorization Code + PKCE).
+Use --apikey   to use the API key / secret flow.
+Use --password to use username/email + password (session cookie) login.
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath, err := resolveCfgPath()
@@ -119,16 +124,23 @@ Use --apikey  to use the API key / secret flow.
 			return fmt.Errorf("no config found at %s — run 'ffc init' first", cfgPath)
 		}
 
-		useOAuth := saOAuth
-		if !saOAuth && !saAPIKey {
-			var method string
+		method := ""
+		switch {
+		case saOAuth:
+			method = "oauth"
+		case saAPIKey:
+			method = "apikey"
+		case saPassword:
+			method = "password"
+		default:
 			menuErr := huh.NewForm(
 				huh.NewGroup(
 					huh.NewSelect[string]().
 						Title("How do you want to connect to the new site?").
 						Options(
-							huh.NewOption("OAuth 2.0  — browser login, no credentials stored", "oauth"),
-							huh.NewOption("API Key    — paste your API key and secret", "apikey"),
+							huh.NewOption("OAuth 2.0          — browser login, no credentials stored", "oauth"),
+							huh.NewOption("API Key            — paste your API key and secret", "apikey"),
+							huh.NewOption("Username & Password — email/username + password login", "password"),
 						).
 						Value(&method),
 				),
@@ -140,13 +152,16 @@ Use --apikey  to use the API key / secret flow.
 			if menuErr != nil {
 				return menuErr
 			}
-			useOAuth = method == "oauth"
 		}
 
-		if useOAuth {
-			return siteAddOAuthFlow(cfgPath)
+		switch method {
+		case "oauth":
+			return siteAddOAuthFlow(cmd.Context(), cfgPath)
+		case "password":
+			return siteAddPasswordFlow(cmd.Context(), cfgPath)
+		default:
+			return siteAddAPIKeyFlow(cfgPath)
 		}
-		return siteAddAPIKeyFlow(cfgPath)
 	},
 }
 
@@ -212,8 +227,29 @@ var siteRemoveCmd = &cobra.Command{
 		}
 
 		fmt.Fprintf(os.Stderr, "✓ Site %q removed.\n", name)
+
+		// If we removed the default site, reassign it (or clear it) so later
+		// commands don't fail with 'site not found' on a dangling default (L21).
 		if cfg.DefaultSite == name {
-			fmt.Fprintln(os.Stderr, "  It was your default site — run 'ffc site use <name>' to set a new one.")
+			var remaining []string
+			for n := range cfg.Sites {
+				if n != name {
+					remaining = append(remaining, n)
+				}
+			}
+			sort.Strings(remaining)
+			newDefault := ""
+			if len(remaining) > 0 {
+				newDefault = remaining[0]
+			}
+			if err := setDefaultSite(cfgPath, newDefault); err != nil {
+				return fmt.Errorf("updating default site: %w", err)
+			}
+			if newDefault != "" {
+				fmt.Fprintf(os.Stderr, "  It was your default site — default is now %q.\n", newDefault)
+			} else {
+				fmt.Fprintln(os.Stderr, "  It was your default site; no sites remain.")
+			}
 		}
 		return nil
 	},
@@ -309,7 +345,8 @@ func pickSite(cfg config.Config, title string) (string, error) {
 func init() {
 	siteAddCmd.Flags().BoolVar(&saOAuth, "oauth", false, "Use OAuth 2.0 browser flow")
 	siteAddCmd.Flags().BoolVar(&saAPIKey, "apikey", false, "Use API key / secret flow")
-	siteAddCmd.MarkFlagsMutuallyExclusive("oauth", "apikey")
+	siteAddCmd.Flags().BoolVar(&saPassword, "password", false, "Use username/email + password (session cookie) login")
+	siteAddCmd.MarkFlagsMutuallyExclusive("oauth", "apikey", "password")
 
 	siteCmd.AddCommand(siteListCmd, siteAddCmd, siteRemoveCmd, siteUseCmd)
 	rootCmd.AddCommand(siteCmd)
@@ -361,10 +398,22 @@ addLoop:
 					Title("API Key").
 					Description("From User → API Access → Generate Keys").
 					Placeholder("21393a7e100ae26").
+					Validate(func(s string) error {
+						if strings.TrimSpace(s) == "" {
+							return fmt.Errorf("API key cannot be empty")
+						}
+						return nil
+					}).
 					Value(&apiKey),
 				huh.NewInput().
 					Title("API Secret").
 					EchoMode(huh.EchoModePassword).
+					Validate(func(s string) error {
+						if strings.TrimSpace(s) == "" {
+							return fmt.Errorf("API secret cannot be empty")
+						}
+						return nil
+					}).
 					Value(&apiSecret),
 			),
 		)
@@ -452,9 +501,171 @@ addLoop:
 	return nil
 }
 
+// ─── site add: username/password flow ─────────────────────────────────────────
+
+func siteAddPasswordFlow(ctx context.Context, cfgPath string) error {
+	// Load existing config for site-name conflict detection.
+	raw, _ := os.ReadFile(cfgPath)
+	var existingCfg config.Config
+	_ = yaml.Unmarshal(raw, &existingCfg)
+
+	var siteName, siteURL, username, password string
+
+passwordAddLoop:
+	for {
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("Site name").
+					Description("A short identifier, e.g. staging or production").
+					Placeholder("staging").
+					Validate(func(s string) error {
+						s = strings.TrimSpace(s)
+						if s == "" {
+							return fmt.Errorf("site name cannot be empty")
+						}
+						if strings.ContainsAny(s, " \t") {
+							return fmt.Errorf("site name must not contain spaces")
+						}
+						return nil
+					}).
+					Value(&siteName),
+				huh.NewInput().
+					Title("Site URL").
+					Description("Base URL of your Frappe site (https:// added if omitted)").
+					Placeholder("mysite.example.com").
+					Validate(func(s string) error {
+						if strings.TrimSpace(s) == "" {
+							return fmt.Errorf("URL cannot be empty")
+						}
+						return nil
+					}).
+					Value(&siteURL),
+			),
+			huh.NewGroup(
+				huh.NewInput().
+					Title("Email or username").
+					Placeholder("user@example.com").
+					Validate(func(s string) error {
+						if strings.TrimSpace(s) == "" {
+							return fmt.Errorf("email/username cannot be empty")
+						}
+						return nil
+					}).
+					Value(&username),
+				huh.NewInput().
+					Title("Password").
+					EchoMode(huh.EchoModePassword).
+					Validate(func(s string) error {
+						if s == "" {
+							return fmt.Errorf("password cannot be empty")
+						}
+						return nil
+					}).
+					Value(&password),
+			),
+		)
+		if err := form.WithKeyMap(escQuitKeyMap()).Run(); err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				fmt.Fprintln(os.Stderr, "Aborted.")
+				return nil
+			}
+			return err
+		}
+
+		siteName = strings.TrimSpace(siteName)
+		siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
+		if !strings.HasPrefix(siteURL, "http://") && !strings.HasPrefix(siteURL, "https://") {
+			siteURL = "https://" + siteURL
+		}
+		username = strings.TrimSpace(username)
+
+		// Site already exists → confirm overwrite.
+		if _, exists := existingCfg.Sites[siteName]; exists {
+			var overwrite bool
+			overErr := huh.NewForm(
+				huh.NewGroup(
+					huh.NewConfirm().
+						Title(fmt.Sprintf("Site %q already exists.", siteName)).
+						Description("Update it with the new credentials?").
+						Value(&overwrite),
+				),
+			).WithKeyMap(escQuitKeyMap()).Run()
+			if errors.Is(overErr, huh.ErrUserAborted) || !overwrite {
+				fmt.Fprintln(os.Stderr, "Aborted.")
+				return nil
+			}
+			if overErr != nil {
+				return overErr
+			}
+		}
+
+		// Probe the credentials against Frappe before persisting anything.
+		// A Ctrl+C during the probe aborts rather than writing unverified creds (L35).
+		var loginErr error
+		if runErr := spinner.New().
+			Title("Verifying credentials...").
+			Action(func() {
+				_, loginErr = client.LoginPassword(ctx, siteURL, username, password)
+			}).
+			Run(); runErr != nil {
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			return nil
+		}
+		if loginErr != nil {
+			fmt.Fprintf(os.Stderr, "\n✗ %v\n\n", loginErr)
+			continue
+		}
+
+		var reviewChoice string
+		reviewErr := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Review configuration").
+					Description(fmt.Sprintf(
+						"Site name: %s\nSite URL:  %s\nUsername:  %s\nPassword:  (%d characters)",
+						siteName, siteURL, username, len(password),
+					)).
+					Options(
+						huh.NewOption("Confirm", "confirm"),
+						huh.NewOption("Edit", "edit"),
+						huh.NewOption("Cancel", "cancel"),
+					).
+					Value(&reviewChoice),
+			),
+		).WithKeyMap(escQuitKeyMap()).Run()
+		if errors.Is(reviewErr, huh.ErrUserAborted) || reviewChoice == "cancel" {
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			return nil
+		}
+		if reviewErr != nil {
+			return reviewErr
+		}
+		if reviewChoice == "edit" {
+			continue
+		}
+		break passwordAddLoop
+	}
+
+	var writeErr error
+	_ = spinner.New().
+		Title("Saving site...").
+		Action(func() {
+			writeErr = upsertSiteInConfig(cfgPath, siteName, buildSessionSiteYAML(siteURL, username, password))
+		}).
+		Run()
+	if writeErr != nil {
+		return fmt.Errorf("saving site: %w", writeErr)
+	}
+
+	fmt.Fprintf(os.Stderr, "\n✓ Site %q added to config.\n", siteName)
+	fmt.Fprintf(os.Stderr, "  Run: ffc --site %s list-docs --doctype \"Sales Invoice\"\n", siteName)
+	return nil
+}
+
 // ─── site add: OAuth flow ─────────────────────────────────────────────────────
 
-func siteAddOAuthFlow(cfgPath string) error {
+func siteAddOAuthFlow(ctx context.Context, cfgPath string) error {
 	// Load existing config for site-name conflict detection.
 	raw, _ := os.ReadFile(cfgPath)
 	var existingCfg config.Config
@@ -590,6 +801,7 @@ OAuth Client setup (one-time, on your Frappe site)
 		"scope":                 {"openid all"},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
+		"state":                 {cs.state}, // CSRF protection (M6)
 	}
 	authURL := strings.TrimRight(siteURL, "/") + "/api/method/frappe.integrations.oauth2.authorize?" + params.Encode()
 
@@ -603,7 +815,7 @@ OAuth Client setup (one-time, on your Frappe site)
 	fmt.Fprintf(os.Stderr, "Waiting for authorization (timeout: 5 minutes)...\n")
 
 	// ── Step 5: wait for callback ─────────────────────────────────────────────
-	code, err := cs.wait()
+	code, err := cs.wait(ctx)
 	if err != nil {
 		return fmt.Errorf("authorization: %w", err)
 	}

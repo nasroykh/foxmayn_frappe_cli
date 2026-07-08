@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,78 +72,72 @@ var AllDateFormats = []struct {
 var ActiveFormat NumberFormat = FormatFrench
 var ActiveDateFormat DateFormat = FormatISODate
 
-// FormatNumber formats f according to the active number format with 2 decimal places.
+// FormatNumber formats f according to the active number format. Integral values
+// are rendered without a decimal part; fractional values keep 2 decimals.
 func FormatNumber(f float64) string {
 	abs := math.Abs(f)
+
+	// int64(abs) is undefined once abs exceeds the int64 range (~9.2e18); fall
+	// back to a plain, ungrouped representation to avoid garbage output (L19).
+	if abs >= float64(math.MaxInt64) {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+
 	intPart := int64(abs)
 	fracInt := int(math.Round((abs - float64(intPart)) * 100))
+	if fracInt >= 100 { // carry, e.g. 1.999 → fracInt 100 (M13)
+		intPart++
+		fracInt -= 100
+	}
 
 	intStr := groupDigits(intPart, thousandsSep(ActiveFormat))
-	result := fmt.Sprintf("%s%s%02d", intStr, decimalSep(ActiveFormat), fracInt)
-	if f < 0 {
+	result := intStr
+	if fracInt != 0 { // only show decimals for non-integral values
+		result = fmt.Sprintf("%s%s%02d", intStr, decimalSep(ActiveFormat), fracInt)
+	}
+	if f < 0 && (intPart != 0 || fracInt != 0) { // avoid "-0"
 		result = "-" + result
 	}
 	return result
 }
 
-// FormatDate converts a Frappe date/datetime string into the active format.
-// If the input is not a recognized date string, it returns the input as-is.
-func FormatDate(s string) string {
-	if len(s) < 10 {
-		return s
-	}
-
-	var t time.Time
-	var hasTime bool
-	var found bool
-
-	// 1. Try common layouts returned by Frappe or already formatted
-	layouts := []string{
-		"2006-01-02 15:04:05",
-		"2006-01-02",
-		"02-01-2006",
-		"02/01/2006",
-		"01/02/2006",
-	}
-
-	for _, l := range layouts {
-		if pt, err := time.Parse(l, s); err == nil {
-			t = pt
-			hasTime = strings.Contains(l, "15:04:05")
-			found = true
-			break
-		}
-	}
-
-	// 2. Try prefix if it's a longer string (e.g., "2025-01-01T... ")
-	if !found {
-		if pt, err := time.Parse("2006-01-02", s[:10]); err == nil {
-			t = pt
-			found = true
-		}
-	}
-
-	if !found {
-		return s
-	}
-
-	var outLayout string
+// dateOutLayout returns the output layout for the active date format, appending
+// a time component when hasTime is set.
+func dateOutLayout(hasTime bool) string {
+	var l string
 	switch ActiveDateFormat {
 	case FormatEuroDate:
-		outLayout = "02-01-2006"
+		l = "02-01-2006"
 	case FormatEuroSlashDate:
-		outLayout = "02/01/2006"
+		l = "02/01/2006"
 	case FormatUSDate:
-		outLayout = "01/02/2006"
+		l = "01/02/2006"
 	default:
-		outLayout = "2006-01-02"
+		l = "2006-01-02"
 	}
-
 	if hasTime {
-		outLayout += " 15:04:05"
+		l += " 15:04:05"
 	}
+	return l
+}
 
-	return t.Format(outLayout)
+// FormatDate converts a Frappe date/datetime string into the active format.
+// Frappe always stores dates in ISO form, so only exact ISO matches are
+// reformatted — the function never guesses DD/MM vs MM/DD and never truncates a
+// longer string down to a date prefix (M17). Anything else is returned as-is.
+func FormatDate(s string) string {
+	for _, layout := range []string{
+		"2006-01-02 15:04:05.000000",
+		"2006-01-02 15:04:05",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.Format(dateOutLayout(true))
+		}
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t.Format(dateOutLayout(false))
+	}
+	return s
 }
 
 func thousandsSep(nf NumberFormat) string {
@@ -204,11 +199,21 @@ type SiteConfig struct {
 	AccessToken       string `mapstructure:"access_token" yaml:"access_token,omitempty"`
 	RefreshToken      string `mapstructure:"refresh_token" yaml:"refresh_token,omitempty"`
 	TokenExpiry       int64  `mapstructure:"token_expiry" yaml:"token_expiry,omitempty"`
+
+	// Username/password session auth (POST /api/method/login, cookie-based).
+	Username string `mapstructure:"username" yaml:"username,omitempty"`
+	Password string `mapstructure:"password" yaml:"password,omitempty"`
 }
 
 // IsOAuth reports whether this site uses OAuth Bearer tokens for authentication.
 func (s *SiteConfig) IsOAuth() bool {
 	return s.AccessToken != ""
+}
+
+// IsSessionAuth reports whether this site uses username/password session-cookie
+// authentication (POST /api/method/login on every client construction).
+func (s *SiteConfig) IsSessionAuth() bool {
+	return s.Username != "" && s.Password != ""
 }
 
 // IsTokenExpired reports whether the OAuth access token has expired
@@ -249,9 +254,9 @@ func Load(siteFlag, configPath string) (*SiteConfig, error) {
 		v.AddConfigPath(cfgDir)
 	}
 
-	// Env var overrides (useful for CI pipelines).
-	v.SetEnvPrefix("FFC")
-	v.AutomaticEnv()
+	// Env var overrides for the documented FFC_URL/FFC_API_KEY/FFC_API_SECRET
+	// are applied explicitly below; viper's AutomaticEnv does not resolve the
+	// nested sites.<name>.* keys those would need, so it is not wired here (I3).
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
@@ -297,8 +302,14 @@ func Load(siteFlag, configPath string) (*SiteConfig, error) {
 	}
 
 	// Allow env vars to override individual site credentials.
+	// The URL override is skipped for OAuth/session sites: redirecting a stored
+	// Bearer token or account password to a different host would leak it (L6).
 	if url := os.Getenv("FFC_URL"); url != "" {
-		site.URL = url
+		if site.IsOAuth() || site.IsSessionAuth() {
+			fmt.Fprintln(os.Stderr, "warning: FFC_URL ignored for this site (OAuth/session auth is bound to its configured URL)")
+		} else {
+			site.URL = url
+		}
 	}
 	if key := os.Getenv("FFC_API_KEY"); key != "" {
 		site.APIKey = key

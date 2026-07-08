@@ -1,14 +1,15 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"os"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -40,26 +41,28 @@ Examples:
 		if !ddYes {
 			var confirmed bool
 			prompt := fmt.Sprintf("Delete %s %q? This cannot be undone.", ddDoctype, ddName)
-			if err := huh.NewConfirm().
-				Title(prompt).
-				Value(&confirmed).
-				Run(); err != nil {
+			err := huh.NewForm(huh.NewGroup(
+				huh.NewConfirm().Title(prompt).Value(&confirmed),
+			)).WithKeyMap(escQuitKeyMap()).Run() // Escape/Ctrl+C aborts (L8)
+			// Distinguish a genuine prompt failure from a user cancel (L4).
+			if err != nil && !errors.Is(err, huh.ErrUserAborted) {
 				return err
 			}
-			if !confirmed {
-				output.PrintError("Deletion cancelled.")
+			if err != nil || !confirmed {
+				// Neutral cancel message, not a red ✗ error (L7).
+				fmt.Fprintln(os.Stderr, "Deletion cancelled.")
 				return nil
 			}
 		}
 
 		var apiErr error
-		c := client.New(cfg)
-		_ = spinner.New().
-			Title(fmt.Sprintf("Deleting %s %s…", ddDoctype, ddName)).
-			Action(func() {
-				apiErr = c.DeleteDoc(ddDoctype, ddName)
-			}).
-			Run()
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		_ = runSpinner(fmt.Sprintf("Deleting %s %s…", ddDoctype, ddName), func() {
+			apiErr = c.DeleteDoc(cmd.Context(), ddDoctype, ddName)
+		})
 		if apiErr != nil {
 			return apiErr
 		}

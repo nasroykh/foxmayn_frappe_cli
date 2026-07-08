@@ -3,13 +3,13 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -47,24 +47,29 @@ Examples:
 
 		var result map[string]interface{}
 		var apiErr error
-		c := client.New(cfg)
-		_ = spinner.New().
-			Title(fmt.Sprintf("Running report %q…", rrName)).
-			Action(func() {
-				result, apiErr = c.RunReport(rrName, filters)
-			}).
-			Run()
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		_ = runSpinner(fmt.Sprintf("Running report %q…", rrName), func() {
+			result, apiErr = c.RunReport(cmd.Context(), rrName, filters)
+		})
 		if apiErr != nil {
 			return apiErr
 		}
 
 		if jsonOutput {
 			out := map[string]interface{}(result)
+			// Honour --limit in JSON mode too (previously ignored, L11).
+			if rrLimit > 0 {
+				if rows, ok := out["result"].([]interface{}); ok && len(rows) > rrLimit {
+					out["result"] = rows[:rrLimit]
+				}
+			}
 			if rrKeys != "" {
 				out = filterSchemaKeys(out, strings.Split(rrKeys, ","))
 			}
-			output.PrintJSON(out)
-			return nil
+			return output.PrintJSON(out)
 		}
 
 		// Extract columns and rows for table rendering.
@@ -77,7 +82,13 @@ Examples:
 		for _, rc := range rawCols {
 			switch col := rc.(type) {
 			case string:
-				colFields = append(colFields, col)
+				// Legacy "label:fieldtype:width" columns — use the first segment
+				// as the field name/header rather than the whole string (L11).
+				name := col
+				if i := strings.IndexByte(col, ':'); i >= 0 {
+					name = col[:i]
+				}
+				colFields = append(colFields, name)
 			case map[string]interface{}:
 				if fn, ok := col["fieldname"].(string); ok && fn != "" {
 					colFields = append(colFields, fn)
@@ -113,7 +124,8 @@ Examples:
 		}
 
 		if len(rows) == 0 {
-			output.PrintError(fmt.Sprintf("No results for report %q.", rrName))
+			// Empty is a successful outcome, not an error — neutral message (L7).
+			fmt.Fprintf(os.Stderr, "No results for report %q.\n", rrName)
 			return nil
 		}
 

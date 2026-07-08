@@ -106,13 +106,15 @@ func PrintTable(rows []map[string]interface{}, fields []string) {
 	fmt.Fprintln(os.Stderr, dimStyle.Render(summary))
 }
 
-// PrintJSON pretty-prints data as indented JSON to stdout.
-func PrintJSON(data interface{}) {
+// PrintJSON pretty-prints data as indented JSON to stdout. It returns the
+// encode error (rather than swallowing it) so callers can exit non-zero (L16).
+func PrintJSON(data interface{}) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(data); err != nil {
-		fmt.Fprintln(os.Stderr, errorStyle.Render("✗ error encoding JSON: "+err.Error()))
+		return fmt.Errorf("encoding JSON: %w", err)
 	}
+	return nil
 }
 
 // PrintDocTable renders a single document as a two-column Field | Value table.

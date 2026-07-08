@@ -332,7 +332,7 @@ foxmayn_frappe_cli/
 │   │   ├── update.go         # update (self-update)
 │   │   ├── update_check.go   # background update check + PersistentPreRunE
 │   │   ├── mcp.go            # mcp subcommand (stdio/HTTP/detach modes)
-│   │   ├── mcp_tools.go      # 12 MCP tool definitions + handlers
+│   │   ├── mcp_tools.go      # 15 MCP tool definitions + handlers
 │   │   ├── mcp_daemon.go     # detach logic, status/stop subcommands, state file
 │   │   ├── mcp_detach_unix.go    # setSysProcAttr (Setsid, Linux/macOS)
 │   │   └── mcp_detach_windows.go # setSysProcAttr no-op (Windows)

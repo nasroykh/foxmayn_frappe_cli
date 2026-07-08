@@ -57,7 +57,7 @@ func runUpdateCheck() {
 
 	// Notify if the cached latest is newer than the running binary.
 	cur := version.Version
-	if cur != "dev" && cur != "" && newerThan(cur, state.Latest) {
+	if !isDevBuild(cur) && newerThan(cur, state.Latest) { // L29
 		fmt.Fprintf(os.Stderr, "Update available: %s → %s  (run: ffc update)\n", cur, state.Latest)
 	}
 
@@ -79,7 +79,7 @@ func startBackgroundFetch(path string) {
 // result to path. Always called inside a goroutine via startBackgroundFetch.
 func fetchAndStoreLatestRelease(path string) {
 	var release githubRelease
-	resp, err := resty.New().R().
+	resp, err := resty.New().SetTimeout(30*time.Second).R().
 		SetResult(&release).
 		SetHeader("Accept", "application/vnd.github+json").
 		Get(githubReleasesAPI)
@@ -96,7 +96,7 @@ func fetchAndStoreLatestRelease(path string) {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	_ = os.WriteFile(path, out, 0644)
+	_ = atomicWriteFile(path, out, 0o644) // L15: atomic write avoids a truncated state file
 }
 
 // waitForUpdateCheck blocks until any in-flight background fetch completes

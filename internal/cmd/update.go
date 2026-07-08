@@ -5,13 +5,18 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
@@ -20,6 +25,17 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 	"github.com/spf13/cobra"
 )
+
+// releaseVersionRE matches a clean release version (vX.Y.Z or X.Y.Z).
+var releaseVersionRE = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
+
+// isDevBuild reports whether v is anything other than a clean release tag. The
+// Makefile injects `git describe --tags --always --dirty` for local builds
+// (e.g. "abc1234", "v0.1.0-3-gdeadbee", "v0.1.0-dirty"), which must not be
+// nagged about updates or treated as outdated (L29).
+func isDevBuild(v string) bool {
+	return !releaseVersionRE.MatchString(strings.TrimSpace(v))
+}
 
 var (
 	upCheckOnly bool
@@ -60,7 +76,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	_ = spinner.New().
 		Title("Checking for updates…").
 		Action(func() {
-			resp, err := resty.New().R().
+			resp, err := resty.New().SetTimeout(30*time.Second).R().
 				SetResult(&release).
 				SetHeader("Accept", "application/vnd.github+json").
 				Get(githubReleasesAPI)
@@ -82,7 +98,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("no releases found on GitHub")
 	}
 
-	isDev := current == "dev" || current == ""
+	isDev := isDevBuild(current)
 	upToDate := !isDev && !newerThan(current, latest)
 
 	if upToDate {
@@ -100,13 +116,15 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	// Find the matching release asset for this OS/arch.
+	// Find the matching release asset for this OS/arch, plus the checksums file.
 	target := releaseAssetName(latest)
-	var downloadURL string
+	var downloadURL, checksumsURL string
 	for _, a := range release.Assets {
-		if a.Name == target {
+		switch a.Name {
+		case target:
 			downloadURL = a.BrowserDownloadURL
-			break
+		case "checksums.txt":
+			checksumsURL = a.BrowserDownloadURL
 		}
 	}
 	if downloadURL == "" {
@@ -123,6 +141,10 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 					Value(&confirmed),
 			),
 		).WithKeyMap(escQuitKeyMap()).Run()
+		// A real prompt error (e.g. no TTY) is distinct from a user cancel (L4).
+		if err != nil && !errors.Is(err, huh.ErrUserAborted) {
+			return err
+		}
 		if err != nil || !confirmed {
 			fmt.Fprintln(os.Stderr, "Update cancelled.")
 			return nil
@@ -134,7 +156,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	_ = spinner.New().
 		Title(fmt.Sprintf("Downloading ffc %s…", latest)).
 		Action(func() {
-			installErr = downloadAndInstall(downloadURL)
+			installErr = downloadAndInstall(downloadURL, checksumsURL, target)
 		}).
 		Run()
 	if installErr != nil {
@@ -145,14 +167,21 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-// downloadAndInstall fetches the release archive and replaces the running binary.
-func downloadAndInstall(downloadURL string) error {
-	resp, err := resty.New().R().Get(downloadURL)
+// downloadAndInstall fetches the release archive, verifies its SHA-256 against
+// the release's checksums.txt, and replaces the running binary.
+func downloadAndInstall(downloadURL, checksumsURL, assetName string) error {
+	resp, err := resty.New().SetTimeout(5 * time.Minute).R().Get(downloadURL)
 	if err != nil {
 		return fmt.Errorf("downloading: %w", err)
 	}
 	if resp.StatusCode() != 200 {
 		return fmt.Errorf("download failed: HTTP %d", resp.StatusCode())
+	}
+
+	// Verify the download against the published checksum before trusting it —
+	// TLS alone doesn't protect against a compromised release (H1).
+	if err := verifyChecksum(resp.Body(), checksumsURL, assetName); err != nil {
+		return err
 	}
 
 	binName := runningBinaryName()
@@ -167,6 +196,35 @@ func downloadAndInstall(downloadURL string) error {
 	}
 
 	return replaceBinary(binData)
+}
+
+// verifyChecksum computes the SHA-256 of archive and compares it against the
+// entry for assetName in the release's checksums.txt (H1).
+func verifyChecksum(archive []byte, checksumsURL, assetName string) error {
+	if checksumsURL == "" {
+		return fmt.Errorf("release has no checksums.txt — refusing to install an unverified binary")
+	}
+	resp, err := resty.New().SetTimeout(30 * time.Second).R().Get(checksumsURL)
+	if err != nil {
+		return fmt.Errorf("fetching checksums: %w", err)
+	}
+	if resp.StatusCode() != 200 {
+		return fmt.Errorf("fetching checksums: HTTP %d", resp.StatusCode())
+	}
+
+	sum := sha256.Sum256(archive)
+	got := hex.EncodeToString(sum[:])
+	for _, line := range strings.Split(string(resp.Body()), "\n") {
+		// checksums.txt lines are "<hex-sha256>  <filename>".
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] == assetName {
+			if !strings.EqualFold(fields[0], got) {
+				return fmt.Errorf("checksum mismatch for %s:\n  expected %s\n  got      %s", assetName, fields[0], got)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("no checksum entry for %s in checksums.txt", assetName)
 }
 
 // replaceBinary writes newData to a temp file then atomically swaps it with
@@ -297,12 +355,11 @@ func extractFromZip(data []byte, name string) ([]byte, error) {
 // newerThan reports whether latest is a higher semver than current.
 // Both may or may not carry a leading "v".
 func newerThan(current, latest string) bool {
-	cur := parseSemver(strings.TrimPrefix(current, "v"))
-	lat := parseSemver(strings.TrimPrefix(latest, "v"))
-	for i := range lat {
-		if i >= len(cur) {
-			return lat[i] > 0
-		}
+	curBase, curPre := splitPreRelease(strings.TrimPrefix(current, "v"))
+	latBase, latPre := splitPreRelease(strings.TrimPrefix(latest, "v"))
+	cur := parseSemver(curBase)
+	lat := parseSemver(latBase)
+	for i := 0; i < 3; i++ {
 		if lat[i] > cur[i] {
 			return true
 		}
@@ -310,7 +367,18 @@ func newerThan(current, latest string) bool {
 			return false
 		}
 	}
-	return false
+	// Same numeric version: a final release is newer than a pre-release, so
+	// v1.6.0 supersedes v1.6.0-rc1 (L30). We never offer a pre-release as an
+	// "update" over a final release.
+	return curPre != "" && latPre == ""
+}
+
+// splitPreRelease separates "1.6.0-rc1" into ("1.6.0", "rc1").
+func splitPreRelease(s string) (base, pre string) {
+	if i := strings.IndexAny(s, "-+"); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
 }
 
 func parseSemver(s string) []int {

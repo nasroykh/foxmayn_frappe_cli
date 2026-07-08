@@ -9,7 +9,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +18,7 @@ var (
 	ldFields  string
 	ldFilters string
 	ldLimit   int
+	ldStart   int
 	ldOrderBy string
 )
 
@@ -49,35 +49,41 @@ Examples:
 			}
 		}
 
+		// --limit 0 means "no limit" (fetch all); the default is 20, so this only
+		// triggers when the user explicitly passes --limit 0 (M12).
+		limit := ldLimit
+		if limit == 0 {
+			limit = -1
+		}
+
 		// Build list options
 		opts := client.ListOptions{
 			Fields:  fields,
 			Filters: ldFilters,
-			Limit:   ldLimit,
+			Limit:   limit,
+			Start:   ldStart,
 			OrderBy: ldOrderBy,
 		}
 
 		// Call the API with a spinner for feedback.
 		var rows []map[string]interface{}
 		var apiErr error
-		c := client.New(cfg)
-		_ = spinner.New().
-			Title(fmt.Sprintf("Fetching %s…", ldDoctype)).
-			Action(func() {
-				rows, apiErr = c.GetList(ldDoctype, opts)
-			}).
-			Run()
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		_ = runSpinner(fmt.Sprintf("Fetching %s…", ldDoctype), func() {
+			rows, apiErr = c.GetList(cmd.Context(), ldDoctype, opts)
+		})
 		if apiErr != nil {
 			return apiErr
 		}
 
 		// Output
 		if jsonOutput {
-			output.PrintJSON(rows)
-		} else {
-			output.PrintTable(rows, fields)
+			return output.PrintJSON(rows)
 		}
-
+		output.PrintTable(rows, fields)
 		return nil
 	},
 }
@@ -86,7 +92,8 @@ func init() {
 	listDocsCmd.Flags().StringVarP(&ldDoctype, "doctype", "d", "", "Frappe DocType to list (required)")
 	listDocsCmd.Flags().StringVarP(&ldFields, "fields", "f", "", `Fields to fetch. JSON array or comma-separated: '["name","modified"]' or name,modified`)
 	listDocsCmd.Flags().StringVar(&ldFilters, "filters", "", `Filter expression as JSON: '{"status":"Open"}' or '[["status","=","Open"]]'`)
-	listDocsCmd.Flags().IntVarP(&ldLimit, "limit", "l", 20, "Maximum number of records to return")
+	listDocsCmd.Flags().IntVarP(&ldLimit, "limit", "l", 20, "Maximum records to return (0 = no limit)")
+	listDocsCmd.Flags().IntVar(&ldStart, "start", 0, "Offset into the result set (for pagination)")
 	listDocsCmd.Flags().StringVarP(&ldOrderBy, "order-by", "o", "", `Order results by field, e.g. "modified desc"`)
 	_ = listDocsCmd.MarkFlagRequired("doctype")
 

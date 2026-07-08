@@ -9,7 +9,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -64,25 +63,40 @@ Examples:
 		}
 
 		// Validate all items have a name before starting any API calls.
+		// Accept numeric names (integer-named DocTypes), not only strings (L27).
+		names := make([]string, len(items))
 		for i, item := range items {
-			if _, ok := item["name"].(string); !ok || item["name"] == "" {
+			n, ok := docName(item["name"])
+			if !ok {
 				return fmt.Errorf("item %d is missing a \"name\" field", i+1)
 			}
+			names[i] = n
 		}
 
-		c := client.New(cfg)
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
 		type itemResult struct {
-			name string
-			err  error
+			name    string
+			err     error
+			skipped bool
 		}
 		results := make([]itemResult, len(items))
 
+		interrupted := false
 		for i, item := range items {
-			name := item["name"].(string)
+			name := names[i]
 			results[i].name = name
 
+			if interrupted || cmd.Context().Err() != nil {
+				results[i].skipped = true
+				interrupted = true
+				continue
+			}
+
 			// Remove "name" from the payload — Frappe expects it only in the URL.
-			payload := make(map[string]interface{}, len(item)-1)
+			payload := make(map[string]interface{}, len(item))
 			for k, v := range item {
 				if k != "name" {
 					payload[k] = v
@@ -90,26 +104,33 @@ Examples:
 			}
 
 			var apiErr error
-			_ = spinner.New().
-				Title(fmt.Sprintf("Updating %s %s (%d/%d)…", buDoctype, name, i+1, len(items))).
-				Action(func() {
-					_, apiErr = c.UpdateDoc(buDoctype, name, payload)
-				}).
-				Run()
+			runErr := runSpinner(fmt.Sprintf("Updating %s %s (%d/%d)…", buDoctype, name, i+1, len(items)), func() {
+				_, apiErr = c.UpdateDoc(cmd.Context(), buDoctype, name, payload)
+			})
+			if runErr != nil { // interrupted (M18)
+				results[i].skipped = true
+				interrupted = true
+				continue
+			}
 			if apiErr != nil {
 				results[i].err = apiErr
 			}
 		}
 
-		succeeded, failed := 0, 0
+		succeeded, failed, skipped := 0, 0, 0
 		rows := make([]map[string]interface{}, len(results))
 		for i, r := range results {
 			row := map[string]interface{}{"#": i + 1, "name": r.name}
-			if r.err != nil {
+			switch {
+			case r.skipped:
+				row["status"] = "skipped"
+				row["detail"] = "interrupted"
+				skipped++
+			case r.err != nil:
 				row["status"] = "error"
 				row["detail"] = r.err.Error()
 				failed++
-			} else {
+			default:
 				row["status"] = "updated"
 				row["detail"] = ""
 				succeeded++
@@ -118,22 +139,25 @@ Examples:
 		}
 
 		if jsonOutput {
-			output.PrintJSON(map[string]interface{}{
+			if err := output.PrintJSON(map[string]interface{}{
 				"updated": succeeded,
 				"failed":  failed,
+				"skipped": skipped,
 				"results": rows,
-			})
+			}); err != nil {
+				return err
+			}
 		} else {
 			output.PrintTable(rows, []string{"#", "name", "status", "detail"})
-			if failed == 0 {
+			if failed == 0 && skipped == 0 {
 				output.PrintSuccess(fmt.Sprintf("All %d %s documents updated.", succeeded, buDoctype))
 			} else {
-				output.PrintError(fmt.Sprintf("%d updated, %d failed.", succeeded, failed))
+				output.PrintError(fmt.Sprintf("%d updated, %d failed, %d skipped.", succeeded, failed, skipped))
 			}
 		}
 
-		if failed > 0 {
-			return fmt.Errorf("%d of %d items failed", failed, len(items))
+		if failed > 0 || skipped > 0 {
+			return fmt.Errorf("%d of %d items did not succeed (%d failed, %d skipped)", failed+skipped, len(items), failed, skipped)
 		}
 		return nil
 	},
@@ -142,9 +166,10 @@ Examples:
 func init() {
 	bulkUpdateCmd.Flags().StringVarP(&buDoctype, "doctype", "d", "", "Frappe DocType (required)")
 	bulkUpdateCmd.Flags().StringVar(&buData, "data", "", `JSON array of objects; each must include "name" plus fields to update`)
-	bulkUpdateCmd.Flags().StringVarP(&buFile, "file", "f", "", "Path to a JSON file containing an array of objects")
+	bulkUpdateCmd.Flags().StringVar(&buFile, "file", "", "Path to a JSON file containing an array of objects")
 
 	_ = bulkUpdateCmd.MarkFlagRequired("doctype")
+	bulkUpdateCmd.MarkFlagsMutuallyExclusive("data", "file") // L9
 
 	rootCmd.AddCommand(bulkUpdateCmd)
 }

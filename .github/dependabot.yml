@@ -1,0 +1,13 @@
+# Keeps GitHub Actions and Go module dependencies patched so pinned versions
+# don't drift into known-vulnerable releases (M1). Pair with SHA-pinning the
+# action refs in release.yml for defence against a compromised action tag.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"

@@ -60,6 +60,9 @@ Examples:
 		if err := yaml.Unmarshal(raw, &root); err != nil {
 			return fmt.Errorf("parsing config: %w", err)
 		}
+		if len(root.Content) == 0 {
+			return fmt.Errorf("config at %s is empty — run 'ffc init' to create one", cfgPath) // L23
+		}
 
 		var vConfig config.Config
 		if err := yaml.Unmarshal(raw, &vConfig); err != nil {
@@ -89,6 +92,11 @@ Examples:
 				),
 			).WithKeyMap(escQuitKeyMap()).Run()
 
+			// Surface a genuine render/terminal error; only Esc/Ctrl+C is a
+			// clean cancel (L4).
+			if err != nil && !errors.Is(err, huh.ErrUserAborted) {
+				return err
+			}
 			if err != nil || action == "cancel" {
 				return nil
 			}
@@ -250,15 +258,14 @@ Examples:
 
 		switch {
 		case jsonOutput:
-			ordered := make([]map[string]interface{}, 0, len(fields))
-			_ = ordered
-			// Build ordered map for JSON output
 			jsonData := map[string]string{
 				"default_site":  data["default_site"].(string),
 				"number_format": data["number_format"].(string),
 				"date_format":   data["date_format"].(string),
 			}
-			output.PrintJSON(jsonData)
+			if err := output.PrintJSON(jsonData); err != nil {
+				return err
+			}
 
 		case cgYAML:
 			fmt.Printf("default_site: %s\nnumber_format: %s\ndate_format: %s\n",
@@ -327,6 +334,9 @@ Examples:
 		if err := yaml.Unmarshal(raw, &root); err != nil {
 			return fmt.Errorf("parsing config: %w", err)
 		}
+		if len(root.Content) == 0 {
+			return fmt.Errorf("config at %s is empty — run 'ffc init' to create one", cfgPath) // L23
+		}
 
 		var vConfig config.Config
 		if err := yaml.Unmarshal(raw, &vConfig); err != nil {
@@ -375,12 +385,17 @@ func resolveCfgPath() (string, error) {
 // saveConfig marshals the YAML node and saves it to disk, preserving any
 // leading comment header from the original file.
 func saveConfig(path string, original []byte, root *yaml.Node) error {
+	if len(root.Content) == 0 {
+		// Empty / comment-only config: nothing to marshal — guard the index (L23).
+		return fmt.Errorf("config at %s is empty — run 'ffc init' to create one", path)
+	}
 	out, err := yaml.Marshal(root.Content[0])
 	if err != nil {
 		return fmt.Errorf("serialising config: %w", err)
 	}
 	final := preserveHeader(original, out)
-	if err := os.WriteFile(path, []byte(final), 0o644); err != nil {
+	// 0600 (the config holds credentials) + atomic write (L2, M9).
+	if err := atomicWriteFile(path, []byte(final), 0o600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 	output.PrintSuccess(fmt.Sprintf("Configuration saved to %s", path))
@@ -455,6 +470,12 @@ func updateYAMLValue(root *yaml.Node, key, value string) {
 func preserveHeader(original, marshaled []byte) string {
 	rawStr := string(original)
 	if !strings.HasPrefix(rawStr, "#") {
+		return string(marshaled)
+	}
+	// If go-yaml already re-emitted a leading comment (it can bind the header to
+	// a node), don't prepend ours again — that grows the header on every save
+	// (L24).
+	if strings.HasPrefix(strings.TrimLeft(string(marshaled), " \t"), "#") {
 		return string(marshaled)
 	}
 	lines := strings.Split(rawStr, "\n")

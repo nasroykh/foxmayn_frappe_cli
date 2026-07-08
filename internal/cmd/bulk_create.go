@@ -9,7 +9,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -62,38 +61,57 @@ Examples:
 			return fmt.Errorf("no items to create")
 		}
 
-		c := client.New(cfg)
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
 		type itemResult struct {
-			name string
-			err  error
+			name    string
+			err     error
+			skipped bool
 		}
 		results := make([]itemResult, len(items))
 
+		interrupted := false
 		for i, item := range items {
+			// Stop launching new work once the user interrupts (Ctrl+C) — do not
+			// keep creating documents after an abort (M18).
+			if interrupted || cmd.Context().Err() != nil {
+				results[i].skipped = true
+				interrupted = true
+				continue
+			}
 			var doc map[string]interface{}
 			var apiErr error
-			_ = spinner.New().
-				Title(fmt.Sprintf("Creating %s (%d/%d)…", bcDoctype, i+1, len(items))).
-				Action(func() {
-					doc, apiErr = c.CreateDoc(bcDoctype, item)
-				}).
-				Run()
+			runErr := runSpinner(fmt.Sprintf("Creating %s (%d/%d)…", bcDoctype, i+1, len(items)), func() {
+				doc, apiErr = c.CreateDoc(cmd.Context(), bcDoctype, item)
+			})
+			if runErr != nil { // spinner interrupted
+				results[i].skipped = true
+				interrupted = true
+				continue
+			}
 			if apiErr != nil {
 				results[i].err = apiErr
-			} else if n, ok := doc["name"].(string); ok {
+			} else if n, ok := docName(doc["name"]); ok { // accept integer names (L27)
 				results[i].name = n
 			}
 		}
 
-		succeeded, failed := 0, 0
+		succeeded, failed, skipped := 0, 0, 0
 		rows := make([]map[string]interface{}, len(results))
 		for i, r := range results {
 			row := map[string]interface{}{"#": i + 1}
-			if r.err != nil {
+			switch {
+			case r.skipped:
+				row["status"] = "skipped"
+				row["detail"] = "interrupted"
+				skipped++
+			case r.err != nil:
 				row["status"] = "error"
 				row["detail"] = r.err.Error()
 				failed++
-			} else {
+			default:
 				row["status"] = "created"
 				row["detail"] = r.name
 				succeeded++
@@ -102,22 +120,25 @@ Examples:
 		}
 
 		if jsonOutput {
-			output.PrintJSON(map[string]interface{}{
+			if err := output.PrintJSON(map[string]interface{}{
 				"created": succeeded,
 				"failed":  failed,
+				"skipped": skipped,
 				"results": rows,
-			})
+			}); err != nil {
+				return err
+			}
 		} else {
 			output.PrintTable(rows, []string{"#", "status", "detail"})
-			if failed == 0 {
+			if failed == 0 && skipped == 0 {
 				output.PrintSuccess(fmt.Sprintf("All %d %s documents created.", succeeded, bcDoctype))
 			} else {
-				output.PrintError(fmt.Sprintf("%d created, %d failed.", succeeded, failed))
+				output.PrintError(fmt.Sprintf("%d created, %d failed, %d skipped.", succeeded, failed, skipped))
 			}
 		}
 
-		if failed > 0 {
-			return fmt.Errorf("%d of %d items failed", failed, len(items))
+		if failed > 0 || skipped > 0 {
+			return fmt.Errorf("%d of %d items did not succeed (%d failed, %d skipped)", failed+skipped, len(items), failed, skipped)
 		}
 		return nil
 	},
@@ -126,9 +147,11 @@ Examples:
 func init() {
 	bulkCreateCmd.Flags().StringVarP(&bcDoctype, "doctype", "d", "", "Frappe DocType (required)")
 	bulkCreateCmd.Flags().StringVar(&bcData, "data", "", "JSON array of field-value objects to create")
-	bulkCreateCmd.Flags().StringVarP(&bcFile, "file", "f", "", "Path to a JSON file containing an array of objects")
+	bulkCreateCmd.Flags().StringVar(&bcFile, "file", "", "Path to a JSON file containing an array of objects")
 
 	_ = bulkCreateCmd.MarkFlagRequired("doctype")
+	// --data and --file are alternatives, not both (L9).
+	bulkCreateCmd.MarkFlagsMutuallyExclusive("data", "file")
 
 	rootCmd.AddCommand(bulkCreateCmd)
 }

@@ -1,15 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -48,24 +49,29 @@ Examples:
 		}
 
 		var doc map[string]interface{}
-		var apiErr error
-		c := client.New(cfg)
-		_ = spinner.New().
-			Title(fmt.Sprintf("Fetching schema for %s…", gsDoctype)).
-			Action(func() {
-				doc, apiErr = c.GetDoc("DocType", gsDoctype)
-				if apiErr != nil {
-					return
-				}
-				apiErr = mergeCustomFields(c, gsDoctype, doc)
-				if apiErr != nil {
-					return
-				}
-				apiErr = applyPropertySetterOverrides(c, gsDoctype, doc)
-			}).
-			Run()
+		var apiErr, cfWarn, psWarn error
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		_ = runSpinner(fmt.Sprintf("Fetching schema for %s…", gsDoctype), func() {
+			doc, apiErr = c.GetDoc(cmd.Context(), "DocType", gsDoctype)
+			if apiErr != nil {
+				return
+			}
+			// Custom Field / Property Setter reads are best-effort: a 403 or
+			// error on them should degrade to the base schema, not abort (L12).
+			cfWarn = mergeCustomFields(cmd.Context(), c, gsDoctype, doc)
+			psWarn = applyPropertySetterOverrides(cmd.Context(), c, gsDoctype, doc)
+		})
 		if apiErr != nil {
 			return apiErr
+		}
+		if cfWarn != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not merge custom fields (%v) — showing base schema only\n", cfWarn)
+		}
+		if psWarn != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not apply Property Setter overrides (%v)\n", psWarn)
 		}
 
 		if jsonOutput {
@@ -76,14 +82,13 @@ Examples:
 			if gsKeys != "" {
 				result = filterSchemaKeys(result, strings.Split(gsKeys, ","))
 			}
-			output.PrintJSON(result)
-			return nil
+			return output.PrintJSON(result)
 		}
 
 		// Table output: extract fields and render a schema-specific table.
 		rawFields, ok := doc["fields"].([]interface{})
 		if !ok || len(rawFields) == 0 {
-			output.PrintError("No fields found in schema.")
+			fmt.Fprintln(os.Stderr, "No fields found in schema.")
 			return nil
 		}
 
@@ -252,13 +257,13 @@ func filterSchemaKeys(doc map[string]interface{}, keys []string) map[string]inte
 // are appended at the end. This is necessary because GetDoc("DocType", ...) only
 // returns the standard fields defined in the DocType itself — custom fields added
 // via Customize Form are stored separately in the Custom Field doctype.
-func mergeCustomFields(fc *client.FrappeClient, doctype string, doc map[string]interface{}) error {
+func mergeCustomFields(ctx context.Context, fc *client.FrappeClient, doctype string, doc map[string]interface{}) error {
 	filters, _ := json.Marshal(map[string]interface{}{"dt": doctype})
-	rows, err := fc.GetList("Custom Field", client.ListOptions{
+	rows, err := fc.GetList(ctx, "Custom Field", client.ListOptions{
 		Fields:  []string{"*"},
 		Filters: string(filters),
 		OrderBy: "idx asc",
-		Limit:   500,
+		Limit:   -1, // no limit — a DocType can have many custom fields (L12)
 	})
 	if err != nil || len(rows) == 0 {
 		return err
@@ -266,41 +271,56 @@ func mergeCustomFields(fc *client.FrappeClient, doctype string, doc map[string]i
 
 	rawFields, _ := doc["fields"].([]interface{})
 
-	// Index existing fieldnames so we know where insert_after targets land.
-	existingNames := make(map[string]bool, len(rawFields))
-	for _, rf := range rawFields {
-		if f, ok := rf.(map[string]interface{}); ok {
-			if fn, ok := f["fieldname"].(string); ok {
-				existingNames[fn] = true
-			}
-		}
-	}
-
-	// Group custom fields by their insert_after target.
-	afterMap := make(map[string][]interface{})
-	var orphans []interface{}
+	// Group custom fields by their immediate insert_after target, preserving idx
+	// order for siblings.
+	afterMap := make(map[string][]map[string]interface{})
 	for _, row := range rows {
 		insertAfter, _ := row["insert_after"].(string)
-		if existingNames[insertAfter] {
-			afterMap[insertAfter] = append(afterMap[insertAfter], row)
-		} else {
-			orphans = append(orphans, row)
-		}
+		afterMap[insertAfter] = append(afterMap[insertAfter], row)
 	}
 
-	// Rebuild the fields slice: standard fields in order, custom fields spliced in.
-	merged := make([]interface{}, 0, len(rawFields)+len(rows))
+	// Emit base fields, recursively splicing each custom field — and any custom
+	// field chained after it — immediately after its target. This resolves the
+	// common case of a custom field inserted after another custom field, which
+	// the previous single-pass approach dropped to the end (M11). `visited`
+	// guards against cycles and marks which custom fields were placed.
+	visited := make(map[string]bool, len(rows))
+	out := make([]interface{}, 0, len(rawFields)+len(rows))
+	var emit func(fieldname string, node interface{})
+	emit = func(fieldname string, node interface{}) {
+		out = append(out, node)
+		if fieldname == "" {
+			return
+		}
+		for _, child := range afterMap[fieldname] {
+			cfn, _ := child["fieldname"].(string)
+			if cfn == "" || visited[cfn] {
+				continue
+			}
+			visited[cfn] = true
+			emit(cfn, child)
+		}
+	}
 	for _, rf := range rawFields {
-		merged = append(merged, rf)
+		fn := ""
 		if f, ok := rf.(map[string]interface{}); ok {
-			if fn, ok := f["fieldname"].(string); ok {
-				merged = append(merged, afterMap[fn]...)
+			fn, _ = f["fieldname"].(string)
+		}
+		emit(fn, rf)
+	}
+
+	// Append custom fields whose insert_after target never appeared.
+	for _, row := range rows {
+		cfn, _ := row["fieldname"].(string)
+		if cfn == "" || !visited[cfn] {
+			out = append(out, row)
+			if cfn != "" {
+				visited[cfn] = true
 			}
 		}
 	}
-	merged = append(merged, orphans...)
 
-	doc["fields"] = merged
+	doc["fields"] = out
 	return nil
 }
 
@@ -308,15 +328,15 @@ func mergeCustomFields(fc *client.FrappeClient, doctype string, doc map[string]i
 // doctype where property="options" and patches the matching fields in doc in-place.
 // This corrects Select field options that have been customised via Frappe's
 // Customize Form / Property Setter, which are invisible in the raw DocType schema.
-func applyPropertySetterOverrides(fc *client.FrappeClient, doctype string, doc map[string]interface{}) error {
+func applyPropertySetterOverrides(ctx context.Context, fc *client.FrappeClient, doctype string, doc map[string]interface{}) error {
 	filters, _ := json.Marshal(map[string]interface{}{
 		"doc_type": doctype,
 		"property": "options",
 	})
-	rows, err := fc.GetList("Property Setter", client.ListOptions{
+	rows, err := fc.GetList(ctx, "Property Setter", client.ListOptions{
 		Fields:  []string{"field_name", "value"},
 		Filters: string(filters),
-		Limit:   500,
+		Limit:   -1,
 	})
 	if err != nil || len(rows) == 0 {
 		return err

@@ -8,7 +8,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -61,13 +60,13 @@ Examples:
 		// Call the API with a spinner
 		var doc map[string]interface{}
 		var apiErr error
-		c := client.New(cfg)
-		_ = spinner.New().
-			Title(fmt.Sprintf("Fetching %s %s…", gdDoctype, name)).
-			Action(func() {
-				doc, apiErr = c.GetDoc(gdDoctype, name)
-			}).
-			Run()
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		_ = runSpinner(fmt.Sprintf("Fetching %s %s…", gdDoctype, name), func() {
+			doc, apiErr = c.GetDoc(cmd.Context(), gdDoctype, name)
+		})
 
 		if apiErr != nil {
 			return apiErr
@@ -76,22 +75,25 @@ Examples:
 		// Output
 		if jsonOutput {
 			result := map[string]interface{}(doc)
-			if gdKeys != "" {
+			// --keys takes priority; otherwise --fields also narrows JSON output
+			// (so it is not silently ignored in --json mode, L10).
+			switch {
+			case gdKeys != "":
 				result = filterSchemaKeys(result, strings.Split(gdKeys, ","))
+			case len(fields) > 0:
+				result = filterSchemaKeys(result, fields)
 			}
-			output.PrintJSON(result)
-		} else {
-			output.PrintDocTable(doc, fields)
+			return output.PrintJSON(result)
 		}
-
+		output.PrintDocTable(doc, fields)
 		return nil
 	},
 }
 
 func init() {
 	getDocCmd.Flags().StringVarP(&gdDoctype, "doctype", "d", "", "Frappe DocType (required)")
-	getDocCmd.Flags().StringVarP(&gdName, "name", "n", "", "Name of the document (required)")
-	getDocCmd.Flags().StringVarP(&gdFields, "fields", "f", "", `Fields to fetch (JSON array or CSV)`)
+	getDocCmd.Flags().StringVarP(&gdName, "name", "n", "", "Name of the document (defaults to the DocType name for Single DocTypes)")
+	getDocCmd.Flags().StringVarP(&gdFields, "fields", "f", "", `Fields to display / include in output (JSON array or CSV)`)
 	getDocCmd.Flags().StringVar(&gdKeys, "keys", "", "Comma-separated keys to include in JSON output, e.g. name,status,grand_total")
 
 	_ = getDocCmd.MarkFlagRequired("doctype")

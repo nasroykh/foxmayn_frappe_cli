@@ -9,7 +9,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -44,13 +43,13 @@ Examples:
 
 		var doc map[string]interface{}
 		var apiErr error
-		c := client.New(cfg)
-		_ = spinner.New().
-			Title(fmt.Sprintf("Creating %s…", cdDoctype)).
-			Action(func() {
-				doc, apiErr = c.CreateDoc(cdDoctype, data)
-			}).
-			Run()
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		_ = runSpinner(fmt.Sprintf("Creating %s…", cdDoctype), func() {
+			doc, apiErr = c.CreateDoc(cmd.Context(), cdDoctype, data)
+		})
 		if apiErr != nil {
 			return apiErr
 		}
@@ -60,14 +59,12 @@ Examples:
 			if cdKeys != "" {
 				result = filterSchemaKeys(result, strings.Split(cdKeys, ","))
 			}
-			output.PrintJSON(result)
-		} else {
-			if name, ok := doc["name"].(string); ok {
-				output.PrintSuccess(fmt.Sprintf("Created %s %s", cdDoctype, name))
-			}
-			output.PrintDocTable(doc, nil)
+			return output.PrintJSON(result)
 		}
-
+		if name, ok := doc["name"].(string); ok {
+			output.PrintSuccess(fmt.Sprintf("Created %s %s", cdDoctype, name))
+		}
+		output.PrintDocTable(doc, nil)
 		return nil
 	},
 }

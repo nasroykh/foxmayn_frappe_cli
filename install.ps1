@@ -4,6 +4,10 @@ param()
 
 $ErrorActionPreference = "Stop"
 
+# Force TLS 1.2 — Windows PowerShell 5.1 may otherwise default to TLS 1.0 and
+# fail the HTTPS downloads (L31).
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
 $Repo   = "nasroykh/foxmayn_frappe_cli"
 $Binary = "ffc.exe"
 
@@ -39,11 +43,18 @@ try {
     Invoke-WebRequest -Uri $DownloadUrl  -OutFile $ArchivePath  -UseBasicParsing
     Invoke-WebRequest -Uri $ChecksumUrl  -OutFile $ChecksumPath -UseBasicParsing
 
-    # --- verify checksum ---
-    $Expected = (Get-Content $ChecksumPath | Where-Object { $_ -match $Archive }) -split '\s+' | Select-Object -First 1
+    # --- verify checksum (fail closed) ---
+    # [regex]::Escape: the archive name contains '.', a regex metacharacter (M2).
+    $Line = Get-Content $ChecksumPath |
+        Where-Object { $_ -match [regex]::Escape($Archive) } |
+        Select-Object -First 1
+    if (-not $Line) {
+        Write-Error "Checksum for $Archive not found in checksums.txt; aborting."
+        exit 1
+    }
+    $Expected = (($Line -split '\s+') | Select-Object -First 1).ToLower()
     $Actual   = (Get-FileHash -Algorithm SHA256 -Path $ArchivePath).Hash.ToLower()
-
-    if ($Expected -and ($Actual -ne $Expected.ToLower())) {
+    if ($Actual -ne $Expected) {
         Write-Error "Checksum mismatch!`n  Expected: $Expected`n  Got:      $Actual"
         exit 1
     }

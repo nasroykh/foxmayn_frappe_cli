@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,7 +12,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/spf13/cobra"
 )
 
@@ -69,50 +69,76 @@ Examples:
 
 		if !bdYes {
 			var confirmed bool
-			prompt := fmt.Sprintf("Delete %d %s document(s)? This cannot be undone.", len(names), bdDoctype)
-			if err := huh.NewForm(
+			// Show which documents will be deleted, not just a count (L8).
+			preview := names
+			if len(preview) > 10 {
+				preview = append(append([]string{}, names[:10]...), fmt.Sprintf("… and %d more", len(names)-10))
+			}
+			prompt := fmt.Sprintf("Delete these %d %s document(s)?\n  %s\nThis cannot be undone.",
+				len(names), bdDoctype, strings.Join(preview, ", "))
+			err := huh.NewForm(
 				huh.NewGroup(
 					huh.NewConfirm().Title(prompt).Value(&confirmed),
 				),
-			).WithKeyMap(escQuitKeyMap()).Run(); err != nil {
+			).WithKeyMap(escQuitKeyMap()).Run()
+			// A user abort (Esc/Ctrl+C) is not a real error (L4).
+			if err != nil && !errors.Is(err, huh.ErrUserAborted) {
 				return err
 			}
-			if !confirmed {
-				output.PrintError("Deletion cancelled.")
+			if err != nil || !confirmed {
+				fmt.Fprintln(os.Stderr, "Deletion cancelled.") // neutral, not red ✗ (L7)
 				return nil
 			}
 		}
 
-		c := client.New(cfg)
+		c, err := client.New(cmd.Context(), cfg)
+		if err != nil {
+			return err
+		}
 		type itemResult struct {
-			name string
-			err  error
+			name    string
+			err     error
+			skipped bool
 		}
 		results := make([]itemResult, len(names))
 
+		interrupted := false
 		for i, name := range names {
 			results[i].name = name
+			// Honour Ctrl+C: stop deleting once interrupted (M18).
+			if interrupted || cmd.Context().Err() != nil {
+				results[i].skipped = true
+				interrupted = true
+				continue
+			}
 			var apiErr error
-			_ = spinner.New().
-				Title(fmt.Sprintf("Deleting %s %s (%d/%d)…", bdDoctype, name, i+1, len(names))).
-				Action(func() {
-					apiErr = c.DeleteDoc(bdDoctype, name)
-				}).
-				Run()
+			runErr := runSpinner(fmt.Sprintf("Deleting %s %s (%d/%d)…", bdDoctype, name, i+1, len(names)), func() {
+				apiErr = c.DeleteDoc(cmd.Context(), bdDoctype, name)
+			})
+			if runErr != nil {
+				results[i].skipped = true
+				interrupted = true
+				continue
+			}
 			if apiErr != nil {
 				results[i].err = apiErr
 			}
 		}
 
-		succeeded, failed := 0, 0
+		succeeded, failed, skipped := 0, 0, 0
 		rows := make([]map[string]interface{}, len(results))
 		for i, r := range results {
 			row := map[string]interface{}{"#": i + 1, "name": r.name}
-			if r.err != nil {
+			switch {
+			case r.skipped:
+				row["status"] = "skipped"
+				row["detail"] = "interrupted"
+				skipped++
+			case r.err != nil:
 				row["status"] = "error"
 				row["detail"] = r.err.Error()
 				failed++
-			} else {
+			default:
 				row["status"] = "deleted"
 				row["detail"] = ""
 				succeeded++
@@ -121,22 +147,25 @@ Examples:
 		}
 
 		if jsonOutput {
-			output.PrintJSON(map[string]interface{}{
+			if err := output.PrintJSON(map[string]interface{}{
 				"deleted": succeeded,
 				"failed":  failed,
+				"skipped": skipped,
 				"results": rows,
-			})
+			}); err != nil {
+				return err
+			}
 		} else {
 			output.PrintTable(rows, []string{"#", "name", "status", "detail"})
-			if failed == 0 {
+			if failed == 0 && skipped == 0 {
 				output.PrintSuccess(fmt.Sprintf("All %d %s documents deleted.", succeeded, bdDoctype))
 			} else {
-				output.PrintError(fmt.Sprintf("%d deleted, %d failed.", succeeded, failed))
+				output.PrintError(fmt.Sprintf("%d deleted, %d failed, %d skipped.", succeeded, failed, skipped))
 			}
 		}
 
-		if failed > 0 {
-			return fmt.Errorf("%d of %d items failed", failed, len(names))
+		if failed > 0 || skipped > 0 {
+			return fmt.Errorf("%d of %d items did not succeed (%d failed, %d skipped)", failed+skipped, len(names), failed, skipped)
 		}
 		return nil
 	},
@@ -145,10 +174,11 @@ Examples:
 func init() {
 	bulkDeleteCmd.Flags().StringVarP(&bdDoctype, "doctype", "d", "", "Frappe DocType (required)")
 	bulkDeleteCmd.Flags().StringVar(&bdNames, "names", "", "Comma-separated list of document names to delete")
-	bulkDeleteCmd.Flags().StringVarP(&bdFile, "file", "f", "", "Path to a JSON file containing an array of name strings")
+	bulkDeleteCmd.Flags().StringVar(&bdFile, "file", "", "Path to a JSON file containing an array of name strings")
 	bulkDeleteCmd.Flags().BoolVarP(&bdYes, "yes", "y", false, "Skip confirmation prompt")
 
 	_ = bulkDeleteCmd.MarkFlagRequired("doctype")
+	bulkDeleteCmd.MarkFlagsMutuallyExclusive("names", "file") // L9
 
 	rootCmd.AddCommand(bulkDeleteCmd)
 }
