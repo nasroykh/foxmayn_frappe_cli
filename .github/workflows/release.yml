@@ -38,7 +38,7 @@ jobs:
 
       # Signed, verifiable provenance for every published archive + checksums (M4).
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist/*.tar.gz
