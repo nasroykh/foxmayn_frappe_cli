@@ -2,10 +2,6 @@ version: 2
 
 project_name: ffc
 
-before:
-  hooks:
-    - go mod tidy
-
 builds:
   - id: ffc
     main: ./cmd/ffc
@@ -37,6 +33,9 @@ archives:
 
 checksum:
   name_template: "checksums.txt"
+
+release:
+  prerelease: auto # a tag like v1.6.0-rc1 must not become /releases/latest
 
 changelog:
   sort: asc

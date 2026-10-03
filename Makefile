@@ -13,18 +13,18 @@ LDFLAGS := -s -w \
 	-X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Commit=$(COMMIT) \
 	-X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Date=$(DATE)
 
-.PHONY: build install clean tidy vet fmt help skills-init skills-init-claude skills-init-cursor skills-init-agent
+.PHONY: build install clean tidy vet fmt test lint help skills-init skills-init-claude skills-init-cursor skills-init-agent
 
-## build: compile binary to project root
+## build: compile binary to ./bin/ffc
 build:
 	go build -ldflags "$(LDFLAGS)" -o ./$(BINARY_DIR)/$(BINARY) $(CMD_PATH)
 
 ## install: install binary to $GOPATH/bin and set up default config
 install:
 	go install -ldflags "$(LDFLAGS)" $(CMD_PATH)
-	@mkdir -p ~/.config/ffc/
+	@mkdir -m 700 -p ~/.config/ffc/
 	@if [ ! -f ~/.config/ffc/config.yaml ]; then \
-		cp config.example.yaml ~/.config/ffc/config.yaml; \
+		install -m 600 config.example.yaml ~/.config/ffc/config.yaml; \
 		echo "Created ~/.config/ffc/config.yaml from example — edit it with your site details."; \
 	else \
 		echo "~/.config/ffc/config.yaml already exists, skipping copy."; \
@@ -42,6 +42,16 @@ vet:
 fmt:
 	gofmt -w .
 
+## test: run all tests with the race detector
+test:
+	go test -race ./...
+
+## lint: gofmt check, go vet and staticcheck (when installed)
+lint:
+	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
+	go vet ./...
+	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; else echo "staticcheck not installed, skipping"; fi
+
 ## clean: remove compiled binary
 clean:
 	rm -f ./$(BINARY_DIR)/$(BINARY)
@@ -56,15 +66,15 @@ skills-init:
 
 ## skills-init-claude: Initialize skills for Claude
 skills-init-claude:
-	mkdir -p .claude/skills/ && rm -rf .claude/skills/* && cd .claude/skills/ && ln -s ../../.agents/skills/*/ .
+	mkdir -p .claude/skills/ && find .claude/skills/ -mindepth 1 -maxdepth 1 -type l -delete && cd .claude/skills/ && ln -s ../../.agents/skills/*/ .
 	echo "Skills initialized for Claude"
 
 ## skills-init-cursor: Initialize skills for Cursor
 skills-init-cursor:
-	mkdir -p .cursor/skills/ && rm -rf .cursor/skills/* && cd .cursor/skills/ && ln -s ../../.agents/skills/*/ .
+	mkdir -p .cursor/skills/ && find .cursor/skills/ -mindepth 1 -maxdepth 1 -type l -delete && cd .cursor/skills/ && ln -s ../../.agents/skills/*/ .
 	echo "Skills initialized for Cursor"
 
 ## skills-init-agent: Initialize skills for Agent
 skills-init-agent:
-	mkdir -p .agent/skills/ && rm -rf .agent/skills/* && cd .agent/skills/ && ln -s ../../.agents/skills/*/ .
+	mkdir -p .agent/skills/ && find .agent/skills/ -mindepth 1 -maxdepth 1 -type l -delete && cd .agent/skills/ && ln -s ../../.agents/skills/*/ .
 	echo "Skills initialized for Antigravity, Gemini CLI, Codex, ...etc"

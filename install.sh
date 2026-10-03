@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-set -e
+set -eu
 
 REPO="nasroykh/foxmayn_frappe_cli"
 BINARY="ffc"
@@ -27,9 +27,13 @@ case "$ARCH" in
 esac
 
 # --- resolve latest tag ---
-VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-  | grep '"tag_name"' \
-  | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+# The releases/latest redirect avoids the unauthenticated API's 60 req/h limit.
+LATEST_URL=$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" || true)
+VERSION="${LATEST_URL##*/}"
+case "$VERSION" in
+  v[0-9]*) ;;
+  *) VERSION="" ;;
+esac
 
 if [ -z "$VERSION" ]; then
   echo "Could not determine latest release version." >&2
@@ -83,6 +87,7 @@ mv "$TMP/$BINARY" "$INSTALL_DIR/$BINARY"
 chmod +x "$INSTALL_DIR/$BINARY"
 
 echo "Installed to $INSTALL_DIR/$BINARY"
+echo "Optional provenance check (needs gh): download $ARCHIVE from $URL and run: gh attestation verify $ARCHIVE --repo $REPO"
 echo "Run 'ffc --help' to get started. Use 'ffc init' to configure your first site."
 
 # warn if install dir is not in PATH
