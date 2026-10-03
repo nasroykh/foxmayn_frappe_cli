@@ -13,17 +13,14 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
-
-	"go.yaml.in/yaml/v3"
 )
 
 // ─── PKCE ────────────────────────────────────────────────────────────────────
@@ -39,16 +36,6 @@ func generateCodeVerifier() (string, error) {
 func generateCodeChallenge(verifier string) string {
 	h := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(h[:])
-}
-
-// tokenExpiryFromNow returns the absolute Unix expiry for an access token,
-// defaulting to Frappe's 1-hour lifetime when the server omits expires_in — so
-// the token still has a real expiry and can be proactively refreshed (L5).
-func tokenExpiryFromNow(expiresIn int) int64 {
-	if expiresIn <= 0 {
-		expiresIn = 3600
-	}
-	return time.Now().Unix() + int64(expiresIn)
 }
 
 // ─── Browser ─────────────────────────────────────────────────────────────────
@@ -71,18 +58,51 @@ func openBrowser(rawURL string) error {
 
 // ─── Local callback server ───────────────────────────────────────────────────
 
+// callbackHost is a loopback IP literal, not "localhost": a browser that
+// resolves localhost to ::1 first could hand the code to another process
+// listening on [::1] (RFC 8252 §8.3).
+const callbackHost = "127.0.0.1"
+
+// oauthCallbackTimeout bounds how long wait blocks for the browser redirect.
+var oauthCallbackTimeout = 5 * time.Minute
+
+type callbackResult struct {
+	code string
+	err  error
+}
+
 // callbackServer holds a running local HTTP server waiting for the OAuth callback.
 type callbackServer struct {
 	port   int
 	state  string // expected OAuth state parameter (CSRF protection, M6)
-	codeCh chan string
-	errCh  chan error
+	result chan callbackResult
 	srv    *http.Server
+	addr   net.Addr
+
+	once      sync.Once
+	closeOnce sync.Once
+}
+
+// deliver records the first callback outcome. Later callbacks (page reloads,
+// duplicate redirects) are dropped instead of blocking their handler forever,
+// which used to make Shutdown hang.
+func (cs *callbackServer) deliver(r callbackResult) bool {
+	first := false
+	cs.once.Do(func() {
+		first = true
+		cs.result <- r
+	})
+	return first
+}
+
+// redirectURI is the URI to register on the Frappe OAuth client.
+func (cs *callbackServer) redirectURI() string {
+	return fmt.Sprintf("http://%s:%d/callback", callbackHost, cs.port)
 }
 
 // startCallbackServer binds to a free port and starts the HTTP server immediately.
 // Call this before showing the redirect URI to the user so the port is guaranteed
-// to be held when Frappe redirects back.
+// to be held when Frappe redirects back. The caller must call close.
 func startCallbackServer() (*callbackServer, error) {
 	// Prefer a small set of fixed ports so the redirect URI stays stable across
 	// re-auths — Frappe validates redirect_uri against a registered allow-list,
@@ -91,7 +111,7 @@ func startCallbackServer() (*callbackServer, error) {
 	var ln net.Listener
 	var err error
 	for _, p := range []int{53682, 53683, 53684, 0} {
-		ln, err = net.Listen("tcp", fmt.Sprintf("localhost:%d", p))
+		ln, err = net.Listen("tcp", net.JoinHostPort(callbackHost, fmt.Sprint(p)))
 		if err == nil {
 			break
 		}
@@ -99,150 +119,134 @@ func startCallbackServer() (*callbackServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("binding callback port: %w", err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
 
 	// Random state tying the auth request to this callback. A forged or
 	// cross-origin request carrying the wrong (or no) state is rejected without
-	// consuming the one-shot channels, so it can't hijack or DoS the login (M6).
+	// consuming the result, so it can't hijack or DoS the login (M6).
 	state, err := generateCodeVerifier()
 	if err != nil {
 		ln.Close()
 		return nil, fmt.Errorf("generating state: %w", err)
 	}
 
-	codeCh := make(chan string, 1)
-	errCh := make(chan error, 1)
-
 	mux := http.NewServeMux()
-	srv := &http.Server{
-		Addr:    fmt.Sprintf("localhost:%d", port),
-		Handler: mux,
+	cs := &callbackServer{
+		port:   ln.Addr().(*net.TCPAddr).Port,
+		state:  state,
+		result: make(chan callbackResult, 1),
+		srv:    &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second},
+		addr:   ln.Addr(),
 	}
 
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
 		// Verify state first — a mismatch keeps the server listening for the
-		// legitimate redirect instead of consuming the channel.
-		if r.URL.Query().Get("state") != state {
+		// legitimate redirect.
+		if q.Get("state") != state {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprint(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Invalid request</h2><p>State mismatch; ignoring.</p></body></html>")
 			return
 		}
-		if errParam := r.URL.Query().Get("error"); errParam != "" {
-			desc := r.URL.Query().Get("error_description")
-			msg := errParam
-			if desc != "" {
+		var res callbackResult
+		var msg string
+		switch {
+		case q.Get("error") != "":
+			msg = q.Get("error")
+			if desc := q.Get("error_description"); desc != "" {
 				msg += ": " + desc
 			}
-			errCh <- fmt.Errorf("authorization denied — %s", msg)
+			res.err = fmt.Errorf("authorization denied: %s", msg)
+		case q.Get("code") == "":
+			msg = "No code received."
+			res.err = errors.New("no authorization code in callback URL")
+		default:
+			res.code = q.Get("code")
+		}
+		if !cs.deliver(res) {
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprint(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Already handled</h2><p>This login was already processed. You can close this tab.</p></body></html>")
+			return
+		}
+		if res.err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			// html.EscapeString: never reflect raw query params into HTML (L1).
-			fmt.Fprintf(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Authorization denied</h2><p>%s</p><p>You can close this tab.</p></body></html>", html.EscapeString(msg))
+			fmt.Fprintf(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Authorization failed</h2><p>%s</p><p>You can close this tab.</p></body></html>", html.EscapeString(msg))
 			return
 		}
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			errCh <- fmt.Errorf("no authorization code in callback URL")
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Error</h2><p>No code received.</p></body></html>")
-			return
-		}
-		codeCh <- code
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `<html><body style="font-family:sans-serif;padding:2rem;text-align:center">
+		fmt.Fprint(w, `<html><body style="font-family:sans-serif;padding:2rem;text-align:center">
 <h2>&#10003; Authorization successful</h2>
 <p>You can close this tab and return to the terminal.</p>
 </body></html>`)
 	})
 
 	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			errCh <- err
+		if err := cs.srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			cs.deliver(callbackResult{err: fmt.Errorf("callback server: %w", err)})
 		}
 	}()
+	return cs, nil
+}
 
-	return &callbackServer{port: port, state: state, codeCh: codeCh, errCh: errCh, srv: srv}, nil
+// close stops the server, giving in-flight responses a moment to finish.
+// Safe to call more than once.
+func (cs *callbackServer) close() {
+	cs.closeOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := cs.srv.Shutdown(ctx); err != nil {
+			cs.srv.Close()
+		}
+	})
 }
 
 // wait blocks until the OAuth callback delivers a code, the context is cancelled
-// (Ctrl+C / SIGTERM), or the 5-minute timeout elapses.
+// (Ctrl+C / SIGTERM), or oauthCallbackTimeout elapses. The server is closed
+// on return.
 func (cs *callbackServer) wait(ctx context.Context) (string, error) {
-	defer cs.srv.Shutdown(context.Background()) //nolint:errcheck
+	defer cs.close()
+	timer := time.NewTimer(oauthCallbackTimeout)
+	defer timer.Stop()
 	select {
-	case code := <-cs.codeCh:
-		return code, nil
-	case err := <-cs.errCh:
-		return "", err
+	case r := <-cs.result:
+		return r.code, r.err
 	case <-ctx.Done():
 		// The root installs a SIGINT/SIGTERM-cancelled context, which disables
 		// Go's default terminate-on-signal — so this wait must honour it or the
 		// user can't abort the browser flow (regression guard).
-		return "", fmt.Errorf("cancelled")
-	case <-time.After(5 * time.Minute):
-		return "", fmt.Errorf("timed out waiting for browser authorization (5 minutes)")
+		return "", errAborted
+	case <-timer.C:
+		return "", fmt.Errorf("timed out waiting for browser authorization (%s)", oauthCallbackTimeout)
 	}
 }
 
-// ─── OAuth init wizard ───────────────────────────────────────────────────────
+// ─── OAuth wizard ────────────────────────────────────────────────────────────
 
-// runOAuthInitFlow runs the full interactive OAuth setup wizard.
-// It handles the huh forms, browser launch, token exchange, and config writing.
-func runOAuthInitFlow(ctx context.Context, cfgPath string) error {
-	// ── Step 1: site name + URL ──────────────────────────────────────────────
-	var siteName, siteURL string
-
-	siteForm := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Site name").
-				Description("A short identifier, e.g. dev or production").
-				Placeholder("dev").
-				Validate(func(s string) error {
-					s = strings.TrimSpace(s)
-					if s == "" {
-						return fmt.Errorf("site name cannot be empty")
-					}
-					if strings.ContainsAny(s, " \t") {
-						return fmt.Errorf("site name must not contain spaces")
-					}
-					return nil
-				}).
-				Value(&siteName),
-
-			huh.NewInput().
-				Title("Site URL").
-				Description("Base URL of your Frappe site (https:// added if omitted)").
-				Placeholder("mysite.example.com").
-				Validate(func(s string) error {
-					if strings.TrimSpace(s) == "" {
-						return fmt.Errorf("URL cannot be empty")
-					}
-					return nil
-				}).
-				Value(&siteURL),
-		),
-	)
-
-	if err := siteForm.WithKeyMap(escQuitKeyMap()).Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			fmt.Fprintln(os.Stderr, "Aborted. No config written.")
-			return nil
+// collectOAuthSite runs the OAuth Authorization Code + PKCE flow and returns
+// the new site with its tokens. See collectSite for checkName.
+func collectOAuthSite(ctx context.Context, checkName func(string) error) (string, config.SiteConfig, error) {
+	var name, rawURL string
+	if err := runForm(huh.NewGroup(siteNameInput(&name), siteURLInput(&rawURL))); err != nil {
+		return "", config.SiteConfig{}, err
+	}
+	siteName, siteURL, err := siteNameAndURL(name, rawURL)
+	if err != nil {
+		return "", config.SiteConfig{}, err
+	}
+	if checkName != nil {
+		if err := checkName(siteName); err != nil {
+			return "", config.SiteConfig{}, err
 		}
-		return err
 	}
 
-	siteName = strings.TrimSpace(siteName)
-	siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
-	if !strings.HasPrefix(siteURL, "http://") && !strings.HasPrefix(siteURL, "https://") {
-		siteURL = "https://" + siteURL
-	}
-
-	// ── Step 2: start callback server (before showing instructions so the port
-	//            is guaranteed held when Frappe redirects back) ───────────────
+	// Start the callback server before showing the instructions so the port
+	// is guaranteed held when Frappe redirects back.
 	cs, err := startCallbackServer()
 	if err != nil {
-		return err
+		return "", config.SiteConfig{}, err
 	}
-	redirectURI := fmt.Sprintf("http://localhost:%d/callback", cs.port)
+	defer cs.close()
+	redirectURI := cs.redirectURI()
 
 	fmt.Fprintf(os.Stderr, `
 OAuth Client setup (one-time, on your Frappe site)
@@ -257,441 +261,85 @@ OAuth Client setup (one-time, on your Frappe site)
 
 `, siteURL, redirectURI)
 
-	// ── Step 3: client ID + secret ──────────────────────────────────────────
 	var clientID, clientSecret string
-
-	credForm := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("OAuth Client ID").
-				Description("From the OAuth Client you just created on Frappe").
-				Validate(func(s string) error {
-					if strings.TrimSpace(s) == "" {
-						return fmt.Errorf("Client ID cannot be empty")
-					}
-					return nil
-				}).
-				Value(&clientID),
-
-			huh.NewInput().
-				Title("OAuth Client Secret").
-				Description("Leave empty if using a Public client (no secret)").
-				EchoMode(huh.EchoModePassword).
-				Value(&clientSecret),
-		),
-	)
-
-	if err := credForm.WithKeyMap(escQuitKeyMap()).Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			fmt.Fprintln(os.Stderr, "Aborted. No config written.")
-			return nil
-		}
-		return err
+	if err := runForm(huh.NewGroup(
+		huh.NewInput().
+			Title("OAuth Client ID").
+			Description("From the OAuth Client you just created on Frappe").
+			Validate(nonEmpty("client ID")).
+			Value(&clientID),
+		huh.NewInput().
+			Title("OAuth Client Secret").
+			Description("Leave empty if using a Public client (no secret)").
+			EchoMode(huh.EchoModePassword).
+			Value(&clientSecret),
+	)); err != nil {
+		return "", config.SiteConfig{}, err
 	}
-
 	clientID = strings.TrimSpace(clientID)
+	clientSecret = strings.TrimSpace(clientSecret)
 
-	// ── Step 4: run OAuth flow ───────────────────────────────────────────────
 	verifier, err := generateCodeVerifier()
 	if err != nil {
-		return fmt.Errorf("generating PKCE verifier: %w", err)
+		return "", config.SiteConfig{}, fmt.Errorf("generating PKCE verifier: %w", err)
 	}
-	challenge := generateCodeChallenge(verifier)
-
 	params := url.Values{
 		"response_type":         {"code"},
 		"client_id":             {clientID},
 		"redirect_uri":          {redirectURI},
 		"scope":                 {"openid all"},
-		"code_challenge":        {challenge},
+		"code_challenge":        {generateCodeChallenge(verifier)},
 		"code_challenge_method": {"S256"},
 		"state":                 {cs.state}, // CSRF protection (M6)
 	}
-	authURL := strings.TrimRight(siteURL, "/") + "/api/method/frappe.integrations.oauth2.authorize?" + params.Encode()
+	authURL := siteURL + "/api/method/frappe.integrations.oauth2.authorize?" + params.Encode()
 
 	fmt.Fprintf(os.Stderr, "\nOpening browser for authorization...\n")
 	fmt.Fprintf(os.Stderr, "If the browser doesn't open automatically, visit:\n  %s\n\n", authURL)
-
 	if err := openBrowser(authURL); err != nil {
 		fmt.Fprintf(os.Stderr, "(Could not open browser: %v)\n\n", err)
 	}
-
-	fmt.Fprintf(os.Stderr, "Waiting for authorization (timeout: 5 minutes)...\n")
+	fmt.Fprintf(os.Stderr, "Waiting for authorization (timeout: %s)...\n", oauthCallbackTimeout)
 
 	code, err := cs.wait(ctx)
 	if err != nil {
-		return fmt.Errorf("authorization: %w", err)
+		if errors.Is(err, errAborted) {
+			return "", config.SiteConfig{}, err
+		}
+		return "", config.SiteConfig{}, fmt.Errorf("authorization: %w", err)
 	}
 
-	// ── Step 5: exchange code for tokens ─────────────────────────────────────
 	var tokens *client.OAuthTokens
 	var exchangeErr error
-	_ = spinner.New().
-		Title("Exchanging authorization code for tokens...").
-		Action(func() {
-			tokens, exchangeErr = client.ExchangeOAuthCode(siteURL, clientID, clientSecret, code, redirectURI, verifier)
-		}).
-		Run()
+	if err := runSpinner("Exchanging authorization code for tokens...", func() {
+		tokens, exchangeErr = client.ExchangeOAuthCode(ctx, siteURL, clientID, clientSecret, code, redirectURI, verifier)
+	}); err != nil || ctx.Err() != nil {
+		return "", config.SiteConfig{}, errAborted
+	}
 	if exchangeErr != nil {
-		return fmt.Errorf("token exchange: %w", exchangeErr)
+		return "", config.SiteConfig{}, fmt.Errorf("token exchange: %w", exchangeErr)
 	}
 
-	// ── Step 6: fetch logged-in user ─────────────────────────────────────────
-	var loggedUser string
-	_ = spinner.New().
-		Title("Fetching user info...").
-		Action(func() {
-			loggedUser, _ = client.GetOAuthUser(siteURL, tokens.AccessToken)
-		}).
-		Run()
-
-	// ── Step 7: review + confirm ─────────────────────────────────────────────
-	userDisplay := loggedUser
-	if userDisplay == "" {
-		userDisplay = "(unknown)"
+	var user string
+	if err := runSpinner("Fetching user info...", func() {
+		user, _ = client.GetOAuthUser(ctx, siteURL, tokens.AccessToken)
+	}); err != nil || ctx.Err() != nil {
+		return "", config.SiteConfig{}, errAborted
 	}
 
-	var reviewChoice string
-	reviewErr := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Review OAuth configuration").
-				Description(fmt.Sprintf(
-					"Site name:  %s\nSite URL:   %s\nClient ID:  %s\nLogged in:  %s",
-					siteName, siteURL, clientID, userDisplay,
-				)).
-				Options(
-					huh.NewOption("Confirm", "confirm"),
-					huh.NewOption("Cancel", "cancel"),
-				).
-				Value(&reviewChoice),
-		),
-	).WithKeyMap(escQuitKeyMap()).Run()
-
-	if errors.Is(reviewErr, huh.ErrUserAborted) || reviewChoice == "cancel" {
-		fmt.Fprintln(os.Stderr, "Aborted. No config written.")
-		return nil
-	}
-	if reviewErr != nil {
-		return reviewErr
+	if _, err := reviewSite(fmt.Sprintf(
+		"Site name:  %s\nSite URL:   %s\nClient ID:  %s\nLogged in:  %s",
+		siteName, siteURL, clientID, orDefault(user, "(unknown)"),
+	), false); err != nil {
+		return "", config.SiteConfig{}, err
 	}
 
-	// ── Step 8: write config ─────────────────────────────────────────────────
-	var writeErr error
-	_ = spinner.New().
-		Title("Writing config...").
-		Action(func() {
-			writeErr = writeConfigOAuth(cfgPath, siteName, siteURL, clientID, clientSecret, tokens)
-		}).
-		Run()
-	if writeErr != nil {
-		return fmt.Errorf("write config: %w", writeErr)
-	}
-
-	fmt.Fprintf(os.Stderr, "\n✓ Config written to %s\n", cfgPath)
-	fmt.Fprintf(os.Stderr, "  Logged in as: %s\n", userDisplay)
-	fmt.Fprintf(os.Stderr, "  Run: ffc --site %s list-docs --doctype \"Sales Invoice\"\n", siteName)
-	return nil
-}
-
-// ─── Config writing ──────────────────────────────────────────────────────────
-
-// writeConfigOAuth writes a fresh config file for an OAuth-authenticated site.
-func writeConfigOAuth(path, siteName, siteURL, clientID, clientSecret string, tokens *client.OAuthTokens) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	expiry := tokenExpiryFromNow(tokens.ExpiresIn)
-
-	var sb strings.Builder
-	sb.WriteString("# ffc configuration — generated by 'ffc init --oauth'\n")
-	sb.WriteString("# Edit this file to add more sites.\n\n")
-	sb.WriteString(fmt.Sprintf("default_site: %s\n\n", siteName))
-	sb.WriteString("sites:\n")
-	sb.WriteString(fmt.Sprintf("  %s:\n", siteName))
-	sb.WriteString(fmt.Sprintf("    url: %q\n", siteURL))
-	sb.WriteString(fmt.Sprintf("    oauth_client_id: %q\n", clientID))
-	if clientSecret != "" {
-		sb.WriteString(fmt.Sprintf("    oauth_client_secret: %q\n", clientSecret))
-	}
-	sb.WriteString(fmt.Sprintf("    access_token: %q\n", tokens.AccessToken))
-	sb.WriteString(fmt.Sprintf("    refresh_token: %q\n", tokens.RefreshToken))
-	sb.WriteString(fmt.Sprintf("    token_expiry: %d\n", expiry))
-
-	return atomicWriteFile(path, []byte(sb.String()), 0o600) // M9
-}
-
-// saveOAuthTokens updates only the OAuth token fields for a specific site in
-// the existing config file, preserving comments and other settings.
-func saveOAuthTokens(cfgPath, siteName string, tokens *client.OAuthTokens) error {
-	raw, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return fmt.Errorf("reading config: %w", err)
-	}
-
-	var root yaml.Node
-	if err := yaml.Unmarshal(raw, &root); err != nil {
-		return fmt.Errorf("parsing config: %w", err)
-	}
-	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
-		return fmt.Errorf("unexpected config format")
-	}
-
-	if err := updateSiteTokens(root.Content[0], siteName, tokens); err != nil {
-		return err
-	}
-
-	out, err := yaml.Marshal(root.Content[0])
-	if err != nil {
-		return fmt.Errorf("serialising config: %w", err)
-	}
-
-	return atomicWriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600) // M9
-}
-
-// updateSiteTokens finds sites.<siteName> in the YAML mapping and updates
-// access_token, refresh_token, and token_expiry.
-func updateSiteTokens(mapping *yaml.Node, siteName string, tokens *client.OAuthTokens) error {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value != "sites" {
-			continue
-		}
-		sitesMap := mapping.Content[i+1]
-		if sitesMap.Kind != yaml.MappingNode {
-			return fmt.Errorf("sites is not a mapping node")
-		}
-		for j := 0; j+1 < len(sitesMap.Content); j += 2 {
-			if sitesMap.Content[j].Value != siteName {
-				continue
-			}
-			siteMap := sitesMap.Content[j+1]
-			if siteMap.Kind != yaml.MappingNode {
-				return fmt.Errorf("site %q is not a mapping node", siteName)
-			}
-			expiry := tokenExpiryFromNow(tokens.ExpiresIn)
-			setScalarNode(siteMap, "access_token", tokens.AccessToken, "!!str")
-			if tokens.RefreshToken != "" {
-				setScalarNode(siteMap, "refresh_token", tokens.RefreshToken, "!!str")
-			}
-			setScalarNode(siteMap, "token_expiry", fmt.Sprintf("%d", expiry), "!!int")
-			return nil
-		}
-		return fmt.Errorf("site %q not found in config", siteName)
-	}
-	return fmt.Errorf("sites section not found in config")
-}
-
-// setScalarNode sets or appends a scalar key/value in a YAML mapping node.
-func setScalarNode(mapping *yaml.Node, key, value, tag string) {
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == key {
-			mapping.Content[i+1].Value = value
-			mapping.Content[i+1].Tag = tag
-			return
-		}
-	}
-	mapping.Content = append(mapping.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Value: key, Tag: "!!str"},
-		&yaml.Node{Kind: yaml.ScalarNode, Value: value, Tag: tag},
-	)
-}
-
-// ─── Config helpers (used by site add / init) ────────────────────────────────
-
-// buildAPIKeySiteYAML returns the YAML block for an API-key-authenticated site.
-func buildAPIKeySiteYAML(siteURL, apiKey, apiSecret string) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "url: %q\n", siteURL)
-	fmt.Fprintf(&sb, "api_key: %q\n", apiKey)
-	fmt.Fprintf(&sb, "api_secret: %q\n", apiSecret)
-	return sb.String()
-}
-
-// buildOAuthSiteYAML returns the YAML block for an OAuth-authenticated site.
-func buildOAuthSiteYAML(siteURL, clientID, clientSecret string, tokens *client.OAuthTokens) string {
-	expiry := tokenExpiryFromNow(tokens.ExpiresIn)
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "url: %q\n", siteURL)
-	fmt.Fprintf(&sb, "oauth_client_id: %q\n", clientID)
-	if clientSecret != "" {
-		fmt.Fprintf(&sb, "oauth_client_secret: %q\n", clientSecret)
-	}
-	fmt.Fprintf(&sb, "access_token: %q\n", tokens.AccessToken)
-	fmt.Fprintf(&sb, "refresh_token: %q\n", tokens.RefreshToken)
-	fmt.Fprintf(&sb, "token_expiry: %d\n", expiry)
-	return sb.String()
-}
-
-// buildSessionSiteYAML returns the YAML block for a username/password
-// (session-cookie) authenticated site.
-func buildSessionSiteYAML(siteURL, username, password string) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "url: %q\n", siteURL)
-	fmt.Fprintf(&sb, "username: %q\n", username)
-	fmt.Fprintf(&sb, "password: %q\n", password)
-	return sb.String()
-}
-
-// upsertSiteInConfig adds or replaces a site entry in the config file.
-// siteYAML is the YAML content for the site's fields (without the site name key).
-// Leading comments and other top-level settings are preserved.
-func upsertSiteInConfig(cfgPath, siteName, siteYAML string) error {
-	// Parse the new site node from the YAML block.
-	var siteDoc yaml.Node
-	if err := yaml.Unmarshal([]byte(siteYAML), &siteDoc); err != nil {
-		return fmt.Errorf("building site node: %w", err)
-	}
-	if siteDoc.Kind != yaml.DocumentNode || len(siteDoc.Content) == 0 {
-		return fmt.Errorf("invalid site YAML")
-	}
-	newSiteNode := siteDoc.Content[0]
-
-	raw, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return fmt.Errorf("reading config: %w", err)
-	}
-	var root yaml.Node
-	if err := yaml.Unmarshal(raw, &root); err != nil {
-		return fmt.Errorf("parsing config: %w", err)
-	}
-	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
-		return fmt.Errorf("unexpected config format")
-	}
-	mapping := root.Content[0]
-
-	// Find or create the sites mapping node.
-	sitesIdx := -1
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == "sites" {
-			sitesIdx = i + 1
-			break
-		}
-	}
-	if sitesIdx < 0 {
-		mapping.Content = append(mapping.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: "sites", Tag: "!!str"},
-			&yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"},
-		)
-		sitesIdx = len(mapping.Content) - 1
-	}
-	sitesMap := mapping.Content[sitesIdx]
-
-	// If `sites:` exists but is empty/null (a scalar node), yaml.Marshal ignores
-	// any children appended to it and the new site is silently dropped. Replace
-	// it with a fresh mapping node first (M8).
-	if sitesMap.Kind != yaml.MappingNode {
-		sitesMap = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		mapping.Content[sitesIdx] = sitesMap
-	}
-
-	// Replace existing entry or append a new one.
-	for j := 0; j+1 < len(sitesMap.Content); j += 2 {
-		if sitesMap.Content[j].Value == siteName {
-			sitesMap.Content[j+1] = newSiteNode
-			out, err := yaml.Marshal(mapping)
-			if err != nil {
-				return fmt.Errorf("serialising config: %w", err)
-			}
-			return atomicWriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600) // M9
-		}
-	}
-	sitesMap.Content = append(sitesMap.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Value: siteName, Tag: "!!str"},
-		newSiteNode,
-	)
-
-	out, err := yaml.Marshal(mapping)
-	if err != nil {
-		return fmt.Errorf("serialising config: %w", err)
-	}
-	return atomicWriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600) // M9
-}
-
-// removeSiteFromConfig removes a site entry from the config file.
-func removeSiteFromConfig(cfgPath, siteName string) error {
-	raw, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return fmt.Errorf("reading config: %w", err)
-	}
-	var root yaml.Node
-	if err := yaml.Unmarshal(raw, &root); err != nil {
-		return fmt.Errorf("parsing config: %w", err)
-	}
-	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
-		return fmt.Errorf("unexpected config format")
-	}
-	mapping := root.Content[0]
-
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value != "sites" {
-			continue
-		}
-		sitesMap := mapping.Content[i+1]
-		for j := 0; j+1 < len(sitesMap.Content); j += 2 {
-			if sitesMap.Content[j].Value != siteName {
-				continue
-			}
-			sitesMap.Content = append(sitesMap.Content[:j], sitesMap.Content[j+2:]...)
-			out, err := yaml.Marshal(mapping)
-			if err != nil {
-				return fmt.Errorf("serialising config: %w", err)
-			}
-			return atomicWriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600) // M9
-		}
-		return fmt.Errorf("site %q not found in config", siteName)
-	}
-	return fmt.Errorf("sites section not found in config")
-}
-
-// setDefaultSite updates the default_site field in the config file.
-func setDefaultSite(cfgPath, siteName string) error {
-	raw, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return fmt.Errorf("reading config: %w", err)
-	}
-	var root yaml.Node
-	if err := yaml.Unmarshal(raw, &root); err != nil {
-		return fmt.Errorf("parsing config: %w", err)
-	}
-	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
-		return fmt.Errorf("unexpected config format")
-	}
-	updateYAMLValue(&root, "default_site", siteName)
-	out, err := yaml.Marshal(root.Content[0])
-	if err != nil {
-		return fmt.Errorf("serialising config: %w", err)
-	}
-	return atomicWriteFile(cfgPath, []byte(preserveHeader(raw, out)), 0o600) // M9
-}
-
-// ─── Background token refresh ────────────────────────────────────────────────
-
-// tryRefreshOAuthToken silently refreshes an expired OAuth access token before
-// any command runs. It loads the current site config, checks expiry, refreshes
-// via the Frappe token endpoint, and writes the new tokens back to disk.
-// All errors are swallowed — commands will handle 401s themselves if refresh fails.
-func tryRefreshOAuthToken() {
-	cfg, err := config.Load(siteName, configPath)
-	if err != nil {
-		return
-	}
-	if !cfg.IsOAuth() || !cfg.IsTokenExpired() || cfg.RefreshToken == "" {
-		return
-	}
-
-	tokens, err := client.RefreshOAuthToken(cfg.URL, cfg.OAuthClientID, cfg.OAuthClientSecret, cfg.RefreshToken)
-	if err != nil {
-		return
-	}
-
-	cfgPath := configPath
-	if cfgPath == "" {
-		cfgPath, err = config.DefaultConfigPath()
-		if err != nil {
-			return
-		}
-	}
-
-	_ = saveOAuthTokens(cfgPath, cfg.Name, tokens)
+	return siteName, config.SiteConfig{
+		URL:               siteURL,
+		OAuthClientID:     clientID,
+		OAuthClientSecret: clientSecret,
+		AccessToken:       tokens.AccessToken,
+		RefreshToken:      tokens.RefreshToken,
+		TokenExpiry:       tokens.ExpiresAt,
+	}, nil
 }

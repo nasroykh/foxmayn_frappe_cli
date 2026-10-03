@@ -5,10 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
-	"time"
-
-	"github.com/go-resty/resty/v2"
 )
 
 // loginBody is the JSON response shape of POST /api/method/login.
@@ -24,18 +20,15 @@ type loginBody struct {
 // password via POST /api/method/login, and returns the resulting session
 // cookie ("sid") value.
 func LoginPassword(ctx context.Context, siteURL, usr, pwd string) (string, error) {
-	// A bounded timeout so a hung login endpoint cannot hang every command for
-	// a session-auth site (M14). Login is intentionally not retried.
-	r := resty.New().
-		SetBaseURL(strings.TrimRight(siteURL, "/")).
-		SetTimeout(30 * time.Second)
-
-	resp, err := r.R().
+	warnIfInsecure(siteURL)
+	// Shares the client policy (timeout, no redirects of the POST, no
+	// logging). Login is intentionally not retried.
+	resp, err := newResty(siteURL).R().
 		SetContext(ctx).
 		SetBody(map[string]string{"usr": usr, "pwd": pwd}).
 		Post("/api/method/login")
 	if err != nil {
-		return "", fmt.Errorf("HTTP request failed: %w", err)
+		return "", requestError(err)
 	}
 
 	var body loginBody
@@ -43,7 +36,7 @@ func LoginPassword(ctx context.Context, siteURL, usr, pwd string) (string, error
 
 	if resp.StatusCode() >= 400 {
 		if body.Message != "" {
-			return "", fmt.Errorf("login failed: %s", body.Message)
+			return "", fmt.Errorf("login failed: %s", stripHTML(body.Message))
 		}
 		return "", fmt.Errorf("login failed (HTTP %d)", resp.StatusCode())
 	}

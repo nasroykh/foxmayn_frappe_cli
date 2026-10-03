@@ -1,11 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -35,55 +34,33 @@ Examples:
   ffc get-doc -d "Sales Invoice" -n "SINV-0001" --json --keys name,status,grand_total
   ffc get-doc -d "System Settings" --json
 `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Load site config
-		cfg, err := config.Load(siteName, configPath)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
-
-		// Parse --fields flag
 		var fields []string
 		if gdFields != "" {
-			fields, err = parseFields(gdFields)
-			if err != nil {
+			var err error
+			if fields, err = parseFields(gdFields); err != nil {
 				return fmt.Errorf("--fields: %w", err)
 			}
 		}
+		name := docNameOrSingle(gdName, gdDoctype)
 
-		// For Single DocTypes the document name equals the DocType name.
-		name := gdName
-		if name == "" {
-			name = gdDoctype
-		}
-
-		// Call the API with a spinner
-		var doc map[string]interface{}
-		var apiErr error
-		c, err := client.New(cmd.Context(), cfg)
+		doc, err := callSite(cmd, fmt.Sprintf("Fetching %s %s…", gdDoctype, name), func(ctx context.Context, c *client.FrappeClient) (map[string]interface{}, error) {
+			return c.GetDoc(ctx, gdDoctype, name)
+		})
 		if err != nil {
 			return err
 		}
-		_ = runSpinner(fmt.Sprintf("Fetching %s %s…", gdDoctype, name), func() {
-			doc, apiErr = c.GetDoc(cmd.Context(), gdDoctype, name)
-		})
 
-		if apiErr != nil {
-			return apiErr
-		}
-
-		// Output
 		if jsonOutput {
-			result := map[string]interface{}(doc)
-			// --keys takes priority; otherwise --fields also narrows JSON output
-			// (so it is not silently ignored in --json mode, L10).
+			// --keys takes priority; otherwise --fields also narrows JSON output.
 			switch {
 			case gdKeys != "":
-				result = filterSchemaKeys(result, strings.Split(gdKeys, ","))
+				doc = selectKeys(doc, gdKeys)
 			case len(fields) > 0:
-				result = filterSchemaKeys(result, fields)
+				doc, _ = filterKeys(doc, fields)
 			}
-			return output.PrintJSON(result)
+			return output.PrintJSON(doc)
 		}
 		output.PrintDocTable(doc, fields)
 		return nil

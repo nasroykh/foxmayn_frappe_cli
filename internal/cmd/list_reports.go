@@ -1,10 +1,9 @@
 package cmd
 
 import (
-	"fmt"
+	"context"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -28,40 +27,17 @@ Examples:
   ffc list-reports --module "Accounts" --limit 20
   ffc list-reports --json
 `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(siteName, configPath)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
-
-		filters, err := moduleFilter(lrModule)
+		opts, err := moduleListOptions(reportListFields, lrModule, lrLimit)
 		if err != nil {
 			return err
 		}
-
-		limit := lrLimit
-		if limit == 0 { // --limit 0 => no limit (M12)
-			limit = -1
-		}
-
-		opts := client.ListOptions{
-			Fields:  []string{"name", "report_type", "module", "is_standard", "ref_doctype"},
-			Filters: filters,
-			Limit:   limit,
-			OrderBy: "name asc",
-		}
-
-		var rows []map[string]interface{}
-		var apiErr error
-		c, err := client.New(cmd.Context(), cfg)
-		if err != nil {
-			return err
-		}
-		_ = runSpinner("Fetching reports…", func() {
-			rows, apiErr = c.GetList(cmd.Context(), "Report", opts)
+		rows, err := callSite(cmd, "Fetching reports…", func(ctx context.Context, c *client.FrappeClient) ([]map[string]interface{}, error) {
+			return c.GetList(ctx, "Report", opts)
 		})
-		if apiErr != nil {
-			return apiErr
+		if err != nil {
+			return err
 		}
 
 		if jsonOutput {

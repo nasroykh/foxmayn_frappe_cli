@@ -10,25 +10,28 @@ func TestFormatNumber(t *testing.T) {
 		in     float64
 		want   string
 	}{
-		// Integral values render without decimals (M13).
+		// Integral values render without decimals.
 		{"integer one, french", FormatFrench, 1, "1"},
 		{"docstatus-like zero", FormatFrench, 0, "0"},
 		{"year grouped, french", FormatFrench, 2024, "2" + nbsp + "024"},
 		{"year grouped, us", FormatUS, 2024, "2,024"},
-		// Fractions keep 2 decimals.
+		// Fractions keep at least 2 decimals.
 		{"half, french", FormatFrench, 1.5, "1,50"},
 		{"currency, us", FormatUS, 1234.5, "1,234.50"},
-		// Carry bug fixed: 1.999 rounds up to 2, not "1,100" (M13).
-		{"carry to integer", FormatFrench, 1.999, "2"},
-		{"carry sub-one", FormatUS, 0.999, "1"},
-		{"carry twelve", FormatUS, 12.999, "13"},
-		// Float representation: 1.255 stored as 1.2549999… rounds down.
-		{"round-down float", FormatUS, 1.255, "1.25"},
+		{"german", FormatGerman, 1234567.25, "1.234.567,25"},
+		{"plain", FormatPlain, 1234567.25, "1234567.25"},
+		// ...and up to 9 (Frappe's max float precision): small rates survive.
+		{"small rate", FormatUS, 0.0045, "0.0045"},
+		{"three decimals", FormatUS, 1.999, "1.999"},
+		{"float repr", FormatUS, 1.255, "1.255"},
+		{"rounds at 9 decimals", FormatUS, 0.1234567891, "0.123456789"},
+		{"rounds up into integer", FormatUS, 0.9999999999, "1"},
 		// Negatives.
 		{"negative fraction", FormatUS, -1.5, "-1.50"},
-		{"negative rounds to zero has no sign", FormatUS, -0.001, "0"},
-		// int64 overflow guard (L19): no garbage, falls back to plain formatting.
-		{"huge value", FormatUS, 1e19, "10000000000000000000"},
+		{"negative small", FormatUS, -0.001, "-0.001"},
+		{"negative rounds to zero has no sign", FormatUS, -0.0000000001, "0"},
+		// Values beyond int64 still group correctly.
+		{"huge value", FormatUS, 1e19, "10,000,000,000,000,000,000"},
 	}
 
 	orig := ActiveFormat

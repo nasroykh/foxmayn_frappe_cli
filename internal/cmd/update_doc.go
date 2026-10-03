@@ -1,12 +1,11 @@
 package cmd
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"strings"
+	"os"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -25,7 +24,9 @@ var updateDocCmd = &cobra.Command{
 	Short: "Update an existing Frappe document",
 	Long: `Update one or more fields on an existing Frappe document.
 
-The --data flag accepts a JSON object containing only the fields you want to change.
+The --data flag accepts a JSON object containing only the fields you want to
+change. A "name" key in --data is ignored: the document is chosen by --name
+(renaming is not done through update).
 
 For Single DocTypes (e.g. "System Settings", "HR Settings"), --name can be
 omitted — the DocType name is used as the document name automatically.
@@ -35,47 +36,41 @@ Examples:
   ffc update-doc -d "Note" -n "My Note" --data '{"title":"Updated Title"}' --json
   ffc update-doc -d "System Settings" --data '{"default_currency":"USD"}' --json
 `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(siteName, configPath)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
-
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(udData), &data); err != nil {
-			return fmt.Errorf("--data: invalid JSON object: %w", err)
-		}
-
-		// For Single DocTypes the document name equals the DocType name.
-		name := udName
-		if name == "" {
-			name = udDoctype
-		}
-
-		var doc map[string]interface{}
-		var apiErr error
-		c, err := client.New(cmd.Context(), cfg)
+		data, err := parseObject("--data", udData)
 		if err != nil {
 			return err
 		}
-		_ = runSpinner(fmt.Sprintf("Updating %s %s…", udDoctype, name), func() {
-			doc, apiErr = c.UpdateDoc(cmd.Context(), udDoctype, name, data)
+		if _, ok := data["name"]; ok {
+			fmt.Fprintln(os.Stderr, `warning: ignoring "name" in --data; use --name to choose the document`)
+			data = withoutName(data)
+		}
+		name := docNameOrSingle(udName, udDoctype)
+
+		doc, err := callSite(cmd, fmt.Sprintf("Updating %s %s…", udDoctype, name), func(ctx context.Context, c *client.FrappeClient) (map[string]interface{}, error) {
+			return c.UpdateDoc(ctx, udDoctype, name, data)
 		})
-		if apiErr != nil {
-			return apiErr
+		if err != nil {
+			return err
 		}
 
 		if jsonOutput {
-			result := map[string]interface{}(doc)
-			if udKeys != "" {
-				result = filterSchemaKeys(result, strings.Split(udKeys, ","))
-			}
-			return output.PrintJSON(result)
+			return output.PrintJSON(selectKeys(doc, udKeys))
 		}
 		output.PrintSuccess(fmt.Sprintf("Updated %s %s", udDoctype, name))
 		output.PrintDocTable(doc, nil)
 		return nil
 	},
+}
+
+// docNameOrSingle returns name, or the DocType name for Single DocTypes
+// (whose only document is named after the DocType).
+func docNameOrSingle(name, doctype string) string {
+	if name == "" {
+		return doctype
+	}
+	return name
 }
 
 func init() {

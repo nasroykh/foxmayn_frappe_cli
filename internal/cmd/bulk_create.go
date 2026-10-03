@@ -1,13 +1,10 @@
 package cmd
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"os"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -17,6 +14,7 @@ var (
 	bcDoctype string
 	bcData    string
 	bcFile    string
+	bcBulk    bulkFlags
 )
 
 var bulkCreateCmd = &cobra.Command{
@@ -24,133 +22,53 @@ var bulkCreateCmd = &cobra.Command{
 	Short: "Create multiple Frappe documents from a JSON array",
 	Long: `Create multiple documents in a Frappe DocType in one command.
 
-Provide records inline with --data or load them from a JSON file with --file.
-Each element of the array is a JSON object of field values.
+Provide records inline with --data, from a JSON file with --file, or from
+stdin with --file -. Each element of the array must be a JSON object of field
+values; the whole input is validated before anything is sent.
 
-Processing continues even when individual items fail. A per-item summary is
-printed at the end. The command exits with a non-zero code if any item failed.
+Processing continues when individual items fail unless --fail-fast is set. A
+per-item summary is printed at the end and the command exits non-zero if any
+item failed. Items cut off by Ctrl+C are reported as "interrupted": the server
+may or may not have created them, so check before re-running.
 
 Examples:
   ffc bulk-create -d "ToDo" --data '[{"description":"Task 1"},{"description":"Task 2"}]'
-  ffc bulk-create -d "Note" --file notes.json
-  ffc bulk-create -d "Customer" --file customers.json --json
+  ffc bulk-create -d "Note" --file notes.json --concurrency 4
+  cat customers.json | ffc bulk-create -d "Customer" --file - --json
 `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(siteName, configPath)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
-
-		raw := bcData
-		if bcFile != "" {
-			b, err := os.ReadFile(bcFile)
-			if err != nil {
-				return fmt.Errorf("reading file: %w", err)
-			}
-			raw = string(b)
-		}
-		if raw == "" {
-			return fmt.Errorf("provide --data or --file")
-		}
-
-		var items []map[string]interface{}
-		if err := json.Unmarshal([]byte(raw), &items); err != nil {
-			return fmt.Errorf("invalid JSON array: %w", err)
-		}
-		if len(items) == 0 {
-			return fmt.Errorf("no items to create")
-		}
-
-		c, err := client.New(cmd.Context(), cfg)
+		raw, err := readInput(bcData, bcFile)
 		if err != nil {
 			return err
 		}
-		type itemResult struct {
-			name    string
-			err     error
-			skipped bool
+		items, err := parseObjects(raw)
+		if err != nil {
+			return err
 		}
-		results := make([]itemResult, len(items))
-
-		interrupted := false
-		for i, item := range items {
-			// Stop launching new work once the user interrupts (Ctrl+C) — do not
-			// keep creating documents after an abort (M18).
-			if interrupted || cmd.Context().Err() != nil {
-				results[i].skipped = true
-				interrupted = true
-				continue
-			}
-			var doc map[string]interface{}
-			var apiErr error
-			runErr := runSpinner(fmt.Sprintf("Creating %s (%d/%d)…", bcDoctype, i+1, len(items)), func() {
-				doc, apiErr = c.CreateDoc(cmd.Context(), bcDoctype, item)
+		rep, err := bcBulk.run(cmd, fmt.Sprintf("Creating %d %s documents…", len(items), bcDoctype), len(items), "created",
+			func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
+				doc, err := c.CreateDoc(ctx, bcDoctype, items[i])
+				if err != nil {
+					return "", err
+				}
+				name, _ := docName(doc["name"])
+				return name, nil
 			})
-			if runErr != nil { // spinner interrupted
-				results[i].skipped = true
-				interrupted = true
-				continue
-			}
-			if apiErr != nil {
-				results[i].err = apiErr
-			} else if n, ok := docName(doc["name"]); ok { // accept integer names (L27)
-				results[i].name = n
-			}
+		if err != nil {
+			return err
 		}
-
-		succeeded, failed, skipped := 0, 0, 0
-		rows := make([]map[string]interface{}, len(results))
-		for i, r := range results {
-			row := map[string]interface{}{"#": i + 1}
-			switch {
-			case r.skipped:
-				row["status"] = "skipped"
-				row["detail"] = "interrupted"
-				skipped++
-			case r.err != nil:
-				row["status"] = "error"
-				row["detail"] = r.err.Error()
-				failed++
-			default:
-				row["status"] = "created"
-				row["detail"] = r.name
-				succeeded++
-			}
-			rows[i] = row
-		}
-
-		if jsonOutput {
-			if err := output.PrintJSON(map[string]interface{}{
-				"created": succeeded,
-				"failed":  failed,
-				"skipped": skipped,
-				"results": rows,
-			}); err != nil {
-				return err
-			}
-		} else {
-			output.PrintTable(rows, []string{"#", "status", "detail"})
-			if failed == 0 && skipped == 0 {
-				output.PrintSuccess(fmt.Sprintf("All %d %s documents created.", succeeded, bcDoctype))
-			} else {
-				output.PrintError(fmt.Sprintf("%d created, %d failed, %d skipped.", succeeded, failed, skipped))
-			}
-		}
-
-		if failed > 0 || skipped > 0 {
-			return fmt.Errorf("%d of %d items did not succeed (%d failed, %d skipped)", failed+skipped, len(items), failed, skipped)
-		}
-		return nil
+		return printBulkReport(rep, bcDoctype)
 	},
 }
 
 func init() {
 	bulkCreateCmd.Flags().StringVarP(&bcDoctype, "doctype", "d", "", "Frappe DocType (required)")
 	bulkCreateCmd.Flags().StringVar(&bcData, "data", "", "JSON array of field-value objects to create")
-	bulkCreateCmd.Flags().StringVar(&bcFile, "file", "", "Path to a JSON file containing an array of objects")
+	bulkCreateCmd.Flags().StringVar(&bcFile, "file", "", "Path to a JSON file containing an array of objects (- for stdin)")
+	bcBulk.register(bulkCreateCmd)
 
 	_ = bulkCreateCmd.MarkFlagRequired("doctype")
-	// --data and --file are alternatives, not both (L9).
 	bulkCreateCmd.MarkFlagsMutuallyExclusive("data", "file")
 
 	rootCmd.AddCommand(bulkCreateCmd)

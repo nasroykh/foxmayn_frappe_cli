@@ -5,9 +5,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,9 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
-	"github.com/go-resty/resty/v2"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 	"github.com/spf13/cobra"
@@ -40,6 +38,14 @@ func isDevBuild(v string) bool {
 var (
 	upCheckOnly bool
 	upYes       bool
+)
+
+const (
+	// maxArchiveBytes caps the downloaded archive; maxBinaryBytes caps one
+	// extracted file, so a hostile or corrupt archive cannot exhaust memory (D20).
+	maxArchiveBytes   = 200 << 20
+	maxBinaryBytes    = 200 << 20
+	maxChecksumsBytes = 1 << 20
 )
 
 const githubReleasesAPI = "https://api.github.com/repos/nasroykh/foxmayn_frappe_cli/releases/latest"
@@ -67,28 +73,77 @@ Examples:
 	RunE: runUpdate,
 }
 
-func runUpdate(_ *cobra.Command, _ []string) error {
+// updateKind classifies how latest relates to the running version.
+type updateKind int
+
+const (
+	kindUpToDate updateKind = iota
+	kindUpdate
+	kindDowngrade
+	kindDev // unparseable dev build (e.g. a bare commit hash)
+)
+
+// gitDescribeRE matches the suffixes `git describe --dirty` adds to a build
+// that is ahead of its tag or has local edits.
+var gitDescribeRE = regexp.MustCompile(`-\d+-g[0-9a-f]+|-dirty`)
+
+var numericBaseRE = regexp.MustCompile(`^v?\d+\.\d+\.\d+`)
+
+// classifyUpdate compares the numeric base of both versions so a pre-release
+// or git-describe build ahead of the latest stable is never offered a silent
+// downgrade (D23).
+func classifyUpdate(current, latest string) updateKind {
+	current = strings.TrimSpace(current)
+	if !numericBaseRE.MatchString(current) {
+		return kindDev
+	}
+	curBase, curPre := splitPreRelease(strings.TrimPrefix(current, "v"))
+	latBase, _ := splitPreRelease(strings.TrimPrefix(latest, "v"))
+	cur, lat := parseSemver(curBase), parseSemver(latBase)
+	for i := 0; i < 3; i++ {
+		if lat[i] > cur[i] {
+			return kindUpdate
+		}
+		if lat[i] < cur[i] {
+			return kindDowngrade
+		}
+	}
+	switch {
+	case curPre == "":
+		return kindUpToDate
+	case gitDescribeRE.MatchString(current):
+		return kindDowngrade // ahead of (or edited on top of) this release
+	default:
+		return kindUpdate // rc of this version: the final supersedes it
+	}
+}
+
+func runUpdate(cmd *cobra.Command, _ []string) error {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	current := version.Version
 
 	// Fetch latest release from GitHub.
 	var release githubRelease
 	var fetchErr error
-	_ = spinner.New().
-		Title("Checking for updates…").
-		Action(func() {
-			resp, err := resty.New().SetTimeout(30*time.Second).R().
-				SetResult(&release).
-				SetHeader("Accept", "application/vnd.github+json").
-				Get(githubReleasesAPI)
-			if err != nil {
-				fetchErr = fmt.Errorf("fetching release info: %w", err)
-				return
-			}
-			if resp.StatusCode() != 200 {
-				fetchErr = fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode())
-			}
-		}).
-		Run()
+	if err := runSpinner("Checking for updates…", func() {
+		resp, err := client.NewHTTPClient(30*time.Second).R().
+			SetContext(ctx).
+			SetResult(&release).
+			SetHeader("Accept", "application/vnd.github+json").
+			Get(githubReleasesAPI)
+		if err != nil {
+			fetchErr = fmt.Errorf("fetching release info: %w", err)
+			return
+		}
+		if resp.StatusCode() != 200 {
+			fetchErr = fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode())
+		}
+	}); err != nil {
+		return err
+	}
 	if fetchErr != nil {
 		return fetchErr
 	}
@@ -98,17 +153,16 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("no releases found on GitHub")
 	}
 
-	isDev := isDevBuild(current)
-	upToDate := !isDev && !newerThan(current, latest)
-
-	if upToDate {
+	kind := classifyUpdate(current, latest)
+	switch kind {
+	case kindUpToDate:
 		output.PrintSuccess(fmt.Sprintf("Already up to date (%s)", current))
 		return nil
-	}
-
-	if isDev {
+	case kindDev:
 		fmt.Fprintf(os.Stderr, "Running a dev build. Latest release: %s\n", latest)
-	} else {
+	case kindDowngrade:
+		fmt.Fprintf(os.Stderr, "Downgrade: you run %s, which is newer than the latest release %s\n", current, latest)
+	default:
 		fmt.Fprintf(os.Stderr, "Update available: %s → %s\n", current, latest)
 	}
 
@@ -131,90 +185,107 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("no asset found for %s/%s (expected %q)", runtime.GOOS, runtime.GOARCH, target)
 	}
 
-	// Confirm before downloading.
+	// Confirm before downloading. --yes also confirms a downgrade; the notice
+	// above is always printed.
 	if !upYes {
-		var confirmed bool
-		err := huh.NewForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title(fmt.Sprintf("Install ffc %s?", latest)).
-					Value(&confirmed),
-			),
-		).WithKeyMap(escQuitKeyMap()).Run()
-		// A real prompt error (e.g. no TTY) is distinct from a user cancel (L4).
-		if err != nil && !errors.Is(err, huh.ErrUserAborted) {
-			return err
+		title := fmt.Sprintf("Install ffc %s?", latest)
+		if kind == kindDowngrade {
+			title = fmt.Sprintf("Downgrade to ffc %s?", latest)
 		}
-		if err != nil || !confirmed {
-			fmt.Fprintln(os.Stderr, "Update cancelled.")
-			return nil
+		// Decline or Esc exits non-zero; no TTY fails with a --yes hint.
+		if err := confirm(title); err != nil {
+			return err
 		}
 	}
 
 	// Download archive and replace binary.
 	var installErr error
-	_ = spinner.New().
-		Title(fmt.Sprintf("Downloading ffc %s…", latest)).
-		Action(func() {
-			installErr = downloadAndInstall(downloadURL, checksumsURL, target)
-		}).
-		Run()
+	if err := runSpinner(fmt.Sprintf("Downloading ffc %s…", latest), func() {
+		installErr = downloadAndInstall(ctx, downloadURL, checksumsURL, target)
+	}); err != nil {
+		return err
+	}
 	if installErr != nil {
 		return installErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	output.PrintSuccess(fmt.Sprintf("Updated to ffc %s", latest))
 	return nil
 }
 
+// fetchLimited GETs url and returns at most max bytes, failing when the body is
+// larger. The context cancels the transfer on Ctrl+C (D18, D20).
+func fetchLimited(ctx context.Context, url string, timeout time.Duration, max int64) ([]byte, error) {
+	resp, err := client.NewHTTPClient(timeout).R().
+		SetContext(ctx).
+		SetDoNotParseResponse(true).
+		Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.RawBody().Close()
+	if resp.StatusCode() != 200 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode())
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.RawBody(), max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("response exceeds %d MB limit", max>>20)
+	}
+	return data, nil
+}
+
 // downloadAndInstall fetches the release archive, verifies its SHA-256 against
 // the release's checksums.txt, and replaces the running binary.
-func downloadAndInstall(downloadURL, checksumsURL, assetName string) error {
-	resp, err := resty.New().SetTimeout(5 * time.Minute).R().Get(downloadURL)
+func downloadAndInstall(ctx context.Context, downloadURL, checksumsURL, assetName string) error {
+	archive, err := fetchLimited(ctx, downloadURL, 5*time.Minute, maxArchiveBytes)
 	if err != nil {
 		return fmt.Errorf("downloading: %w", err)
-	}
-	if resp.StatusCode() != 200 {
-		return fmt.Errorf("download failed: HTTP %d", resp.StatusCode())
 	}
 
 	// Verify the download against the published checksum before trusting it —
 	// TLS alone doesn't protect against a compromised release (H1).
-	if err := verifyChecksum(resp.Body(), checksumsURL, assetName); err != nil {
+	if err := verifyChecksum(ctx, archive, checksumsURL, assetName); err != nil {
 		return err
 	}
 
 	binName := runningBinaryName()
 	var binData []byte
 	if runtime.GOOS == "windows" {
-		binData, err = extractFromZip(resp.Body(), binName)
+		binData, err = extractFromZip(archive, binName)
 	} else {
-		binData, err = extractFromTarGz(resp.Body(), binName)
+		binData, err = extractFromTarGz(archive, binName)
 	}
 	if err != nil {
 		return fmt.Errorf("extracting binary: %w", err)
 	}
 
+	// Do not touch the installed binary once the user has interrupted.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return replaceBinary(binData)
 }
 
 // verifyChecksum computes the SHA-256 of archive and compares it against the
 // entry for assetName in the release's checksums.txt (H1).
-func verifyChecksum(archive []byte, checksumsURL, assetName string) error {
+func verifyChecksum(ctx context.Context, archive []byte, checksumsURL, assetName string) error {
 	if checksumsURL == "" {
 		return fmt.Errorf("release has no checksums.txt — refusing to install an unverified binary")
 	}
-	resp, err := resty.New().SetTimeout(30 * time.Second).R().Get(checksumsURL)
+	body, err := fetchLimited(ctx, checksumsURL, 30*time.Second, maxChecksumsBytes)
 	if err != nil {
 		return fmt.Errorf("fetching checksums: %w", err)
-	}
-	if resp.StatusCode() != 200 {
-		return fmt.Errorf("fetching checksums: HTTP %d", resp.StatusCode())
 	}
 
 	sum := sha256.Sum256(archive)
 	got := hex.EncodeToString(sum[:])
-	for _, line := range strings.Split(string(resp.Body()), "\n") {
+	for _, line := range strings.Split(string(body), "\n") {
 		// checksums.txt lines are "<hex-sha256>  <filename>".
 		fields := strings.Fields(line)
 		if len(fields) == 2 && fields[1] == assetName {
@@ -254,7 +325,17 @@ func replaceBinary(newData []byte) error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("writing update: %w", writeErr)
 	}
-	tmp.Close()
+	// Sync before rename: a rename can become durable before the data, and a
+	// power loss would then leave a zero-length binary (D21).
+	if syncErr := tmp.Sync(); syncErr != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("syncing update: %w", syncErr)
+	}
+	if closeErr := tmp.Close(); closeErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("writing update: %w", closeErr)
+	}
 
 	if err := os.Chmod(tmpPath, 0755); err != nil {
 		os.Remove(tmpPath)
@@ -271,7 +352,11 @@ func replaceBinary(newData []byte) error {
 func swapExecutable(current, replacement string) error {
 	if runtime.GOOS == "windows" {
 		old := current + ".old"
-		os.Remove(old) // remove leftover from any previous update
+		// A previous .old may still be a running image (e.g. a detached MCP
+		// server) and so cannot be removed; use a unique name then (D22).
+		if err := os.Remove(old); err != nil && !os.IsNotExist(err) {
+			old = fmt.Sprintf("%s.old-%d", current, time.Now().UnixNano())
+		}
 		if err := os.Rename(current, old); err != nil {
 			os.Remove(replacement)
 			return fmt.Errorf("moving old binary: %w", err)
@@ -280,6 +365,7 @@ func swapExecutable(current, replacement string) error {
 			_ = os.Rename(old, current) // try to restore
 			return fmt.Errorf("installing new binary: %w", err)
 		}
+		cleanupStaleOld(current)
 		return nil
 	}
 	// Unix: os.Rename is atomic on the same filesystem.
@@ -288,6 +374,31 @@ func swapExecutable(current, replacement string) error {
 		return fmt.Errorf("replacing binary: %w", err)
 	}
 	return nil
+}
+
+// cleanupStaleOld best-effort removes leftover ffc.exe.old* files from earlier
+// updates. Ones still in use fail to delete and are retried next time (D22).
+func cleanupStaleOld(current string) {
+	matches, _ := filepath.Glob(current + ".old*")
+	for _, m := range matches {
+		os.Remove(m)
+	}
+}
+
+// readBinaryEntry reads one archive entry, rejecting empty or oversized data so
+// a corrupt archive can never replace ffc with a 0-byte or huge file (D20).
+func readBinaryEntry(r io.Reader, name string) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxBinaryBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBinaryBytes {
+		return nil, fmt.Errorf("%q exceeds %d MB limit", name, maxBinaryBytes>>20)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("%q in archive is empty", name)
+	}
+	return data, nil
 }
 
 // releaseAssetName returns the GoReleaser archive filename for the current
@@ -327,8 +438,8 @@ func extractFromTarGz(data []byte, name string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading tar: %w", err)
 		}
-		if filepath.Base(hdr.Name) == name {
-			return io.ReadAll(tr)
+		if hdr.Typeflag == tar.TypeReg && filepath.Base(hdr.Name) == name {
+			return readBinaryEntry(tr, name)
 		}
 	}
 	return nil, fmt.Errorf("%q not found in archive", name)
@@ -340,13 +451,13 @@ func extractFromZip(data []byte, name string) ([]byte, error) {
 		return nil, fmt.Errorf("opening zip: %w", err)
 	}
 	for _, f := range r.File {
-		if filepath.Base(f.Name) == name {
+		if f.Mode().IsRegular() && filepath.Base(f.Name) == name {
 			rc, err := f.Open()
 			if err != nil {
 				return nil, err
 			}
 			defer rc.Close()
-			return io.ReadAll(rc)
+			return readBinaryEntry(rc, name)
 		}
 	}
 	return nil, fmt.Errorf("%q not found in zip", name)

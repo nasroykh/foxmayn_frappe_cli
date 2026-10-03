@@ -1,13 +1,12 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,34 +17,31 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-// FrappeClient wraps a resty client configured for a specific Frappe site.
+// FrappeClient wraps a resty client configured for a specific Frappe site. It
+// is safe for concurrent use: the only mutable state (a session id) is guarded
+// by mu and attached per request, never by mutating the shared resty client.
 type FrappeClient struct {
 	r *resty.Client
+
+	// Username/password sites only. loginMu serialises re-logins so that
+	// concurrent requests rejected by one expired session log in once.
+	session    *sessionCreds
+	loginMu    sync.Mutex
+	mu         sync.Mutex
+	sid        string
+	loggedInAt time.Time
 }
 
-var insecureWarnOnce sync.Once
+type sessionCreds struct{ url, user, pwd string }
 
-// warnIfInsecure prints a one-time stderr warning when credentials will be sent
-// over a non-localhost plain-HTTP connection (M5). Localhost HTTP is left alone.
-func warnIfInsecure(rawURL string) {
-	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme != "http" {
-		return
-	}
-	switch u.Hostname() {
-	case "localhost", "127.0.0.1", "::1", "":
-		return
-	}
-	insecureWarnOnce.Do(func() {
-		fmt.Fprintf(os.Stderr,
-			"warning: %s uses plain HTTP — credentials are transmitted unencrypted. Use https:// if the site supports it.\n",
-			rawURL)
-	})
-}
+// reloginAfter is how old a session must be before a 401/403 can trigger a
+// transparent re-login. A fresh session that is refused is a genuine
+// permission error, so it is not retried.
+const reloginAfter = time.Minute
 
 // resourcePath builds an /api/resource path, URL-escaping every segment so that
 // doctypes with spaces ("Sales Invoice") and names with "/", "#" or "?"
-// ("INV/2025/001") cannot break out of their path segment (H2).
+// ("INV/2025/001") cannot break out of their path segment.
 func resourcePath(doctype string, name ...string) string {
 	p := "/api/resource/" + url.PathEscape(doctype)
 	for _, n := range name {
@@ -60,18 +56,12 @@ func resourcePath(doctype string, name ...string) string {
 func New(ctx context.Context, cfg *config.SiteConfig) (*FrappeClient, error) {
 	warnIfInsecure(cfg.URL)
 
-	r := resty.New().
-		SetBaseURL(strings.TrimRight(cfg.URL, "/")).
-		SetTimeout(30 * time.Second).
+	r := newResty(cfg.URL).
 		SetRetryCount(2).
-		SetRetryWaitTime(500 * time.Millisecond).
-		// Only retry idempotent GETs on a transport error. Retrying a POST/PUT/
-		// DELETE that timed out after the server already committed would create
-		// duplicate documents or mis-report a completed write (H3).
-		AddRetryCondition(func(resp *resty.Response, err error) bool {
-			return err != nil && resp != nil && resp.Request != nil &&
-				resp.Request.Method == http.MethodGet
-		})
+		SetRetryWaitTime(500*time.Millisecond).
+		AddRetryCondition(retryableGET).
+		SetHeader("Accept", "application/json")
+	c := &FrappeClient{r: r}
 
 	// OAuth Bearer token takes priority; fall back to Frappe token auth, then
 	// to a fresh username/password session login.
@@ -81,21 +71,128 @@ func New(ctx context.Context, cfg *config.SiteConfig) (*FrappeClient, error) {
 	case cfg.APIKey != "" && cfg.APISecret != "":
 		r.SetHeader("Authorization", fmt.Sprintf("token %s:%s", cfg.APIKey, cfg.APISecret))
 	case cfg.IsSessionAuth():
-		sid, err := LoginPassword(ctx, cfg.URL, cfg.Username, cfg.Password)
-		if err != nil {
-			return nil, fmt.Errorf("session login: %w", err)
+		c.session = &sessionCreds{url: cfg.URL, user: cfg.Username, pwd: cfg.Password}
+		if err := c.login(ctx); err != nil {
+			return nil, err
 		}
-		r.SetHeader("Cookie", "sid="+sid)
 	default:
 		// No usable credentials — fail loudly rather than issue anonymous
-		// requests that mysteriously 403/return Guest data (L22).
+		// requests that mysteriously 403/return Guest data.
 		return nil, fmt.Errorf("site has no usable credentials (need an API key/secret, OAuth token, or username/password)")
 	}
+	return c, nil
+}
 
-	// Frappe returns JSON
-	r.SetHeader("Accept", "application/json")
+func (c *FrappeClient) login(ctx context.Context) error {
+	sid, err := LoginPassword(ctx, c.session.url, c.session.user, c.session.pwd)
+	if err != nil {
+		return fmt.Errorf("session login: %w", err)
+	}
+	c.mu.Lock()
+	c.sid, c.loggedInAt = sid, time.Now()
+	c.mu.Unlock()
+	return nil
+}
 
-	return &FrappeClient{r: r}, nil
+// relogin handles a 401/403 received with session id used. It reports true
+// when the request should be repeated with the current session id: another
+// request already logged in again, or this call did. It reports false (the
+// rejection stands) when the session is too young for expiry to explain it,
+// when the session is still valid (a genuine permission error), or when the
+// login fails.
+func (c *FrappeClient) relogin(ctx context.Context, used string) bool {
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+
+	c.mu.Lock()
+	current, age := c.sid, time.Since(c.loggedInAt)
+	c.mu.Unlock()
+	if current != used {
+		return true
+	}
+	if age < reloginAfter || c.sessionValid(ctx, used) {
+		return false
+	}
+	return c.login(ctx) == nil
+}
+
+// sessionValid reports whether sid still belongs to a logged-in user, so a
+// permission error is not mistaken for an expired session (which would open
+// a new server-side session on every denied call).
+func (c *FrappeClient) sessionValid(ctx context.Context, sid string) bool {
+	var res struct {
+		Message string `json:"message"`
+	}
+	resp, err := c.r.R().SetContext(ctx).SetHeader("Cookie", "sid="+sid).
+		Get("/api/method/frappe.auth.get_logged_user")
+	if err != nil || resp.StatusCode() != http.StatusOK || json.Unmarshal(resp.Body(), &res) != nil {
+		return false
+	}
+	return res.Message != "" && res.Message != "Guest"
+}
+
+// Close ends the server-side session of a username/password client so a
+// long-running process (the MCP server) does not leave it behind. It is a
+// no-op for token-authenticated clients.
+func (c *FrappeClient) Close(ctx context.Context) {
+	if c.session == nil {
+		return
+	}
+	_ = c.do(ctx, http.MethodPost, "/api/method/logout", nil, nil, nil, nil)
+}
+
+// do executes a request and decodes the JSON response into out (if non-nil).
+func (c *FrappeClient) do(ctx context.Context, method, path string, body interface{}, query map[string]string, hints map[int]string, out interface{}) error {
+	var sid string // the session id the last send used
+	send := func() (*resty.Response, error) {
+		req := c.r.R().SetContext(ctx)
+		if body != nil {
+			req.SetBody(body)
+		}
+		if len(query) > 0 {
+			req.SetQueryParams(query)
+		}
+		if c.session != nil {
+			c.mu.Lock()
+			sid = c.sid
+			c.mu.Unlock()
+			req.SetHeader("Cookie", "sid="+sid)
+		}
+		return req.Execute(method, path)
+	}
+
+	resp, err := send()
+	if err != nil {
+		return requestError(err)
+	}
+	if code := resp.StatusCode(); c.session != nil && (code == http.StatusUnauthorized || code == http.StatusForbidden) && c.relogin(ctx, sid) {
+		// The request was rejected before it ran, so repeating it (even a
+		// write) cannot duplicate anything.
+		if resp, err = send(); err != nil {
+			return requestError(err)
+		}
+	}
+	if resp.StatusCode() >= 400 {
+		return apiError(resp, hints)
+	}
+	if out == nil {
+		return nil
+	}
+	return decodeJSON(resp, out)
+}
+
+// decodeJSON unmarshals a 2xx body, reporting an HTML or other non-JSON page
+// (an SSO/login proxy, a wrong URL) clearly instead of "invalid character '<'".
+func decodeJSON(resp *resty.Response, out interface{}) error {
+	body := resp.Body()
+	if err := json.Unmarshal(body, out); err != nil {
+		ct := resp.Header().Get("Content-Type")
+		if ct != "" && !strings.Contains(ct, "json") {
+			return fmt.Errorf("unexpected non-JSON response (%s, HTTP %d): check the site URL: %s", ct, resp.StatusCode(), snippet(body))
+		}
+		return fmt.Errorf("parsing response: %w", err)
+	}
+	return nil
 }
 
 // ListOptions contains query parameters for listing documents.
@@ -107,41 +204,23 @@ type ListOptions struct {
 	OrderBy string   // e.g. "name asc"
 }
 
-// listResponse is the envelope Frappe wraps list results in.
-type listResponse struct {
-	Data    []map[string]interface{} `json:"data"`
-	Message []map[string]interface{} `json:"message"` // v1 variant
-}
-
 // frappeErrorResponse represents a Frappe server-side error JSON body.
 type frappeErrorResponse struct {
 	Exception      string `json:"exception"`        // e.g. "frappe.exceptions.DataError: ..."
 	ExcType        string `json:"exc_type"`         // e.g. "DataError"
 	ServerMessages string `json:"_server_messages"` // JSON-encoded list of message objects
+	Message        any    `json:"message"`          // some endpoints (login, whitelisted methods) put the error here
 }
 
 // serverMessage is a single entry inside _server_messages.
 type serverMessage struct {
 	Message string `json:"message"`
-	Title   string `json:"title"`
 }
 
-var htmlTagRE = regexp.MustCompile(`<[^>]+>`)
-
-// stripHTML removes HTML tags Frappe embeds in translated messages and trims.
-func stripHTML(s string) string {
-	return strings.TrimSpace(htmlTagRE.ReplaceAllString(s, ""))
-}
-
-// frappeUserMessage extracts the human-facing message(s) from a Frappe error
-// body: every entry of _server_messages (joined), HTML-stripped, falling back
-// to the exception text. Returns "" if nothing usable is found (L13).
-func frappeUserMessage(body []byte) string {
-	var fe frappeErrorResponse
-	if err := json.Unmarshal(body, &fe); err != nil {
-		return ""
-	}
-
+// userMessage extracts the human-facing message(s) from a parsed Frappe error
+// body: every entry of _server_messages (joined), falling back to the
+// exception text, then to a plain string "message". "" if nothing usable.
+func (fe *frappeErrorResponse) userMessage() string {
 	if fe.ServerMessages != "" {
 		// _server_messages is a JSON-encoded array of JSON-encoded objects.
 		var rawMsgs []string
@@ -160,59 +239,99 @@ func frappeUserMessage(body []byte) string {
 			}
 		}
 	}
-
 	if fe.Exception != "" {
 		// "frappe.exceptions.DataError: Field not permitted ..." → keep the tail.
-		if parts := strings.SplitN(fe.Exception, ": ", 2); len(parts) == 2 {
-			return stripHTML(parts[1])
+		if _, tail, ok := strings.Cut(fe.Exception, ": "); ok {
+			return stripHTML(tail)
 		}
 		return stripHTML(fe.Exception)
+	}
+	if s, ok := fe.Message.(string); ok {
+		return stripHTML(s)
 	}
 	return ""
 }
 
-// parseFrappeError turns a raw Frappe error body into a human-friendly error.
-func parseFrappeError(statusCode int, body []byte) error {
+// frappeUserMessage parses body and returns its user-facing message.
+func frappeUserMessage(body []byte) string {
 	var fe frappeErrorResponse
-	if err := json.Unmarshal(body, &fe); err != nil {
-		return fmt.Errorf("server error %d: %s", statusCode, strings.TrimSpace(string(body)))
+	if json.Unmarshal(body, &fe) != nil {
+		return ""
 	}
-	msg := frappeUserMessage(body)
-	excType := fe.ExcType
-	if excType == "" {
-		excType = "ServerError"
-	}
-	if msg != "" {
-		return fmt.Errorf("[%s] %s (HTTP %d)", excType, msg, statusCode)
-	}
-	return fmt.Errorf("server error %d (%s)", statusCode, excType)
+	return fe.userMessage()
 }
 
 // apiError converts a >=400 response into a user-facing error. For statuses
-// with an actionable hint it combines the hint with the specific Frappe message
-// (so 401/403/404 no longer discard the server's explanation, L18); otherwise
-// it defers to parseFrappeError.
+// with an actionable hint it combines the hint with the specific Frappe
+// message; otherwise it reports the exception type and message. Non-JSON
+// bodies (proxy error pages) are truncated and sanitized.
 func apiError(resp *resty.Response, hints map[int]string) error {
 	code := resp.StatusCode()
-	msg := frappeUserMessage(resp.Body())
+	body := resp.Body()
+
+	var fe frappeErrorResponse
+	isJSON := json.Unmarshal(body, &fe) == nil
+	msg := ""
+	if isJSON {
+		msg = fe.userMessage()
+	}
+
 	if hint, ok := hints[code]; ok {
 		if msg != "" {
 			return fmt.Errorf("%s — %s (HTTP %d)", hint, msg, code)
 		}
 		return fmt.Errorf("%s (HTTP %d)", hint, code)
 	}
-	return parseFrappeError(code, resp.Body())
+	if !isJSON {
+		if s := snippet(body); s != "" {
+			return fmt.Errorf("server error %d: %s", code, s)
+		}
+		return fmt.Errorf("server error %d", code)
+	}
+	excType := fe.ExcType
+	if excType == "" {
+		excType = "ServerError"
+	}
+	if msg != "" {
+		return fmt.Errorf("[%s] %s (HTTP %d)", excType, msg, code)
+	}
+	return fmt.Errorf("server error %d (%s)", code, excType)
 }
 
-func authHint() string {
-	return "authentication failed (401): check your credentials or run 'ffc init' to reconfigure"
+const authHint = "authentication failed (401): check your credentials or run 'ffc init' to reconfigure"
+
+func readHints(doctype string) map[int]string {
+	return map[int]string{
+		http.StatusUnauthorized: authHint,
+		http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have read access to %s", doctype),
+		http.StatusNotFound:     fmt.Sprintf("doctype %q not found on this site (404)", doctype),
+	}
+}
+
+func docHints(doctype, name, access string) map[int]string {
+	return map[int]string{
+		http.StatusUnauthorized: authHint,
+		http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have %s access to %s", access, doctype),
+		http.StatusNotFound:     fmt.Sprintf("%s %q not found (404)", doctype, name),
+	}
+}
+
+// dataEnvelope is the {"data": {...}} wrapper of /api/resource document calls.
+type dataEnvelope struct {
+	Data map[string]interface{} `json:"data"`
+}
+
+func (e dataEnvelope) doc() (map[string]interface{}, error) {
+	if e.Data == nil {
+		return nil, fmt.Errorf("unexpected response: no document in the server reply")
+	}
+	return e.Data, nil
 }
 
 // GetList calls GET /api/resource/<doctype> and returns the document rows.
 // It always returns a non-nil slice on success (empty when there are no rows).
 func (c *FrappeClient) GetList(ctx context.Context, doctype string, opts ListOptions) ([]map[string]interface{}, error) {
 	params := map[string]string{}
-
 	if len(opts.Fields) > 0 {
 		fieldsJSON, err := json.Marshal(opts.Fields)
 		if err != nil {
@@ -224,7 +343,7 @@ func (c *FrappeClient) GetList(ctx context.Context, doctype string, opts ListOpt
 		params["filters"] = opts.Filters
 	}
 	// Limit: <0 unlimited (Frappe treats limit_page_length=0 as "all"),
-	// >0 explicit page length, 0 leaves the Frappe default (M12).
+	// >0 explicit page length, 0 leaves the Frappe default.
 	if opts.Limit < 0 {
 		params["limit_page_length"] = "0"
 	} else if opts.Limit > 0 {
@@ -237,138 +356,112 @@ func (c *FrappeClient) GetList(ctx context.Context, doctype string, opts ListOpt
 		params["order_by"] = opts.OrderBy
 	}
 
-	resp, err := c.r.R().SetContext(ctx).SetQueryParams(params).Get(resourcePath(doctype))
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	// Frappe v14/v15 wraps the list in "data", older versions in "message".
+	var result struct {
+		Data    []map[string]interface{} `json:"data"`
+		Message []map[string]interface{} `json:"message"`
 	}
-	if resp.StatusCode() >= 400 {
-		return nil, apiError(resp, map[int]string{
-			http.StatusUnauthorized: authHint(),
-			http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have read access to %s", doctype),
-			http.StatusNotFound:     fmt.Sprintf("doctype %q not found on this site (404)", doctype),
-		})
+	if err := c.do(ctx, http.MethodGet, resourcePath(doctype), nil, params, readHints(doctype), &result); err != nil {
+		return nil, err
 	}
-
-	// Frappe v14/v15 wraps the list in "data", older in "message".
-	var result listResponse
-	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
-	}
-	if result.Data != nil {
+	switch {
+	case result.Data != nil:
 		return result.Data, nil
-	}
-	if result.Message != nil {
+	case result.Message != nil:
 		return result.Message, nil
 	}
-	// Never return nil: `list-docs --json` must emit [] (not null) so `| jq '.[]'`
-	// works even for an empty or unrecognized 2xx envelope (L13).
+	// Never return nil: `list-docs --json` must emit [] (not null).
 	return []map[string]interface{}{}, nil
+}
+
+// GetDoc calls GET /api/resource/<doctype>/<name> and returns the document fields.
+func (c *FrappeClient) GetDoc(ctx context.Context, doctype, name string) (map[string]interface{}, error) {
+	var env dataEnvelope
+	if err := c.do(ctx, http.MethodGet, resourcePath(doctype, name), nil, nil, docHints(doctype, name, "read"), &env); err != nil {
+		return nil, err
+	}
+	return env.doc()
 }
 
 // CreateDoc posts a new document and returns the created document fields.
 func (c *FrappeClient) CreateDoc(ctx context.Context, doctype string, data map[string]interface{}) (map[string]interface{}, error) {
-	resp, err := c.r.R().SetContext(ctx).SetBody(data).Post(resourcePath(doctype))
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	hints := readHints(doctype)
+	hints[http.StatusForbidden] = fmt.Sprintf("permission denied (403): your user may not have create access to %s", doctype)
+	var env dataEnvelope
+	if err := c.do(ctx, http.MethodPost, resourcePath(doctype), data, nil, hints, &env); err != nil {
+		return nil, err
 	}
-	if resp.StatusCode() >= 400 {
-		return nil, apiError(resp, map[int]string{
-			http.StatusUnauthorized: authHint(),
-			http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have write access to %s", doctype),
-			http.StatusNotFound:     fmt.Sprintf("doctype %q not found on this site (404)", doctype),
-		})
-	}
-
-	var result struct {
-		Data map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
-	}
-	return result.Data, nil
+	return env.doc()
 }
 
 // UpdateDoc sends a PUT request to update an existing document and returns the updated fields.
 func (c *FrappeClient) UpdateDoc(ctx context.Context, doctype, name string, data map[string]interface{}) (map[string]interface{}, error) {
-	resp, err := c.r.R().SetContext(ctx).SetBody(data).Put(resourcePath(doctype, name))
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	var env dataEnvelope
+	if err := c.do(ctx, http.MethodPut, resourcePath(doctype, name), data, nil, docHints(doctype, name, "write"), &env); err != nil {
+		return nil, err
 	}
-	if resp.StatusCode() >= 400 {
-		return nil, apiError(resp, map[int]string{
-			http.StatusUnauthorized: authHint(),
-			http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have write access to %s", doctype),
-			http.StatusNotFound:     fmt.Sprintf("%s %q not found (404)", doctype, name),
-		})
-	}
-
-	var result struct {
-		Data map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
-	}
-	return result.Data, nil
+	return env.doc()
 }
 
 // DeleteDoc sends a DELETE request to remove a document. Returns nil on success.
 func (c *FrappeClient) DeleteDoc(ctx context.Context, doctype, name string) error {
-	resp, err := c.r.R().SetContext(ctx).Delete(resourcePath(doctype, name))
-	if err != nil {
-		return fmt.Errorf("HTTP request failed: %w", err)
-	}
-	if resp.StatusCode() >= 400 {
-		return apiError(resp, map[int]string{
-			http.StatusUnauthorized: authHint(),
-			http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have write access to %s", doctype),
-			http.StatusNotFound:     fmt.Sprintf("%s %q not found (404)", doctype, name),
-		})
-	}
-	return nil
+	return c.do(ctx, http.MethodDelete, resourcePath(doctype, name), nil, nil, docHints(doctype, name, "delete"), nil)
 }
 
 // CallMethod invokes /api/method/<method>. When httpGET is true the args are
-// sent as query parameters via GET (for methods whitelisted GET-only, L16);
-// otherwise they are POSTed as a JSON body. Returns the "message" field.
+// sent as query parameters via GET (for methods whitelisted GET-only):
+// strings are sent as-is and every other value JSON-encoded, which is what
+// Frappe's argument parsing expects (Go's %v would send "map[a:1]").
+// Otherwise they are POSTed as a JSON body. Returns the "message" field.
 func (c *FrappeClient) CallMethod(ctx context.Context, method string, args map[string]interface{}, httpGET bool) (interface{}, error) {
-	req := c.r.R().SetContext(ctx)
 	endpoint := "/api/method/" + url.PathEscape(method)
-
-	var resp *resty.Response
-	var err error
-	if httpGET {
-		if len(args) > 0 {
-			qp := make(map[string]string, len(args))
-			for k, v := range args {
-				qp[k] = fmt.Sprintf("%v", v)
-			}
-			req = req.SetQueryParams(qp)
-		}
-		resp, err = req.Get(endpoint)
-	} else {
-		if len(args) > 0 {
-			req = req.SetBody(args)
-		}
-		resp, err = req.Post(endpoint)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	if resp.StatusCode() >= 400 {
-		return nil, apiError(resp, map[int]string{
-			http.StatusUnauthorized: authHint(),
-			http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have access to method %s", method),
-			http.StatusNotFound:     fmt.Sprintf("method %q not found (404): check the method name and that it is whitelisted", method),
-		})
+	hints := map[int]string{
+		http.StatusUnauthorized: authHint,
+		http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have access to method %s", method),
+		http.StatusNotFound:     fmt.Sprintf("method %q not found (404): check the method name and that it is whitelisted", method),
 	}
 
 	var result struct {
 		Message interface{} `json:"message"`
 	}
-	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
+	var err error
+	if httpGET {
+		var qp map[string]string
+		if qp, err = queryArgs(args); err != nil {
+			return nil, err
+		}
+		err = c.do(ctx, http.MethodGet, endpoint, nil, qp, hints, &result)
+	} else {
+		var body interface{}
+		if len(args) > 0 {
+			body = args
+		}
+		err = c.do(ctx, http.MethodPost, endpoint, body, nil, hints, &result)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return result.Message, nil
+}
+
+// queryArgs encodes method arguments as query parameters.
+func queryArgs(args map[string]interface{}) (map[string]string, error) {
+	qp := make(map[string]string, len(args))
+	for k, v := range args {
+		switch val := v.(type) {
+		case nil:
+			continue
+		case string:
+			qp[k] = val
+		default:
+			b, err := json.Marshal(val)
+			if err != nil {
+				return nil, fmt.Errorf("encoding argument %q: %w", k, err)
+			}
+			qp[k] = string(bytes.TrimSpace(b))
+		}
+	}
+	return qp, nil
 }
 
 // GetCount returns the number of documents matching the given doctype and filters.
@@ -377,42 +470,24 @@ func (c *FrappeClient) GetCount(ctx context.Context, doctype, filters string) (i
 	if filters != "" {
 		body["filters"] = filters
 	}
-
-	resp, err := c.r.R().SetContext(ctx).SetBody(body).Post("/api/method/frappe.client.get_count")
-	if err != nil {
-		return 0, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	if resp.StatusCode() >= 400 {
-		return 0, apiError(resp, map[int]string{
-			http.StatusUnauthorized: authHint(),
-			http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have read access to %s", doctype),
-		})
-	}
-
+	hints := readHints(doctype)
+	delete(hints, http.StatusNotFound) // get_count reports a missing doctype differently
 	var result struct {
 		Message int `json:"message"`
 	}
-	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		return 0, fmt.Errorf("parsing response: %w", err)
+	if err := c.do(ctx, http.MethodPost, "/api/method/frappe.client.get_count", body, nil, hints, &result); err != nil {
+		return 0, err
 	}
 	return result.Message, nil
 }
 
 // Ping checks server connectivity by calling GET /api/method/frappe.ping.
 func (c *FrappeClient) Ping(ctx context.Context) (string, error) {
-	resp, err := c.r.R().SetContext(ctx).Get("/api/method/frappe.ping")
-	if err != nil {
-		return "", fmt.Errorf("HTTP request failed: %w", err)
-	}
-	if resp.StatusCode() >= 400 {
-		return "", apiError(resp, map[int]string{http.StatusUnauthorized: authHint()})
-	}
-
 	var result struct {
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		return "", fmt.Errorf("parsing response: %w", err)
+	if err := c.do(ctx, http.MethodGet, "/api/method/frappe.ping", nil, nil, map[int]string{http.StatusUnauthorized: authHint}, &result); err != nil {
+		return "", err
 	}
 	return result.Message, nil
 }
@@ -427,53 +502,24 @@ func (c *FrappeClient) RunReport(ctx context.Context, reportName string, filters
 		}
 		filtersJSON = string(b)
 	}
-
 	body := map[string]interface{}{
 		"report_name":            reportName,
 		"filters":                filtersJSON,
 		"ignore_prepared_report": 1,
 	}
-
-	resp, err := c.r.R().SetContext(ctx).SetBody(body).Post("/api/method/frappe.desk.query_report.run")
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	hints := map[int]string{
+		http.StatusUnauthorized: authHint,
+		http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have access to report %q", reportName),
+		http.StatusNotFound:     fmt.Sprintf("report %q not found (404)", reportName),
 	}
-	if resp.StatusCode() >= 400 {
-		return nil, apiError(resp, map[int]string{
-			http.StatusUnauthorized: authHint(),
-			http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have access to report %q", reportName),
-			http.StatusNotFound:     fmt.Sprintf("report %q not found (404)", reportName),
-		})
-	}
-
 	var result struct {
 		Message map[string]interface{} `json:"message"`
 	}
-	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
+	if err := c.do(ctx, http.MethodPost, "/api/method/frappe.desk.query_report.run", body, nil, hints, &result); err != nil {
+		return nil, err
+	}
+	if result.Message == nil {
+		return nil, fmt.Errorf("unexpected response: report %q returned no result", reportName)
 	}
 	return result.Message, nil
-}
-
-// GetDoc calls GET /api/resource/<doctype>/<name> and returns the document fields.
-func (c *FrappeClient) GetDoc(ctx context.Context, doctype, name string) (map[string]interface{}, error) {
-	resp, err := c.r.R().SetContext(ctx).Get(resourcePath(doctype, name))
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	if resp.StatusCode() >= 400 {
-		return nil, apiError(resp, map[int]string{
-			http.StatusUnauthorized: authHint(),
-			http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have read access to %s", doctype),
-			http.StatusNotFound:     fmt.Sprintf("%s %q not found (404)", doctype, name),
-		})
-	}
-
-	var result struct {
-		Data map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(resp.Body(), &result); err != nil {
-		return nil, fmt.Errorf("parsing response: %w", err)
-	}
-	return result.Data, nil
 }

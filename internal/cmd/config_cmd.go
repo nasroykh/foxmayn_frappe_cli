@@ -3,8 +3,8 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -50,173 +50,130 @@ Examples:
 		if err != nil {
 			return err
 		}
-
-		raw, err := os.ReadFile(cfgPath)
+		orig, err := readConfig(cfgPath)
 		if err != nil {
-			return fmt.Errorf("reading config %s: %w. Make sure it exists or use ffc init.", cfgPath, err)
+			return err
 		}
+		cur := *orig
 
-		var root yaml.Node
-		if err := yaml.Unmarshal(raw, &root); err != nil {
-			return fmt.Errorf("parsing config: %w", err)
-		}
-		if len(root.Content) == 0 {
-			return fmt.Errorf("config at %s is empty — run 'ffc init' to create one", cfgPath) // L23
-		}
-
-		var vConfig config.Config
-		if err := yaml.Unmarshal(raw, &vConfig); err != nil {
-			return fmt.Errorf("parsing config values: %w", err)
-		}
-
-		var action string
 		for {
-			err = huh.NewForm(
-				huh.NewGroup(
-					huh.NewSelect[string]().
-						Title("ffc Configuration").
-						Description(fmt.Sprintf(
-							"Site: %s   Numbers: %s   Dates: %s",
-							orDefault(vConfig.DefaultSite, "none"),
-							orDefault(string(vConfig.NumberFormat), "french"),
-							orDefault(string(vConfig.DateFormat), "yyyy-mm-dd"),
-						)).
-						Options(
-							huh.NewOption("Set Default Site", "site"),
-							huh.NewOption("Set Number Format", "number"),
-							huh.NewOption("Set Date Format", "date"),
-							huh.NewOption("Save and Exit", "save"),
-							huh.NewOption("Cancel (discard changes)", "cancel"),
-						).
-						Value(&action),
-				),
-			).WithKeyMap(escQuitKeyMap()).Run()
-
-			// Surface a genuine render/terminal error; only Esc/Ctrl+C is a
-			// clean cancel (L4).
-			if err != nil && !errors.Is(err, huh.ErrUserAborted) {
+			var action string
+			if err := runForm(huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("ffc Configuration").
+					Description(fmt.Sprintf(
+						"Site: %s   Numbers: %s   Dates: %s",
+						orDefault(cur.DefaultSite, "none"),
+						orDefault(string(cur.NumberFormat), string(config.FormatFrench)),
+						orDefault(string(cur.DateFormat), string(config.FormatISODate)),
+					)).
+					Options(
+						huh.NewOption("Set Default Site", "site"),
+						huh.NewOption("Set Number Format", "number"),
+						huh.NewOption("Set Date Format", "date"),
+						huh.NewOption("Save and Exit", "save"),
+						huh.NewOption("Cancel (discard changes)", "cancel"),
+					).
+					Value(&action),
+			)); err != nil {
 				return err
-			}
-			if err != nil || action == "cancel" {
-				return nil
-			}
-
-			if action == "save" {
-				break
 			}
 
 			switch action {
-			case "site":
-				var siteNames []string
-				for name := range vConfig.Sites {
-					siteNames = append(siteNames, name)
-				}
-				sort.Strings(siteNames)
+			case "cancel":
+				fmt.Fprintln(os.Stderr, "Changes discarded.")
+				return nil
 
-				if len(siteNames) == 0 {
+			case "save":
+				var changes []configValue
+				if cur.DefaultSite != orig.DefaultSite {
+					changes = append(changes, configValue{"default_site", cur.DefaultSite})
+				}
+				if cur.NumberFormat != orig.NumberFormat {
+					changes = append(changes, configValue{"number_format", string(cur.NumberFormat)})
+				}
+				if cur.DateFormat != orig.DateFormat {
+					changes = append(changes, configValue{"date_format", string(cur.DateFormat)})
+				}
+				if len(changes) == 0 {
+					fmt.Fprintln(os.Stderr, "No changes to save.")
+					return nil
+				}
+				if err := setConfigValues(cfgPath, changes); err != nil {
+					return err
+				}
+				output.PrintSuccess(fmt.Sprintf("Configuration saved to %s", cfgPath))
+				return nil
+
+			case "site":
+				names := sortedSiteNames(&cur)
+				if len(names) == 0 {
 					output.PrintError("No sites configured in config.yaml")
 					continue
 				}
-
-				opts := make([]huh.Option[string], len(siteNames))
-				for i, name := range siteNames {
+				opts := make([]huh.Option[string], len(names))
+				for i, name := range names {
 					label := name
-					if name == vConfig.DefaultSite {
+					if name == cur.DefaultSite {
 						label += "  (current)"
 					}
 					opts[i] = huh.NewOption(label, name)
 				}
-
-				chosen := vConfig.DefaultSite
-				err = huh.NewForm(
-					huh.NewGroup(
-						huh.NewSelect[string]().
-							Title("Choose Default Site").
-							Description("Press esc to go back").
-							Options(opts...).
-							Value(&chosen),
-					),
-				).WithKeyMap(escQuitKeyMap()).Run()
-
-				if errors.Is(err, huh.ErrUserAborted) {
-					continue
-				}
-				if err != nil {
+				if chosen, err := pickSetting("Choose Default Site", cur.DefaultSite, opts); err != nil {
 					return err
-				}
-				if chosen != "" {
-					vConfig.DefaultSite = chosen
-					updateYAMLValue(&root, "default_site", chosen)
+				} else if chosen != "" {
+					cur.DefaultSite = chosen
 				}
 
 			case "number":
 				opts := make([]huh.Option[string], len(config.AllFormats))
 				for i, f := range config.AllFormats {
 					label := fmt.Sprintf("%-20s  e.g. %s", f.Label, f.Example)
-					if f.Key == vConfig.NumberFormat {
+					if f.Key == cur.NumberFormat {
 						label += "  (current)"
 					}
 					opts[i] = huh.NewOption(label, string(f.Key))
 				}
-
-				chosen := string(vConfig.NumberFormat)
-				err = huh.NewForm(
-					huh.NewGroup(
-						huh.NewSelect[string]().
-							Title("Choose Number Format").
-							Description("Press esc to go back").
-							Options(opts...).
-							Value(&chosen),
-					),
-				).WithKeyMap(escQuitKeyMap()).Run()
-
-				if errors.Is(err, huh.ErrUserAborted) {
-					continue
-				}
-				if err != nil {
+				if chosen, err := pickSetting("Choose Number Format", string(cur.NumberFormat), opts); err != nil {
 					return err
-				}
-				if chosen != "" {
-					vConfig.NumberFormat = config.NumberFormat(chosen)
-					updateYAMLValue(&root, "number_format", chosen)
+				} else if chosen != "" {
+					cur.NumberFormat = config.NumberFormat(chosen)
 				}
 
 			case "date":
 				opts := make([]huh.Option[string], len(config.AllDateFormats))
 				for i, f := range config.AllDateFormats {
 					label := fmt.Sprintf("%-25s e.g. %s", f.Label, f.Example)
-					if f.Key == vConfig.DateFormat {
+					if f.Key == cur.DateFormat {
 						label += "  (current)"
 					}
 					opts[i] = huh.NewOption(label, string(f.Key))
 				}
-
-				chosen := string(vConfig.DateFormat)
-				err = huh.NewForm(
-					huh.NewGroup(
-						huh.NewSelect[string]().
-							Title("Choose Date Format").
-							Description("Press esc to go back").
-							Options(opts...).
-							Value(&chosen),
-					),
-				).WithKeyMap(escQuitKeyMap()).Run()
-
-				if errors.Is(err, huh.ErrUserAborted) {
-					continue
-				}
-				if err != nil {
+				if chosen, err := pickSetting("Choose Date Format", string(cur.DateFormat), opts); err != nil {
 					return err
-				}
-				if chosen != "" {
-					vConfig.DateFormat = config.DateFormat(chosen)
-					updateYAMLValue(&root, "date_format", chosen)
+				} else if chosen != "" {
+					cur.DateFormat = config.DateFormat(chosen)
 				}
 			}
 		}
-
-		return saveConfig(cfgPath, raw, &root)
 	},
+}
+
+// pickSetting shows a sub-menu of the TUI. Esc goes back to the main menu
+// (returns "", nil); other errors are returned.
+func pickSetting(title, current string, opts []huh.Option[string]) (string, error) {
+	chosen := current
+	err := runForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title(title).
+			Description("Press esc to go back").
+			Options(opts...).
+			Value(&chosen),
+	))
+	if errors.Is(err, errAborted) {
+		return "", nil
+	}
+	return chosen, err
 }
 
 // ─── ffc config get ───────────────────────────────────────────────────────────
@@ -239,14 +196,9 @@ Examples:
 			return err
 		}
 
-		raw, err := os.ReadFile(cfgPath)
+		vConfig, err := readConfig(cfgPath)
 		if err != nil {
-			return fmt.Errorf("reading config %s: %w", cfgPath, err)
-		}
-
-		var vConfig config.Config
-		if err := yaml.Unmarshal(raw, &vConfig); err != nil {
-			return fmt.Errorf("parsing config: %w", err)
+			return err
 		}
 
 		data := map[string]interface{}{
@@ -268,11 +220,23 @@ Examples:
 			}
 
 		case cgYAML:
-			fmt.Printf("default_site: %s\nnumber_format: %s\ndate_format: %s\n",
-				data["default_site"],
-				data["number_format"],
-				data["date_format"],
-			)
+			// yaml.Marshal quotes values such as "#dev" that would otherwise
+			// be read back as a comment.
+			out, err := yaml.Marshal(struct {
+				DefaultSite  string `yaml:"default_site"`
+				NumberFormat string `yaml:"number_format"`
+				DateFormat   string `yaml:"date_format"`
+			}{
+				data["default_site"].(string),
+				data["number_format"].(string),
+				data["date_format"].(string),
+			})
+			if err != nil {
+				return fmt.Errorf("encoding YAML: %w", err)
+			}
+			if _, err := os.Stdout.Write(out); err != nil {
+				return err
+			}
 
 		default:
 			output.PrintDocTable(data, fields)
@@ -324,47 +288,28 @@ Examples:
 		if err != nil {
 			return err
 		}
-
-		raw, err := os.ReadFile(cfgPath)
-		if err != nil {
-			return fmt.Errorf("reading config %s: %w", cfgPath, err)
+		// Unlike Edit, refuse to create a config that only holds formats.
+		if _, err := readConfig(cfgPath); err != nil {
+			return err
 		}
 
-		var root yaml.Node
-		if err := yaml.Unmarshal(raw, &root); err != nil {
-			return fmt.Errorf("parsing config: %w", err)
-		}
-		if len(root.Content) == 0 {
-			return fmt.Errorf("config at %s is empty — run 'ffc init' to create one", cfgPath) // L23
-		}
-
-		var vConfig config.Config
-		if err := yaml.Unmarshal(raw, &vConfig); err != nil {
-			return fmt.Errorf("parsing config values: %w", err)
-		}
-
+		var changes []configValue
 		if siteChanged {
-			if _, ok := vConfig.Sites[csDefaultSite]; !ok {
-				var names []string
-				for n := range vConfig.Sites {
-					names = append(names, n)
-				}
-				sort.Strings(names)
-				return fmt.Errorf("site %q not found in config (available: %s)", csDefaultSite, strings.Join(names, ", "))
-			}
-			updateYAMLValue(&root, "default_site", csDefaultSite)
-			output.PrintSuccess(fmt.Sprintf("default_site → %s", csDefaultSite))
+			changes = append(changes, configValue{"default_site", csDefaultSite})
 		}
 		if numberChanged {
-			updateYAMLValue(&root, "number_format", csNumberFormat)
-			output.PrintSuccess(fmt.Sprintf("number_format → %s", csNumberFormat))
+			changes = append(changes, configValue{"number_format", csNumberFormat})
 		}
 		if dateChanged {
-			updateYAMLValue(&root, "date_format", csDateFormat)
-			output.PrintSuccess(fmt.Sprintf("date_format → %s", csDateFormat))
+			changes = append(changes, configValue{"date_format", csDateFormat})
 		}
-
-		return saveConfig(cfgPath, raw, &root)
+		if err := setConfigValues(cfgPath, changes); err != nil {
+			return err
+		}
+		for _, c := range changes {
+			output.PrintSuccess(fmt.Sprintf("%s → %s", c.key, c.value))
+		}
+		return nil
 	},
 }
 
@@ -382,24 +327,44 @@ func resolveCfgPath() (string, error) {
 	return p, nil
 }
 
-// saveConfig marshals the YAML node and saves it to disk, preserving any
-// leading comment header from the original file.
-func saveConfig(path string, original []byte, root *yaml.Node) error {
-	if len(root.Content) == 0 {
-		// Empty / comment-only config: nothing to marshal — guard the index (L23).
-		return fmt.Errorf("config at %s is empty — run 'ffc init' to create one", path)
+// readConfig reads the config at path, pointing at `ffc init` when it does
+// not exist yet. Parse errors are returned, never ignored.
+func readConfig(path string) (*config.Config, error) {
+	cfg, err := config.Read(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("no config found at %s — run 'ffc init' to create one", path)
 	}
-	out, err := yaml.Marshal(root.Content[0])
 	if err != nil {
-		return fmt.Errorf("serialising config: %w", err)
+		return nil, fmt.Errorf("reading config: %w", err)
 	}
-	final := preserveHeader(original, out)
-	// 0600 (the config holds credentials) + atomic write (L2, M9).
-	if err := atomicWriteFile(path, []byte(final), 0o600); err != nil {
-		return fmt.Errorf("writing config: %w", err)
-	}
-	output.PrintSuccess(fmt.Sprintf("Configuration saved to %s", path))
-	return nil
+	return cfg, nil
+}
+
+// configValue is one top-level setting to write.
+type configValue struct {
+	key, value string
+}
+
+// setConfigValues writes top-level settings under the config lock. A
+// default_site must name an existing site. Nothing is written when every
+// value is already set.
+func setConfigValues(path string, values []configValue) error {
+	return config.Edit(path, func(f *config.File) error {
+		changed := false
+		for _, v := range values {
+			if v.key == "default_site" && !f.HasSite(v.value) {
+				return fmt.Errorf("site %q not found in config (available: %s)", v.value, strings.Join(f.SiteNames(), ", "))
+			}
+			if f.Get(v.key) != v.value {
+				f.Set(v.key, v.value)
+				changed = true
+			}
+		}
+		if !changed {
+			return config.ErrUnchanged
+		}
+		return nil
+	})
 }
 
 // validateNumberFormat returns an error if s is not a valid number format key.
@@ -443,51 +408,6 @@ func orDefault(s, fallback string) string {
 		return fallback
 	}
 	return s
-}
-
-// updateYAMLValue finds a key in a YAML mapping node and updates its value.
-// If the key doesn't exist, it appends it.
-func updateYAMLValue(root *yaml.Node, key, value string) {
-	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
-		return
-	}
-	mapping := root.Content[0]
-	if mapping.Kind != yaml.MappingNode {
-		return
-	}
-	for i := 0; i+1 < len(mapping.Content); i += 2 {
-		if mapping.Content[i].Value == key {
-			mapping.Content[i+1].Value = value
-			return
-		}
-	}
-	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
-	valNode := &yaml.Node{Kind: yaml.ScalarNode, Value: value}
-	mapping.Content = append(mapping.Content, keyNode, valNode)
-}
-
-// preserveHeader tries to extract leading comments from the original file.
-func preserveHeader(original, marshaled []byte) string {
-	rawStr := string(original)
-	if !strings.HasPrefix(rawStr, "#") {
-		return string(marshaled)
-	}
-	// If go-yaml already re-emitted a leading comment (it can bind the header to
-	// a node), don't prepend ours again — that grows the header on every save
-	// (L24).
-	if strings.HasPrefix(strings.TrimLeft(string(marshaled), " \t"), "#") {
-		return string(marshaled)
-	}
-	lines := strings.Split(rawStr, "\n")
-	var commentLines []string
-	for _, l := range lines {
-		if strings.HasPrefix(l, "#") || l == "" {
-			commentLines = append(commentLines, l)
-		} else {
-			break
-		}
-	}
-	return strings.Join(commentLines, "\n") + "\n" + string(marshaled)
 }
 
 // ─── init ─────────────────────────────────────────────────────────────────────

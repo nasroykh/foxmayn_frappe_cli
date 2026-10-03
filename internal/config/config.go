@@ -1,208 +1,38 @@
 package config
 
 import (
+	"errors"
 	"fmt"
-	"math"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/spf13/viper"
+	"go.yaml.in/yaml/v3"
 )
-
-// ─── Number format ────────────────────────────────────────────────────────────
-
-// NumberFormat defines the display style for numeric values.
-type NumberFormat string
-
-const (
-	// FormatFrench  1 000 000,00  (non-breaking space thousands, comma decimal) — DEFAULT
-	FormatFrench NumberFormat = "french"
-	// FormatUS      1,000,000.00  (comma thousands, period decimal)
-	FormatUS NumberFormat = "us"
-	// FormatGerman  1.000.000,00  (period thousands, comma decimal)
-	FormatGerman NumberFormat = "german"
-	// FormatPlain   1000000.00    (no grouping, period decimal)
-	FormatPlain NumberFormat = "plain"
-)
-
-// AllFormats lists every supported number format.
-var AllFormats = []struct {
-	Key     NumberFormat
-	Label   string
-	Example string
-}{
-	{FormatFrench, "French / European", "1 000 000,00"},
-	{FormatUS, "US / English", "1,000,000.00"},
-	{FormatGerman, "German / Spanish", "1.000.000,00"},
-	{FormatPlain, "Plain (no grouping)", "1000000.00"},
-}
-
-// ─── Date format ──────────────────────────────────────────────────────────────
-
-// DateFormat defines the display style for dates.
-type DateFormat string
-
-const (
-	// FormatISODate YYYY-MM-DD (Frappe default)
-	FormatISODate DateFormat = "yyyy-mm-dd"
-	// FormatEuroDate DD-MM-YYYY
-	FormatEuroDate DateFormat = "dd-mm-yyyy"
-	// FormatEuroSlashDate DD/MM/YYYY
-	FormatEuroSlashDate DateFormat = "dd/mm/yyyy"
-	// FormatUSDate   MM/DD/YYYY
-	FormatUSDate DateFormat = "mm/dd/yyyy"
-)
-
-// AllDateFormats lists every supported date format.
-var AllDateFormats = []struct {
-	Key     DateFormat
-	Label   string
-	Example string
-}{
-	{FormatISODate, "ISO (YYYY-MM-DD)", "2025-12-31"},
-	{FormatEuroDate, "European (DD-MM-YYYY)", "31-12-2025"},
-	{FormatEuroSlashDate, "European (DD/MM/YYYY)", "31/12/2025"},
-	{FormatUSDate, "US (MM/DD/YYYY)", "12/31/2025"},
-}
-
-// ActiveFormat and ActiveDateFormat are the formats used by the output layer.
-var ActiveFormat NumberFormat = FormatFrench
-var ActiveDateFormat DateFormat = FormatISODate
-
-// FormatNumber formats f according to the active number format. Integral values
-// are rendered without a decimal part; fractional values keep 2 decimals.
-func FormatNumber(f float64) string {
-	abs := math.Abs(f)
-
-	// int64(abs) is undefined once abs exceeds the int64 range (~9.2e18); fall
-	// back to a plain, ungrouped representation to avoid garbage output (L19).
-	if abs >= float64(math.MaxInt64) {
-		return strconv.FormatFloat(f, 'f', -1, 64)
-	}
-
-	intPart := int64(abs)
-	fracInt := int(math.Round((abs - float64(intPart)) * 100))
-	if fracInt >= 100 { // carry, e.g. 1.999 → fracInt 100 (M13)
-		intPart++
-		fracInt -= 100
-	}
-
-	intStr := groupDigits(intPart, thousandsSep(ActiveFormat))
-	result := intStr
-	if fracInt != 0 { // only show decimals for non-integral values
-		result = fmt.Sprintf("%s%s%02d", intStr, decimalSep(ActiveFormat), fracInt)
-	}
-	if f < 0 && (intPart != 0 || fracInt != 0) { // avoid "-0"
-		result = "-" + result
-	}
-	return result
-}
-
-// dateOutLayout returns the output layout for the active date format, appending
-// a time component when hasTime is set.
-func dateOutLayout(hasTime bool) string {
-	var l string
-	switch ActiveDateFormat {
-	case FormatEuroDate:
-		l = "02-01-2006"
-	case FormatEuroSlashDate:
-		l = "02/01/2006"
-	case FormatUSDate:
-		l = "01/02/2006"
-	default:
-		l = "2006-01-02"
-	}
-	if hasTime {
-		l += " 15:04:05"
-	}
-	return l
-}
-
-// FormatDate converts a Frappe date/datetime string into the active format.
-// Frappe always stores dates in ISO form, so only exact ISO matches are
-// reformatted — the function never guesses DD/MM vs MM/DD and never truncates a
-// longer string down to a date prefix (M17). Anything else is returned as-is.
-func FormatDate(s string) string {
-	for _, layout := range []string{
-		"2006-01-02 15:04:05.000000",
-		"2006-01-02 15:04:05",
-	} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.Format(dateOutLayout(true))
-		}
-	}
-	if t, err := time.Parse("2006-01-02", s); err == nil {
-		return t.Format(dateOutLayout(false))
-	}
-	return s
-}
-
-func thousandsSep(nf NumberFormat) string {
-	switch nf {
-	case FormatFrench:
-		return "\u00a0" // non-breaking space
-	case FormatUS:
-		return ","
-	case FormatGerman:
-		return "."
-	default:
-		return ""
-	}
-}
-
-func decimalSep(nf NumberFormat) string {
-	switch nf {
-	case FormatFrench, FormatGerman:
-		return ","
-	default:
-		return "."
-	}
-}
-
-// groupDigits formats n inserting sep every 3 digits from the right.
-func groupDigits(n int64, sep string) string {
-	s := fmt.Sprintf("%d", n)
-	if sep == "" || len(s) <= 3 {
-		return s
-	}
-	var b strings.Builder
-	start := len(s) % 3
-	if start > 0 {
-		b.WriteString(s[:start])
-	}
-	for i := start; i < len(s); i += 3 {
-		if i > 0 || start > 0 {
-			b.WriteString(sep)
-		}
-		b.WriteString(s[i : i+3])
-	}
-	return b.String()
-}
 
 // ─── Config structs ───────────────────────────────────────────────────────────
 
 // SiteConfig holds connection details for a single Frappe site.
 type SiteConfig struct {
 	// Name is populated by Load at runtime; it is not persisted to YAML.
-	Name string `mapstructure:"-" yaml:"-"`
+	Name string `yaml:"-"`
 
-	URL       string `mapstructure:"url" yaml:"url"`
-	APIKey    string `mapstructure:"api_key" yaml:"api_key,omitempty"`
-	APISecret string `mapstructure:"api_secret" yaml:"api_secret,omitempty"`
+	URL       string `yaml:"url"`
+	APIKey    string `yaml:"api_key,omitempty"`
+	APISecret string `yaml:"api_secret,omitempty"`
 
 	// OAuth 2.0 fields (Authorization Code + PKCE).
-	OAuthClientID     string `mapstructure:"oauth_client_id" yaml:"oauth_client_id,omitempty"`
-	OAuthClientSecret string `mapstructure:"oauth_client_secret" yaml:"oauth_client_secret,omitempty"`
-	AccessToken       string `mapstructure:"access_token" yaml:"access_token,omitempty"`
-	RefreshToken      string `mapstructure:"refresh_token" yaml:"refresh_token,omitempty"`
-	TokenExpiry       int64  `mapstructure:"token_expiry" yaml:"token_expiry,omitempty"`
+	OAuthClientID     string `yaml:"oauth_client_id,omitempty"`
+	OAuthClientSecret string `yaml:"oauth_client_secret,omitempty"`
+	AccessToken       string `yaml:"access_token,omitempty"`
+	RefreshToken      string `yaml:"refresh_token,omitempty"`
+	TokenExpiry       int64  `yaml:"token_expiry,omitempty"`
 
 	// Username/password session auth (POST /api/method/login, cookie-based).
-	Username string `mapstructure:"username" yaml:"username,omitempty"`
-	Password string `mapstructure:"password" yaml:"password,omitempty"`
+	Username string `yaml:"username,omitempty"`
+	Password string `yaml:"password,omitempty"`
 }
 
 // IsOAuth reports whether this site uses OAuth Bearer tokens for authentication.
@@ -227,64 +57,58 @@ func (s *SiteConfig) IsTokenExpired() bool {
 
 // Config is the top-level config structure.
 type Config struct {
-	DefaultSite  string                `mapstructure:"default_site" yaml:"default_site"`
-	NumberFormat NumberFormat          `mapstructure:"number_format" yaml:"number_format"`
-	DateFormat   DateFormat            `mapstructure:"date_format" yaml:"date_format"`
-	Sites        map[string]SiteConfig `mapstructure:"sites" yaml:"sites"`
+	DefaultSite  string                `yaml:"default_site"`
+	NumberFormat NumberFormat          `yaml:"number_format"`
+	DateFormat   DateFormat            `yaml:"date_format"`
+	Sites        map[string]SiteConfig `yaml:"sites"`
 }
 
 // ─── Loading ──────────────────────────────────────────────────────────────────
+
+// Read parses the config file at path. The file is decoded with yaml.v3 (not
+// viper) so site names keep their case and may contain dots: viper lowercases
+// map keys and splits them on ".", which made sites such as "Prod" or
+// "erp.example.com" impossible to load even though init/site add accepted them.
+func Read(path string) (*Config, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return &cfg, nil
+}
 
 // Load reads the config file and returns the SiteConfig for the requested site.
 // siteFlag selects the site; if empty, DefaultSite is used.
 // configPath overrides the default config file location.
 func Load(siteFlag, configPath string) (*SiteConfig, error) {
-	v := viper.New()
-
-	// Resolve config file path.
-	if configPath != "" {
-		v.SetConfigFile(configPath)
-	} else {
-		cfgDir, err := defaultConfigDir()
+	path := configPath
+	if path == "" {
+		p, err := DefaultConfigPath()
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine config directory: %w", err)
 		}
-		v.SetConfigName("config")
-		v.SetConfigType("yaml")
-		v.AddConfigPath(cfgDir)
+		path = p
 	}
 
-	// Env var overrides for the documented FFC_URL/FFC_API_KEY/FFC_API_SECRET
-	// are applied explicitly below; viper's AutomaticEnv does not resolve the
-	// nested sites.<name>.* keys those would need, so it is not wired here (I3).
-
-	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+	cfg, err := Read(path)
+	if err != nil {
+		// Only the implicit default path falls back to env vars; an explicit
+		// --config that does not exist is an error.
+		if errors.Is(err, fs.ErrNotExist) && configPath == "" {
 			return loadFromEnv()
 		}
-		return nil, fmt.Errorf("reading config: %w", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("reading config: %w", err)
+		}
+		return nil, err
 	}
 
-	var cfg Config
-	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("parsing config: %w", err)
-	}
+	applyFormats(cfg)
 
-	// Apply number format globally (default to french if unset).
-	if cfg.NumberFormat != "" {
-		ActiveFormat = cfg.NumberFormat
-	} else {
-		ActiveFormat = FormatFrench
-	}
-
-	// Apply date format globally (default to ISO if unset).
-	if cfg.DateFormat != "" {
-		ActiveDateFormat = cfg.DateFormat
-	} else {
-		ActiveDateFormat = FormatISODate
-	}
-
-	// Pick the site.
 	siteName := siteFlag
 	if siteName == "" {
 		siteName = cfg.DefaultSite
@@ -295,31 +119,76 @@ func Load(siteFlag, configPath string) (*SiteConfig, error) {
 
 	site, ok := cfg.Sites[siteName]
 	if !ok {
-		return nil, fmt.Errorf("site %q not found in config", siteName)
+		// Before viper was removed, lookups ignored case; keep `--site prod`
+		// working for a site named "Prod" when the match is unambiguous.
+		var matches []string
+		for name := range cfg.Sites {
+			if strings.EqualFold(name, siteName) {
+				matches = append(matches, name)
+			}
+		}
+		if len(matches) != 1 {
+			return nil, fmt.Errorf("site %q not found in config", siteName)
+		}
+		siteName = matches[0]
+		site = cfg.Sites[siteName]
 	}
 	if site.URL == "" {
 		return nil, fmt.Errorf("site %q has no URL configured", siteName)
 	}
 
-	// Allow env vars to override individual site credentials.
-	// The URL override is skipped for OAuth/session sites: redirecting a stored
-	// Bearer token or account password to a different host would leak it (L6).
-	if url := os.Getenv("FFC_URL"); url != "" {
-		if site.IsOAuth() || site.IsSessionAuth() {
-			fmt.Fprintln(os.Stderr, "warning: FFC_URL ignored for this site (OAuth/session auth is bound to its configured URL)")
-		} else {
-			site.URL = url
-		}
+	if err := applyEnvOverrides(&site); err != nil {
+		return nil, err
 	}
-	if key := os.Getenv("FFC_API_KEY"); key != "" {
-		site.APIKey = key
-	}
-	if secret := os.Getenv("FFC_API_SECRET"); secret != "" {
-		site.APISecret = secret
-	}
-
 	site.Name = siteName
 	return &site, nil
+}
+
+// applyFormats sets the package-level display formats from cfg, warning about
+// (and ignoring) unknown values instead of silently rendering them as plain.
+func applyFormats(cfg *Config) {
+	ActiveFormat = FormatFrench
+	switch {
+	case cfg.NumberFormat == "":
+	case cfg.NumberFormat.Valid():
+		ActiveFormat = cfg.NumberFormat
+	default:
+		fmt.Fprintf(os.Stderr, "warning: unknown number_format %q in config, using %q\n", cfg.NumberFormat, FormatFrench)
+	}
+
+	ActiveDateFormat = FormatISODate
+	switch {
+	case cfg.DateFormat == "":
+	case cfg.DateFormat.Valid():
+		ActiveDateFormat = cfg.DateFormat
+	default:
+		fmt.Fprintf(os.Stderr, "warning: unknown date_format %q in config, using %q\n", cfg.DateFormat, FormatISODate)
+	}
+}
+
+// applyEnvOverrides lets FFC_URL / FFC_API_KEY / FFC_API_SECRET override a
+// configured site. Env credentials are only honoured as a complete key+secret
+// pair, and then they replace every stored credential (otherwise the stored
+// OAuth token or password would silently win in client.New). FFC_URL is only
+// applied together with env credentials: redirecting a stored API secret,
+// Bearer token or password to another host would leak it. FFC_URL alone is an
+// error rather than a warning, so a script meant for another host never runs
+// against the stored one.
+func applyEnvOverrides(site *SiteConfig) error {
+	key, secret := os.Getenv("FFC_API_KEY"), os.Getenv("FFC_API_SECRET")
+	envCreds := key != "" && secret != ""
+	if envCreds {
+		*site = SiteConfig{URL: site.URL, APIKey: key, APISecret: secret}
+	} else if key != "" || secret != "" {
+		fmt.Fprintln(os.Stderr, "warning: FFC_API_KEY and FFC_API_SECRET must be set together; ignoring them")
+	}
+	if u := os.Getenv("FFC_URL"); u != "" && u != site.URL {
+		if !envCreds {
+			return fmt.Errorf("FFC_URL (%s) differs from the site URL (%s) and only applies together with FFC_API_KEY and FFC_API_SECRET, so stored credentials are never sent to another host: set all three, or unset FFC_URL", u, site.URL)
+		}
+		site.URL = u
+	}
+	return nil
 }
 
 // loadFromEnv constructs a SiteConfig purely from environment variables.
@@ -328,7 +197,7 @@ func loadFromEnv() (*SiteConfig, error) {
 	if url == "" {
 		return nil, fmt.Errorf(
 			"no config file found and FFC_URL is not set\n" +
-				"Create ~/.config/ffc/config.yaml or set FFC_URL, FFC_API_KEY, FFC_API_SECRET",
+				"Create ~/.config/ffc/config.yaml (ffc init) or set FFC_URL, FFC_API_KEY, FFC_API_SECRET",
 		)
 	}
 	return &SiteConfig{
@@ -340,8 +209,9 @@ func loadFromEnv() (*SiteConfig, error) {
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
-// defaultConfigDir returns ~/.config/ffc.
-func defaultConfigDir() (string, error) {
+// DefaultConfigDir returns ~/.config/ffc, the directory holding config.yaml
+// and ffc's state files.
+func DefaultConfigDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -351,7 +221,7 @@ func defaultConfigDir() (string, error) {
 
 // DefaultConfigPath returns the full path to the default config file.
 func DefaultConfigPath() (string, error) {
-	dir, err := defaultConfigDir()
+	dir, err := DefaultConfigDir()
 	if err != nil {
 		return "", err
 	}

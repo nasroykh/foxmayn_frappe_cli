@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -22,24 +21,23 @@ Examples:
   ffc ping
   ffc ping --site dev
 `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(siteName, configPath)
+		cfg, err := loadSite(cmd.Context())
 		if err != nil {
-			return fmt.Errorf("config: %w", err)
+			return err
 		}
-
+		start := time.Now()
 		c, err := client.New(cmd.Context(), cfg)
 		if err != nil {
 			return err
 		}
-
-		start := time.Now()
-		resp, apiErr := c.Ping(cmd.Context())
-		elapsed := time.Since(start)
-
-		if apiErr != nil {
-			return apiErr
+		resp, err := c.Ping(cmd.Context())
+		if err != nil {
+			return err
 		}
+		// For session-auth sites the latency includes the login round-trip.
+		elapsed := time.Since(start)
 
 		if jsonOutput {
 			return output.PrintJSON(map[string]interface{}{

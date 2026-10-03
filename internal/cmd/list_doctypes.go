@@ -1,10 +1,9 @@
 package cmd
 
 import (
-	"fmt"
+	"context"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -26,40 +25,17 @@ Examples:
   ffc list-doctypes --module "Accounts" --limit 20
   ffc list-doctypes --json
 `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(siteName, configPath)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
-
-		filters, err := moduleFilter(ltModule)
+		opts, err := moduleListOptions(doctypeListFields, ltModule, ltLimit)
 		if err != nil {
 			return err
 		}
-
-		limit := ltLimit
-		if limit == 0 { // --limit 0 => no limit (M12)
-			limit = -1
-		}
-
-		opts := client.ListOptions{
-			Fields:  []string{"name", "module", "is_submittable", "is_tree", "description"},
-			Filters: filters,
-			Limit:   limit,
-			OrderBy: "name asc",
-		}
-
-		var rows []map[string]interface{}
-		var apiErr error
-		c, err := client.New(cmd.Context(), cfg)
-		if err != nil {
-			return err
-		}
-		_ = runSpinner("Fetching DocTypes…", func() {
-			rows, apiErr = c.GetList(cmd.Context(), "DocType", opts)
+		rows, err := callSite(cmd, "Fetching DocTypes…", func(ctx context.Context, c *client.FrappeClient) ([]map[string]interface{}, error) {
+			return c.GetList(ctx, "DocType", opts)
 		})
-		if apiErr != nil {
-			return apiErr
+		if err != nil {
+			return err
 		}
 
 		if jsonOutput {

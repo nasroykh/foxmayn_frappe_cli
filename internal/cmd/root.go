@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 
 	"github.com/spf13/cobra"
@@ -26,7 +27,9 @@ var rootCmd = &cobra.Command{
 	Long: `ffc is a minimal CLI for interacting with Frappe ERP sites via the REST API.
 
 Config file: ~/.config/ffc/config.yaml
-Env vars:    FFC_URL, FFC_API_KEY, FFC_API_SECRET
+Env vars:    FFC_API_KEY + FFC_API_SECRET (override the site's credentials),
+             FFC_URL (with the env key pair, or alone when there is no config file),
+             FFC_NO_UPDATE_CHECK (disable the daily update check)
 
 Example config:
 
@@ -68,7 +71,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&siteName, "site", "s", "", "Site name from config (default: default_site)")
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "Path to config file (default: ~/.config/ffc/config.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&jsonOutput, "json", "j", false, "Output raw JSON instead of a table")
-	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress the progress spinner (also on when NO_COLOR or CI is set)")
+	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress the progress spinner (also off when stderr is not a terminal, or NO_COLOR or CI is set)")
+	rootCmd.PersistentFlags().DurationVar(&client.Timeout, "timeout", client.Timeout, "HTTP timeout per request to the site (raise it for heavy reports), e.g. 2m")
 
 	// Version template: "ffc version v0.1.0 (abc1234, 2026-03-09)"
 	rootCmd.SetVersionTemplate(fmt.Sprintf("ffc version %s (%s, %s)\n", version.Version, version.Commit, version.Date))

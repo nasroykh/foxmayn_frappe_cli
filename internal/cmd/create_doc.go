@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -28,40 +26,26 @@ The --data flag accepts a JSON object of field values.
 
 Examples:
   ffc create-doc --doctype "ToDo" --data '{"description":"Test","priority":"Medium"}'
-  ffc create-doc -d "Note" --data '{"title":"Hello","content":"World"}' --json
+  ffc create-doc -d "Note" --data '{"title":"Meeting","content":"Discussed Q1"}' --json
+  ffc create-doc -d "ToDo" --data '{"description":"x"}' --json --keys name
 `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(siteName, configPath)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
-
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(cdData), &data); err != nil {
-			return fmt.Errorf("--data: invalid JSON object: %w", err)
-		}
-
-		var doc map[string]interface{}
-		var apiErr error
-		c, err := client.New(cmd.Context(), cfg)
+		data, err := parseObject("--data", cdData)
 		if err != nil {
 			return err
 		}
-		_ = runSpinner(fmt.Sprintf("Creating %s…", cdDoctype), func() {
-			doc, apiErr = c.CreateDoc(cmd.Context(), cdDoctype, data)
+		doc, err := callSite(cmd, fmt.Sprintf("Creating %s…", cdDoctype), func(ctx context.Context, c *client.FrappeClient) (map[string]interface{}, error) {
+			return c.CreateDoc(ctx, cdDoctype, data)
 		})
-		if apiErr != nil {
-			return apiErr
+		if err != nil {
+			return err
 		}
 
 		if jsonOutput {
-			result := map[string]interface{}(doc)
-			if cdKeys != "" {
-				result = filterSchemaKeys(result, strings.Split(cdKeys, ","))
-			}
-			return output.PrintJSON(result)
+			return output.PrintJSON(selectKeys(doc, cdKeys))
 		}
-		if name, ok := doc["name"].(string); ok {
+		if name, ok := docName(doc["name"]); ok {
 			output.PrintSuccess(fmt.Sprintf("Created %s %s", cdDoctype, name))
 		}
 		output.PrintDocTable(doc, nil)

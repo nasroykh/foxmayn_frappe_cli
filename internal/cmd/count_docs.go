@@ -1,10 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -28,28 +28,16 @@ Examples:
   ffc count-docs -d "Sales Invoice" --filters '{"status":"Paid"}'
   ffc count-docs -d "User" --filters '[["enabled","=","1"]]' --json
 `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(siteName, configPath)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
-
 		if err := validateFiltersJSON(coFilters); err != nil {
 			return err
 		}
-
-		c, err := client.New(cmd.Context(), cfg)
+		count, err := callSite(cmd, fmt.Sprintf("Counting %s…", coDoctype), func(ctx context.Context, c *client.FrappeClient) (int, error) {
+			return c.GetCount(ctx, coDoctype, coFilters)
+		})
 		if err != nil {
 			return err
-		}
-
-		var count int
-		var apiErr error
-		_ = runSpinner(fmt.Sprintf("Counting %s…", coDoctype), func() {
-			count, apiErr = c.GetCount(cmd.Context(), coDoctype, coFilters)
-		})
-		if apiErr != nil {
-			return apiErr
 		}
 
 		if jsonOutput {

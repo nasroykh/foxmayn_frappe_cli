@@ -1,0 +1,175 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"strconv"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
+)
+
+// maxToolResultBytes caps a tool result. Anything bigger is refused with a
+// hint to narrow the request, instead of flooding the model's context (and
+// the server's memory) with megabytes of rows.
+const maxToolResultBytes = 512 << 10
+
+// maxMCPBulkItems caps the items a single bulk_* tool call may touch.
+const maxMCPBulkItems = 200
+
+// clientFn returns a ready-to-use FrappeClient for a tool call.
+type clientFn func(context.Context) (*client.FrappeClient, error)
+
+// toolCall is the site work of a tool, run once its arguments are valid.
+type toolCall func(ctx context.Context, c *client.FrappeClient) (interface{}, error)
+
+// toolHandler validates arguments first (so a bad call never costs a login
+// or a request), then runs the call. Every failure becomes a tool error with
+// a nil Go error, so the model sees it and can correct itself instead of the
+// client treating it as a protocol failure.
+func toolHandler(getClient clientFn, parse func(req mcp.CallToolRequest) (toolCall, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		call, err := parse(req)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		c, err := getClient(ctx)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		out, err := call(ctx, c)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if s, ok := out.(string); ok {
+			return mcp.NewToolResultText(s), nil
+		}
+		return marshalResult(out), nil
+	}
+}
+
+// marshalResult serializes data as compact JSON, refusing oversized results.
+func marshalResult(data interface{}) *mcp.CallToolResult {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("encoding result: %s", err))
+	}
+	if len(b) > maxToolResultBytes {
+		return mcp.NewToolResultError(fmt.Sprintf(
+			"result is too large (%d KiB, limit %d KiB): narrow it with limit, fields, filters or keys",
+			len(b)>>10, maxToolResultBytes>>10))
+	}
+	return mcp.NewToolResultText(string(b))
+}
+
+// jsonArg decodes a JSON-valued argument into out. Models send these either
+// as native JSON ({"status":"Open"}) or as a JSON-encoded string; both are
+// accepted. mcp-go's GetString returns "" for a non-string value, which used
+// to drop object filters silently and return unfiltered results.
+func jsonArg(req mcp.CallToolRequest, key string, out interface{}) (bool, error) {
+	v, ok := req.GetArguments()[key]
+	if !ok || v == nil {
+		return false, nil
+	}
+	var raw []byte
+	if s, isStr := v.(string); isStr {
+		if s == "" {
+			return false, nil
+		}
+		raw = []byte(s)
+	} else {
+		var err error
+		if raw, err = json.Marshal(v); err != nil {
+			return false, fmt.Errorf("%s: %w", key, err)
+		}
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return false, fmt.Errorf("%s: invalid JSON: %w", key, err)
+	}
+	return true, nil
+}
+
+// rawJSONArg returns a JSON argument re-encoded as a string, for parameters
+// such as list filters that the API takes as JSON text. It must be an object
+// or an array.
+func rawJSONArg(req mcp.CallToolRequest, key string) (string, error) {
+	var v interface{}
+	ok, err := jsonArg(req, key, &v)
+	if err != nil || !ok {
+		return "", err
+	}
+	switch v.(type) {
+	case map[string]interface{}, []interface{}:
+	default:
+		return "", fmt.Errorf("%s: expected a JSON object or array", key)
+	}
+	b, err := json.Marshal(v)
+	return string(b), err
+}
+
+// objectArg decodes a JSON object argument; null and non-objects are errors.
+func objectArg(req mcp.CallToolRequest, key string, required bool) (map[string]interface{}, error) {
+	var m map[string]interface{}
+	ok, err := jsonArg(req, key, &m)
+	switch {
+	case err != nil:
+		return nil, err
+	case !ok || m == nil:
+		if required {
+			return nil, fmt.Errorf("%s: a JSON object is required", key)
+		}
+		return nil, nil
+	}
+	return m, nil
+}
+
+// intArg reads a non-negative integer argument (number or numeric string).
+func intArg(req mcp.CallToolRequest, key string, def int) (int, error) {
+	v, ok := req.GetArguments()[key]
+	if !ok || v == nil {
+		return def, nil
+	}
+	var f float64
+	switch n := v.(type) {
+	case float64:
+		f = n
+	case int:
+		f = float64(n)
+	case string:
+		p, err := strconv.ParseFloat(n, 64)
+		if err != nil {
+			return 0, fmt.Errorf("%s: expected an integer, got %q", key, n)
+		}
+		f = p
+	default:
+		return 0, fmt.Errorf("%s: expected an integer", key)
+	}
+	if f != math.Trunc(f) || f < 0 || f > math.MaxInt32 {
+		return 0, fmt.Errorf("%s: expected a non-negative integer, got %v", key, v)
+	}
+	return int(f), nil
+}
+
+// stringsArg reads an array of strings (native or JSON-encoded) argument.
+func stringsArg(req mcp.CallToolRequest, key string) ([]string, error) {
+	var out []string
+	if _, err := jsonArg(req, key, &out); err != nil {
+		return nil, fmt.Errorf("%s: expected an array of strings", key)
+	}
+	return out, nil
+}
+
+// rawArg returns an argument re-encoded as JSON bytes (for the bulk parsers).
+func rawArg(req mcp.CallToolRequest, key string) ([]byte, error) {
+	var v interface{}
+	ok, err := jsonArg(req, key, &v)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("required argument %q not found", key)
+	}
+	return json.Marshal(v)
+}

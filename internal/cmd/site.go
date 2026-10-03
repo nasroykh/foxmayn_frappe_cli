@@ -1,21 +1,14 @@
 package cmd
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/huh/spinner"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 	"github.com/spf13/cobra"
-	"go.yaml.in/yaml/v3"
 )
 
 // ─── flags ───────────────────────────────────────────────────────────────────
@@ -52,36 +45,19 @@ var siteListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		raw, err := os.ReadFile(cfgPath)
+		cfg, err := readConfig(cfgPath)
 		if err != nil {
-			return fmt.Errorf("no config found at %s — run 'ffc init' to create one", cfgPath)
-		}
-		var cfg config.Config
-		if err := yaml.Unmarshal(raw, &cfg); err != nil {
-			return fmt.Errorf("parsing config: %w", err)
+			return err
 		}
 		if len(cfg.Sites) == 0 {
 			fmt.Fprintln(os.Stderr, "No sites configured. Run 'ffc init' or 'ffc site add'.")
 			return nil
 		}
 
-		names := make([]string, 0, len(cfg.Sites))
-		for n := range cfg.Sites {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-
+		names := sortedSiteNames(cfg)
 		rows := make([]map[string]interface{}, 0, len(names))
 		for _, name := range names {
 			site := cfg.Sites[name]
-			authMode := "—"
-			if site.AccessToken != "" {
-				authMode = "OAuth 2.0"
-			} else if site.APIKey != "" {
-				authMode = "API Key"
-			} else if site.Username != "" {
-				authMode = "Username/Password"
-			}
 			dflt := ""
 			if name == cfg.DefaultSite {
 				dflt = "✓"
@@ -89,18 +65,31 @@ var siteListCmd = &cobra.Command{
 			rows = append(rows, map[string]interface{}{
 				"name":    name,
 				"url":     site.URL,
-				"auth":    authMode,
+				"auth":    authLabel(site),
 				"default": dflt,
 			})
 		}
 
 		if jsonOutput {
-			output.PrintJSON(rows)
-		} else {
-			output.PrintTable(rows, []string{"name", "url", "auth", "default"})
+			return output.PrintJSON(rows)
 		}
+		output.PrintTable(rows, []string{"name", "url", "auth", "default"})
 		return nil
 	},
+}
+
+// authLabel names the credentials client.New will actually use, in the same
+// priority order.
+func authLabel(site config.SiteConfig) string {
+	switch {
+	case site.IsOAuth():
+		return "OAuth 2.0"
+	case site.APIKey != "" && site.APISecret != "":
+		return "API Key"
+	case site.IsSessionAuth():
+		return "Username/Password"
+	}
+	return "none"
 }
 
 // ─── ffc site add ────────────────────────────────────────────────────────────
@@ -108,7 +97,7 @@ var siteListCmd = &cobra.Command{
 var siteAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a new site to your config",
-	Long: `Add a new Frappe site to ~/.config/ffc/config.yaml.
+	Long: `Add a new Frappe site to your config file (default: ~/.config/ffc/config.yaml).
 
 Without flags, a menu lets you choose the authentication method.
 Use --oauth    to use the OAuth 2.0 browser flow (Authorization Code + PKCE).
@@ -120,48 +109,40 @@ Use --password to use username/email + password (session cookie) login.
 		if err != nil {
 			return err
 		}
-		if _, err := os.Stat(cfgPath); err != nil {
-			return fmt.Errorf("no config found at %s — run 'ffc init' first", cfgPath)
+		// Read up front so a malformed config fails before any browser flow.
+		cfg, err := readConfig(cfgPath)
+		if err != nil {
+			return err
 		}
 
-		method := ""
-		switch {
-		case saOAuth:
-			method = "oauth"
-		case saAPIKey:
-			method = "apikey"
-		case saPassword:
-			method = "password"
-		default:
-			menuErr := huh.NewForm(
-				huh.NewGroup(
-					huh.NewSelect[string]().
-						Title("How do you want to connect to the new site?").
-						Options(
-							huh.NewOption("OAuth 2.0          — browser login, no credentials stored", "oauth"),
-							huh.NewOption("API Key            — paste your API key and secret", "apikey"),
-							huh.NewOption("Username & Password — email/username + password login", "password"),
-						).
-						Value(&method),
-				),
-			).WithKeyMap(escQuitKeyMap()).Run()
-			if errors.Is(menuErr, huh.ErrUserAborted) {
-				fmt.Fprintln(os.Stderr, "Aborted.")
+		method, err := chooseAuthMethod("How do you want to connect to the new site?", saOAuth, saAPIKey, saPassword)
+		if err != nil {
+			return err
+		}
+		confirmOverwrite := func(name string) error {
+			if _, exists := cfg.Sites[name]; !exists {
 				return nil
 			}
-			if menuErr != nil {
-				return menuErr
+			ok, err := confirmPrompt(fmt.Sprintf("Site %q already exists.", name), "Replace it with the new credentials?")
+			if err != nil {
+				return err
 			}
+			if !ok {
+				return fmt.Errorf("%w: site %q kept", errAborted, name)
+			}
+			return nil
+		}
+		name, site, err := collectSite(cmd.Context(), method, confirmOverwrite)
+		if err != nil {
+			return err
+		}
+		if err := addSiteToConfig(cfgPath, name, site); err != nil {
+			return fmt.Errorf("saving site: %w", err)
 		}
 
-		switch method {
-		case "oauth":
-			return siteAddOAuthFlow(cmd.Context(), cfgPath)
-		case "password":
-			return siteAddPasswordFlow(cmd.Context(), cfgPath)
-		default:
-			return siteAddAPIKeyFlow(cfgPath)
-		}
+		fmt.Fprintf(os.Stderr, "\n✓ Site %q added to %s\n", name, cfgPath)
+		printSiteSaved(name, site)
+		return nil
 	},
 }
 
@@ -176,75 +157,38 @@ var siteRemoveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-
-		raw, err := os.ReadFile(cfgPath)
+		cfg, err := readConfig(cfgPath)
 		if err != nil {
-			return fmt.Errorf("reading config: %w", err)
+			return err
 		}
-		var cfg config.Config
-		if err := yaml.Unmarshal(raw, &cfg); err != nil {
-			return fmt.Errorf("parsing config: %w", err)
-		}
-		if len(cfg.Sites) == 0 {
-			return fmt.Errorf("no sites configured — run 'ffc init' or 'ffc site add'")
+		name, err := siteArg(cfg, args, "Which site do you want to remove?")
+		if err != nil {
+			return err
 		}
 
-		var name string
-		if len(args) == 1 {
-			name = args[0]
-			if _, ok := cfg.Sites[name]; !ok {
-				return fmt.Errorf("site %q not found in config", name)
-			}
-		} else {
-			name, err = pickSite(cfg, "Which site do you want to remove?")
-			if err != nil {
+		ok, err := confirmPrompt(fmt.Sprintf("Remove site %q?", name), fmt.Sprintf("URL: %s", cfg.Sites[name].URL))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%w: site %q kept", errAborted, name)
+		}
+
+		var wasDefault bool
+		var newDefault string
+		if err := config.Edit(cfgPath, func(f *config.File) error {
+			wasDefault = f.Get("default_site") == name
+			if err := f.RemoveSite(name); err != nil {
 				return err
 			}
-			if name == "" {
-				return nil
-			}
-		}
-
-		var confirmed bool
-		confirmErr := huh.NewForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title(fmt.Sprintf("Remove site %q?", name)).
-					Description(fmt.Sprintf("URL: %s", cfg.Sites[name].URL)).
-					Value(&confirmed),
-			),
-		).WithKeyMap(escQuitKeyMap()).Run()
-		if errors.Is(confirmErr, huh.ErrUserAborted) || !confirmed {
-			fmt.Fprintln(os.Stderr, "Aborted.")
+			newDefault = f.Get("default_site")
 			return nil
-		}
-		if confirmErr != nil {
-			return confirmErr
-		}
-
-		if err := removeSiteFromConfig(cfgPath, name); err != nil {
+		}); err != nil {
 			return err
 		}
 
 		fmt.Fprintf(os.Stderr, "✓ Site %q removed.\n", name)
-
-		// If we removed the default site, reassign it (or clear it) so later
-		// commands don't fail with 'site not found' on a dangling default (L21).
-		if cfg.DefaultSite == name {
-			var remaining []string
-			for n := range cfg.Sites {
-				if n != name {
-					remaining = append(remaining, n)
-				}
-			}
-			sort.Strings(remaining)
-			newDefault := ""
-			if len(remaining) > 0 {
-				newDefault = remaining[0]
-			}
-			if err := setDefaultSite(cfgPath, newDefault); err != nil {
-				return fmt.Errorf("updating default site: %w", err)
-			}
+		if wasDefault {
 			if newDefault != "" {
 				fmt.Fprintf(os.Stderr, "  It was your default site — default is now %q.\n", newDefault)
 			} else {
@@ -266,36 +210,15 @@ var siteUseCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-
-		raw, err := os.ReadFile(cfgPath)
+		cfg, err := readConfig(cfgPath)
 		if err != nil {
-			return fmt.Errorf("reading config: %w", err)
+			return err
 		}
-		var cfg config.Config
-		if err := yaml.Unmarshal(raw, &cfg); err != nil {
-			return fmt.Errorf("parsing config: %w", err)
+		name, err := siteArg(cfg, args, "Which site do you want to use as default?")
+		if err != nil {
+			return err
 		}
-		if len(cfg.Sites) == 0 {
-			return fmt.Errorf("no sites configured — run 'ffc init' or 'ffc site add'")
-		}
-
-		var name string
-		if len(args) == 1 {
-			name = args[0]
-			if _, ok := cfg.Sites[name]; !ok {
-				return fmt.Errorf("site %q not found in config", name)
-			}
-		} else {
-			name, err = pickSite(cfg, "Which site do you want to use as default?")
-			if err != nil {
-				return err
-			}
-			if name == "" {
-				return nil
-			}
-		}
-
-		if err := setDefaultSite(cfgPath, name); err != nil {
+		if err := setConfigValues(cfgPath, []configValue{{"default_site", name}}); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "✓ Default site set to %q.\n", name)
@@ -305,19 +228,28 @@ var siteUseCmd = &cobra.Command{
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-// pickSite shows a huh selection menu of all configured sites and returns the
-// chosen name. Returns ("", nil) if the user aborts.
-func pickSite(cfg config.Config, title string) (string, error) {
-	names := make([]string, 0, len(cfg.Sites))
-	for n := range cfg.Sites {
-		names = append(names, n)
+// siteArg returns the site named in args (which must exist) or, without an
+// argument, lets the user pick one.
+func siteArg(cfg *config.Config, args []string, title string) (string, error) {
+	if len(cfg.Sites) == 0 {
+		return "", fmt.Errorf("no sites configured — run 'ffc init' or 'ffc site add'")
 	}
-	sort.Strings(names)
+	if len(args) == 1 {
+		if _, ok := cfg.Sites[args[0]]; !ok {
+			return "", fmt.Errorf("site %q not found in config", args[0])
+		}
+		return args[0], nil
+	}
+	return pickSite(cfg, title)
+}
 
+// pickSite shows a selection menu of all configured sites and returns the
+// chosen name. An abort returns errAborted.
+func pickSite(cfg *config.Config, title string) (string, error) {
+	names := sortedSiteNames(cfg)
 	opts := make([]huh.Option[string], 0, len(names))
 	for _, n := range names {
-		site := cfg.Sites[n]
-		label := n + "  (" + site.URL + ")"
+		label := n + "  (" + cfg.Sites[n].URL + ")"
 		if n == cfg.DefaultSite {
 			label += "  ✓ default"
 		}
@@ -325,19 +257,21 @@ func pickSite(cfg config.Config, title string) (string, error) {
 	}
 
 	var chosen string
-	err := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title(title).
-				Options(opts...).
-				Value(&chosen),
-		),
-	).WithKeyMap(escQuitKeyMap()).Run()
-	if errors.Is(err, huh.ErrUserAborted) {
-		fmt.Fprintln(os.Stderr, "Aborted.")
-		return "", nil
+	if err := runForm(huh.NewGroup(
+		huh.NewSelect[string]().Title(title).Options(opts...).Value(&chosen),
+	)); err != nil {
+		return "", err
 	}
-	return chosen, err
+	return chosen, nil
+}
+
+func sortedSiteNames(cfg *config.Config) []string {
+	names := make([]string, 0, len(cfg.Sites))
+	for n := range cfg.Sites {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ─── init ────────────────────────────────────────────────────────────────────
@@ -350,542 +284,4 @@ func init() {
 
 	siteCmd.AddCommand(siteListCmd, siteAddCmd, siteRemoveCmd, siteUseCmd)
 	rootCmd.AddCommand(siteCmd)
-}
-
-// ─── site add: API key flow ───────────────────────────────────────────────────
-
-func siteAddAPIKeyFlow(cfgPath string) error {
-	// Load existing config for site-name conflict detection.
-	raw, _ := os.ReadFile(cfgPath)
-	var existingCfg config.Config
-	_ = yaml.Unmarshal(raw, &existingCfg)
-
-	var siteName, siteURL, apiKey, apiSecret string
-
-addLoop:
-	for {
-		form := huh.NewForm(
-			huh.NewGroup(
-				huh.NewInput().
-					Title("Site name").
-					Description("A short identifier, e.g. staging or production").
-					Placeholder("staging").
-					Validate(func(s string) error {
-						s = strings.TrimSpace(s)
-						if s == "" {
-							return fmt.Errorf("site name cannot be empty")
-						}
-						if strings.ContainsAny(s, " \t") {
-							return fmt.Errorf("site name must not contain spaces")
-						}
-						return nil
-					}).
-					Value(&siteName),
-				huh.NewInput().
-					Title("Site URL").
-					Description("Base URL of your Frappe site (https:// added if omitted)").
-					Placeholder("mysite.example.com").
-					Validate(func(s string) error {
-						if strings.TrimSpace(s) == "" {
-							return fmt.Errorf("URL cannot be empty")
-						}
-						return nil
-					}).
-					Value(&siteURL),
-			),
-			huh.NewGroup(
-				huh.NewInput().
-					Title("API Key").
-					Description("From User → API Access → Generate Keys").
-					Placeholder("21393a7e100ae26").
-					Validate(func(s string) error {
-						if strings.TrimSpace(s) == "" {
-							return fmt.Errorf("API key cannot be empty")
-						}
-						return nil
-					}).
-					Value(&apiKey),
-				huh.NewInput().
-					Title("API Secret").
-					EchoMode(huh.EchoModePassword).
-					Validate(func(s string) error {
-						if strings.TrimSpace(s) == "" {
-							return fmt.Errorf("API secret cannot be empty")
-						}
-						return nil
-					}).
-					Value(&apiSecret),
-			),
-		)
-		if err := form.WithKeyMap(escQuitKeyMap()).Run(); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				fmt.Fprintln(os.Stderr, "Aborted.")
-				return nil
-			}
-			return err
-		}
-
-		siteName = strings.TrimSpace(siteName)
-		siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
-		if !strings.HasPrefix(siteURL, "http://") && !strings.HasPrefix(siteURL, "https://") {
-			siteURL = "https://" + siteURL
-		}
-
-		// Site already exists → confirm overwrite.
-		if _, exists := existingCfg.Sites[siteName]; exists {
-			var overwrite bool
-			overErr := huh.NewForm(
-				huh.NewGroup(
-					huh.NewConfirm().
-						Title(fmt.Sprintf("Site %q already exists.", siteName)).
-						Description("Update it with the new credentials?").
-						Value(&overwrite),
-				),
-			).WithKeyMap(escQuitKeyMap()).Run()
-			if errors.Is(overErr, huh.ErrUserAborted) || !overwrite {
-				fmt.Fprintln(os.Stderr, "Aborted.")
-				return nil
-			}
-			if overErr != nil {
-				return overErr
-			}
-		}
-
-		secretSummary := "(empty)"
-		if strings.TrimSpace(apiSecret) != "" {
-			secretSummary = fmt.Sprintf("(%d characters)", len(apiSecret))
-		}
-		var reviewChoice string
-		reviewErr := huh.NewForm(
-			huh.NewGroup(
-				huh.NewSelect[string]().
-					Title("Review configuration").
-					Description(fmt.Sprintf(
-						"Site name:  %s\nSite URL:   %s\nAPI key:    %s\nAPI secret: %s",
-						siteName, siteURL, apiKey, secretSummary,
-					)).
-					Options(
-						huh.NewOption("Confirm", "confirm"),
-						huh.NewOption("Edit", "edit"),
-						huh.NewOption("Cancel", "cancel"),
-					).
-					Value(&reviewChoice),
-			),
-		).WithKeyMap(escQuitKeyMap()).Run()
-		if errors.Is(reviewErr, huh.ErrUserAborted) || reviewChoice == "cancel" {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			return nil
-		}
-		if reviewErr != nil {
-			return reviewErr
-		}
-		if reviewChoice == "edit" {
-			continue
-		}
-		break addLoop
-	}
-
-	var writeErr error
-	_ = spinner.New().
-		Title("Saving site...").
-		Action(func() {
-			writeErr = upsertSiteInConfig(cfgPath, siteName, buildAPIKeySiteYAML(siteURL, apiKey, apiSecret))
-		}).
-		Run()
-	if writeErr != nil {
-		return fmt.Errorf("saving site: %w", writeErr)
-	}
-
-	fmt.Fprintf(os.Stderr, "\n✓ Site %q added to config.\n", siteName)
-	fmt.Fprintf(os.Stderr, "  Run: ffc --site %s list-docs --doctype \"Sales Invoice\"\n", siteName)
-	return nil
-}
-
-// ─── site add: username/password flow ─────────────────────────────────────────
-
-func siteAddPasswordFlow(ctx context.Context, cfgPath string) error {
-	// Load existing config for site-name conflict detection.
-	raw, _ := os.ReadFile(cfgPath)
-	var existingCfg config.Config
-	_ = yaml.Unmarshal(raw, &existingCfg)
-
-	var siteName, siteURL, username, password string
-
-passwordAddLoop:
-	for {
-		form := huh.NewForm(
-			huh.NewGroup(
-				huh.NewInput().
-					Title("Site name").
-					Description("A short identifier, e.g. staging or production").
-					Placeholder("staging").
-					Validate(func(s string) error {
-						s = strings.TrimSpace(s)
-						if s == "" {
-							return fmt.Errorf("site name cannot be empty")
-						}
-						if strings.ContainsAny(s, " \t") {
-							return fmt.Errorf("site name must not contain spaces")
-						}
-						return nil
-					}).
-					Value(&siteName),
-				huh.NewInput().
-					Title("Site URL").
-					Description("Base URL of your Frappe site (https:// added if omitted)").
-					Placeholder("mysite.example.com").
-					Validate(func(s string) error {
-						if strings.TrimSpace(s) == "" {
-							return fmt.Errorf("URL cannot be empty")
-						}
-						return nil
-					}).
-					Value(&siteURL),
-			),
-			huh.NewGroup(
-				huh.NewInput().
-					Title("Email or username").
-					Placeholder("user@example.com").
-					Validate(func(s string) error {
-						if strings.TrimSpace(s) == "" {
-							return fmt.Errorf("email/username cannot be empty")
-						}
-						return nil
-					}).
-					Value(&username),
-				huh.NewInput().
-					Title("Password").
-					EchoMode(huh.EchoModePassword).
-					Validate(func(s string) error {
-						if s == "" {
-							return fmt.Errorf("password cannot be empty")
-						}
-						return nil
-					}).
-					Value(&password),
-			),
-		)
-		if err := form.WithKeyMap(escQuitKeyMap()).Run(); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				fmt.Fprintln(os.Stderr, "Aborted.")
-				return nil
-			}
-			return err
-		}
-
-		siteName = strings.TrimSpace(siteName)
-		siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
-		if !strings.HasPrefix(siteURL, "http://") && !strings.HasPrefix(siteURL, "https://") {
-			siteURL = "https://" + siteURL
-		}
-		username = strings.TrimSpace(username)
-
-		// Site already exists → confirm overwrite.
-		if _, exists := existingCfg.Sites[siteName]; exists {
-			var overwrite bool
-			overErr := huh.NewForm(
-				huh.NewGroup(
-					huh.NewConfirm().
-						Title(fmt.Sprintf("Site %q already exists.", siteName)).
-						Description("Update it with the new credentials?").
-						Value(&overwrite),
-				),
-			).WithKeyMap(escQuitKeyMap()).Run()
-			if errors.Is(overErr, huh.ErrUserAborted) || !overwrite {
-				fmt.Fprintln(os.Stderr, "Aborted.")
-				return nil
-			}
-			if overErr != nil {
-				return overErr
-			}
-		}
-
-		// Probe the credentials against Frappe before persisting anything.
-		// A Ctrl+C during the probe aborts rather than writing unverified creds (L35).
-		var loginErr error
-		if runErr := spinner.New().
-			Title("Verifying credentials...").
-			Action(func() {
-				_, loginErr = client.LoginPassword(ctx, siteURL, username, password)
-			}).
-			Run(); runErr != nil {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			return nil
-		}
-		if loginErr != nil {
-			fmt.Fprintf(os.Stderr, "\n✗ %v\n\n", loginErr)
-			continue
-		}
-
-		var reviewChoice string
-		reviewErr := huh.NewForm(
-			huh.NewGroup(
-				huh.NewSelect[string]().
-					Title("Review configuration").
-					Description(fmt.Sprintf(
-						"Site name: %s\nSite URL:  %s\nUsername:  %s\nPassword:  (%d characters)",
-						siteName, siteURL, username, len(password),
-					)).
-					Options(
-						huh.NewOption("Confirm", "confirm"),
-						huh.NewOption("Edit", "edit"),
-						huh.NewOption("Cancel", "cancel"),
-					).
-					Value(&reviewChoice),
-			),
-		).WithKeyMap(escQuitKeyMap()).Run()
-		if errors.Is(reviewErr, huh.ErrUserAborted) || reviewChoice == "cancel" {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			return nil
-		}
-		if reviewErr != nil {
-			return reviewErr
-		}
-		if reviewChoice == "edit" {
-			continue
-		}
-		break passwordAddLoop
-	}
-
-	var writeErr error
-	_ = spinner.New().
-		Title("Saving site...").
-		Action(func() {
-			writeErr = upsertSiteInConfig(cfgPath, siteName, buildSessionSiteYAML(siteURL, username, password))
-		}).
-		Run()
-	if writeErr != nil {
-		return fmt.Errorf("saving site: %w", writeErr)
-	}
-
-	fmt.Fprintf(os.Stderr, "\n✓ Site %q added to config.\n", siteName)
-	fmt.Fprintf(os.Stderr, "  Run: ffc --site %s list-docs --doctype \"Sales Invoice\"\n", siteName)
-	return nil
-}
-
-// ─── site add: OAuth flow ─────────────────────────────────────────────────────
-
-func siteAddOAuthFlow(ctx context.Context, cfgPath string) error {
-	// Load existing config for site-name conflict detection.
-	raw, _ := os.ReadFile(cfgPath)
-	var existingCfg config.Config
-	_ = yaml.Unmarshal(raw, &existingCfg)
-
-	// ── Step 1: site name + URL ───────────────────────────────────────────────
-	var siteName, siteURL string
-	siteForm := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Site name").
-				Description("A short identifier, e.g. staging or production").
-				Placeholder("staging").
-				Validate(func(s string) error {
-					s = strings.TrimSpace(s)
-					if s == "" {
-						return fmt.Errorf("site name cannot be empty")
-					}
-					if strings.ContainsAny(s, " \t") {
-						return fmt.Errorf("site name must not contain spaces")
-					}
-					return nil
-				}).
-				Value(&siteName),
-			huh.NewInput().
-				Title("Site URL").
-				Description("Base URL of your Frappe site (https:// added if omitted)").
-				Placeholder("mysite.example.com").
-				Validate(func(s string) error {
-					if strings.TrimSpace(s) == "" {
-						return fmt.Errorf("URL cannot be empty")
-					}
-					return nil
-				}).
-				Value(&siteURL),
-		),
-	)
-	if err := siteForm.WithKeyMap(escQuitKeyMap()).Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			return nil
-		}
-		return err
-	}
-
-	siteName = strings.TrimSpace(siteName)
-	siteURL = strings.TrimRight(strings.TrimSpace(siteURL), "/")
-	if !strings.HasPrefix(siteURL, "http://") && !strings.HasPrefix(siteURL, "https://") {
-		siteURL = "https://" + siteURL
-	}
-
-	// Site already exists → confirm before running the browser flow.
-	if _, exists := existingCfg.Sites[siteName]; exists {
-		var overwrite bool
-		overErr := huh.NewForm(
-			huh.NewGroup(
-				huh.NewConfirm().
-					Title(fmt.Sprintf("Site %q already exists.", siteName)).
-					Description("Update it with a new OAuth token?").
-					Value(&overwrite),
-			),
-		).WithKeyMap(escQuitKeyMap()).Run()
-		if errors.Is(overErr, huh.ErrUserAborted) || !overwrite {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			return nil
-		}
-		if overErr != nil {
-			return overErr
-		}
-	}
-
-	// ── Step 2: start callback server ─────────────────────────────────────────
-	cs, err := startCallbackServer()
-	if err != nil {
-		return err
-	}
-	redirectURI := fmt.Sprintf("http://localhost:%d/callback", cs.port)
-
-	fmt.Fprintf(os.Stderr, `
-OAuth Client setup (one-time, on your Frappe site)
-──────────────────────────────────────────────────
-1. Go to: %s/app/oauth-client/new-oauth-client-1
-2. Fill in:
-     App Name:      ffc (or any name)
-     Grant Type:    Authorization Code
-     Scopes:        openid all
-     Redirect URIs: %s
-3. Save → copy the Client ID (and Client Secret if using Confidential type).
-
-`, siteURL, redirectURI)
-
-	// ── Step 3: client ID + secret ────────────────────────────────────────────
-	var clientID, clientSecret string
-	credForm := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("OAuth Client ID").
-				Description("From the OAuth Client you just created on Frappe").
-				Validate(func(s string) error {
-					if strings.TrimSpace(s) == "" {
-						return fmt.Errorf("Client ID cannot be empty")
-					}
-					return nil
-				}).
-				Value(&clientID),
-			huh.NewInput().
-				Title("OAuth Client Secret").
-				Description("Leave empty if using a Public client (no secret)").
-				EchoMode(huh.EchoModePassword).
-				Value(&clientSecret),
-		),
-	)
-	if err := credForm.WithKeyMap(escQuitKeyMap()).Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			return nil
-		}
-		return err
-	}
-	clientID = strings.TrimSpace(clientID)
-
-	// ── Step 4: PKCE + browser ────────────────────────────────────────────────
-	verifier, err := generateCodeVerifier()
-	if err != nil {
-		return fmt.Errorf("generating PKCE verifier: %w", err)
-	}
-	challenge := generateCodeChallenge(verifier)
-
-	params := url.Values{
-		"response_type":         {"code"},
-		"client_id":             {clientID},
-		"redirect_uri":          {redirectURI},
-		"scope":                 {"openid all"},
-		"code_challenge":        {challenge},
-		"code_challenge_method": {"S256"},
-		"state":                 {cs.state}, // CSRF protection (M6)
-	}
-	authURL := strings.TrimRight(siteURL, "/") + "/api/method/frappe.integrations.oauth2.authorize?" + params.Encode()
-
-	fmt.Fprintf(os.Stderr, "\nOpening browser for authorization...\n")
-	fmt.Fprintf(os.Stderr, "If the browser doesn't open automatically, visit:\n  %s\n\n", authURL)
-
-	if err := openBrowser(authURL); err != nil {
-		fmt.Fprintf(os.Stderr, "(Could not open browser: %v)\n\n", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Waiting for authorization (timeout: 5 minutes)...\n")
-
-	// ── Step 5: wait for callback ─────────────────────────────────────────────
-	code, err := cs.wait(ctx)
-	if err != nil {
-		return fmt.Errorf("authorization: %w", err)
-	}
-
-	// ── Step 6: exchange code for tokens ──────────────────────────────────────
-	var tokens *client.OAuthTokens
-	var exchangeErr error
-	_ = spinner.New().
-		Title("Exchanging authorization code for tokens...").
-		Action(func() {
-			tokens, exchangeErr = client.ExchangeOAuthCode(siteURL, clientID, clientSecret, code, redirectURI, verifier)
-		}).
-		Run()
-	if exchangeErr != nil {
-		return fmt.Errorf("token exchange: %w", exchangeErr)
-	}
-
-	// ── Step 7: fetch logged-in user ──────────────────────────────────────────
-	var loggedUser string
-	_ = spinner.New().
-		Title("Fetching user info...").
-		Action(func() {
-			loggedUser, _ = client.GetOAuthUser(siteURL, tokens.AccessToken)
-		}).
-		Run()
-
-	userDisplay := loggedUser
-	if userDisplay == "" {
-		userDisplay = "(unknown)"
-	}
-
-	// ── Step 8: review + confirm ──────────────────────────────────────────────
-	var reviewChoice string
-	reviewErr := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("Review OAuth configuration").
-				Description(fmt.Sprintf(
-					"Site name:  %s\nSite URL:   %s\nClient ID:  %s\nLogged in:  %s",
-					siteName, siteURL, clientID, userDisplay,
-				)).
-				Options(
-					huh.NewOption("Confirm", "confirm"),
-					huh.NewOption("Cancel", "cancel"),
-				).
-				Value(&reviewChoice),
-		),
-	).WithKeyMap(escQuitKeyMap()).Run()
-	if errors.Is(reviewErr, huh.ErrUserAborted) || reviewChoice == "cancel" {
-		fmt.Fprintln(os.Stderr, "Aborted.")
-		return nil
-	}
-	if reviewErr != nil {
-		return reviewErr
-	}
-
-	// ── Step 9: write ──────────────────────────────────────────────────────────
-	var writeErr error
-	_ = spinner.New().
-		Title("Saving site...").
-		Action(func() {
-			writeErr = upsertSiteInConfig(cfgPath, siteName, buildOAuthSiteYAML(siteURL, clientID, clientSecret, tokens))
-		}).
-		Run()
-	if writeErr != nil {
-		return fmt.Errorf("saving site: %w", writeErr)
-	}
-
-	fmt.Fprintf(os.Stderr, "\n✓ Site %q added to config.\n", siteName)
-	fmt.Fprintf(os.Stderr, "  Logged in as: %s\n", userDisplay)
-	fmt.Fprintf(os.Stderr, "  Run: ffc --site %s list-docs --doctype \"Sales Invoice\"\n", siteName)
-	return nil
 }

@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/go-resty/resty/v2"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -27,7 +28,7 @@ type updateCheckState struct {
 // updateCheckPath returns ~/.config/ffc/.update_check.json — see the comment
 // on mcpStateDir for why this isn't os.UserConfigDir().
 func updateCheckPath() string {
-	dir, err := defaultConfigDir()
+	dir, err := config.DefaultConfigDir()
 	if err != nil {
 		return ""
 	}
@@ -37,68 +38,58 @@ func updateCheckPath() string {
 // runUpdateCheck reads the cached update state file and prints a one-line
 // notice to stderr if a newer version is available. If the cache is stale
 // (or missing) it starts a background goroutine to refresh it; Execute()
-// waits for that goroutine before the process exits.
+// waits for that goroutine (at most 2 s) before the process exits.
 func runUpdateCheck() {
+	if os.Getenv("FFC_NO_UPDATE_CHECK") != "" {
+		return
+	}
 	path := updateCheckPath()
 	if path == "" {
 		return
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		// State file missing — start background fetch; no notification yet.
-		startBackgroundFetch(path)
-		return
-	}
-
 	var state updateCheckState
-	if err := json.Unmarshal(data, &state); err != nil {
-		startBackgroundFetch(path)
-		return
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &state)
 	}
 
 	// Notify if the cached latest is newer than the running binary.
 	cur := version.Version
-	if !isDevBuild(cur) && newerThan(cur, state.Latest) { // L29
+	if state.Latest != "" && !isDevBuild(cur) && newerThan(cur, state.Latest) {
 		fmt.Fprintf(os.Stderr, "Update available: %s → %s  (run: ffc update)\n", cur, state.Latest)
 	}
 
-	// Refresh in background if the cache is older than the check interval.
 	if time.Since(state.CheckedAt) > updateCheckInterval {
-		startBackgroundFetch(path)
+		// Record the attempt before fetching: a fetch that fails, is
+		// rate-limited or is cut off by the 2 s exit wait must not make every
+		// following command pay for another attempt.
+		state.CheckedAt = time.Now().UTC()
+		writeUpdateState(path, state)
+		startBackgroundFetch(path, state)
 	}
 }
 
-func startBackgroundFetch(path string) {
+func startBackgroundFetch(path string, state updateCheckState) {
 	updateCheckDone = make(chan struct{})
 	go func() {
 		defer close(updateCheckDone)
-		fetchAndStoreLatestRelease(path)
+		var release githubRelease
+		resp, err := client.NewHTTPClient(10*time.Second).R().
+			SetResult(&release).
+			SetHeader("Accept", "application/vnd.github+json").
+			Get(githubReleasesAPI)
+		if err != nil || resp.StatusCode() != 200 || release.TagName == "" {
+			return
+		}
+		state.Latest = release.TagName
+		writeUpdateState(path, state)
 	}()
 }
 
-// fetchAndStoreLatestRelease queries the GitHub releases API and writes the
-// result to path. Always called inside a goroutine via startBackgroundFetch.
-func fetchAndStoreLatestRelease(path string) {
-	var release githubRelease
-	resp, err := resty.New().SetTimeout(30*time.Second).R().
-		SetResult(&release).
-		SetHeader("Accept", "application/vnd.github+json").
-		Get(githubReleasesAPI)
-	if err != nil || resp.StatusCode() != 200 || release.TagName == "" {
-		return
+func writeUpdateState(path string, state updateCheckState) {
+	if out, err := json.Marshal(state); err == nil {
+		_ = config.WriteFileAtomic(path, out, 0o600)
 	}
-
-	state := updateCheckState{
-		CheckedAt: time.Now().UTC(),
-		Latest:    release.TagName,
-	}
-	out, err := json.Marshal(state)
-	if err != nil {
-		return
-	}
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	_ = atomicWriteFile(path, out, 0o644) // L15: atomic write avoids a truncated state file
 }
 
 // waitForUpdateCheck blocks until any in-flight background fetch completes
@@ -114,17 +105,26 @@ func waitForUpdateCheck() {
 	}
 }
 
-func init() {
-	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		// Skip the check when the user is already running `ffc update` or `ffc mcp`
-		// (stderr output from the update notice would corrupt the MCP JSON-RPC stream).
-		if cmd.Name() != "update" && cmd.Name() != "mcp" {
-			runUpdateCheck()
+// skipUpdateCheck reports commands that must not print the update notice or
+// touch the network: `update` itself, the MCP server (long-running; its stdout
+// is the JSON-RPC channel), and shell completion/help, which run on every TAB.
+func skipUpdateCheck(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		switch c.Name() {
+		case "update", "mcp", "completion", "help", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+			return true
 		}
-		// Silently refresh an expired OAuth access token before the command runs.
-		// Skip for init (no site configured yet) and mcp (stdout is the JSON-RPC channel).
-		if cmd.Name() != "init" && cmd.Name() != "update" && cmd.Name() != "mcp" {
-			tryRefreshOAuthToken()
+	}
+	return false
+}
+
+func init() {
+	// The only PersistentPreRunE in the tree — see CLAUDE.md. OAuth token
+	// refresh is not done here: loadSite() refreshes lazily, only for the
+	// commands that actually call a site.
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if !skipUpdateCheck(cmd) {
+			runUpdateCheck()
 		}
 		return nil
 	}

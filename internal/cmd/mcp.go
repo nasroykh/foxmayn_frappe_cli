@@ -5,38 +5,65 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 	"github.com/spf13/cobra"
 )
 
-// newMCPClientProvider returns a clientFn that builds a fresh FrappeClient for
-// each tool call: it first refreshes an expired OAuth token (and persists it),
-// then reloads config and constructs the client (which re-logs-in session-auth
-// sites). This keeps a long-running MCP server's credentials fresh instead of
-// pinning one client built at startup (H5). The config refresh/load is
-// serialized to avoid concurrent token-file writes.
-func newMCPClientProvider() clientFn {
-	var mu sync.Mutex
-	return func(ctx context.Context) (*client.FrappeClient, error) {
+// newMCPClientProvider returns the clientFn the MCP tools use, plus a close
+// func to call on shutdown. The client is built once and reused (one HTTP
+// transport, one login for session-auth sites) while the site's credentials
+// are unchanged; every call still goes through loadSite, so an expired OAuth
+// token is refreshed and a config edit (or a token refreshed by another ffc
+// process) is picked up by rebuilding the client.
+func newMCPClientProvider() (clientFn, func()) {
+	var (
+		mu  sync.Mutex
+		key string
+		fc  *client.FrappeClient
+	)
+	get := func(ctx context.Context) (*client.FrappeClient, error) {
 		mu.Lock()
-		tryRefreshOAuthToken()
-		cfg, err := config.Load(siteName, configPath)
-		mu.Unlock()
+		defer mu.Unlock()
+		cfg, err := loadSite(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("config: %w", err)
+			return nil, err
 		}
-		return client.New(ctx, cfg)
+		k := strings.Join([]string{cfg.URL, cfg.AccessToken, cfg.APIKey, cfg.APISecret, cfg.Username, cfg.Password}, "\x00")
+		if fc != nil && k == key {
+			return fc, nil
+		}
+		c, err := client.New(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		// The old client is dropped without logging out: tool calls that
+		// fetched it before the swap may still be using its session.
+		fc, key = c, k
+		return fc, nil
 	}
+	closeFn := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if fc != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			fc.Close(ctx)
+			fc = nil
+		}
+	}
+	return get, closeFn
 }
 
 var (
-	mcpDetach bool
-	mcpPort   int
+	mcpDetach   bool
+	mcpPort     int
+	mcpReadOnly bool
 )
 
 var mcpCmd = &cobra.Command{
@@ -79,7 +106,8 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Default: stdio server.
-	provider := newMCPClientProvider()
+	provider, closeProvider := newMCPClientProvider()
+	defer closeProvider()
 	// Validate credentials once up front so misconfiguration fails immediately.
 	if _, err := provider(cmd.Context()); err != nil {
 		return err
@@ -105,6 +133,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 
 func init() {
 	mcpCmd.Flags().BoolVarP(&mcpDetach, "detach", "d", false, "Run as a background HTTP server (use 'ffc mcp stop' to stop)")
+	mcpCmd.Flags().BoolVar(&mcpReadOnly, "read-only", false, "Expose only read tools (no create, update, delete, bulk or call_method)")
 	mcpCmd.Flags().IntVarP(&mcpPort, "port", "p", 0, fmt.Sprintf("Port for HTTP mode (default %d, implies HTTP transport)", defaultMCPPort))
 	rootCmd.AddCommand(mcpCmd)
 }

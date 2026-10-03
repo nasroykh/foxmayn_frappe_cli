@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -42,56 +43,45 @@ Examples:
   ffc get-schema -d "Sales Invoice" --json --keys fields
   ffc get-schema -d "Sales Invoice" --json --keys name,module,fields
 `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(siteName, configPath)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
+		type schema struct {
+			doc      map[string]interface{}
+			warnings []string
 		}
-
-		var doc map[string]interface{}
-		var apiErr, cfWarn, psWarn error
-		c, err := client.New(cmd.Context(), cfg)
+		res, err := callSite(cmd, fmt.Sprintf("Fetching schema for %s…", gsDoctype), func(ctx context.Context, c *client.FrappeClient) (schema, error) {
+			doc, warnings, err := fetchSchema(ctx, c, gsDoctype)
+			return schema{doc, warnings}, err
+		})
 		if err != nil {
 			return err
 		}
-		_ = runSpinner(fmt.Sprintf("Fetching schema for %s…", gsDoctype), func() {
-			doc, apiErr = c.GetDoc(cmd.Context(), "DocType", gsDoctype)
-			if apiErr != nil {
-				return
-			}
-			// Custom Field / Property Setter reads are best-effort: a 403 or
-			// error on them should degrade to the base schema, not abort (L12).
-			cfWarn = mergeCustomFields(cmd.Context(), c, gsDoctype, doc)
-			psWarn = applyPropertySetterOverrides(cmd.Context(), c, gsDoctype, doc)
-		})
-		if apiErr != nil {
-			return apiErr
-		}
-		if cfWarn != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not merge custom fields (%v) — showing base schema only\n", cfWarn)
-		}
-		if psWarn != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not apply Property Setter overrides (%v)\n", psWarn)
-		}
+		doc := res.doc
 
 		if jsonOutput {
-			result := map[string]interface{}(doc)
+			result := doc
 			if !gsFull {
 				result = compactSchema(doc)
 			}
-			if gsKeys != "" {
-				result = filterSchemaKeys(result, strings.Split(gsKeys, ","))
+			result = selectKeys(result, gsKeys)
+			if len(res.warnings) > 0 {
+				// In-band too, so a script can tell the schema is partial.
+				result["_warnings"] = res.warnings
+			}
+			for _, w := range res.warnings {
+				fmt.Fprintln(os.Stderr, "warning: "+w)
 			}
 			return output.PrintJSON(result)
 		}
+		for _, w := range res.warnings {
+			fmt.Fprintln(os.Stderr, "warning: "+w)
+		}
 
-		// Table output: extract fields and render a schema-specific table.
 		rawFields, ok := doc["fields"].([]interface{})
 		if !ok || len(rawFields) == 0 {
 			fmt.Fprintln(os.Stderr, "No fields found in schema.")
 			return nil
 		}
-
 		rows := make([]map[string]interface{}, 0, len(rawFields))
 		for _, rf := range rawFields {
 			f, ok := rf.(map[string]interface{})
@@ -99,17 +89,8 @@ Examples:
 				continue
 			}
 			reqd := ""
-			if r, ok := f["reqd"]; ok {
-				switch v := r.(type) {
-				case float64:
-					if v == 1 {
-						reqd = "✓"
-					}
-				case bool:
-					if v {
-						reqd = "✓"
-					}
-				}
+			if isTruthy(f["reqd"]) {
+				reqd = "✓"
 			}
 			rows = append(rows, map[string]interface{}{
 				"fieldname": f["fieldname"],
@@ -120,10 +101,28 @@ Examples:
 				"default":   f["default"],
 			})
 		}
-
 		output.PrintTable(rows, []string{"fieldname", "label", "fieldtype", "required", "options", "default"})
 		return nil
 	},
+}
+
+// fetchSchema returns a DocType definition as the desk sees it: the base
+// DocType plus Custom Fields and every Property Setter override. Custom Field
+// and Property Setter reads are best-effort — a user without read access to
+// them still gets the base schema, with a warning explaining what is missing.
+func fetchSchema(ctx context.Context, c *client.FrappeClient, doctype string) (map[string]interface{}, []string, error) {
+	doc, err := c.GetDoc(ctx, "DocType", doctype)
+	if err != nil {
+		return nil, nil, err
+	}
+	var warnings []string
+	if err := mergeCustomFields(ctx, c, doctype, doc); err != nil {
+		warnings = append(warnings, "custom fields could not be merged (showing base schema only): "+err.Error())
+	}
+	if err := applyPropertySetters(ctx, c, doctype, doc); err != nil {
+		warnings = append(warnings, "Property Setter overrides could not be applied: "+err.Error())
+	}
+	return doc, warnings, nil
 }
 
 // compactSchema returns a filtered view of a raw DocType document.
@@ -144,9 +143,16 @@ Examples:
 //	non_negative, allow_on_submit, in_list_view, in_standard_filter,
 //	set_only_once, translatable, ignore_user_permissions
 //
-// DocField level — kept when non-empty string: options, default, description,
+// DocType level — kept when non-empty: title_field, search_fields, sort_field,
+// sort_order, image_field, description, permissions (role/permlevel/rights)
 //
-//	fetch_from, depends_on, mandatory_depends_on, read_only_depends_on
+// DocField level — kept when non-empty: options, default, description,
+//
+//	fetch_from, fetch_if_empty, depends_on, mandatory_depends_on,
+//	read_only_depends_on, precision, link_filters, insert_after
+//
+// DocField level — kept when truthy: no_copy, search_index, bold, collapsible,
+// print_hide, report_hide
 //
 // DocField level — kept when > 0: length, permlevel
 func compactSchema(doc map[string]interface{}) map[string]interface{} {
@@ -163,6 +169,20 @@ func compactSchema(doc map[string]interface{}) map[string]interface{} {
 		}
 	}
 
+	// Include only when non-empty: these name the fields Frappe uses for
+	// titles, search, sorting and images.
+	for _, k := range []string{
+		"title_field", "search_fields", "sort_field", "sort_order", "image_field",
+		"description",
+	} {
+		if v, ok := doc[k]; ok && !isEmpty(v) {
+			out[k] = v
+		}
+	}
+
+	if perms := compactPermissions(doc["permissions"]); len(perms) > 0 {
+		out["permissions"] = perms
+	}
 	// Include only when truthy (non-zero / true).
 	for _, k := range []string{"allow_rename", "track_changes"} {
 		if v, ok := doc[k]; ok && isTruthy(v) {
@@ -215,15 +235,21 @@ func compactField(f map[string]interface{}) map[string]interface{} {
 		}
 	}
 
-	// Include string values only when non-empty.
+	// Include values only when non-empty. default may be numeric.
 	for _, k := range []string{
-		"options", "default", "description", "fetch_from",
+		"options", "default", "description", "fetch_from", "fetch_if_empty",
 		"depends_on", "mandatory_depends_on", "read_only_depends_on",
+		"precision", "link_filters", "insert_after",
 	} {
-		if v, ok := f[k]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				out[k] = v
-			}
+		if v, ok := f[k]; ok && !isEmpty(v) {
+			out[k] = v
+		}
+	}
+
+	// Include flags that change data handling only when truthy.
+	for _, k := range []string{"no_copy", "search_index", "bold", "collapsible", "print_hide", "report_hide"} {
+		if v, ok := f[k]; ok && isTruthy(v) {
+			out[k] = v
 		}
 	}
 
@@ -236,18 +262,6 @@ func compactField(f map[string]interface{}) map[string]interface{} {
 		}
 	}
 
-	return out
-}
-
-// filterSchemaKeys returns a new map containing only the specified top-level keys.
-func filterSchemaKeys(doc map[string]interface{}, keys []string) map[string]interface{} {
-	out := make(map[string]interface{}, len(keys))
-	for _, k := range keys {
-		k = strings.TrimSpace(k)
-		if v, ok := doc[k]; ok {
-			out[k] = v
-		}
-	}
 	return out
 }
 
@@ -324,48 +338,141 @@ func mergeCustomFields(ctx context.Context, fc *client.FrappeClient, doctype str
 	return nil
 }
 
-// applyPropertySetterOverrides fetches all Property Setter records for the given
-// doctype where property="options" and patches the matching fields in doc in-place.
-// This corrects Select field options that have been customised via Frappe's
-// Customize Form / Property Setter, which are invisible in the raw DocType schema.
-func applyPropertySetterOverrides(ctx context.Context, fc *client.FrappeClient, doctype string, doc map[string]interface{}) error {
-	filters, _ := json.Marshal(map[string]interface{}{
-		"doc_type": doctype,
-		"property": "options",
-	})
+// applyPropertySetters applies the doctype's Property Setters — what
+// Customize Form saves for every changed property (reqd, hidden, label,
+// options, default, in_list_view, precision, ...), not only Select options —
+// to the DocType or the matching field, cast by property_type. A DocType-level
+// field_order setter (saved when fields are reordered) reorders the fields.
+func applyPropertySetters(ctx context.Context, fc *client.FrappeClient, doctype string, doc map[string]interface{}) error {
+	filters, _ := json.Marshal(map[string]interface{}{"doc_type": doctype})
 	rows, err := fc.GetList(ctx, "Property Setter", client.ListOptions{
-		Fields:  []string{"field_name", "value"},
+		Fields:  []string{"doctype_or_field", "field_name", "property", "property_type", "value"},
 		Filters: string(filters),
+		OrderBy: "creation asc",
 		Limit:   -1,
 	})
 	if err != nil || len(rows) == 0 {
 		return err
 	}
 
-	overrides := make(map[string]string, len(rows))
-	for _, row := range rows {
-		fn, _ := row["field_name"].(string)
-		val, _ := row["value"].(string)
-		if fn != "" {
-			overrides[fn] = val
+	fieldsByName := map[string]map[string]interface{}{}
+	rawFields, _ := doc["fields"].([]interface{})
+	for _, rf := range rawFields {
+		if f, ok := rf.(map[string]interface{}); ok {
+			if fn, _ := f["fieldname"].(string); fn != "" {
+				fieldsByName[fn] = f
+			}
 		}
 	}
 
-	rawFields, ok := doc["fields"].([]interface{})
-	if !ok {
-		return nil
-	}
-	for _, rf := range rawFields {
-		f, ok := rf.(map[string]interface{})
-		if !ok {
+	for _, row := range rows {
+		prop, _ := row["property"].(string)
+		if prop == "" {
 			continue
 		}
-		fn, _ := f["fieldname"].(string)
-		if val, found := overrides[fn]; found {
-			f["options"] = val
+		val := castProperty(row["value"], row["property_type"])
+		switch row["doctype_or_field"] {
+		case "DocField":
+			fn, _ := row["field_name"].(string)
+			if f, ok := fieldsByName[fn]; ok {
+				f[prop] = val
+			}
+		case "DocType":
+			if prop == "field_order" {
+				reorderFields(doc, val)
+				continue
+			}
+			doc[prop] = val
 		}
 	}
 	return nil
+}
+
+// castProperty converts a Property Setter's string value to the JSON type the
+// DocType itself uses for that property.
+func castProperty(v, propertyType interface{}) interface{} {
+	s, ok := v.(string)
+	if !ok {
+		return v
+	}
+	switch propertyType {
+	case "Check", "Int":
+		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
+			return float64(n)
+		}
+	case "Float", "Currency", "Percent":
+		if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
+			return f
+		}
+	}
+	return s
+}
+
+// reorderFields sorts doc["fields"] by a field_order value (a JSON-encoded
+// list of fieldnames). Fields it does not mention keep their relative order
+// at the end.
+func reorderFields(doc map[string]interface{}, order interface{}) {
+	s, _ := order.(string)
+	var names []string
+	if json.Unmarshal([]byte(s), &names) != nil || len(names) == 0 {
+		return
+	}
+	rawFields, _ := doc["fields"].([]interface{})
+	pos := make(map[string]int, len(names))
+	for i, n := range names {
+		pos[n] = i
+	}
+	rank := func(f interface{}) int {
+		m, _ := f.(map[string]interface{})
+		fn, _ := m["fieldname"].(string)
+		if p, ok := pos[fn]; ok {
+			return p
+		}
+		return len(names)
+	}
+	sort.SliceStable(rawFields, func(i, j int) bool { return rank(rawFields[i]) < rank(rawFields[j]) })
+	doc["fields"] = rawFields
+}
+
+// compactPermissions keeps role, permlevel and the granted rights of each
+// DocPerm row.
+func compactPermissions(v interface{}) []map[string]interface{} {
+	rows, _ := v.([]interface{})
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, r := range rows {
+		p, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		c := map[string]interface{}{"role": p["role"]}
+		if isTruthy(p["permlevel"]) {
+			c["permlevel"] = p["permlevel"]
+		}
+		var rights []string
+		for _, k := range []string{"select", "read", "write", "create", "delete", "submit", "cancel", "amend", "report", "export", "import", "print", "email", "share", "if_owner"} {
+			if isTruthy(p[k]) {
+				rights = append(rights, k)
+			}
+		}
+		c["rights"] = rights
+		out = append(out, c)
+	}
+	return out
+}
+
+// isEmpty reports nil, "" and empty arrays/objects.
+func isEmpty(v interface{}) bool {
+	switch val := v.(type) {
+	case nil:
+		return true
+	case string:
+		return val == ""
+	case []interface{}:
+		return len(val) == 0
+	case map[string]interface{}:
+		return len(val) == 0
+	}
+	return false
 }
 
 // isTruthy reports whether v represents a non-zero numeric or boolean true.

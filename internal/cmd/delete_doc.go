@@ -1,15 +1,12 @@
 package cmd
 
 import (
-	"errors"
+	"context"
 	"fmt"
-	"os"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
-	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -25,48 +22,32 @@ var deleteDocCmd = &cobra.Command{
 	Short: "Delete a Frappe document",
 	Long: `Permanently delete a document from a Frappe DocType.
 
-You will be prompted to confirm deletion unless --yes is provided.
+You will be prompted to confirm deletion unless --yes is provided. Declining
+the prompt exits with a non-zero code.
 
 Examples:
   ffc delete-doc --doctype "ToDo" --name "TD-0001"
   ffc delete-doc -d "Note" -n "Old Note" --yes
+  ffc delete-doc -d "Note" -n "Old Note" --yes --json
 `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(siteName, configPath)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
-
-		// Confirmation prompt unless --yes is passed.
 		if !ddYes {
-			var confirmed bool
-			prompt := fmt.Sprintf("Delete %s %q? This cannot be undone.", ddDoctype, ddName)
-			err := huh.NewForm(huh.NewGroup(
-				huh.NewConfirm().Title(prompt).Value(&confirmed),
-			)).WithKeyMap(escQuitKeyMap()).Run() // Escape/Ctrl+C aborts (L8)
-			// Distinguish a genuine prompt failure from a user cancel (L4).
-			if err != nil && !errors.Is(err, huh.ErrUserAborted) {
+			if err := confirm(fmt.Sprintf("Delete %s %q? This cannot be undone.", ddDoctype, ddName)); err != nil {
 				return err
 			}
-			if err != nil || !confirmed {
-				// Neutral cancel message, not a red ✗ error (L7).
-				fmt.Fprintln(os.Stderr, "Deletion cancelled.")
-				return nil
-			}
 		}
 
-		var apiErr error
-		c, err := client.New(cmd.Context(), cfg)
+		_, err := callSite(cmd, fmt.Sprintf("Deleting %s %s…", ddDoctype, ddName), func(ctx context.Context, c *client.FrappeClient) (struct{}, error) {
+			return struct{}{}, c.DeleteDoc(ctx, ddDoctype, ddName)
+		})
 		if err != nil {
 			return err
 		}
-		_ = runSpinner(fmt.Sprintf("Deleting %s %s…", ddDoctype, ddName), func() {
-			apiErr = c.DeleteDoc(cmd.Context(), ddDoctype, ddName)
-		})
-		if apiErr != nil {
-			return apiErr
-		}
 
+		if jsonOutput {
+			return output.PrintJSON(map[string]interface{}{"deleted": true, "doctype": ddDoctype, "name": ddName})
+		}
 		output.PrintSuccess(fmt.Sprintf("Deleted %s %s", ddDoctype, ddName))
 		return nil
 	},

@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
@@ -58,21 +60,14 @@ func PrintTable(rows []map[string]interface{}, fields []string) {
 		return
 	}
 
-	// Determine columns.
-	cols := fields
-	if len(cols) == 0 {
-		for k := range rows[0] {
-			cols = append(cols, k)
-		}
-		sort.Strings(cols)
-	}
+	cols := tableColumns(rows[0], fields)
 
 	// Build data rows.
 	data := make([][]string, len(rows))
 	for i, row := range rows {
 		line := make([]string, len(cols))
 		for j, col := range cols {
-			line[j] = formatValue(row[col])
+			line[j] = formatValue(col, row[col])
 		}
 		data[i] = line
 	}
@@ -80,7 +75,7 @@ func PrintTable(rows []map[string]interface{}, fields []string) {
 	// Upper-case headers for visual clarity.
 	headers := make([]string, len(cols))
 	for i, c := range cols {
-		headers[i] = strings.ToUpper(c)
+		headers[i] = strings.ToUpper(text.Sanitize(c))
 	}
 
 	t := table.New().
@@ -141,7 +136,7 @@ func PrintDocTable(doc map[string]interface{}, fields []string) {
 
 	rows := make([][]string, 0, len(keys))
 	for _, k := range keys {
-		rows = append(rows, []string{k, formatValue(doc[k])})
+		rows = append(rows, []string{text.Sanitize(k), formatValue(k, doc[k])})
 	}
 
 	t := table.New().
@@ -174,7 +169,7 @@ func PrintDocTable(doc map[string]interface{}, fields []string) {
 
 // PrintError writes a styled error message to stderr.
 func PrintError(msg string) {
-	fmt.Fprintln(os.Stderr, errorStyle.Render("✗ "+msg))
+	fmt.Fprintln(os.Stderr, errorStyle.Render("✗ "+text.Sanitize(msg)))
 }
 
 // PrintSuccess writes a styled success message to stderr.
@@ -182,23 +177,66 @@ func PrintSuccess(msg string) {
 	fmt.Fprintln(os.Stderr, successStyle.Render("✓ "+msg))
 }
 
-// formatValue converts a value to a string, pretty-printing maps/slices as JSON.
-func formatValue(v interface{}) string {
+// tableColumns picks the columns to show. Requested fields are used as
+// column keys, mapped to the key Frappe actually returns: "count(name) as n"
+// comes back as "n" and "`tabToDo`.status" or "items.item_code" as the part
+// after the last dot. "*" or no fields means every key, sorted.
+func tableColumns(first map[string]interface{}, fields []string) []string {
+	var cols []string
+	for _, f := range fields {
+		if f == "*" {
+			cols = nil
+			break
+		}
+		cols = append(cols, resultKey(f))
+	}
+	if len(cols) == 0 {
+		for k := range first {
+			cols = append(cols, k)
+		}
+		sort.Strings(cols)
+	}
+	return cols
+}
+
+// resultKey returns the key under which Frappe returns a requested field.
+func resultKey(field string) string {
+	f := strings.TrimSpace(field)
+	if i := strings.LastIndex(strings.ToLower(f), " as "); i >= 0 {
+		f = strings.TrimSpace(f[i+4:])
+	} else if i := strings.LastIndex(f, "."); i >= 0 {
+		f = f[i+1:]
+	}
+	return strings.Trim(f, "`\"")
+}
+
+// identityKeys are columns whose values are identifiers, shown verbatim: a
+// numeric autoincrement name must stay pasteable into get-doc ("1234", not
+// "1 234"), and a name that looks like a date must not be reformatted.
+var identityKeys = map[string]bool{"name": true, "idx": true, "parent": true}
+
+// formatValue converts a value to a display string: numbers and ISO dates in
+// the configured format, maps/slices as indented JSON, and every string
+// stripped of terminal control characters.
+func formatValue(key string, v interface{}) string {
 	if v == nil {
 		return dimStyle.Render("—")
 	}
-
 	switch val := v.(type) {
 	case float64:
+		if identityKeys[key] {
+			return strconv.FormatFloat(val, 'f', -1, 64)
+		}
 		return config.FormatNumber(val)
 	case string:
-		return config.FormatDate(val)
+		if identityKeys[key] {
+			return text.Sanitize(val)
+		}
+		return text.Sanitize(config.FormatDate(val))
 	case map[string]interface{}, []interface{}, []map[string]interface{}:
-		b, err := json.MarshalIndent(val, "", "  ")
-		if err == nil {
-			return string(b)
+		if b, err := json.MarshalIndent(val, "", "  "); err == nil {
+			return text.Sanitize(string(b))
 		}
 	}
-
-	return fmt.Sprintf("%v", v)
+	return text.Sanitize(fmt.Sprintf("%v", v))
 }

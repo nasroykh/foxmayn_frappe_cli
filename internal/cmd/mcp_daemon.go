@@ -15,10 +15,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/mattn/go-isatty"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -30,6 +31,12 @@ const (
 	mcpHealthPath   = "/healthz"
 	mcpServiceName  = "ffc-mcp"
 	mcpProbeTimeout = 500 * time.Millisecond
+
+	// mcpStartTimeout bounds how long a detached start waits while the child is
+	// still alive: it must finish config load, OAuth refresh and session login
+	// before it listens (D11).
+	mcpStartTimeout = 60 * time.Second
+	mcpLockStale    = 60 * time.Second
 )
 
 type mcpState struct {
@@ -48,7 +55,7 @@ type mcpState struct {
 // macOS and would put mcp.json/mcp.log somewhere CLAUDE.md and the rest of
 // the app don't look.
 func mcpStateDir() string {
-	dir, err := defaultConfigDir()
+	dir, err := config.DefaultConfigDir()
 	if err != nil {
 		return ""
 	}
@@ -83,7 +90,9 @@ func writeMCPState(state mcpState) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600) // 0600: the file holds the bearer token (L3)
+	// Atomic write creates a fresh 0600 file, so a 0644 file left by an older
+	// release is replaced rather than reused (D10).
+	return config.WriteFileAtomic(path, b, 0o600) // 0600: the file holds the bearer token (L3)
 }
 
 func readMCPState() (*mcpState, error) {
@@ -111,16 +120,40 @@ func removeMCPState() {
 	}
 }
 
-// isProcessRunning is a cheap liveness check (signal 0 on Unix). It cannot tell
-// whether the PID still belongs to our server after PID reuse — mcpHealth does
-// that. On Windows, Signal is unsupported, so this reports false; callers rely
-// on mcpHealth there.
-func isProcessRunning(pid int) bool {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
+// removeMCPStateIf removes the state file only while it still describes the
+// given instance, so a failed start can never delete a newer server's state (D7).
+func removeMCPStateIf(instance string) {
+	if state, err := readMCPState(); err == nil && state != nil && state.Instance == instance {
+		removeMCPState()
 	}
-	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+// acquireMCPLock takes an exclusive lock file next to mcp.json for the whole
+// start sequence. A lock older than mcpLockStale is assumed to be left by a
+// crashed start and is taken over (D7).
+func acquireMCPLock() (release func(), err error) {
+	dir := mcpStateDir()
+	if dir == "" {
+		return nil, fmt.Errorf("cannot determine config dir")
+	}
+	path := filepath.Join(dir, "mcp.lock")
+	for attempt := 0; attempt < 2; attempt++ {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			fmt.Fprintf(f, "%d\n", os.Getpid())
+			f.Close()
+			return func() { os.Remove(path) }, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("creating lock file: %w", err)
+		}
+		if fi, e := os.Stat(path); e == nil && time.Since(fi.ModTime()) > mcpLockStale {
+			os.Remove(path)
+			continue
+		}
+		break
+	}
+	return nil, fmt.Errorf("another 'ffc mcp --detach' is starting (lock %s); retry in a moment", path)
 }
 
 // mcpHealth probes the daemon's unauthenticated health endpoint and returns the
@@ -169,18 +202,29 @@ func lastLogLines(path string, n int) string {
 
 // startDetached re-execs the current binary as a background HTTP MCP server.
 func startDetached(ctx context.Context, port int) error {
-	// Already running? Verify via the health endpoint so a stale/reused PID
-	// doesn't block a fresh start (M7).
-	if state, _ := readMCPState(); state != nil {
-		if inst, ok := mcpHealth(state.Port, mcpProbeTimeout); ok && inst == state.Instance {
-			return fmt.Errorf("MCP server already running (PID %d, port %d) — run 'ffc mcp stop' first", state.PID, state.Port)
-		}
-	}
-
 	if dir := mcpStateDir(); dir != "" {
 		if err := os.MkdirAll(dir, 0o700); err != nil { // L25
 			return fmt.Errorf("creating state dir: %w", err)
 		}
+	}
+
+	unlock, err := acquireMCPLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	// Already running? Verify via the health endpoint so a stale/reused PID
+	// doesn't block a fresh start (M7). A live but unhealthy PID is refused:
+	// overwriting the state file would orphan it with a still-valid token (D7).
+	if state, _ := readMCPState(); state != nil {
+		if inst, ok := mcpHealth(state.Port, mcpProbeTimeout); ok && inst == state.Instance {
+			return fmt.Errorf("MCP server already running (PID %d, port %d) — run 'ffc mcp stop' first", state.PID, state.Port)
+		}
+		if isProcessRunning(state.PID) {
+			return fmt.Errorf("PID %d from the state file is alive but not responding on port %d (starting up or wedged) — run 'ffc mcp stop --force' first", state.PID, state.Port)
+		}
+		removeMCPState()
 	}
 
 	token, err := randomToken(24)
@@ -192,12 +236,20 @@ func startDetached(ctx context.Context, port int) error {
 		return fmt.Errorf("generating instance id: %w", err)
 	}
 
+	// Truncate per start so old output (and any older token) does not linger,
+	// and force 0600 in case the file pre-exists as 0644 (D10).
 	logPath := mcpLogPath()
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) // L3
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // L3
 	if err != nil {
 		return fmt.Errorf("opening log file: %w", err)
 	}
 	defer logFile.Close()
+	_ = logFile.Chmod(0o600)
+
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("finding executable: %w", err)
+	}
 
 	// Build child args: same site/config flags, explicit port, no --detach.
 	args := []string{"mcp", "--port", strconv.Itoa(port)}
@@ -207,8 +259,11 @@ func startDetached(ctx context.Context, port int) error {
 	if configPath != "" {
 		args = append(args, "--config", configPath)
 	}
+	if mcpReadOnly {
+		args = append(args, "--read-only")
+	}
 
-	cmd := exec.Command(os.Args[0], args...)
+	cmd := exec.Command(exe, args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = logFile
@@ -219,6 +274,10 @@ func startDetached(ctx context.Context, port int) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting background process: %w", err)
 	}
+	// Reap the child so an early exit is observable (a zombie still answers
+	// signal 0) and so we can tell "failed" from "still starting".
+	exited := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(exited) }()
 
 	if err := writeMCPState(mcpState{
 		PID:       cmd.Process.Pid,
@@ -229,30 +288,42 @@ func startDetached(ctx context.Context, port int) error {
 		Token:     token,
 		Instance:  instance,
 	}); err != nil {
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		return fmt.Errorf("writing state file: %w", err)
 	}
-	cmd.Process.Release()
 
 	// Poll the health endpoint to confirm the child actually started before
-	// reporting success — a port conflict or bad config kills it seconds in (M15).
-	for i := 0; i < 30; i++ {
+	// reporting success — a port conflict or bad config kills it seconds in
+	// (M15). Keep waiting while the child is alive: credential validation can
+	// take a while on a slow ERP (D11).
+	deadline := time.Now().Add(mcpStartTimeout)
+	childGone := false
+	for time.Now().Before(deadline) && ctx.Err() == nil {
 		if inst, ok := mcpHealth(port, 300*time.Millisecond); ok && inst == instance {
 			fmt.Fprintf(os.Stderr, "Authorization: Bearer %s\n", token)
 			return nil
 		}
-		if ctx.Err() != nil {
+		select {
+		case <-exited:
+			childGone = true
+		case <-time.After(100 * time.Millisecond):
+		}
+		if childGone {
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
 
 	// Never became healthy — stop the child and surface the log tail.
-	if proc, e := os.FindProcess(cmd.Process.Pid); e == nil {
-		_ = terminateProcess(proc)
+	if !childGone {
+		_ = terminateProcess(cmd.Process)
+		select {
+		case <-exited:
+		case <-time.After(3 * time.Second):
+			_ = cmd.Process.Kill()
+		}
 	}
-	removeMCPState()
-	return fmt.Errorf("MCP server did not become healthy on port %d within 3s — last log lines:\n%s", port, lastLogLines(logPath, 15))
+	removeMCPStateIf(instance)
+	return fmt.Errorf("MCP server did not become healthy on port %d — last log lines:\n%s", port, lastLogLines(logPath, 15))
 }
 
 // mcpAuthMiddleware enforces the bearer token and rejects cross-origin requests,
@@ -289,7 +360,8 @@ func isLocalhostOrigin(origin string) bool {
 
 // runHTTPServer starts the MCP server over HTTP on the given port.
 func runHTTPServer(ctx context.Context, port int) error {
-	provider := newMCPClientProvider()
+	provider, closeProvider := newMCPClientProvider()
+	defer closeProvider()
 	// Validate credentials up front so misconfiguration fails immediately.
 	if _, err := provider(ctx); err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -331,7 +403,7 @@ func runHTTPServer(ctx context.Context, port int) error {
 	})
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port) // C1: bind localhost only
-	httpServer := &http.Server{Addr: addr, Handler: mux}
+	httpServer := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	// Graceful shutdown on Ctrl+C / SIGTERM (L14).
 	go func() {
@@ -342,7 +414,11 @@ func runHTTPServer(ctx context.Context, port int) error {
 	}()
 
 	fmt.Fprintf(os.Stderr, "ffc MCP HTTP server listening on http://%s/mcp\n", addr)
-	fmt.Fprintf(os.Stderr, "  Authorization: Bearer %s\n", token)
+	// Never write the token to a log: detached stderr is mcp.log. `ffc mcp
+	// status` shows it for detached servers (D10).
+	if isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd()) {
+		fmt.Fprintf(os.Stderr, "  Authorization: Bearer %s\n", token)
+	}
 
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("http server: %w", err)
@@ -427,13 +503,20 @@ var mcpStopCmd = &cobra.Command{
 		}
 
 		// Wait briefly for it to drain and exit before removing state (L14).
-		for i := 0; i < 20; i++ {
-			if _, ok := mcpHealth(state.Port, 200*time.Millisecond); !ok {
-				break
+		stillUp := func() bool {
+			if _, ok := mcpHealth(state.Port, 200*time.Millisecond); ok {
+				return true
 			}
+			return isProcessRunning(state.PID)
+		}
+		for i := 0; i < 30 && stillUp(); i++ {
 			time.Sleep(100 * time.Millisecond)
 		}
-		removeMCPState()
+		if stillUp() {
+			fmt.Printf("Signalled PID %d but it is still running; keeping the state file. Re-run 'ffc mcp stop' shortly, or 'ffc mcp stop --force'.\n", state.PID)
+			return nil
+		}
+		removeMCPStateIf(state.Instance)
 		fmt.Printf("Stopped MCP server (PID %d)\n", state.PID)
 		return nil
 	},

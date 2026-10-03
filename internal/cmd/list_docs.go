@@ -1,12 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -33,34 +33,26 @@ Examples:
   ffc list-docs --doctype "ToDo" --filters '{"status":"Open"}' --order-by "modified desc"
   ffc list-docs --doctype "Sales Invoice" --limit 5 --json
 `,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Load site config
-		cfg, err := config.Load(siteName, configPath)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
-
-		// Parse --fields flag (accepts both comma-separated and JSON array)
 		var fields []string
 		if ldFields != "" {
-			fields, err = parseFields(ldFields)
-			if err != nil {
+			var err error
+			if fields, err = parseFields(ldFields); err != nil {
 				return fmt.Errorf("--fields: %w", err)
 			}
 		}
-
 		if err := validateFiltersJSON(ldFilters); err != nil {
 			return err
 		}
-
-		// --limit 0 means "no limit" (fetch all); the default is 20, so this only
-		// triggers when the user explicitly passes --limit 0 (M12).
-		limit := ldLimit
-		if limit == 0 {
-			limit = -1
+		limit, err := listLimit("--limit", ldLimit)
+		if err != nil {
+			return err
+		}
+		if ldStart < 0 {
+			return fmt.Errorf("--start must be >= 0")
 		}
 
-		// Build list options
 		opts := client.ListOptions{
 			Fields:  fields,
 			Filters: ldFilters,
@@ -68,22 +60,13 @@ Examples:
 			Start:   ldStart,
 			OrderBy: ldOrderBy,
 		}
-
-		// Call the API with a spinner for feedback.
-		var rows []map[string]interface{}
-		var apiErr error
-		c, err := client.New(cmd.Context(), cfg)
+		rows, err := callSite(cmd, fmt.Sprintf("Fetching %s…", ldDoctype), func(ctx context.Context, c *client.FrappeClient) ([]map[string]interface{}, error) {
+			return c.GetList(ctx, ldDoctype, opts)
+		})
 		if err != nil {
 			return err
 		}
-		_ = runSpinner(fmt.Sprintf("Fetching %s…", ldDoctype), func() {
-			rows, apiErr = c.GetList(cmd.Context(), ldDoctype, opts)
-		})
-		if apiErr != nil {
-			return apiErr
-		}
 
-		// Output
 		if jsonOutput {
 			return output.PrintJSON(rows)
 		}
@@ -105,24 +88,19 @@ func init() {
 }
 
 // parseFields accepts a JSON array string or comma-separated field names.
+// Field expressions may contain commas ("count(name) as n" is fine, but
+// "ifnull(a, b)" is not), so use the JSON form for those.
 func parseFields(raw string) ([]string, error) {
 	raw = strings.TrimSpace(raw)
 	if strings.HasPrefix(raw, "[") {
-		// JSON array
 		var fields []string
 		if err := json.Unmarshal([]byte(raw), &fields); err != nil {
 			return nil, fmt.Errorf("invalid JSON array: %w", err)
 		}
 		return fields, nil
 	}
-	// Comma-separated shorthand: name,modified => ["name","modified"]
-	parts := strings.Split(raw, ",")
-	var fields []string
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			fields = append(fields, p)
-		}
+	if strings.HasPrefix(raw, "{") {
+		return nil, fmt.Errorf("expected a JSON array or comma-separated names, not an object")
 	}
-	return fields, nil
+	return splitCSV(raw), nil
 }
