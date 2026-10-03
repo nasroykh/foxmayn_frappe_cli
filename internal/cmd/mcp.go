@@ -79,7 +79,7 @@ To run in the background as an HTTP server:
   ffc mcp status
   ffc mcp stop
 
-The HTTP endpoint is http://localhost:<port>/mcp (Streamable HTTP transport).
+The HTTP endpoint is http://127.0.0.1:<port>/mcp (Streamable HTTP transport, loopback only).
 
 All tools use the same authentication and site config as other ffc commands.
 `,
