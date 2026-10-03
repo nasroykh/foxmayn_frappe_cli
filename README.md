@@ -50,15 +50,17 @@ Use the interactive setup wizard — it creates `~/.config/ffc/config.yaml`:
 ffc init
 ```
 
-The wizard lets you choose between two authentication methods:
+The wizard lets you choose between three authentication methods:
 
-- **OAuth 2.0** (`--oauth`) — browser login, PKCE flow, no credentials stored. You create an OAuth Client on Frappe once and authorize via the browser.
-- **API Key** (`--apikey`) — paste your API key and secret from **User → API Access → Generate Keys**.
+- **OAuth 2.0** (`--oauth`) — browser login, PKCE flow; only the tokens are stored. You create an OAuth Client on Frappe once and authorize via the browser. The wizard prints the redirect URI to register, `http://127.0.0.1:<port>/callback` (earlier ffc versions used `localhost`; update an existing OAuth Client if it was registered that way).
+- **API Key** (`--apikey`) — paste your API key and secret from **User → API Access → Generate Keys**. The keys are checked against the site before they are saved. Best choice for scripts and CI.
+- **Username / password** (`--password`) — logs in with a session cookie on every run. The password is stored in the config file (mode 0600). Two-factor authentication is not supported.
 
 ```bash
-ffc init            # menu to choose auth method
-ffc init --oauth    # go straight to the OAuth browser flow
-ffc init --apikey   # go straight to the API key form
+ffc init             # menu to choose auth method
+ffc init --oauth     # go straight to the OAuth browser flow
+ffc init --apikey    # go straight to the API key form
+ffc init --password  # go straight to the username/password form
 ```
 
 ## Configuration
@@ -127,13 +129,13 @@ ffc config set --number-format us --date-format dd/mm/yyyy
 
 **Environment variable overrides** (useful in CI):
 
-| Variable         | Overrides  |
-| ---------------- | ---------- |
-| `FFC_URL`        | Site URL   |
-| `FFC_API_KEY`    | API key    |
-| `FFC_API_SECRET` | API secret |
+| Variable              | Effect |
+| --------------------- | ------ |
+| `FFC_API_KEY` + `FFC_API_SECRET` | Set together, they replace every stored credential of the selected site (one alone is ignored with a warning). |
+| `FFC_URL`             | Site URL. Only applied together with `FFC_API_KEY` + `FFC_API_SECRET`, so stored credentials are never sent to another host; set alone to a different URL it is an error. |
+| `FFC_NO_UPDATE_CHECK` | Set to any value to disable the daily background update check. |
 
-When no config file exists, `ffc` falls back to these env vars entirely.
+When no config file exists at the default path, `ffc` builds the site from `FFC_URL`, `FFC_API_KEY` and `FFC_API_SECRET` alone.
 
 ## Usage
 
@@ -148,7 +150,11 @@ ffc [--site <name>] [--config <path>] [--json] <command> [flags]
 | `--site`    | `-s`  | Site name from config (default: `default_site`) |
 | `--config`  | `-c`  | Config file path                                |
 | `--json`    | `-j`  | Print raw JSON instead of a table               |
+| `--quiet`   | `-q`  | No progress spinner (also off when stderr is not a terminal, or `NO_COLOR`/`CI` is set) |
+| `--timeout` |       | HTTP timeout per request, e.g. `2m` (default `30s`) |
 | `--version` | `-v`  | Print version information                       |
+
+Commands exit non-zero on any error, declined confirmation or aborted prompt, so scripts can rely on the exit status.
 
 ---
 
@@ -218,6 +224,19 @@ ffc delete-doc -d "ToDo" -n "83a12bf99c" --yes
 ffc count-docs -d "Sales Invoice" --filters '{"status":"Unpaid"}'
 ```
 
+**7. `bulk-create`, `bulk-update`, `bulk-delete`** (Many documents in one run)
+
+Input is a JSON array, inline with `--data` / `--names` or from a file with `--file` (`-` reads stdin). Each item is reported as created/updated/deleted, `error`, `interrupted` (cut off by Ctrl+C; the server may or may not have applied it) or `skipped`. The command exits non-zero unless every item succeeded.
+
+```bash
+ffc bulk-create -d "ToDo" --data '[{"description":"a"},{"description":"b"}]'
+ffc bulk-update -d "ToDo" --file updates.json --concurrency 4   # each item needs a "name"
+ffc bulk-delete -d "ToDo" --names "TD-001,TD-002" --yes
+ffc bulk-delete -d "Note" --file names.json --fail-fast          # use --file for names containing commas
+```
+
+`--concurrency` (1-10, default 1) sets the number of requests in flight; `--fail-fast` stops starting new items after the first failure.
+
 ---
 
 ### Schema & Introspection
@@ -284,12 +303,19 @@ ffc mcp --port 8765 --site mysite
 ```bash
 ffc mcp --detach [--port 8765] [--site mysite]
 ffc mcp status   # show PID, URL, uptime, log path
-ffc mcp stop     # send SIGTERM and clean up
+ffc mcp stop     # stop the server and clean up (--force if it is not responding)
 ```
 
-The HTTP endpoint is `http://localhost:<port>/mcp` (Streamable HTTP transport).
+The HTTP endpoint is `http://127.0.0.1:<port>/mcp` (Streamable HTTP transport, localhost only, bearer token shown by `ffc mcp status`).
 
-Available MCP tools: `ping`, `get_doc`, `list_docs`, `create_doc`, `update_doc`, `delete_doc`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `call_method`.
+**Read-only mode** — expose only read tools (no create, update, delete, bulk or `call_method`):
+```bash
+ffc mcp --read-only --site prod
+```
+
+Available MCP tools (15): `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method`.
+
+Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`); `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
 **Example Claude Desktop config:**
 ```json
@@ -313,38 +339,41 @@ foxmayn_frappe_cli/
 ├── internal/
 │   ├── cmd/                  # Cobra command definitions
 │   │   ├── root.go           # Root command + global flags
-│   │   ├── init.go           # Interactive setup wizard (API key or OAuth)
-│   │   ├── oauth_flow.go     # OAuth PKCE flow, token refresh, site YAML helpers
-│   │   ├── site.go           # ffc site list/add/remove/use
-│   │   ├── config_cmd.go     # Interactive settings menu
-│   │   ├── ping.go           # ping
-│   │   ├── get_doc.go        # get-doc
-│   │   ├── list_docs.go      # list-docs
-│   │   ├── create_doc.go     # create-doc
-│   │   ├── update_doc.go     # update-doc
-│   │   ├── delete_doc.go     # delete-doc
-│   │   ├── count_docs.go     # count-docs
-│   │   ├── get_schema.go     # get-schema
-│   │   ├── list_doctypes.go  # list-doctypes
-│   │   ├── list_reports.go   # list-reports
-│   │   ├── run_report.go     # run-report
-│   │   ├── call_method.go    # call-method
+│   │   ├── site_client.go    # loadSite/newClient: the one way to get a site client (OAuth refresh)
+│   │   ├── helpers.go        # callSite, spinner, confirm, input parsing
+│   │   ├── auth_wizard.go    # Shared API key / password / OAuth wizard for init and site add
+│   │   ├── init.go           # init
+│   │   ├── oauth_flow.go     # OAuth PKCE callback server and flow
+│   │   ├── site.go           # site list/add/remove/use
+│   │   ├── config_cmd.go     # Interactive settings menu, config get/set
+│   │   ├── ping.go, get_doc.go, list_docs.go, create_doc.go, update_doc.go,
+│   │   │   delete_doc.go, count_docs.go, get_schema.go, list_doctypes.go,
+│   │   │   list_reports.go, run_report.go, call_method.go   # data commands
+│   │   ├── bulk.go           # Bulk worker pool and input parsers
+│   │   ├── bulk_create.go, bulk_update.go, bulk_delete.go
 │   │   ├── update.go         # update (self-update)
 │   │   ├── update_check.go   # background update check + PersistentPreRunE
-│   │   ├── mcp.go            # mcp subcommand (stdio/HTTP/detach modes)
-│   │   ├── mcp_tools.go      # 15 MCP tool definitions + handlers
-│   │   ├── mcp_daemon.go     # detach logic, status/stop subcommands, state file
-│   │   ├── mcp_detach_unix.go    # setSysProcAttr (Setsid, Linux/macOS)
-│   │   └── mcp_detach_windows.go # setSysProcAttr no-op (Windows)
+│   │   ├── mcp.go            # mcp subcommand (stdio/HTTP/detach, --read-only)
+│   │   ├── mcp_args.go       # MCP argument parsing and result limits
+│   │   ├── mcp_tools.go      # 15 MCP tool definitions
+│   │   ├── mcp_daemon.go     # detached server, status/stop, state file
+│   │   └── mcp_detach_unix.go / mcp_detach_windows.go  # platform process handling
 │   ├── client/
-│   │   ├── client.go         # Frappe REST API client (resty, Bearer + token auth)
-│   │   └── oauth.go          # ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser
-│   ├── config/config.go      # Config loading, OAuth fields, number/date formatting
+│   │   ├── http.go           # Transport policy: timeout, body cap, redirects, retries
+│   │   ├── client.go         # Frappe REST API client (Bearer, token and session auth)
+│   │   ├── oauth.go          # ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser
+│   │   └── session.go        # Username/password login
+│   ├── config/
+│   │   ├── config.go         # Config loading and env overrides
+│   │   ├── file.go           # Locked, atomic, comment-preserving config edits
+│   │   └── format.go         # Number/date formatting
 │   ├── output/output.go      # Table (lipgloss) and JSON formatters
+│   ├── text/text.go          # Strips terminal control characters from server data
 │   └── version/version.go    # Build-time version injection
 ├── config.example.yaml       # Example config
-├── Makefile                  # Build, install, tidy, vet, fmt
+├── Makefile                  # build, install, test, lint, tidy, vet, fmt
 ├── .goreleaser.yaml          # Cross-compilation and release config
+├── .github/workflows/        # ci.yml (vet, race tests, cross-build), release.yml
 ├── install.sh                # One-liner install script (Linux/macOS)
 ├── install.ps1               # One-liner install script (Windows PowerShell)
 ├── go.mod

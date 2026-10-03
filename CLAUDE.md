@@ -8,7 +8,7 @@
 
 - **Language:** Go 1.25
 - **CLI framework:** [cobra](https://github.com/spf13/cobra)
-- **Config:** [viper](https://github.com/spf13/viper) (YAML + env vars)
+- **Config:** [go.yaml.in/yaml/v3](https://github.com/yaml/go-yaml) (read as structs, edited as `yaml.Node` trees) + env vars
 - **HTTP client:** [resty](https://github.com/go-resty/resty)
 - **Table & styling:** [lipgloss v2](https://charm.land/lipgloss/v2) + built-in `table` sub-package
 - **Forms & prompts:** [huh](https://github.com/charmbracelet/huh)
@@ -23,6 +23,8 @@ make install        # Install to $GOPATH/bin + set up config
 make tidy           # go mod tidy
 make vet            # go vet ./...
 make fmt            # gofmt -w .
+make test           # go test -race ./...
+make lint           # gofmt check, go vet, staticcheck (if installed)
 make clean          # Remove binary
 ```
 
@@ -53,7 +55,8 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 
 **Key files:**
 - `.goreleaser.yaml` — build matrix, archive naming, checksum config
-- `.github/workflows/release.yml` — triggers on `v*` tags, runs GoReleaser
+- `.github/workflows/release.yml` — triggers on `v*` tags; runs `go mod tidy -diff`, vet and tests, then GoReleaser and a build-provenance attestation. Actions are pinned to commit SHAs.
+- `.github/workflows/ci.yml` — tidy check, vet, race tests and a cross-build on every push/PR
 - `install.sh` — Linux/macOS: detects OS/arch, downloads tarball, verifies SHA256, installs to `/usr/local/bin` or `~/.local/bin`
 - `install.ps1` — Windows: detects arch, downloads zip, verifies SHA256, installs to `%LOCALAPPDATA%\Programs\ffc`, adds to user PATH
 
@@ -61,44 +64,39 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 
 ```
 cmd/ffc/main.go              → Entry point, calls cmd.Execute()
-internal/cmd/root.go         → Root cobra command, global flags (--site, --config, --json)
-internal/cmd/init.go         → init subcommand (auth method menu, --oauth/--apikey/--password flags,
-                                writeConfig, runPasswordInitFlow, writeConfigSession)
-internal/cmd/oauth_flow.go   → OAuth PKCE flow (runOAuthInitFlow, callbackServer, PKCE helpers,
-                                writeConfigOAuth, saveOAuthTokens, tryRefreshOAuthToken,
-                                upsertSiteInConfig, removeSiteFromConfig, setDefaultSite,
-                                buildAPIKeySiteYAML, buildOAuthSiteYAML, buildSessionSiteYAML)
-internal/cmd/site.go         → site subcommand: list, add (OAuth/API key/username+password), remove, use;
-                                pickSite helper, siteAddPasswordFlow
-internal/cmd/config_cmd.go   → config subcommand: TUI (no args), config get, config set;
-                                escQuitKeyMap, saveConfig, updateYAMLValue, preserveHeader, resolveCfgPath
-internal/cmd/ping.go         → ping subcommand
-internal/cmd/get_doc.go      → get-doc subcommand
-internal/cmd/list_docs.go    → list-docs subcommand
-internal/cmd/create_doc.go   → create-doc subcommand
-internal/cmd/update_doc.go   → update-doc subcommand
-internal/cmd/delete_doc.go   → delete-doc subcommand
-internal/cmd/count_docs.go   → count-docs subcommand
-internal/cmd/get_schema.go   → get-schema subcommand
-internal/cmd/list_doctypes.go → list-doctypes subcommand
-internal/cmd/list_reports.go → list-reports subcommand
-internal/cmd/run_report.go   → run-report subcommand
-internal/cmd/call_method.go  → call-method subcommand
-internal/cmd/update.go           → update subcommand (self-update from GitHub releases)
-internal/cmd/update_check.go     → background update check; owns rootCmd.PersistentPreRunE;
-                                    calls tryRefreshOAuthToken() before every non-init/update/mcp command
-internal/cmd/mcp.go              → mcp subcommand (stdio/HTTP/detach mode routing, --detach, --port flags)
-internal/cmd/mcp_tools.go        → 15 MCP tool definitions + handlers (registerTools, marshalResult)
-internal/cmd/mcp_daemon.go       → detach logic (startDetached, runHTTPServer), status/stop subcommands, state file I/O
-internal/cmd/mcp_detach_unix.go  → setSysProcAttr with Setsid=true (Linux/macOS build tag: !windows)
-internal/cmd/mcp_detach_windows.go → setSysProcAttr no-op (Windows build tag)
-internal/client/client.go    → FrappeClient (resty); New() is fallible — Bearer auth for OAuth, token auth
-                                for API key, live POST /api/method/login for username/password sites
-internal/client/oauth.go     → ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser (OAuthTokens struct)
-internal/client/session.go   → LoginPassword (POST /api/method/login, sid cookie extraction, 2FA detection)
-internal/config/config.go    → Config/SiteConfig structs (OAuth + Username/Password fields), viper loading,
-                                number/date formatting
-internal/output/             → Formatters: lipgloss table and JSON
+internal/cmd/root.go         → Root cobra command, global flags (--site, --config, --json, --quiet, --timeout)
+internal/cmd/site_client.go  → loadSite (config.Load + OAuth refresh under the config lock) and newClient.
+                                The ONLY way a command or MCP tool gets a site client.
+internal/cmd/helpers.go      → callSite[T] (client + spinner), runSpinner, confirm, readInput ("-" = stdin),
+                                parseObject, splitCSV, filterKeys/selectKeys, listLimit, docName, validateFiltersJSON
+internal/cmd/auth_wizard.go  → Shared auth wizard: collectSite → collectAPIKeySite / collectPasswordSite /
+                                collectOAuthSite; runForm (Esc/Ctrl+C → errAborted), validateSiteName,
+                                normalizeSiteURL, writeInitConfig (Overwrite), addSiteToConfig (Edit)
+internal/cmd/init.go         → init subcommand (--oauth/--apikey/--password)
+internal/cmd/oauth_flow.go   → OAuth PKCE: callbackServer (127.0.0.1, single-use delivery), collectOAuthSite
+internal/cmd/site.go         → site list / add / remove / use
+internal/cmd/config_cmd.go   → config TUI, config get, config set; escQuitKeyMap, resolveCfgPath
+internal/cmd/{ping,get_doc,list_docs,create_doc,update_doc,delete_doc,count_docs,get_schema,
+             list_doctypes,list_reports,run_report,call_method}.go → data commands (all use callSite)
+internal/cmd/bulk.go         → runBulk worker pool, bulkReport, parseObjects/parseNames/splitUpdates, bulkFlags
+internal/cmd/bulk_{create,update,delete}.go → bulk commands (--concurrency 1-10, --fail-fast)
+internal/cmd/update.go           → self-update (size-limited download, SHA256 check, atomic swap)
+internal/cmd/update_check.go     → background update check; owns rootCmd.PersistentPreRunE
+internal/cmd/mcp.go              → mcp subcommand, --read-only, newMCPClientProvider (cached client)
+internal/cmd/mcp_args.go         → toolHandler, marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
+internal/cmd/mcp_tools.go        → 15 MCP tools (registerTools)
+internal/cmd/mcp_daemon.go       → detached HTTP server, status/stop, state + lock files
+internal/cmd/mcp_detach_unix.go / mcp_detach_windows.go → setSysProcAttr, terminateProcess, isProcessRunning
+internal/client/http.go      → newResty (timeout, 128 MiB body cap, no cookie jar, silent logger, GET-only
+                                redirects), retry policy, requestError, warnIfInsecure, stripHTML, snippet
+internal/client/client.go    → FrappeClient; New() picks auth; one do() request path; session relogin; Close()
+internal/client/oauth.go     → ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser (all take ctx)
+internal/client/session.go   → LoginPassword (POST /api/method/login, sid cookie, 2FA detection)
+internal/config/config.go    → Config/SiteConfig, Read, Load, env overrides, default paths
+internal/config/file.go      → File (yaml.Node editor), Edit/Overwrite (lock + atomic 0600 write), WriteFileAtomic
+internal/config/format.go    → number/date formats, FormatNumber, FormatDate
+internal/output/             → lipgloss table and JSON; every server value passes through text.Sanitize
+internal/text/               → Sanitize: strips C0/C1 control characters (terminal escape injection)
 internal/version/            → Build-time version variables (ldflags)
 ```
 
@@ -106,39 +104,48 @@ internal/version/            → Build-time version variables (ldflags)
 
 - **Error handling:** Wrap with `fmt.Errorf("context: %w", err)`. Never log and return; return and let caller decide.
 - **Stdout vs stderr:** Data goes to stdout, diagnostics/errors go to stderr.
+- **Exit codes:** any abort, declined confirmation or partial bulk failure is a non-zero exit (`errAborted`, `bulkReport.err()`). Only the config TUI's explicit "Cancel" exits 0.
 - **Config precedence:** flags > env vars > config file > defaults.
-- **Auth:** Bearer token (`Authorization: Bearer <access_token>`) for OAuth sites; Frappe token auth (`Authorization: token key:secret`) for API key sites; `Cookie: sid=<sid>` for username/password sites. `client.New()` picks the right auth automatically based on `cfg.AccessToken` / `cfg.APIKey`+`cfg.APISecret` / `cfg.IsSessionAuth()`, in that priority order. `client.New()` is **fallible** (`(*FrappeClient, error)`) because session-auth sites perform a live `POST /api/method/login` inside it — every one of its ~17 call sites must handle the error.
-- **Adding commands:** Create `internal/cmd/<name>.go`, define `*cobra.Command`, register via `rootCmd.AddCommand()` in `init()`.
+- **Auth:** Bearer token for OAuth sites; `Authorization: token key:secret` for API-key sites; `Cookie: sid=<sid>` for username/password sites. `client.New()` picks the method from `cfg.AccessToken` / `cfg.APIKey`+`cfg.APISecret` / `cfg.IsSessionAuth()`, in that order. `client.New()` is fallible because session sites log in inside it.
+- **Adding a data command:** create `internal/cmd/<name>.go`, set `Args: cobra.NoArgs`, call `callSite(cmd, title, func(ctx, c) ...)`, register via `rootCmd.AddCommand()` in `init()`. Never build a client with `client.New` directly in a command — use `newClient`/`callSite` so OAuth refresh happens.
+- **Adding an MCP tool:** use `toolHandler(getClient, parse)`; read JSON-valued params with `jsonArg`/`rawJSONArg`/`objectArg` (never `req.GetString` — it returns "" for a native object), integers with `intArg`. Register write tools only when `!mcpReadOnly`.
 
 ## Config
 
-Default config path: `~/.config/ffc/config.yaml`
+Default config path: `~/.config/ffc/config.yaml` (dir 0700, file 0600, lock file `config.yaml.lock`).
 
-Env var fallback: `FFC_URL`, `FFC_API_KEY`, `FFC_API_SECRET`
+Env vars:
+- `FFC_API_KEY` + `FFC_API_SECRET` — only honoured as a pair; they then replace every stored credential of the selected site.
+- `FFC_URL` — applies only together with that pair (never redirects stored credentials to another host); `FFC_URL` alone that differs from the site URL is an error, so a script aimed at another host never runs against the stored one. With no config file at the default path, the three env vars alone define the site.
+- `FFC_NO_UPDATE_CHECK=1` — disables the background update check.
 
 ## Common Pitfalls
 
 - The `config.yaml` in the project root is gitignored — it's for local dev only. Do not commit credentials.
-- Frappe API wraps list results in `"data"` (v14+) or `"message"` (older). The client handles both.
-- Frappe error responses contain nested JSON strings with Python tracebacks. The `parseFrappeError` function extracts user-friendly messages from this noise.
-- `Config` and `SiteConfig` structs carry **both** `mapstructure` and `yaml` struct tags. `mapstructure` is needed by viper; `yaml` is needed by `go.yaml.in/yaml/v3` for direct unmarshal in `config_cmd.go`. Always add both when extending these structs.
-- `config_cmd.go` has a `saveConfig` helper (marshals YAML node → file). `init.go` has its own `writeConfig` (generates fresh YAML from scratch) and `writeConfigSession` (fresh username/password config). `oauth_flow.go` has `writeConfigOAuth` (fresh OAuth config). The names are intentionally different to avoid package-level collisions.
-- Username/password (session-cookie) auth intentionally has **no proactive refresh hook** and **no `sid` field in config** — unlike OAuth. Frappe's `/api/method/login` response never tells you when the session expires, so there's no cheap staleness check to hook into `PersistentPreRunE` the way `tryRefreshOAuthToken` does. Instead, `client.New()` logs in fresh (`LoginPassword`) every time it's called, using the persisted `username`/`password`. This costs one extra HTTP round-trip per `ffc` invocation for session-auth sites, but keeps `client.go`'s 9 request methods and all 17 `client.New()` call sites free of retry/relogin logic. Do not try to persist a `sid` to config — it would immediately go stale between invocations and add complexity for no benefit, since each `ffc` run is a fresh process anyway.
-- The plaintext `password` field in `SiteConfig` is stored in `config.yaml` at `0600` — the same protection level as the existing `api_secret` field. This is a deliberate parity choice with `kb_compta_app`'s password-auth mode (which uses the OS keychain, with a plaintext-file fallback); ffc has no OS-keychain integration, so plaintext-in-a-0600-file is the existing precedent to follow, not a new risk introduced by this feature.
-- In huh v1.0.0, only `ctrl+c` is bound to Quit by default — Escape does nothing. All `huh.NewForm` calls use `WithKeyMap(escQuitKeyMap())` to add Escape support. `escQuitKeyMap()` is defined in `config_cmd.go` and is available package-wide.
-- `update_check.go` sets `rootCmd.PersistentPreRunE` in its `init()`. Do not set `PersistentPreRunE` on `rootCmd` anywhere else — it would silently overwrite the hook. Add new pre-run logic inside the existing hook in `update_check.go`.
-- `PersistentPreRunE` also calls `tryRefreshOAuthToken()` (defined in `oauth_flow.go`) before every command except `init`, `update`, and `mcp`. This silently refreshes expired OAuth access tokens and writes the new tokens to disk before the command's own `config.Load()` call. All errors in `tryRefreshOAuthToken` are swallowed — commands handle 401s themselves.
-- OAuth PKCE flow: `generateCodeVerifier` (32 random bytes, base64url) + `generateCodeChallenge` (SHA-256 S256). The callback HTTP server (`callbackServer`) binds its port immediately via `net.Listen` before the user even fills in the OAuth form — this prevents port theft between "find free port" and "start listening". `cs.wait()` blocks up to 5 minutes.
-- Site management uses yaml.Node tree manipulation (not struct marshal/unmarshal) so leading `#` comments in config.yaml are preserved. `upsertSiteInConfig`, `removeSiteFromConfig`, `setDefaultSite` in `oauth_flow.go` + `preserveHeader` / `updateYAMLValue` in `config_cmd.go` are the relevant helpers. Do not duplicate these.
-- `IsOAuth()` on `SiteConfig` returns true only if `AccessToken != ""` — not just `OAuthClientID != ""`. A site with only a client ID but no token would produce unauthenticated requests. `IsSessionAuth()` similarly requires both `Username != ""` and `Password != ""`.
-- `client.LoginPassword` (session.go) does not support Frappe's two-factor authentication — if the login response contains a `verification`/`tmp_id` payload (Frappe's 2FA challenge, returned as HTTP 200 instead of `"Logged In"`), it returns an error telling the user to use `ffc init --oauth` or an API key instead. This mirrors `kb_compta_app`'s password-auth mode, which has the same limitation.
-- `SiteConfig.Name` is a runtime-only field (`mapstructure:"-" yaml:"-"`) populated by `config.Load()`. `tryRefreshOAuthToken` uses `cfg.Name` as the site key when calling `saveOAuthTokens`.
-- The self-update state file lives at `~/.config/ffc/.update_check.json` (JSON with `checked_at` and `latest` fields). It is refreshed in a background goroutine at most once per day. `Execute()` in `root.go` waits up to 2 seconds for that goroutine before exiting.
-- `update_check.go` skips the update check for both `update` and `mcp` commands. The MCP server takes over stdin/stdout for JSON-RPC; any stderr output (including the update notice) would corrupt the stream. Do not remove `mcp` from this skip condition.
-- The MCP detached-server state file lives at `~/.config/ffc/mcp.json` (JSON with `pid`, `port`, `site`, `started_at`, `log_path`). The log file is at `~/.config/ffc/mcp.log`. These are managed by `mcp_daemon.go` — `ffc mcp stop` removes the state file.
-- `mcp_detach_unix.go` and `mcp_detach_windows.go` use build tags (`!windows` / `windows`) to provide platform-specific `setSysProcAttr(*exec.Cmd)`. The Unix version sets `Setsid: true` to detach from the terminal's process group. Do not add `syscall.SysProcAttr` fields directly in non-platform-tagged files — they won't compile cross-platform.
-- MCP tool handlers in `mcp_tools.go` must never write to stdout or call `output.Print*` functions. Stdout is the MCP JSON-RPC channel. Return results via `mcp.NewToolResultText(json)` and errors via `mcp.NewToolResultError(msg)` with a `nil` Go error (so the LLM sees the failure, not a protocol crash).
-- `get-schema --json` returns a **compact view** by default (via `compactSchema` in `get_schema.go`): only meaningful DocType and DocField properties are kept; zero-value booleans, internal metadata, and noise fields are stripped. Use `--full` to get the raw Frappe response. The `isTruthy`, `compactField`, `compactSchema`, and `filterSchemaKeys` helpers are defined in `get_schema.go` — do not duplicate them elsewhere. The MCP `get_schema` tool defaults to compact but accepts optional `full` (bool) and `keys` (string) parameters so the LLM can request the raw response or filter to specific top-level keys.
-- `get-doc` and `update-doc` make `--name` optional: if omitted, the name variable defaults to the DocType name. This is the correct behaviour for Single DocTypes (where the document name equals the DocType name). The MCP `get_doc` and `update_doc` tools do the same via `req.GetString("name", "")` defaulting to `doctype`. `delete-doc` intentionally keeps `--name` required — Frappe does not allow deleting Single DocTypes, so defaulting there would only produce a confusing error.
-- `GetDoc("DocType", doctype)` only returns standard fields — it does NOT include custom fields added via Customize Form. Custom fields are stored in the `Custom Field` DocType (filtered by `dt = doctype`). `mergeCustomFields(fc, doctype, doc)` in `get_schema.go` fetches them and splices them into `doc["fields"]` at the correct positions (using the `insert_after` field, ordered by `idx`). It is called in both the CLI (`get_schema.go`) and MCP (`mcp_tools.go`) handlers, always before `applyPropertySetterOverrides`.
-- The MCP `run_report` tool applies `compactReportResult` (defined in `mcp_tools.go`): returns only `columns`, `result`, and `report_summary` (if non-null). Strips `execution_time`, `chart`, `add_total_row`, `message`. The CLI `run-report --json` still returns the full response (use `--keys columns,result` to trim it).
+- **All config writes go through `config.Edit` (or `config.Overwrite` for a fresh file).** They take `config.yaml.lock`, re-read the file, apply the callback to a `config.File` (yaml.Node tree: keeps comments and key order), and write atomically at 0600, following symlinks. Return `config.ErrUnchanged` from the callback to skip the write. Any network call made while holding the lock must be bounded by `config.MaxLockHold` (30 s; the lock is considered stale after 3×), and release removes the lock only if it still holds this process's token. Never write config.yaml with `os.WriteFile` or by marshalling the struct.
+- Site names keep their case and may contain dots (`Prod`, `erp.example.com`). `--site`/`default_site` match exactly first, then fall back to a unique case-insensitive match (what viper users relied on). viper was removed because it lowercased keys and split them on dots; do not reintroduce it. `Config`/`SiteConfig` carry `yaml` tags only.
+- Frappe API wraps list results in `"data"` (v14+) or `"message"` (older). The client handles both. A 2xx single-document response without `data` is an error, not an empty doc.
+- Frappe error responses contain nested JSON strings with Python tracebacks. `frappeErrorResponse.userMessage()` extracts the user-facing message; non-JSON error bodies are cut to 300 runes and sanitised.
+- **Redirects:** only GET/HEAD follow redirects. A redirected POST/PUT/DELETE fails with the target URL, because Go would otherwise replay it as a body-less GET and report success (e.g. delete-doc against an `http://` URL that redirects to `https://`).
+- Non-site HTTP (GitHub release API, downloads) uses `client.NewHTTPClient(timeout)`, never `resty.New()` — resty's default logger prints `WARN RESTY` lines on stderr.
+- **Retries:** only GET, only on 429/502/503/504, never after a timeout or cancel. Do not add retries to writes.
+- **OAuth refresh** happens in `loadSite` (site_client.go), only for commands that talk to a site, under the config lock; it re-checks expiry after taking the lock so concurrent processes refresh once. Failures warn on stderr and the command proceeds (it then gets a 401). There is no refresh in `PersistentPreRunE` any more.
+- Username/password (session-cookie) auth has no `sid` in config. CLI commands log in once per invocation (short-lived process). Long-lived users of one client (MCP daemon, bulk runs) rely on `FrappeClient.relogin`: on a 401/403 with a session older than 1 minute it first asks `frappe.auth.get_logged_user` whether the session is still valid (then it is a real permission error, no new login), and logins are single-flight under `loginMu`, keyed by the sid each request used. `Close(ctx)` logs out; the MCP provider drops a replaced client without logging out (in-flight calls may still use it). Do not persist a `sid` to config.
+- The plaintext `password` field in `SiteConfig` is stored at 0600 — same protection as `api_secret`. ffc has no OS-keychain integration.
+- In huh v1.0.0, only `ctrl+c` is bound to Quit by default. Use `runForm` (auth_wizard.go), which adds Escape via `escQuitKeyMap()` and maps an abort to `errAborted`.
+- `update_check.go` sets `rootCmd.PersistentPreRunE` in its `init()`. Do not set it anywhere else — it would silently overwrite the hook.
+- The update check is skipped for `update`, `mcp` (and subcommands), `completion`, `__complete` and `help`, and when `FFC_NO_UPDATE_CHECK` is set. `checked_at` is recorded before the fetch, so a failing network costs at most one attempt per day. State file: `~/.config/ffc/.update_check.json` (0600).
+- OAuth PKCE: the callback server binds `127.0.0.1` (the redirect URI is `http://127.0.0.1:<port>/callback`, not `localhost`) before the form opens, accepts exactly one result, answers duplicates with 409, and is always closed on abort.
+- `IsOAuth()` returns true only if `AccessToken != ""`. `IsSessionAuth()` requires both `Username` and `Password`.
+- `client.LoginPassword` does not support Frappe 2FA; it returns an error pointing to OAuth or an API key.
+- `SiteConfig.Name` is a runtime-only field (`yaml:"-"`) set by `config.Load` to the exact YAML key; token writes use it as the site key.
+- **MCP stdout is the JSON-RPC channel.** Tool handlers must never write to stdout or call `output.Print*`. Return results via `marshalResult`/`mcp.NewToolResultText` and errors via `mcp.NewToolResultError` with a nil Go error. Stderr is safe in stdio mode (clients log it) and is `mcp.log` in detached mode — never print secrets there (the daemon prints its bearer token only to a terminal; `ffc mcp status` shows it).
+- MCP limits: results over 512 KiB are refused with a hint to narrow them; `run_report` defaults to 500 rows; bulk tools take at most 200 items; `--read-only` registers only read tools (call_method counts as a write).
+- The MCP detached-server state file is `~/.config/ffc/mcp.json` (pid, port, site, started_at, log_path, instance), guarded by a lock file; the log is `~/.config/ffc/mcp.log`. `ffc mcp stop --force` stops a PID that is alive but not health-confirmed.
+- `mcp_detach_unix.go` / `mcp_detach_windows.go` use build tags. Keep `syscall`/`golang.org/x/sys/windows` fields out of untagged files.
+- `get-schema --json` returns a compact view by default (`compactSchema` in get_schema.go); `--full` gives the raw response, `--keys` filters top-level keys. `fetchSchema` is shared by the CLI and MCP: it merges Custom Fields (`mergeCustomFields`, by `insert_after`) and then applies every Property Setter (`applyPropertySetters`: DocField and DocType level, values cast by `property_type`, `field_order` reorders fields). Problems become warnings (`_warnings` in CLI JSON), not failures.
+- `get-doc` and `update-doc` default `--name` to the DocType name (Single DocTypes); `delete-doc` keeps `--name` required. `update-doc` strips a `name` key from `--data` with a warning (the name comes from the URL).
+- MCP `run_report` returns only `columns`, `result`, `report_summary` (if non-null), `total_rows` and `truncated` (`compactReportResult`). CLI `run-report --json` returns the full response; `--limit` applies to both table and JSON.
+- `list-docs --limit 0` means no limit; negative `--limit`/`--start` are rejected. `--filters` must be a JSON object or array.
+- `go.mod` has `toolchain go1.25.14`. CI and GoReleaser install Go from `go-version-file: go.mod`, which can resolve to the `go` line (1.25.0); the toolchain line guarantees the patched release either way (setup-go or `GOTOOLCHAIN=auto` switches to it). Without it, release binaries were built with Go 1.25.0 and carried 30 reachable stdlib vulnerabilities (`GOTOOLCHAIN=go1.25.0 govulncheck ./...`). Bump it with each Go patch release.
+- Go directive stays at 1.25.0: the newest `golang.org/x/*` releases require Go 1.26, so they are pinned to the last 1.25-compatible versions (net v0.58.0, text v0.41.0, sys v0.47.0, sync v0.22.0). Check `go.mod` before bumping.
