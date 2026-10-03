@@ -12,7 +12,7 @@ description: >
 
 # Foxmayn Frappe CLI (ffc)
 
-A command-line tool for interacting with Frappe/ERPNext sites via the REST API. Supports full CRUD on documents, schema introspection, report execution, and RPC method calls.
+A command-line tool for interacting with Frappe/ERPNext sites via the REST API. Supports full CRUD on documents, bulk create/update/delete, schema introspection, report execution, RPC method calls, and an MCP server.
 
 ## Quick Setup
 
@@ -20,6 +20,16 @@ A command-line tool for interacting with Frappe/ERPNext sites via the REST API. 
 ffc init        # interactive wizard — creates ~/.config/ffc/config.yaml
 ffc config      # TUI to change default site, number/date formatting
 ```
+
+`ffc init` offers three auth methods (or jump straight to one with a flag):
+
+```bash
+ffc init --oauth      # OAuth 2.0 browser login (PKCE); only tokens are stored
+ffc init --apikey     # API key + secret (best for scripts/CI); verified against the site before saving
+ffc init --password   # username/email + password; session cookie, no 2FA support
+```
+
+OAuth: create an OAuth Client on Frappe first (Integrations > OAuth Client). The wizard prints the redirect URI to register: `http://127.0.0.1:<port>/callback` (not `localhost`). Expired access tokens are refreshed automatically when a command runs.
 
 Config file: `~/.config/ffc/config.yaml`
 
@@ -35,7 +45,16 @@ sites:
     api_secret: "your_api_secret"
 ```
 
-Generate API keys on the Frappe site: **User > API Access > Generate Keys**.
+Generate API keys on the Frappe site: **User > API Access > Generate Keys**. OAuth sites use `oauth_client_id` / `access_token` / `refresh_token` / `token_expiry` instead; password sites use `username` / `password` (stored in the config file at mode 0600).
+
+### Managing Sites
+
+```bash
+ffc site list               # name, URL, auth method, default
+ffc site add                # menu to choose auth method (or --oauth / --apikey / --password)
+ffc site use [name]         # set default site (menu if name omitted)
+ffc site remove [name]      # remove a site (menu if name omitted)
+```
 
 ### Managing Config from the Terminal
 
@@ -55,7 +74,7 @@ ffc config set --default-site prod --number-format french --date-format yyyy-mm-
 Valid `--number-format` values: `french` (1 000 000,00), `us` (1,000,000.00), `german` (1.000.000,00), `plain` (1000000.00).
 Valid `--date-format` values: `yyyy-mm-dd`, `dd-mm-yyyy`, `dd/mm/yyyy`, `mm/dd/yyyy`.
 
-**Environment variable overrides** (useful in CI — also work without a config file):
+**Environment variable overrides** (useful in CI):
 
 ```bash
 export FFC_URL="https://erp.company.com"
@@ -63,11 +82,16 @@ export FFC_API_KEY="your_key"
 export FFC_API_SECRET="your_secret"
 ```
 
+- `FFC_API_KEY` + `FFC_API_SECRET` only work as a pair; together they replace every stored credential of the selected site.
+- `FFC_URL` only applies together with that pair (stored credentials are never sent to another host). Set alone with a URL different from the site's, it is an error.
+- With no config file at all, the three variables alone define the site.
+- `FFC_NO_UPDATE_CHECK=1` disables the daily background update check.
+
 ## IMPORTANT: Always Use --json / -j
 
 **MANDATORY for AI/LLM usage:** Always append `--json` (or `-j`) to every ffc command that supports it. The default table output is formatted for human reading and is not reliably parseable. JSON output is structured, complete, and easy to process.
 
-Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `count-docs`, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `ping`. (`call-method` always outputs JSON regardless. `delete-doc` has no data output — `--json` is not applicable. MCP tools always return JSON by design.)
+Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `delete-doc`, `count-docs`, `bulk-create`, `bulk-update`, `bulk-delete`, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `ping`, `site list`. (`call-method` always outputs JSON regardless. MCP tools always return JSON by design.)
 
 ```bash
 # Always do this:
@@ -83,11 +107,15 @@ ffc get-doc -d "Sales Invoice" -n "SINV-0001"
 
 ### Global Flags
 
-| Flag       | Short | Description                                         |
-| ---------- | ----- | --------------------------------------------------- |
-| `--site`   | `-s`  | Select a site from config (default: `default_site`) |
-| `--config` | `-c`  | Custom config file path                             |
-| `--json`   | `-j`  | Output raw JSON instead of a table                  |
+| Flag        | Short | Description                                                                 |
+| ----------- | ----- | --------------------------------------------------------------------------- |
+| `--site`    | `-s`  | Select a site from config (default: `default_site`)                         |
+| `--config`  | `-c`  | Custom config file path                                                     |
+| `--json`    | `-j`  | Output raw JSON instead of a table                                          |
+| `--quiet`   | `-q`  | No progress spinner (also off when stderr is not a terminal, or `NO_COLOR`/`CI` is set) |
+| `--timeout` | —     | HTTP timeout per request, e.g. `2m` (default `30s`; raise it for heavy reports) |
+
+Commands exit non-zero on any error, declined confirmation or aborted prompt, so scripts can rely on the exit status. Data goes to stdout; spinner, warnings and errors go to stderr.
 
 ---
 
@@ -108,6 +136,7 @@ ffc get-doc -d "System Settings" --json
 | `--doctype` | `-d`  | Yes      | Frappe DocType                                        |
 | `--name`    | `-n`  | No       | Document name (ID). Defaults to DocType name for Single DocTypes. |
 | `--fields`  | `-f`  | No       | Fields to fetch: `'["name","email"]'` or `name,email` |
+| `--keys`    | —     | No       | Comma-separated keys to keep in JSON output (takes priority over `--fields` for JSON) |
 
 #### `ffc list-docs` — List documents
 
@@ -123,6 +152,9 @@ ffc list-docs -d "ToDo" --filters '{"status":"Open"}' -o "modified desc" --json
 | `--filters`  | —     | No       | —       | JSON filter: `'{"status":"Open"}'` or `'[["status","=","Open"]]'` |
 | `--limit`    | `-l`  | No       | 20      | Max records to return                                             |
 | `--order-by` | `-o`  | No       | —       | Sort: `"modified desc"`, `"name asc"`                             |
+| `--start`    | —     | No       | 0       | Offset into the result set (pagination)                           |
+
+`--limit 0` means no limit; negative `--limit`/`--start` are rejected. `--filters` must be a JSON object or array.
 
 #### `ffc create-doc` — Create a document
 
@@ -134,6 +166,7 @@ ffc create-doc -d "ToDo" --data '{"description":"Fix bug","priority":"Medium"}' 
 | ----------- | ----- | -------- | --------------------------- |
 | `--doctype` | `-d`  | Yes      | Frappe DocType              |
 | `--data`    | —     | Yes      | JSON object of field values |
+| `--keys`    | —     | No       | Comma-separated keys to keep in JSON output |
 
 #### `ffc update-doc` — Update a document
 
@@ -148,11 +181,12 @@ ffc update-doc -d "System Settings" --data '{"default_currency":"USD"}' --json
 | ----------- | ----- | -------- | ------------------------------------------------------------------ |
 | `--doctype` | `-d`  | Yes      | Frappe DocType                                                     |
 | `--name`    | `-n`  | No       | Document name (ID). Defaults to DocType name for Single DocTypes.  |
-| `--data`    | —     | Yes      | JSON object of fields to update                                    |
+| `--data`    | —     | Yes      | JSON object of fields to update (a `name` key is dropped with a warning) |
+| `--keys`    | —     | No       | Comma-separated keys to keep in JSON output                        |
 
 #### `ffc delete-doc` — Delete a document
 
-Prompts for confirmation unless `--yes` is passed.
+Prompts for confirmation unless `--yes` is passed. Declining (or Esc) exits non-zero. `--name` is required (Single DocTypes cannot be deleted).
 
 ```bash
 ffc delete-doc -d "ToDo" -n "TD-0001" --yes
@@ -177,6 +211,29 @@ ffc count-docs -d "Sales Invoice" --filters '{"status":"Unpaid"}' --json
 
 ---
 
+### Bulk Operations
+
+`bulk-create`, `bulk-update`, `bulk-delete` take a JSON array inline (`--data` / `--names`) or from a file (`--file`, `-` reads stdin). The whole input is validated before anything is sent. Each item is reported as created/updated/deleted, `error`, `interrupted` (cut off by Ctrl+C — the server may or may not have applied it, check before re-running) or `skipped` (not started because of `--fail-fast` or an abort). The command exits non-zero unless every item succeeded.
+
+```bash
+ffc bulk-create -d "ToDo" --data '[{"description":"a"},{"description":"b"}]' --json
+ffc bulk-update -d "ToDo" --file updates.json --concurrency 4 --json   # each item needs a "name"
+ffc bulk-delete -d "ToDo" --names "TD-001,TD-002" --yes --json
+ffc bulk-delete -d "Note" --file names.json --yes --json               # use --file for names containing commas
+```
+
+| Flag            | Short | Applies to              | Description                                              |
+| --------------- | ----- | ----------------------- | -------------------------------------------------------- |
+| `--doctype`     | `-d`  | all                     | Frappe DocType (required)                                |
+| `--data`        | —     | create, update          | JSON array of objects (update: each with `name`)         |
+| `--names`       | —     | delete                  | Comma-separated document names                           |
+| `--file`        | —     | all                     | JSON file (array of objects; delete: array of names); `-` = stdin |
+| `--concurrency` | —     | all                     | Requests in flight, 1-10 (default 1)                     |
+| `--fail-fast`   | —     | all                     | Stop starting new items after the first failure          |
+| `--yes`         | `-y`  | delete                  | Skip confirmation prompt                                 |
+
+---
+
 ### Schema & Introspection
 
 #### `ffc get-schema` — View DocType field definitions
@@ -197,6 +254,8 @@ ffc get-schema -d "Sales Invoice" --json --keys name,module,fields
 | `--doctype` | `-d`  | Yes      | DocType to inspect                                       |
 | `--full`    | —     | No       | Return the complete unfiltered Frappe response           |
 | `--keys`    | —     | No       | Comma-separated top-level keys to include, e.g. `fields` |
+
+Both `--full` and `--keys` only apply to `--json` output. Problems merging custom fields or Property Setters are reported as warnings (`_warnings` in the JSON), not failures. Property Setter overrides (DocField and DocType level, `field_order`) are applied after custom fields are merged.
 
 **Compact JSON keeps:**
 - DocType level (always): `name`, `module`, `autoname`, `naming_rule`, `is_submittable`, `issingle`, `istable`, `is_tree`, `is_virtual`, `read_only`, `custom`
@@ -243,7 +302,10 @@ ffc run-report -n "General Ledger" --filters '{"company":"Acme","from_date":"202
 | ----------- | ----- | -------- | ----------------------------------- |
 | `--name`    | `-n`  | Yes      | Report name                         |
 | `--filters` | —     | No       | JSON object of report filter values |
-| `--limit`   | `-l`  | No       | Limit rows displayed (0 = all)      |
+| `--limit`   | `-l`  | No       | Max result rows, table and JSON (0 = all) |
+| `--keys`    | —     | No       | Comma-separated top-level keys for JSON output, e.g. `columns,result` |
+
+Heavy reports may exceed the default 30s timeout; pass `--timeout 2m`.
 
 ---
 
@@ -262,6 +324,7 @@ ffc call-method --method "frappe.client.get_count" --args '{"doctype":"ToDo","fi
 | ---------- | ----- | -------- | -------------------------------------- |
 | `--method` | —     | Yes      | Frappe method path, e.g. `frappe.ping` |
 | `--args`   | —     | No       | JSON object of method arguments        |
+| `--get`    | —     | No       | Send as GET (for methods whitelisted GET-only) |
 
 ---
 
@@ -269,7 +332,7 @@ ffc call-method --method "frappe.client.get_count" --args '{"doctype":"ToDo","fi
 
 #### `ffc mcp` — Start an MCP server for AI agents
 
-Exposes all Frappe API operations as MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
+Exposes Frappe API operations as 15 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
 
 **Three modes:**
 
@@ -281,20 +344,24 @@ ffc mcp --site mysite
 **HTTP foreground** — useful for testing with the MCP Inspector:
 ```bash
 ffc mcp --port 8765 --site mysite
-# endpoint: http://localhost:8765/mcp
+# endpoint: http://127.0.0.1:8765/mcp (localhost only, bearer token required)
 ```
 
 **Detached background** — runs as a background HTTP server, doesn't block the terminal:
 ```bash
 ffc mcp --detach [--port 8765] [--site mysite]
-ffc mcp status    # PID, URL, site, uptime, log file path
-ffc mcp stop      # send SIGTERM + clean up state file
+ffc mcp status    # PID, URL, site, uptime, log file path, bearer token
+ffc mcp stop      # stop the server + clean up state file
+ffc mcp stop --force   # stop the recorded PID even if it does not answer health checks
 ```
+
+The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <token>`; the token is shown by `ffc mcp status` (detached) or printed to the terminal (foreground).
 
 | Flag       | Short | Description                                                |
 | ---------- | ----- | ---------------------------------------------------------- |
 | `--detach` | `-d`  | Run as a background HTTP server                            |
 | `--port`   | `-p`  | Port for HTTP mode (default: 8765, implies HTTP transport) |
+| `--read-only` | —  | Expose only read tools (no create, update, delete, bulk or `call_method`) |
 
 **Available MCP tools** (used by the AI agent, not called directly):
 
@@ -312,12 +379,20 @@ ffc mcp stop      # send SIGTERM + clean up state file
 | `list_reports`  | `ffc list-reports`     |
 | `run_report`    | `ffc run-report`       |
 | `call_method`   | `ffc call-method`      |
+| `bulk_create`   | `ffc bulk-create`      |
+| `bulk_update`   | `ffc bulk-update`      |
+| `bulk_delete`   | `ffc bulk-delete`      |
+
+With `--read-only`, only `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports` and `run_report` are registered.
 
 MCP tools always return JSON — no `--json` flag needed.
 
 **MCP-specific output behaviour (differs from CLI defaults):**
 - `get_schema` returns the compact view by default (same as `ffc get-schema --json`). The LLM can pass `full=true` for the raw Frappe response, or `keys="fields"` / `keys="name,module,fields"` to select specific top-level properties.
-- `run_report` returns only `columns`, `result`, and `report_summary` (if non-null) — strips `execution_time`, `chart`, `add_total_row`, `message`.
+- `run_report` returns only `columns`, `result`, `report_summary` (if non-null), plus `total_rows` and `truncated` when rows were cut — strips `execution_time`, `chart`, `add_total_row`, `message`. Defaults to 500 rows unless `limit` is given.
+- A tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`).
+- Bulk tools take at most 200 items per call.
+- JSON-valued arguments (`filters`, `fields`, `data`, `args`, …) may be passed as native JSON or as a JSON-encoded string.
 
 **Example Claude Desktop config** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 ```json
@@ -356,7 +431,7 @@ ffc update --check   # only print whether an update is available
 ffc update --yes     # update without confirmation
 ```
 
-ffc also checks for updates automatically in the background at most once per day and prints a one-line notice to stderr before any command output when a newer version is available:
+The download is size-limited and SHA256-verified before the binary is swapped. ffc also checks for updates automatically in the background at most once per day (skipped for `update`, `mcp`, `completion`, `help`, or when `FFC_NO_UPDATE_CHECK` is set) and prints a one-line notice to stderr when a newer version is available:
 
 ```
 Update available: v1.2.0 → v1.3.0  (run: ffc update)
@@ -402,17 +477,22 @@ done
 
 | Error                          | Cause                        | Fix                                    |
 | ------------------------------ | ---------------------------- | -------------------------------------- |
-| `authentication failed (401)`  | Bad API key/secret           | Regenerate keys: User > API Access     |
+| `authentication failed (401)`  | Bad credentials / expired OAuth token | Regenerate keys, or re-run `ffc site add --oauth` / `ffc init` |
 | `permission denied (403)`      | User lacks read access       | Check role permissions for the DocType |
 | `doctype "X" not found (404)`  | Typo or module not installed | Verify the DocType name on the site    |
-| `no config file found`         | Missing config               | Run `ffc init` or set `FFC_*` env vars |
-| `site "X" not found in config` | Wrong `--site` value         | Check site names in config.yaml        |
+| `no config file found`         | Missing config               | Run `ffc init` or set `FFC_URL` + `FFC_API_KEY` + `FFC_API_SECRET` |
+| `site "X" not found in config` | Wrong `--site` value         | Run `ffc site list`                    |
+| `FFC_URL (...) differs from the site URL` | `FFC_URL` set without the key pair | Set all three vars, or unset `FFC_URL` |
+| `warning: refreshing the OAuth token ... failed` | Refresh token revoked/expired | Re-run `ffc site add --oauth` (or `ffc init --oauth`) |
+| timeout / deadline exceeded    | Slow report or site          | Raise `--timeout` (e.g. `--timeout 2m`) |
 
 ## Config Precedence
 
 Highest wins:
 
 1. `--site` / `--config` flags
-2. `FFC_*` environment variables
+2. `FFC_*` environment variables (key/secret pair replaces the site's stored credentials)
 3. Config file (`~/.config/ffc/config.yaml`)
 4. Defaults
+
+`--site` / `default_site` match the site name exactly first, then a unique case-insensitive match. Site names keep their case and may contain dots.
