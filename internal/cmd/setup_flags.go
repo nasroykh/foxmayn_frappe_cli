@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mattn/go-isatty"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -99,6 +100,10 @@ func (s *setupFlags) resolve(oauth, apikey, passwordFlag bool) (string, config.S
 // variable env, and a usage error naming the flag when neither is available.
 func readSecret(fromStdin bool, env, flagName string) (string, error) {
 	if fromStdin {
+		if fd := os.Stdin.Fd(); isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd) {
+			// Typing it here would echo the secret on screen.
+			return "", usageErrorf("%s reads a piped secret, but stdin is a terminal: pipe it in, or set $%s", flagName, env)
+		}
 		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return "", fmt.Errorf("reading %s from stdin: %w", strings.TrimSuffix(flagName, "-stdin"), err)

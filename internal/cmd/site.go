@@ -313,6 +313,10 @@ Examples:
 		if !ok {
 			return fmt.Errorf("site %q not found in config", name)
 		}
+		if site.IsOAuth() {
+			// The OAuth client and tokens belong to the current server.
+			return usageErrorf("site %q uses OAuth, which is registered with its current server: run 'ffc site add --oauth --force' with the new URL instead", name)
+		}
 		site.Name = name
 		site.URL = newURL
 		if err := verifySite(cmd.Context(), site); err != nil {

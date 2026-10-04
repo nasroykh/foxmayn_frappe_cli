@@ -46,6 +46,26 @@ func TestExitCodes(t *testing.T) {
 			},
 			args: []string{"get-doc", "-d", "ToDo", "-n", "a"}, code: exitAuth,
 		},
+		{
+			name: "login rate-limited",
+			cfg: func(t *testing.T, s *frappetest.Site) string {
+				return fakeConfig(t, s, "password")
+			},
+			setup: func(s *frappetest.Site) {
+				s.Handle("POST /api/method/login", frappetest.ErrorHandler(&frappetest.Error{Status: 429, ExcType: "TooManyRequestsError", Message: "slow down"}))
+			},
+			args: []string{"get-doc", "-d", "ToDo", "-n", "a"}, code: exitNetwork,
+		},
+		{
+			name: "login server error",
+			cfg: func(t *testing.T, s *frappetest.Site) string {
+				return fakeConfig(t, s, "password")
+			},
+			setup: func(s *frappetest.Site) {
+				s.Handle("POST /api/method/login", frappetest.ErrorHandler(&frappetest.Error{Status: 503, ExcType: "Exception", Message: "down"}))
+			},
+			args: []string{"get-doc", "-d", "ToDo", "-n", "a"}, code: exitNetwork,
+		},
 		{name: "not found", args: []string{"get-doc", "-d", "ToDo", "-n", "missing"}, code: exitNotFound},
 		{
 			name: "permission",
@@ -139,6 +159,38 @@ func TestJSONErrorOnStderr(t *testing.T) {
 	r = runFFC(t, fakeConfig(t, s, "apikey"), "", "--json", "list-docs", "-d", "ToDo", "--limit", "-1")
 	if err := json.Unmarshal([]byte(strings.TrimSpace(r.Stderr)), &e); err != nil || e.Error.Code != "usage" || e.Error.ExitCode != exitUsage {
 		t.Errorf("usage error JSON = %+v, %v (%s)", e.Error, err, r.Stderr)
+	}
+
+	// So are errors cobra returns before it parsed --json.
+	for _, args := range [][]string{
+		{"list-docs", "--bogus", "--json"},
+		{"--json", "no-such-command"},
+		{"-j", "get-doc", "--nope"},
+	} {
+		r = runFFC(t, fakeConfig(t, s, "apikey"), "", args...)
+		e = errorJSON{}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(r.Stderr)), &e); err != nil || e.Error.Code != "usage" || r.Code != exitUsage {
+			t.Errorf("%v: code %d, stderr %q", args, r.Code, r.Stderr)
+		}
+	}
+}
+
+func TestArgsWantJSON(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"ping"}, false},
+		{[]string{"--json", "ping"}, true},
+		{[]string{"ping", "-j"}, true},
+		{[]string{"--json=true"}, true},
+		{[]string{"--json=false"}, false},
+		{[]string{"--json", "--json=false"}, false},
+		{[]string{"--", "--json"}, false},
+	} {
+		if got := argsWantJSON(tc.args); got != tc.want {
+			t.Errorf("argsWantJSON(%v) = %v", tc.args, got)
+		}
 	}
 }
 

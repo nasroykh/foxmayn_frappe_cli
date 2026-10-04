@@ -65,7 +65,7 @@ func Execute() {
 	// cmd.Context(), so long-running or bulk operations can be interrupted
 	// cleanly (M18, L14, L35).
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code, _ := execute(ctx, os.Stderr)
+	code, _ := execute(ctx, os.Args[1:], os.Stderr)
 	stop()
 	if code != exitOK {
 		os.Exit(code)
@@ -76,7 +76,8 @@ var trackOnce sync.Once
 
 // execute runs the root command, reports a failure on stderr and returns the
 // exit code (see exit.go) with the error.
-func execute(ctx context.Context, stderr io.Writer) (int, error) {
+func execute(ctx context.Context, args []string, stderr io.Writer) (int, error) {
+	rootCmd.SetArgs(args)
 	trackOnce.Do(func() { trackRunStart(rootCmd) })
 	runStarted = false
 	err := rootCmd.ExecuteContext(ctx)
@@ -92,6 +93,10 @@ func execute(ctx context.Context, stderr io.Writer) (int, error) {
 		// Cobra's argument and flag checks run before RunE.
 		if code, _ := classify(err); code == exitGeneric {
 			err = &usageError{err}
+		}
+		// An unknown flag or command stops parsing before --json is read.
+		if !jsonOutput && argsWantJSON(args) {
+			return reportError(stderr, err, true), err
 		}
 	}
 	return reportError(stderr, err, jsonOutput), err

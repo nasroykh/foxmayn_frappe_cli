@@ -34,11 +34,16 @@ func LoginPassword(ctx context.Context, siteURL, usr, pwd string) (string, error
 	var body loginBody
 	jsonErr := json.Unmarshal(resp.Body(), &body)
 
-	if resp.StatusCode() >= 400 {
+	switch code := resp.StatusCode(); {
+	case code == http.StatusUnauthorized, code == http.StatusForbidden, code == http.StatusExpectationFailed:
+		// Rejected credentials (or a disabled user).
 		if body.Message != "" {
 			return "", &AuthError{resp.StatusCode(), "login failed: " + stripHTML(body.Message)}
 		}
 		return "", &AuthError{resp.StatusCode(), fmt.Sprintf("login failed (HTTP %d)", resp.StatusCode())}
+	case code >= 400:
+		// Rate limit, server error, wrong path: not a credentials problem.
+		return "", apiError(resp, nil)
 	}
 
 	// A 2xx with a non-JSON body means we hit something other than Frappe's

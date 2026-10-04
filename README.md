@@ -63,7 +63,7 @@ ffc init --apikey    # go straight to the API key form
 ffc init --password  # go straight to the username/password form
 ```
 
-Without a terminal (CI, scripts, agents), pass the site and one credential set as flags. The secret is never a flag value: pipe it with `--api-secret-stdin` / `--password-stdin` (one line), or set `FFC_API_SECRET` / `FFC_PASSWORD`. The credentials are checked against the site before the config is written; an existing config is replaced only with `--force`.
+Without a terminal (CI, scripts, agents), pass the site and one credential set as flags. The secret is never a flag value: pipe it with `--api-secret-stdin` / `--password-stdin` (one line; a terminal on stdin is refused, so the secret is never echoed), or set `FFC_API_SECRET` / `FFC_PASSWORD`. The credentials are checked against the site before the config is written; an existing config is replaced only with `--force`.
 
 ```bash
 echo "$SECRET" | ffc init --name prod --url https://erp.example.com --api-key KEY --api-secret-stdin
@@ -119,7 +119,7 @@ ffc site use [name]             # set the default site (interactive menu if name
 ffc site remove [name]          # remove a site (interactive menu if name omitted)
 ffc site remove NAME --yes      # remove without a prompt (required without a terminal)
 ffc site rename OLD NEW         # rename a site; default_site follows if OLD was the default
-ffc site edit NAME --url URL    # change the URL; stored credentials are re-checked against it first
+ffc site edit NAME --url URL    # change the URL; stored credentials are re-checked against it first (not for OAuth sites: re-add them)
 ```
 
 Non-interactive `site add` (no terminal needed; `--name`, `--url` and one credential set; `--force` to replace an existing site):

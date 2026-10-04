@@ -214,6 +214,14 @@ func TestSiteEditURLRechecksCredentials(t *testing.T) {
 	}
 	assertMode0600(t, path)
 
+	// An OAuth site cannot move: its client is registered with the old server.
+	oauth := fakeConfig(t, site, "oauth")
+	before, _ := os.ReadFile(oauth)
+	wantCode(t, runFFC(t, oauth, "", "site", "edit", "t", "--url", second.URL), 2)
+	if after, _ := os.ReadFile(oauth); string(after) != string(before) {
+		t.Fatal("OAuth site edited")
+	}
+
 	// A site that rejects the stored credentials is not saved.
 	bad := frappetest.New(t)
 	bad.Handle("GET /api/method/frappe.auth.get_logged_user", frappetest.ErrorHandler(&frappetest.Error{Status: 401, ExcType: "AuthenticationError", Message: "no"}))

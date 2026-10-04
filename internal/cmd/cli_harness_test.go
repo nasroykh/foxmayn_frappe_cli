@@ -114,8 +114,7 @@ func runFFCCtx(t *testing.T, ctx context.Context, cfgPath, stdin string, args ..
 	if cfgPath != "" {
 		args = append([]string{"--config", cfgPath}, args...)
 	}
-	rootCmd.SetArgs(args)
-	code, err := execute(ctx, files["stderr"])
+	code, err := execute(ctx, args, files["stderr"])
 	out, _ := os.ReadFile(files["stdout"].Name())
 	errOut, _ := os.ReadFile(files["stderr"].Name())
 	return cliResult{string(out), string(errOut), err, code}

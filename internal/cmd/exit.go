@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/spf13/cobra"
@@ -149,4 +151,22 @@ func init() {
 	// RunE wrapping happens in execute, after every init has registered its
 	// command; flag errors are marked here.
 	rootCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{err} })
+}
+
+// argsWantJSON reports whether args ask for --json, for errors cobra returns
+// before it has parsed the flag.
+func argsWantJSON(args []string) bool {
+	want := false
+	for _, a := range args {
+		switch {
+		case a == "--":
+			return want
+		case a == "--json", a == "-j":
+			want = true
+		case strings.HasPrefix(a, "--json="):
+			v, err := strconv.ParseBool(strings.TrimPrefix(a, "--json="))
+			want = err == nil && v
+		}
+	}
+	return want
 }
