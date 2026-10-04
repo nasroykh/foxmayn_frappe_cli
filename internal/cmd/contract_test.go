@@ -241,6 +241,12 @@ func contractAPI(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
 		t.Errorf("getdoc = %s (%v)", r.Stdout, err)
 	}
 
+	// list-docs --all pages with the stable "creation asc, name asc" order.
+	r = runFFC(t, cfg, "", "list-docs", "-d", contractDT, "--all", "--page-size", "2", "--output", "ndjson", "--filters", `[["title","like","api-%"]]`)
+	if r.Err != nil || strings.Count(r.Stdout, "\n") != 3 {
+		t.Errorf("list-docs --all: %v\n%s", r.Err, r.Stdout)
+	}
+
 	filters := `filters=[["title","like","api-%"]]`
 	for _, path := range []string{"/api/resource/" + contractDT, "/api/v2/document/" + contractDT} {
 		r := runFFC(t, cfg, "", "api", path, "--paginate", "-f", "limit=2", "-f", filters)

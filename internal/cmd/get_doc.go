@@ -52,7 +52,7 @@ Examples:
 			return err
 		}
 
-		if jsonOutput {
+		if machineOutput() {
 			// --keys takes priority; otherwise --fields also narrows JSON output.
 			switch {
 			case gdKeys != "":
@@ -60,7 +60,7 @@ Examples:
 			case len(fields) > 0:
 				doc, _ = filterKeys(doc, fields)
 			}
-			return output.PrintJSON(doc)
+			return printResult(doc, fields...)
 		}
 		output.PrintDocTable(doc, fields)
 		return nil

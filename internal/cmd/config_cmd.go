@@ -209,13 +209,13 @@ Examples:
 		fields := []string{"default_site", "number_format", "date_format"}
 
 		switch {
-		case jsonOutput:
+		case machineOutput():
 			jsonData := map[string]string{
 				"default_site":  data["default_site"].(string),
 				"number_format": data["number_format"].(string),
 				"date_format":   data["date_format"].(string),
 			}
-			if err := output.PrintJSON(jsonData); err != nil {
+			if err := printResult(jsonData); err != nil {
 				return err
 			}
 

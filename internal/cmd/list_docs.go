@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -20,6 +19,7 @@ var (
 	ldLimit   int
 	ldStart   int
 	ldOrderBy string
+	ldPages   pageFlags
 )
 
 var listDocsCmd = &cobra.Command{
@@ -32,6 +32,8 @@ Examples:
   ffc list-docs --doctype "User" --fields '["name","email","enabled"]' --limit 10
   ffc list-docs --doctype "ToDo" --filters '{"status":"Open"}' --order-by "modified desc"
   ffc list-docs --doctype "Sales Invoice" --limit 5 --json
+  ffc list-docs --doctype "Sales Invoice" --all --output csv --fields name,customer,grand_total > invoices.csv
+  ffc list-docs --doctype "ToDo" --filters @filters.json --jq '.[].name'
 `,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -42,7 +44,8 @@ Examples:
 				return usageErrorf("--fields: %w", err)
 			}
 		}
-		if err := validateFiltersJSON(ldFilters); err != nil {
+		filters, err := filtersFlag(ldFilters)
+		if err != nil {
 			return err
 		}
 		limit, err := listLimit("--limit", ldLimit)
@@ -55,23 +58,15 @@ Examples:
 
 		opts := client.ListOptions{
 			Fields:  fields,
-			Filters: ldFilters,
+			Filters: filters,
 			Limit:   limit,
 			Start:   ldStart,
 			OrderBy: ldOrderBy,
 		}
-		rows, err := callSite(cmd, fmt.Sprintf("Fetching %s…", ldDoctype), func(ctx context.Context, c *client.FrappeClient) ([]map[string]interface{}, error) {
-			return c.GetList(ctx, ldDoctype, opts)
+		return listDocs(cmd, ldPages, fmt.Sprintf("Fetching %s…", ldDoctype), ldDoctype, opts, fields, func(rows []map[string]interface{}) error {
+			output.PrintTable(rows, fields)
+			return nil
 		})
-		if err != nil {
-			return err
-		}
-
-		if jsonOutput {
-			return output.PrintJSON(rows)
-		}
-		output.PrintTable(rows, fields)
-		return nil
 	},
 }
 
@@ -82,6 +77,7 @@ func init() {
 	listDocsCmd.Flags().IntVarP(&ldLimit, "limit", "l", 20, "Maximum records to return (0 = no limit)")
 	listDocsCmd.Flags().IntVar(&ldStart, "start", 0, "Offset into the result set (for pagination)")
 	listDocsCmd.Flags().StringVarP(&ldOrderBy, "order-by", "o", "", `Order results by field, e.g. "modified desc"`)
+	ldPages.register(listDocsCmd, "limit", "start")
 	_ = listDocsCmd.MarkFlagRequired("doctype")
 
 	rootCmd.AddCommand(listDocsCmd)

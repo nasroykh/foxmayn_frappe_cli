@@ -52,8 +52,8 @@ Examples:
 		}
 		limitReportRows(result, rrLimit)
 
-		if jsonOutput {
-			return output.PrintJSON(selectKeys(result, rrKeys))
+		if machineOutput() {
+			return printResult(selectKeys(result, rrKeys))
 		}
 
 		rows, cols := reportTable(result)

@@ -37,24 +37,40 @@ func docName(v interface{}) (string, bool) {
 	}
 }
 
-// validateFiltersJSON returns a clear client-side error when raw is a
-// non-empty, invalid JSON string, instead of letting it reach the server and
-// come back as a raw JSONDecodeError (500). Mirrors the validation create-doc,
-// update-doc, bulk-*, run-report, and the MCP tools already do for their own
-// JSON flags.
-func validateFiltersJSON(raw string) error {
-	if raw == "" {
-		return nil
+// jsonFlag returns the JSON text of a JSON-valued flag: the value itself,
+// or the content of a file for @FILE and of stdin for @- (as in curl and gh;
+// JSON never starts with @).
+func jsonFlag(flag, raw string) (string, error) {
+	if !strings.HasPrefix(raw, "@") {
+		return raw, nil
+	}
+	if raw == "@" {
+		return "", usageErrorf("%s: @ needs a file name, or - for stdin", flag)
+	}
+	b, err := readInput("", raw[1:])
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", flag, err)
+	}
+	return string(b), nil
+}
+
+// filtersFlag returns the --filters JSON (inline or @FILE), with a clear
+// client-side error when it is not a JSON object or array, instead of letting
+// it reach the server and come back as a raw JSONDecodeError (500).
+func filtersFlag(raw string) (string, error) {
+	raw, err := jsonFlag("--filters", raw)
+	if err != nil || raw == "" {
+		return raw, err
 	}
 	var v interface{}
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {
-		return usageErrorf("--filters: invalid JSON: %w", err)
+		return "", usageErrorf("--filters: invalid JSON: %w", err)
 	}
 	switch v.(type) {
 	case map[string]interface{}, []interface{}:
-		return nil
+		return raw, nil
 	}
-	return usageErrorf("--filters: expected a JSON object or array")
+	return "", usageErrorf("--filters: expected a JSON object or array")
 }
 
 // moduleFilter builds a Frappe list-filter JSON for an optional module name,
@@ -177,6 +193,9 @@ func callSite[T any](cmd *cobra.Command, title string, fn func(ctx context.Conte
 func readInput(inline, file string) ([]byte, error) {
 	switch file {
 	case "":
+		if strings.HasPrefix(inline, "@") && inline != "@" {
+			return readInput("", inline[1:])
+		}
 		if inline == "" {
 			return nil, usageErrorf("provide --data or --file")
 		}
@@ -196,10 +215,21 @@ func readInput(inline, file string) ([]byte, error) {
 	}
 }
 
-// parseObject decodes a JSON object flag; null and non-objects are rejected.
+// parseObject decodes a JSON object flag (inline or @FILE); null and
+// non-objects are rejected. Numbers keep their literal (json.Number), so a
+// large integer is sent exactly.
 func parseObject(flag, raw string) (map[string]interface{}, error) {
+	raw, err := jsonFlag(flag, raw)
+	if err != nil {
+		return nil, err
+	}
 	var m map[string]interface{}
-	if err := json.Unmarshal([]byte(raw), &m); err != nil || m == nil {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.UseNumber()
+	if err = dec.Decode(&m); err == nil && dec.More() {
+		err = errors.New("unexpected data after the object")
+	}
+	if err != nil || m == nil {
 		if err == nil {
 			err = errors.New("got null")
 		}

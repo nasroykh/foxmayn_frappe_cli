@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -123,7 +124,7 @@ var envErr error
 // when the flag was not given (flags > env > config). It runs after flag
 // parsing, before any command code.
 func applyEnv() {
-	envErr = nil
+	envErr = resolveOutput()
 	flags := rootCmd.PersistentFlags()
 	if v := os.Getenv("FFC_SITE"); v != "" && !flags.Changed("site") {
 		siteName = v
@@ -134,7 +135,7 @@ func applyEnv() {
 	if v := os.Getenv("FFC_TIMEOUT"); v != "" && !flags.Changed("timeout") {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
-			envErr = usageErrorf("FFC_TIMEOUT=%q: want a positive duration such as 30s or 2m", v)
+			envErr = errors.Join(envErr, usageErrorf("FFC_TIMEOUT=%q: want a positive duration such as 30s or 2m", v))
 			return
 		}
 		client.Timeout = d

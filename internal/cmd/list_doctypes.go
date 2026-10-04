@@ -1,9 +1,6 @@
 package cmd
 
 import (
-	"context"
-
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -13,6 +10,7 @@ import (
 var (
 	ltModule string
 	ltLimit  int
+	ltPages  pageFlags
 )
 
 var listDoctypesCmd = &cobra.Command{
@@ -31,23 +29,16 @@ Examples:
 		if err != nil {
 			return err
 		}
-		rows, err := callSite(cmd, "Fetching DocTypes…", func(ctx context.Context, c *client.FrappeClient) ([]map[string]interface{}, error) {
-			return c.GetList(ctx, "DocType", opts)
+		return listDocs(cmd, ltPages, "Fetching DocTypes…", "DocType", opts, doctypeListFields, func(rows []map[string]interface{}) error {
+			output.PrintTable(rows, []string{"name", "module", "is_submittable", "description"})
+			return nil
 		})
-		if err != nil {
-			return err
-		}
-
-		if jsonOutput {
-			return output.PrintJSON(rows)
-		}
-		output.PrintTable(rows, []string{"name", "module", "is_submittable", "description"})
-		return nil
 	},
 }
 
 func init() {
 	listDoctypesCmd.Flags().StringVarP(&ltModule, "module", "m", "", "Filter by module name (e.g. \"Accounts\")")
 	listDoctypesCmd.Flags().IntVarP(&ltLimit, "limit", "l", 50, "Maximum DocTypes to return (0 = no limit)")
+	ltPages.register(listDoctypesCmd, "limit")
 	rootCmd.AddCommand(listDoctypesCmd)
 }

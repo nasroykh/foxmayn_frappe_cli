@@ -139,8 +139,8 @@ func (r bulkReport) err() error {
 
 // printBulkReport renders a report for the CLI and returns the exit error.
 func printBulkReport(rep bulkReport, doctype string) error {
-	if jsonOutput {
-		if err := output.PrintJSON(rep.JSON()); err != nil {
+	if machineOutput() {
+		if err := printResult(rep.JSON()); err != nil {
 			return err
 		}
 		return rep.err()
