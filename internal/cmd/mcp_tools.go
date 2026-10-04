@@ -445,6 +445,9 @@ func registerCallMethod(s *server.MCPServer, getClient clientFn) {
 		mcp.WithBoolean("get",
 			mcp.Description("Send as a GET request (for methods whitelisted GET-only). Default: false (POST)."),
 		),
+		mcp.WithBoolean("full_response",
+			mcp.Description(`Return the whole response object instead of only "message": desk methods put "docs", "docinfo" and "_server_messages" next to it. Default: false.`),
+		),
 	)
 	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
 		method, err := req.RequireString("method")
@@ -455,8 +458,11 @@ func registerCallMethod(s *server.MCPServer, getClient clientFn) {
 		if err != nil {
 			return nil, err
 		}
-		get := req.GetBool("get", false)
+		get, full := req.GetBool("get", false), req.GetBool("full_response", false)
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
+			if full {
+				return c.CallMethodFull(ctx, method, args, get)
+			}
 			return c.CallMethod(ctx, method, args, get)
 		}, nil
 	}))

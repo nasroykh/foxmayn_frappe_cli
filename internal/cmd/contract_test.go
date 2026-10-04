@@ -83,6 +83,7 @@ func TestContract(t *testing.T) {
 	t.Run("child table PUT replaces rows", func(t *testing.T) { contractChildPut(t, c) })
 	t.Run("lifecycle submit cancel amend", func(t *testing.T) { contractLifecycle(t, c) })
 	t.Run("schema merges custom field and property setter", func(t *testing.T) { contractSchema(t, c) })
+	t.Run("api passthrough", func(t *testing.T) { contractAPI(t, c, sc) })
 	t.Run("errors match the fake", func(t *testing.T) { contractErrors(t, c, sc.URL) })
 	t.Run("password session", func(t *testing.T) { contractSession(t, sc) })
 }
@@ -215,6 +216,38 @@ func contractNumbers(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig
 	}
 	if !strings.Contains(r.Stdout, "1,234,567") {
 		t.Errorf("table should group the Currency (us):\n%s", r.Stdout)
+	}
+}
+
+// contractAPI pins T1.2: desk methods put their data next to "message", and
+// both list APIs page the way --paginate expects (v1 by limit_start, v2 by
+// start with has_next_page).
+func contractAPI(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
+	var names []string
+	for i := 0; i < 3; i++ {
+		names = append(names, createContractDoc(t, c, map[string]interface{}{"title": fmt.Sprintf("api-%d", i)}))
+	}
+	cfg := contractConfig(t, sc)
+
+	r := runFFC(t, cfg, "", "api", "/api/method/frappe.desk.form.load.getdoc", "-f", "doctype="+contractDT, "-f", "name="+names[0])
+	if r.Err != nil {
+		t.Fatalf("getdoc: %v\n%s", r.Err, r.Stdout)
+	}
+	var getdoc struct {
+		Docs    []map[string]interface{} `json:"docs"`
+		Docinfo map[string]interface{}   `json:"docinfo"`
+	}
+	if err := json.Unmarshal([]byte(r.Stdout), &getdoc); err != nil || len(getdoc.Docs) != 1 || getdoc.Docs[0]["name"] != names[0] || getdoc.Docinfo == nil {
+		t.Errorf("getdoc = %s (%v)", r.Stdout, err)
+	}
+
+	filters := `filters=[["title","like","api-%"]]`
+	for _, path := range []string{"/api/resource/" + contractDT, "/api/v2/document/" + contractDT} {
+		r := runFFC(t, cfg, "", "api", path, "--paginate", "-f", "limit=2", "-f", filters)
+		var out struct{ Data []map[string]interface{} }
+		if err := json.Unmarshal([]byte(r.Stdout), &out); err != nil || r.Err != nil || len(out.Data) != 3 {
+			t.Errorf("%s: %d rows, err %v / %v\n%s", path, len(out.Data), r.Err, err, r.Stdout)
+		}
 	}
 }
 

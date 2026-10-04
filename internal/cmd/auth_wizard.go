@@ -11,7 +11,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/huh"
-	"github.com/mattn/go-isatty"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 )
@@ -35,8 +34,7 @@ func inputDisabled() bool {
 	if noInput {
 		return true
 	}
-	fd := os.Stdin.Fd()
-	return !isatty.IsTerminal(fd) && !isatty.IsCygwinTerminal(fd)
+	return !isTerminal(os.Stdin)
 }
 
 // runForm runs a huh form with Esc bound to quit. Esc/Ctrl+C becomes
