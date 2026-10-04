@@ -91,7 +91,7 @@ export FFC_API_SECRET="your_secret"
 
 **MANDATORY for AI/LLM usage:** Always append `--json` (or `-j`) to every ffc command that supports it. The default table output is formatted for human reading and is not reliably parseable. JSON output is structured, complete, and easy to process.
 
-Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `delete-doc`, `count-docs`, `bulk-create`, `bulk-update`, `bulk-delete`, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `ping`, `site list`. (`call-method` always outputs JSON regardless. MCP tools always return JSON by design.)
+Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `delete-doc`, `count-docs`, `bulk-create`, `bulk-update`, `bulk-delete`, the lifecycle and `workflow` commands, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `ping`, `site list`. (`call-method` always outputs JSON regardless. MCP tools always return JSON by design.)
 
 ```bash
 # Always do this:
@@ -234,6 +234,36 @@ ffc bulk-delete -d "Note" --file names.json --yes --json               # use --f
 
 ---
 
+### Document Lifecycle
+
+State changes go through Frappe's own methods, so validations, permissions and hooks run. A state error (submitting a submitted document, amending a draft, a DocType with an active Workflow) exits 6.
+
+```bash
+ffc submit-doc -d "Sales Invoice" -n ACC-SINV-2026-00001 --json
+ffc cancel-doc -d "Sales Invoice" -n ACC-SINV-2026-00001 --check --json   # submitted documents blocking the cancel; cancels nothing
+ffc cancel-doc -d "Sales Invoice" -n ACC-SINV-2026-00001 --yes --json
+ffc amend-doc  -d "Sales Invoice" -n ACC-SINV-2026-00001 --data '{"due_date":"2026-11-30"}' --json   # new draft <name>-1
+ffc copy-doc   -d "Item" -n SKU-001 --data '{"item_code":"SKU-002"}' --json
+ffc rename-doc -d Customer -n "Acme Ltd" --to "Acme Limited" --json          # --merge --yes: merge into an existing doc
+ffc restore-doc -d ToDo -n TD-0001 --json                                    # or --deleted <Deleted Document>
+ffc discard-doc -d "Sales Invoice" -n ACC-SINV-2026-00002 --yes             # cancel a draft; Frappe v16+
+```
+
+- `amend-doc` keeps "no copy" fields (desk Amend); `copy-doc` drops them (desk Duplicate). Child rows are copied by both.
+- `restore-doc` prints the restored name: a hash- or series-named DocType may give it a new one.
+- `cancel-doc`, `discard-doc` and `rename-doc --merge` ask for confirmation; pass `--yes` in scripts.
+
+**Workflows.** `submit-doc`/`cancel-doc` refuse a DocType with an active Workflow; use:
+
+```bash
+ffc workflow transitions -d "Leave Application" -n HR-LAP-2026-00001 --json   # actions you can apply now
+ffc workflow apply -d "Leave Application" -n HR-LAP-2026-00001 --action Approve --json
+ffc workflow bulk-apply -d "Leave Application" --file names.json --action Approve --yes --json   # per-document report, exit 8 if any failed
+ffc workflow pending [-d "Leave Application"] --json                          # open Workflow Actions
+```
+
+---
+
 ### Schema & Introspection
 
 #### `ffc get-schema` — View DocType field definitions
@@ -335,7 +365,7 @@ ffc call-method --method "frappe.client.get_count" --args '{"doctype":"ToDo","fi
 
 #### `ffc mcp` — Start an MCP server for AI agents
 
-Exposes Frappe API operations as 15 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
+Exposes Frappe API operations as 22 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
 
 **Three modes:**
 
@@ -364,7 +394,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | ---------- | ----- | ---------------------------------------------------------- |
 | `--detach` | `-d`  | Run as a background HTTP server                            |
 | `--port`   | `-p`  | Port for HTTP mode (default: 8765, implies HTTP transport) |
-| `--read-only` | —  | Expose only read tools (no create, update, delete, bulk or `call_method`) |
+| `--read-only` | —  | Expose only read tools (no create, update, delete, bulk, lifecycle, workflow or `call_method`) |
 
 **Available MCP tools** (used by the AI agent, not called directly):
 
@@ -385,8 +415,15 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `bulk_create`   | `ffc bulk-create`      |
 | `bulk_update`   | `ffc bulk-update`      |
 | `bulk_delete`   | `ffc bulk-delete`      |
+| `submit_doc`    | `ffc submit-doc`       |
+| `cancel_doc`    | `ffc cancel-doc`       |
+| `amend_doc`     | `ffc amend-doc`        |
+| `copy_doc`      | `ffc copy-doc`         |
+| `rename_doc`    | `ffc rename-doc`       |
+| `get_transitions` | `ffc workflow transitions` |
+| `apply_workflow`  | `ffc workflow apply`       |
 
-With `--read-only`, only `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports` and `run_report` are registered.
+With `--read-only`, only `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report` and `get_transitions` are registered.
 
 MCP tools always return JSON — no `--json` flag needed.
 

@@ -174,7 +174,12 @@ func PrintError(msg string) {
 
 // PrintSuccess writes a styled success message to stderr.
 func PrintSuccess(msg string) {
-	fmt.Fprintln(os.Stderr, successStyle.Render("✓ "+msg))
+	fmt.Fprintln(os.Stderr, successStyle.Render("✓ "+text.Sanitize(msg)))
+}
+
+// PrintWarning writes a styled warning to stderr.
+func PrintWarning(msg string) {
+	fmt.Fprintln(os.Stderr, warnStyle.Render(text.Sanitize(msg)))
 }
 
 // tableColumns picks the columns to show. Requested fields are used as

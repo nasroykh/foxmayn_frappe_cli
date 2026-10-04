@@ -33,6 +33,9 @@ const (
 	// contractMarker is the description of both fixture DocTypes; teardown
 	// refuses to touch a DocType of the same name without it.
 	contractMarker = "Created by the ffc contract tests; safe to delete."
+	// contractWF is the fixture Workflow; its states and action carry the
+	// same prefix.
+	contractWF = "FFC Contract Workflow"
 )
 
 // contractSite resolves the site under test, or skips.
@@ -82,10 +85,13 @@ func TestContract(t *testing.T) {
 	t.Run("list default fields are name only", func(t *testing.T) { contractListDefault(t, c) })
 	t.Run("child table PUT replaces rows", func(t *testing.T) { contractChildPut(t, c) })
 	t.Run("lifecycle submit cancel amend", func(t *testing.T) { contractLifecycle(t, c) })
+	t.Run("lifecycle commands", func(t *testing.T) { contractLifecycleCLI(t, c, sc) })
 	t.Run("schema merges custom field and property setter", func(t *testing.T) { contractSchema(t, c) })
 	t.Run("api passthrough", func(t *testing.T) { contractAPI(t, c, sc) })
 	t.Run("errors match the fake", func(t *testing.T) { contractErrors(t, c, sc.URL) })
 	t.Run("password session", func(t *testing.T) { contractSession(t, sc) })
+	// Last: an active workflow changes how the DocType submits.
+	t.Run("workflow", func(t *testing.T) { contractWorkflow(t, c, sc) })
 }
 
 func setupContract(t *testing.T, c *client.FrappeClient) {
@@ -106,8 +112,10 @@ func setupContract(t *testing.T, c *client.FrappeClient) {
 	})
 	mustCreate("DocType", map[string]interface{}{
 		"name": contractDT, "module": "Custom", "custom": 1, "is_submittable": 1, "autoname": "hash", "description": contractMarker,
+		"allow_rename": 1,
 		"fields": []interface{}{
 			map[string]interface{}{"fieldname": "title", "label": "Title", "fieldtype": "Data"},
+			map[string]interface{}{"fieldname": "ref_no", "label": "Ref No", "fieldtype": "Data", "no_copy": 1},
 			map[string]interface{}{"fieldname": "status", "label": "Status", "fieldtype": "Select", "options": "Open\nClosed"},
 			map[string]interface{}{"fieldname": "n_int", "label": "N Int", "fieldtype": "Int"},
 			map[string]interface{}{"fieldname": "n_float", "label": "N Float", "fieldtype": "Float"},
@@ -145,6 +153,7 @@ func teardownContract(t *testing.T, c *client.FrappeClient) {
 			t.Fatalf("DocType %q exists but was not created by these tests; refusing to delete it", dt)
 		}
 	}
+	teardownWorkflow(ctx, t, c)
 	rows, err := c.GetList(ctx, contractDT, client.ListOptions{Fields: []string{"name", "docstatus"}, Limit: -1})
 	if err == nil {
 		// Longer names first: "x-1-1" before "x-1" before "x".
@@ -177,6 +186,7 @@ func teardownContract(t *testing.T, c *client.FrappeClient) {
 			t.Logf("teardown: delete DocType %s: %v", dt, err)
 		}
 	}
+	teardownWorkflow(ctx, t, c) // the states, once no document links to them
 }
 
 func createContractDoc(t *testing.T, c *client.FrappeClient, data map[string]interface{}) string {
@@ -483,4 +493,164 @@ func contractSession(t *testing.T, sc *config.SiteConfig) {
 	if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("logged-out sid: status %d, want 401/403", resp.StatusCode)
 	}
+}
+
+// contractLifecycleCLI runs the T1.1 commands: submit, cancel (--check
+// first), amend (keeps "no copy" fields), copy (drops them), rename, delete
+// and restore, and discard (v16; v15 reports that it needs v16).
+func contractLifecycleCLI(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
+	cfg := contractConfig(t, sc)
+	ffc := func(args ...string) map[string]interface{} {
+		t.Helper()
+		r := runFFC(t, cfg, "", append(args, "--json")...)
+		if r.Err != nil {
+			t.Fatalf("%s: %v\n%s", args[0], r.Err, r.Stderr)
+		}
+		var m map[string]interface{}
+		if strings.HasPrefix(strings.TrimSpace(r.Stdout), "{") {
+			if err := json.Unmarshal([]byte(r.Stdout), &m); err != nil {
+				t.Fatalf("%s: %v\n%s", args[0], err, r.Stdout)
+			}
+		}
+		return m
+	}
+	name := createContractDoc(t, c, map[string]interface{}{
+		"title": "cli", "ref_no": "R-1", "items": []interface{}{map[string]interface{}{"item": "a", "qty": 2}},
+	})
+
+	if d := ffc("submit-doc", "-d", contractDT, "-n", name); fmt.Sprint(d["docstatus"]) != "1" {
+		t.Fatalf("submit-doc: docstatus %v", d["docstatus"])
+	}
+	r := runFFC(t, cfg, "", "cancel-doc", "-d", contractDT, "-n", name, "--check", "--json")
+	if r.Err != nil || strings.TrimSpace(r.Stdout) != "[]" {
+		t.Errorf("cancel-doc --check: %v %s", r.Err, r.Stdout)
+	}
+	if d := ffc("cancel-doc", "-d", contractDT, "-n", name, "--yes"); fmt.Sprint(d["docstatus"]) != "2" {
+		t.Fatalf("cancel-doc: docstatus %v", d["docstatus"])
+	}
+
+	am := ffc("amend-doc", "-d", contractDT, "-n", name, "--data", `{"title":"cli amended"}`)
+	if am["name"] != name+"-1" || am["amended_from"] != name || am["title"] != "cli amended" || am["ref_no"] != "R-1" || fmt.Sprint(am["docstatus"]) != "0" {
+		t.Errorf("amend-doc = %v", am)
+	}
+	if items, _ := am["items"].([]interface{}); len(items) != 1 || items[0].(map[string]interface{})["parent"] != am["name"] {
+		t.Errorf("amend-doc items = %v", am["items"])
+	}
+	r = runFFC(t, cfg, "", "amend-doc", "-d", contractDT, "-n", fmt.Sprint(am["name"]))
+	if r.Code != exitValidation {
+		t.Errorf("amend-doc of a draft: exit %d, want %d (%v)", r.Code, exitValidation, r.Err)
+	}
+
+	cp := ffc("copy-doc", "-d", contractDT, "-n", name)
+	if cp["name"] == name || cp["amended_from"] != nil || cp["ref_no"] != nil || cp["title"] != "cli" || fmt.Sprint(cp["docstatus"]) != "0" {
+		t.Errorf("copy-doc = %v", cp)
+	}
+	if items, _ := cp["items"].([]interface{}); len(items) != 1 {
+		t.Errorf("copy-doc items = %v", cp["items"])
+	}
+
+	newName := fmt.Sprint(cp["name"]) + "-renamed"
+	if rn := ffc("rename-doc", "-d", contractDT, "-n", fmt.Sprint(cp["name"]), "--to", newName); rn["name"] != newName {
+		t.Errorf("rename-doc = %v", rn)
+	}
+	if _, err := c.GetDoc(contractCtx(t), contractDT, newName); err != nil {
+		t.Errorf("renamed document: %v", err)
+	}
+
+	// A hash-named document comes back under a new name.
+	ffc("delete-doc", "-d", contractDT, "-n", newName, "--yes")
+	rs := ffc("restore-doc", "-d", contractDT, "-n", newName)
+	if rs["restored"] != true || rs["name"] == "" {
+		t.Errorf("restore-doc = %v", rs)
+	}
+	if d, err := c.GetDoc(contractCtx(t), contractDT, fmt.Sprint(rs["name"])); err != nil || d["title"] != "cli" {
+		t.Errorf("restored document: %v %v", d, err)
+	}
+
+	draft := createContractDoc(t, c, map[string]interface{}{"title": "discard"})
+	r = runFFC(t, cfg, "", "discard-doc", "-d", contractDT, "-n", draft, "--yes")
+	switch {
+	case r.Err == nil:
+		if d, _ := c.GetDoc(contractCtx(t), contractDT, draft); fmt.Sprint(d["docstatus"]) != "2" {
+			t.Errorf("discard-doc: docstatus %v, want 2", d["docstatus"])
+		}
+	case !strings.Contains(r.Err.Error(), "Frappe v16"):
+		t.Errorf("discard-doc: %v", r.Err)
+	}
+}
+
+// contractWorkflow pins the workflow methods' arguments (a doc with only
+// doctype and name) on a two-state workflow, and that submit-doc refuses a
+// DocType with an active workflow.
+func contractWorkflow(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
+	ctx := contractCtx(t)
+	draft, done, action := contractWF+" Draft", contractWF+" Done", contractWF+" Finish"
+	for _, st := range []string{draft, done} {
+		if _, err := c.CreateDoc(ctx, "Workflow State", map[string]interface{}{"workflow_state_name": st}); err != nil {
+			t.Fatalf("Workflow State: %v", err)
+		}
+	}
+	if _, err := c.CreateDoc(ctx, "Workflow Action Master", map[string]interface{}{"workflow_action_name": action}); err != nil {
+		t.Fatalf("Workflow Action Master: %v", err)
+	}
+	_, err := c.CreateDoc(ctx, "Workflow", map[string]interface{}{
+		"workflow_name": contractWF, "document_type": contractDT, "is_active": 1, "send_email_alert": 0,
+		"states": []interface{}{
+			map[string]interface{}{"state": draft, "doc_status": "0", "allow_edit": "System Manager"},
+			map[string]interface{}{"state": done, "doc_status": "1", "allow_edit": "System Manager"},
+		},
+		"transitions": []interface{}{
+			map[string]interface{}{"state": draft, "action": action, "next_state": done, "allowed": "System Manager", "allow_self_approval": 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Workflow: %v", err)
+	}
+	t.Cleanup(func() { teardownWorkflow(context.Background(), t, c) })
+
+	cfg := contractConfig(t, sc)
+	name := createContractDoc(t, c, map[string]interface{}{"title": "workflow"})
+	r := runFFC(t, cfg, "", "submit-doc", "-d", contractDT, "-n", name)
+	if r.Code != exitValidation || r.Err == nil || !strings.Contains(r.Err.Error(), contractWF) {
+		t.Errorf("submit-doc with a workflow: exit %d, %v", r.Code, r.Err)
+	}
+
+	r = runFFC(t, cfg, "", "workflow", "transitions", "-d", contractDT, "-n", name, "--jq", ".[].action")
+	if r.Err != nil || strings.TrimSpace(r.Stdout) != action {
+		t.Fatalf("workflow transitions: %v %q", r.Err, r.Stdout)
+	}
+	r = runFFC(t, cfg, "", "workflow", "apply", "-d", contractDT, "-n", name, "--action", action, "--json")
+	var doc map[string]interface{}
+	if r.Err != nil || json.Unmarshal([]byte(r.Stdout), &doc) != nil || doc["workflow_state"] != done || fmt.Sprint(doc["docstatus"]) != "1" {
+		t.Errorf("workflow apply: %v %s", r.Err, r.Stdout)
+	}
+	r = runFFC(t, cfg, "", "workflow", "apply", "-d", contractDT, "-n", name, "--action", action)
+	if r.Code != exitValidation {
+		t.Errorf("workflow apply twice: exit %d, %v", r.Code, r.Err)
+	}
+}
+
+// teardownWorkflow removes the fixture Workflow, its states and its action,
+// and the Workflow Actions on contract documents. It touches only a Workflow
+// on the contract DocType.
+func teardownWorkflow(ctx context.Context, t *testing.T, c *client.FrappeClient) {
+	t.Helper()
+	// Open Workflow Actions link to the documents and block their delete.
+	if rows, err := c.GetList(ctx, "Workflow Action", client.ListOptions{Filters: `{"reference_doctype":"` + contractDT + `"}`, Limit: -1}); err == nil {
+		for _, r := range rows {
+			_ = c.DeleteDoc(ctx, "Workflow Action", fmt.Sprint(r["name"]))
+		}
+	}
+	if wf, err := c.GetDoc(ctx, "Workflow", contractWF); err == nil {
+		if wf["document_type"] != contractDT {
+			t.Fatalf("Workflow %q exists but is not on %s; refusing to delete it", contractWF, contractDT)
+		}
+		if err := c.DeleteDoc(ctx, "Workflow", contractWF); err != nil {
+			t.Logf("teardown: delete Workflow: %v", err)
+		}
+	}
+	for _, st := range []string{contractWF + " Draft", contractWF + " Done"} {
+		_ = c.DeleteDoc(ctx, "Workflow State", st)
+	}
+	_ = c.DeleteDoc(ctx, "Workflow Action Master", contractWF+" Finish")
 }

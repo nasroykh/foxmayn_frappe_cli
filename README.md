@@ -229,7 +229,7 @@ Without a terminal (pipes, cron, CI, agents) ffc never waits for input: a comman
 | 3 | Authentication: rejected credentials (401), failed login |
 | 4 | Not found (404) |
 | 5 | Permission denied (403) |
-| 6 | Validation or conflict: 417 (e.g. ValidationError, LinkExistsError), 409 duplicate, 400, TimestampMismatchError |
+| 6 | Validation or conflict: 417 (e.g. ValidationError, LinkExistsError), 409 duplicate, 400, TimestampMismatchError, or a document in the wrong state for the command (amending a draft, submitting under an active Workflow) |
 | 7 | Network or server: no connection, timeout, 429, 5xx |
 | 8 | Partial bulk failure: some items of a bulk command did not succeed |
 | 130 | Interrupted (Ctrl+C) |
@@ -335,6 +335,38 @@ ffc bulk-delete -d "Note" --file names.json --fail-fast          # use --file fo
 
 ---
 
+### Document Lifecycle
+
+Submit, cancel, amend, copy, rename and restore documents through Frappe's own methods, so its validations, permissions and hooks run. A state error (submitting a submitted document, amending a draft) exits 6.
+
+```bash
+ffc submit-doc -d "Sales Invoice" -n ACC-SINV-2026-00001
+ffc cancel-doc -d "Sales Invoice" -n ACC-SINV-2026-00001 --check   # list the submitted documents that block the cancel
+ffc cancel-doc -d "Sales Invoice" -n ACC-SINV-2026-00001 --yes
+ffc amend-doc  -d "Sales Invoice" -n ACC-SINV-2026-00001 --data '{"due_date":"2026-11-30"}'   # new draft ACC-SINV-2026-00001-1
+ffc copy-doc   -d "Item" -n SKU-001 --data '{"item_code":"SKU-002"}'   # like the desk's Duplicate
+ffc rename-doc -d Customer -n "Acme Ltd" --to "Acme Limited"            # --merge --yes merges into an existing one
+ffc restore-doc -d ToDo -n TD-0001                                       # undo delete-doc (System Manager)
+ffc discard-doc -d "Sales Invoice" -n ACC-SINV-2026-00002 --yes          # cancel a draft (Frappe v16+)
+```
+
+- `amend-doc` keeps the fields marked "no copy", like the desk's Amend; `copy-doc` drops them, on child rows too.
+- `restore-doc` takes the document (`-d`/`-n`, its latest unrestored deletion) or the Deleted Document (`--deleted`). A DocType named by hash or naming series may restore it under a new name; the command prints it.
+- `submit-doc` and `cancel-doc` refuse a DocType with an active Workflow; use `ffc workflow`.
+
+**Workflows**
+
+```bash
+ffc workflow transitions -d "Leave Application" -n HR-LAP-2026-00001   # actions you can apply now
+ffc workflow apply -d "Leave Application" -n HR-LAP-2026-00001 --action Approve
+ffc workflow bulk-apply -d "Leave Application" --file names.json --action Approve --yes
+ffc workflow pending -d "Leave Application"                            # open Workflow Actions
+```
+
+`bulk-apply` applies the action one document at a time and reports each result like the bulk commands (`--concurrency`, `--fail-fast`, exit 8 if any failed).
+
+---
+
 ### Schema & Introspection
 
 **1. `list-doctypes`** (List available DocTypes)
@@ -435,12 +467,12 @@ ffc mcp stop     # stop the server and clean up (--force if it is not responding
 
 The HTTP endpoint is `http://127.0.0.1:<port>/mcp` (Streamable HTTP transport, localhost only, bearer token shown by `ffc mcp status`).
 
-**Read-only mode** — expose only read tools (no create, update, delete, bulk or `call_method`):
+**Read-only mode** — expose only read tools (no create, update, delete, bulk, lifecycle, workflow or `call_method`):
 ```bash
 ffc mcp --read-only --site prod
 ```
 
-Available MCP tools (15): `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object).
+Available MCP tools (22): `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
 
 Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`); `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
@@ -479,17 +511,21 @@ foxmayn_frappe_cli/
 │   │   ├── api.go            # api: raw requests to any site path
 │   │   ├── bulk.go           # Bulk worker pool and input parsers
 │   │   ├── bulk_create.go, bulk_update.go, bulk_delete.go
+│   │   ├── submit_doc.go, cancel_doc.go, discard_doc.go, amend_doc.go (amend-doc, copy-doc),
+│   │   │   rename_doc.go, restore_doc.go, workflow.go   # document lifecycle
 │   │   ├── update.go         # update (self-update)
 │   │   ├── update_check.go   # background update check + PersistentPreRunE
 │   │   ├── mcp.go            # mcp subcommand (stdio/HTTP/detach, --read-only)
 │   │   ├── mcp_args.go       # MCP argument parsing and result limits
-│   │   ├── mcp_tools.go      # 15 MCP tool definitions
+│   │   ├── mcp_tools.go      # MCP tool definitions (22 with mcp_lifecycle_tools.go)
+│   │   ├── mcp_lifecycle_tools.go  # submit/cancel/amend/copy/rename/workflow tools
 │   │   ├── mcp_daemon.go     # detached server, status/stop, state file
 │   │   └── mcp_detach_unix.go / mcp_detach_windows.go  # platform process handling
 │   ├── client/
 │   │   ├── http.go           # Transport policy: timeout, body cap, redirects, retries
 │   │   ├── client.go         # Frappe REST API client (Bearer, token and session auth)
 │   │   ├── raw.go            # Raw requests (ffc api): SitePath, streamed bodies
+│   │   ├── lifecycle.go      # Submit, cancel, amend, copy, rename, restore, workflow
 │   │   ├── oauth.go          # ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser
 │   │   └── session.go        # Username/password login
 │   ├── config/

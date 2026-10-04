@@ -92,11 +92,14 @@ internal/cmd/render.go       → output layer: resolveOutput (--output/--json/--
                                 (--all/--page-size, streamed for json/ndjson/csv/tsv), pageFlags
 internal/cmd/bulk.go         → runBulk worker pool, bulkReport, parseObjects/parseNames/splitUpdates, bulkFlags
 internal/cmd/bulk_{create,update,delete}.go → bulk commands (--concurrency 1-10, --fail-fast)
+internal/cmd/{submit_doc,cancel_doc,discard_doc,amend_doc,rename_doc,restore_doc}.go → lifecycle commands
+                                (amend_doc.go also has copy-doc); refuseWorkflow in submit_doc.go
+internal/cmd/workflow.go         → workflow transitions / apply / bulk-apply (bulkFlags) / pending
 internal/cmd/update.go           → self-update (size-limited download, signed checksums.txt + SHA256 check, atomic swap)
 internal/cmd/update_check.go     → background update check; owns rootCmd.PersistentPreRunE
 internal/cmd/mcp.go              → mcp subcommand, --read-only, newMCPClientProvider (cached client)
 internal/cmd/mcp_args.go         → toolHandler, marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
-internal/cmd/mcp_tools.go        → 15 MCP tools (registerTools)
+internal/cmd/mcp_tools.go        → 22 MCP tools (registerTools); lifecycle ones in mcp_lifecycle_tools.go
 internal/cmd/mcp_daemon.go       → detached HTTP server, status/stop, state + lock files
 internal/cmd/mcp_detach_unix.go / mcp_detach_windows.go → setSysProcAttr, terminateProcess, isProcessRunning
 internal/client/http.go      → newResty (timeout, 128 MiB body cap, no cookie jar, silent logger, GET-only
@@ -106,6 +109,8 @@ internal/client/raw.go       → Raw (any site path, streamed, no retries, no 12
                                 ResponseError (status+body → *APIError)
 internal/client/oauth.go     → ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser (all take ctx)
 internal/client/session.go   → LoginPassword (POST /api/method/login, sid cookie, 2FA detection)
+internal/client/lifecycle.go → SubmitDoc/CancelDoc/AmendDoc/DuplicateDoc/RenameDoc/RestoreDeleted/DiscardDoc,
+                                workflow methods; StateError (exit 6) in errors.go
 internal/config/config.go    → Config/SiteConfig, Read, Load, env overrides, default paths
 internal/config/file.go      → File (yaml.Node editor), Edit/Overwrite (lock + atomic 0600 write), WriteFileAtomic
 internal/config/format.go    → number/date formats, FormatNumber, FormatDate
@@ -130,7 +135,7 @@ internal/version/            → Build-time version variables (ldflags)
 
 - **Error handling:** Wrap with `fmt.Errorf("context: %w", err)`. Never log and return; return and let caller decide.
 - **Stdout vs stderr:** Data goes to stdout, diagnostics/errors go to stderr.
-- **Exit codes (`exit.go`, part of the CLI contract; README table):** 0 ok, 1 generic, 2 usage, 3 auth, 4 not found, 5 permission, 6 validation/conflict, 7 network/server, 8 partial bulk, 130 interrupted. `classify` maps typed errors: `client.APIError` (status + exc_type), `client.AuthError` (login), `client.TransportError` (no response), `usageError` (`usageErrorf` for invalid flag values; anything cobra rejects before RunE is wrapped automatically), `partialError` (bulk). Return these types instead of plain errors where the class matters. With `--json`, `reportError` prints `{"error":{code,exit_code,status,exc_type,message}}` on stderr. Only the config TUI's explicit "Cancel" exits 0.
+- **Exit codes (`exit.go`, part of the CLI contract; README table):** 0 ok, 1 generic, 2 usage, 3 auth, 4 not found, 5 permission, 6 validation/conflict, 7 network/server, 8 partial bulk, 130 interrupted. `classify` maps typed errors: `client.APIError` (status + exc_type), `client.AuthError` (login), `client.TransportError` (no response), `client.StateError` (document in the wrong state, 6), `usageError` (`usageErrorf` for invalid flag values; anything cobra rejects before RunE is wrapped automatically), `partialError` (bulk). Return these types instead of plain errors where the class matters. With `--json`, `reportError` prints `{"error":{code,exit_code,status,exc_type,message}}` on stderr. Only the config TUI's explicit "Cancel" exits 0.
 - **No prompts without a terminal.** `runForm` returns `errNoInput` (a usage error) when `--no-input` is set or stdin is not a TTY; `confirm` turns it into "pass --yes". New prompts must go through `runForm`.
 - **Environment:** `applyEnv` (cobra.OnInitialize) fills `--site/--config/--timeout` from `FFC_SITE/FFC_CONFIG/FFC_TIMEOUT` when the flag is unset; an invalid value fails in the RunE wrapper (`trackRunStart`).
 - **Config precedence:** flags > env vars > config file > defaults.
@@ -172,6 +177,7 @@ Env vars:
 - `--output json` must stay byte-identical to the old `--json` (indented, HTML-escaped by encoding/json). YAML numbers go through `yamlNode` (yaml.v3 would quote a json.Number).
 - **`ffc api` defaults to GET even with fields** (gh switches to POST): a bare `-f` on `/api/resource/X` would create a document. Only `--input` implies POST. `SitePath` refuses absolute and `//host` URLs; `CheckHeaders`/`Raw` refuse `Authorization`, `Cookie`, `Host`, `X-Frappe-Site-Name` and `X-Forwarded-Host` (the last three route to another site on a bench). Keep both checks in the client: they are the credential boundary.
 - **MCP stdout is the JSON-RPC channel.** Tool handlers must never write to stdout or call `output.Print*`. Return results via `marshalResult`/`mcp.NewToolResultText` and errors via `mcp.NewToolResultError` with a nil Go error. Stderr is safe in stdio mode (clients log it) and is `mcp.log` in detached mode — never print secrets there (the daemon prints its bearer token only to a terminal; `ffc mcp status` shows it).
+- **Lifecycle:** every state change goes through Frappe's whitelisted methods (`frappe.client.submit` with the document as read, so the timestamp check applies; `frappe.client.cancel`, `rename_doc`, `frappe.model.workflow.*`, the Deleted Document `restore`). amend-doc and copy-doc build the copy client-side from GetDoc (`clean`): the v2 `/copy` route ignores its `ignore_no_copy` query parameter, so copy-doc reads "no copy" fields from `frappe.desk.form.load.getdoctype` (whose data is in `docs`, not `message`; the fake returns it with `frappetest.Response`). An amendment is `<name>-1`, an amendment of `<x>-<n>` is `<x>-<n+1>`; a second amendment of the same document is a duplicate. `restore` may give a hash- or series-named document a new name (`Deleted Document.new_name`). submit-doc/cancel-doc refuse a DocType with an active Workflow (StateError); a 403 reading Workflow skips the check. `discard` exists only in v16 (ErrNeedsV16). Workflow bulk is client-side (`bulk_workflow_approval` reports per-document failures only as msgprint).
 - MCP limits: results over 512 KiB are refused with a hint to narrow them; `run_report` defaults to 500 rows; bulk tools take at most 200 items; `--read-only` registers only read tools (call_method counts as a write).
 - The MCP detached-server state file is `~/.config/ffc/mcp.json` (pid, port, site, started_at, log_path, token, instance; 0600, the token is the HTTP bearer secret), guarded by a lock file; the log is `~/.config/ffc/mcp.log`. `ffc mcp stop --force` stops a PID that is alive but not health-confirmed.
 - `mcp_detach_unix.go` / `mcp_detach_windows.go` use build tags. Keep `syscall`/`golang.org/x/sys/windows` fields out of untagged files.

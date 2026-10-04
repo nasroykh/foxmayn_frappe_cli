@@ -31,3 +31,10 @@ type AuthError struct {
 }
 
 func (e *AuthError) Error() string { return e.Message }
+
+// StateError is an operation the document's current state does not allow,
+// found before anything was sent (e.g. amending a document that is not
+// cancelled). The CLI treats it like a validation error.
+type StateError struct{ Message string }
+
+func (e *StateError) Error() string { return e.Message }

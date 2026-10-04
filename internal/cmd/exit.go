@@ -64,6 +64,7 @@ func classify(err error) (int, string) {
 		auth    *client.AuthError
 		api     *client.APIError
 		tr      *client.TransportError
+		state   *client.StateError
 	)
 	switch {
 	case err == nil:
@@ -80,6 +81,8 @@ func classify(err error) (int, string) {
 		return exitAuth, "auth"
 	case errors.As(err, &api):
 		return classifyAPI(api)
+	case errors.As(err, &state):
+		return exitValidation, "validation"
 	case errors.As(err, &tr):
 		return exitNetwork, "network"
 	}

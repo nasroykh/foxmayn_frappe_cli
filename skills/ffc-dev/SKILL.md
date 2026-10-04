@@ -52,11 +52,15 @@ internal/cmd/run_report.go    → run-report subcommand, limitReportRows
 internal/cmd/call_method.go   → call-method subcommand
 internal/cmd/bulk.go          → runBulk worker pool, bulkReport, parseObjects/parseNames/splitUpdates, bulkFlags
 internal/cmd/bulk_{create,update,delete}.go → bulk commands (--concurrency 1-10, --fail-fast)
+internal/cmd/{submit_doc,cancel_doc,discard_doc,amend_doc,rename_doc,restore_doc}.go → lifecycle commands
+                                  (amend_doc.go also has copy-doc); refuseWorkflow in submit_doc.go
+internal/cmd/workflow.go          → workflow transitions / apply / bulk-apply (bulkFlags) / pending
 internal/cmd/update.go            → update subcommand: size-limited download, signed checksums.txt (relsig) + SHA256 check, atomic binary swap
 internal/cmd/update_check.go      → background update check; owns rootCmd.PersistentPreRunE + state file
 internal/cmd/mcp.go               → mcp subcommand: stdio/HTTP/detach routing, --detach/--port/--read-only, newMCPClientProvider (cached client)
 internal/cmd/mcp_args.go          → toolHandler, marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
-internal/cmd/mcp_tools.go         → 15 MCP tools + handlers; registerTools(); compactReportResult
+internal/cmd/mcp_tools.go         → 22 MCP tools + handlers; registerTools(); compactReportResult
+internal/cmd/mcp_lifecycle_tools.go → submit/cancel/amend/copy/rename/apply_workflow + get_transitions (docTool, docHandler)
 internal/cmd/mcp_daemon.go        → startDetached(), runHTTPServer(), mcpStatusCmd, mcpStopCmd, state + lock files
 internal/cmd/mcp_detach_unix.go   → setSysProcAttr (Setsid=true), terminateProcess, isProcessRunning — build tag: !windows
 internal/cmd/mcp_detach_windows.go → same functions for Windows — build tag: windows
@@ -64,6 +68,8 @@ internal/client/http.go           → newResty (timeout, 128 MiB body cap, no co
 internal/client/client.go         → FrappeClient; New() picks auth; single do() request path; session relogin; Close(); GetDoc, GetList, …
 internal/client/oauth.go          → ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser (all take ctx)
 internal/client/session.go        → LoginPassword (POST /api/method/login, sid cookie, 2FA detection)
+internal/client/lifecycle.go      → SubmitDoc/CancelDoc/AmendDoc/DuplicateDoc (GetDoc + clean; no-copy fields from getdoctype),
+                                    RenameDoc, RestoreDeleted (returns new_name), DiscardDoc (v16), workflow methods
 internal/config/config.go         → Config/SiteConfig, Read, Load, env overrides, default paths
 internal/config/file.go           → File (yaml.Node editor), Edit/Overwrite (lock + atomic 0600 write), WriteFileAtomic
 internal/config/format.go         → number/date formats, FormatNumber, FormatDate

@@ -38,6 +38,7 @@ func registerTools(s *server.MCPServer, getClient clientFn) {
 	registerListDoctypes(s, getClient)
 	registerListReports(s, getClient)
 	registerRunReport(s, getClient)
+	registerGetTransitions(s, getClient)
 	if mcpReadOnly {
 		return
 	}
@@ -48,6 +49,7 @@ func registerTools(s *server.MCPServer, getClient clientFn) {
 	registerBulkCreate(s, getClient)
 	registerBulkUpdate(s, getClient)
 	registerBulkDelete(s, getClient)
+	registerLifecycleTools(s, getClient)
 }
 
 // jsonParam declares a parameter that takes a JSON value. It has no fixed
