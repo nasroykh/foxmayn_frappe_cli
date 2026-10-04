@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -115,10 +116,11 @@ func TestSiteConfigRoundTrip(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if st.Mode().Perm() != 0o600 {
+				// Windows has no Unix permission bits; Go reports 0666/0777 there.
+				if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 					t.Errorf("config mode = %v, want 0600", st.Mode().Perm())
 				}
-				if st, _ := os.Stat(filepath.Dir(path)); st.Mode().Perm() != 0o700 {
+				if st, _ := os.Stat(filepath.Dir(path)); runtime.GOOS != "windows" && st.Mode().Perm() != 0o700 {
 					t.Errorf("config dir mode = %v, want 0700", st.Mode().Perm())
 				}
 			})
