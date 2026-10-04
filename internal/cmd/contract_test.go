@@ -30,6 +30,9 @@ import (
 const (
 	contractDT    = "FFC Contract Test"
 	contractChild = "FFC Contract Test Item"
+	// contractMarker is the description of both fixture DocTypes; teardown
+	// refuses to touch a DocType of the same name without it.
+	contractMarker = "Created by the ffc contract tests; safe to delete."
 )
 
 // contractSite resolves the site under test, or skips.
@@ -94,14 +97,14 @@ func setupContract(t *testing.T, c *client.FrappeClient) {
 		}
 	}
 	mustCreate("DocType", map[string]interface{}{
-		"name": contractChild, "module": "Custom", "custom": 1, "istable": 1,
+		"name": contractChild, "module": "Custom", "custom": 1, "istable": 1, "description": contractMarker,
 		"fields": []interface{}{
 			map[string]interface{}{"fieldname": "item", "label": "Item", "fieldtype": "Data"},
 			map[string]interface{}{"fieldname": "qty", "label": "Qty", "fieldtype": "Int"},
 		},
 	})
 	mustCreate("DocType", map[string]interface{}{
-		"name": contractDT, "module": "Custom", "custom": 1, "is_submittable": 1, "autoname": "hash",
+		"name": contractDT, "module": "Custom", "custom": 1, "is_submittable": 1, "autoname": "hash", "description": contractMarker,
 		"fields": []interface{}{
 			map[string]interface{}{"fieldname": "title", "label": "Title", "fieldtype": "Data"},
 			map[string]interface{}{"fieldname": "status", "label": "Status", "fieldtype": "Select", "options": "Open\nClosed"},
@@ -132,6 +135,15 @@ func teardownContract(t *testing.T, c *client.FrappeClient) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	for _, dt := range []string{contractDT, contractChild} {
+		d, err := c.GetDoc(ctx, "DocType", dt)
+		if err != nil {
+			continue // absent (or unreadable): nothing of ours to remove
+		}
+		if d["description"] != contractMarker {
+			t.Fatalf("DocType %q exists but was not created by these tests; refusing to delete it", dt)
+		}
+	}
 	rows, err := c.GetList(ctx, contractDT, client.ListOptions{Fields: []string{"name", "docstatus"}, Limit: -1})
 	if err == nil {
 		// Longer names first: "x-1-1" before "x-1" before "x".

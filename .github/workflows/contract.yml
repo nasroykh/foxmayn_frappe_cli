@@ -43,7 +43,11 @@ jobs:
         run: |
           curl -fsSL "https://raw.githubusercontent.com/frappe/frappe_docker/${FRAPPE_DOCKER_SHA}/pwd.yml" -o pwd.yml
           sed -i -E "s#image: frappe/erpnext:v[0-9.]+#image: frappe/erpnext:${ERPNEXT}#" pwd.yml
-          grep -n 'image: frappe/erpnext' pwd.yml
+          # Fail if the image swap matched nothing (pwd.yml changed upstream).
+          grep -q "image: frappe/erpnext:${ERPNEXT}$" pwd.yml
+          if grep -E 'image: frappe/erpnext:' pwd.yml | grep -vq "${ERPNEXT}$"; then
+            echo "pwd.yml still references another erpnext image"; exit 1
+          fi
           docker compose -f pwd.yml up -d
           docker compose -f pwd.yml wait create-site
           for i in $(seq 1 60); do
