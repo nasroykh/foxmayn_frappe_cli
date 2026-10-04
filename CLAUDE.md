@@ -24,7 +24,8 @@ make tidy           # go mod tidy
 make vet            # go vet ./...
 make fmt            # gofmt -w .
 make test           # go test -race ./...
-make lint           # gofmt check, go vet, staticcheck (if installed)
+make lint           # gofmt check, go vet, staticcheck (pinned, via go run)
+make vuln           # govulncheck (pinned, via go run)
 make clean          # Remove binary
 ```
 
@@ -60,7 +61,7 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 **Key files:**
 - `.goreleaser.yaml` — build matrix, archive naming, checksum config
 - `.github/workflows/release.yml` — triggers on `v*` tags; runs `go mod tidy -diff`, vet and tests, then GoReleaser and a build-provenance attestation. Actions are pinned to commit SHAs.
-- `.github/workflows/ci.yml` — tidy check, vet, race tests and a cross-build on every push/PR
+- `.github/workflows/ci.yml` — gofmt, tidy check, vet, race tests, staticcheck, govulncheck and a cross-build on every push/PR
 - `install.sh` — Linux/macOS: detects OS/arch, downloads tarball, verifies SHA256, installs to `/usr/local/bin` or `~/.local/bin`
 - `install.ps1` — Windows: detects arch, downloads zip, verifies SHA256, installs to `%LOCALAPPDATA%\Programs\ffc`, adds to user PATH
 
@@ -106,6 +107,14 @@ internal/relsig/             → Ed25519 sign/verify of checksums.txt (domain-se
 tools/relsign/               → keygen / sign / verify for the release key (run by GoReleaser, not shipped)
 internal/version/            → Build-time version variables (ldflags)
 ```
+
+## Testing
+
+- **Fake Frappe (`internal/frappetest`).** An in-memory site for unit tests: `/api/resource` CRUD with filters, fields, paging and ordering, the `/api/method` endpoints ffc calls, API-key/Bearer/session auth, login and logout counters, and Frappe's real error shapes (`exc_type`, `_server_messages`, `exception`, captured from a v16 site). `HandleMethod` adds a whitelisted method, `Handle("METHOD /path", h)` overrides a route (`ErrorHandler`, `HTMLPage`), and `Requests()` returns what was sent.
+- **CLI harness (`internal/cmd/cli_harness_test.go`).** `fakeConfig(t, site, "apikey"|"password"|"oauth")` writes a config; `runFFC(t, cfg, stdin, args...)` runs the root command with stdout/stderr captured and resets every flag afterwards.
+- **MCP.** `newMCPFake(t, readOnly)` registers the tools against a fake site; `callTool` goes through JSON-RPC so argument decoding matches a real client.
+- **Contract tests (`internal/cmd/contract_test.go`, build tag `contract`).** Run against a real, disposable site: `make contract SITE=<ffc config site>`, or `FFC_CONTRACT_URL` with `FFC_CONTRACT_API_KEY`/`_SECRET` or `FFC_CONTRACT_USER`/`_PASSWORD`. Each run creates the custom submittable DocType `FFC Contract Test` (child `FFC Contract Test Item`, a Custom Field and a Property Setter), and removes it again, leftovers of an interrupted run included. They pin number literals (Currency always `x.0`), the list default (`name` only), child-table PUT (replaces rows), submit/cancel/amend (`frappe.client.submit` takes the doc, an amendment is `<name>-1`, editing a submitted doc is UpdateAfterSubmitError 417), schema merging, session logout and POST without CSRF, and that the fake fails like the real site. `.github/workflows/contract.yml` runs them nightly against ERPNext v15 and v16 from frappe_docker's pwd.yml.
+- Every new command or tool ships with tests against the fake. Behaviour the fake cannot prove (real Frappe semantics) belongs in the contract tests (T1.7 layer 2).
 
 ## Conventions
 
