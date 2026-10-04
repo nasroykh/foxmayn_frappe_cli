@@ -193,7 +193,13 @@ func (c *FrappeClient) do(ctx context.Context, method, path string, body interfa
 		return apiError(resp, hints)
 	}
 	if out == nil {
-		return nil
+		// The result is not needed, but a 2xx HTML page (a login proxy, a
+		// wrong URL) must not pass for success: require JSON unless empty.
+		if len(resp.Body()) == 0 {
+			return nil
+		}
+		var ignored json.RawMessage
+		return decodeJSON(resp, &ignored)
 	}
 	return decodeJSON(resp, out)
 }
@@ -275,15 +281,6 @@ func (fe *frappeErrorResponse) userMessage() string {
 		return stripHTML(s)
 	}
 	return ""
-}
-
-// frappeUserMessage parses body and returns its user-facing message.
-func frappeUserMessage(body []byte) string {
-	var fe frappeErrorResponse
-	if json.Unmarshal(body, &fe) != nil {
-		return ""
-	}
-	return fe.userMessage()
 }
 
 // apiError converts a >=400 response into a user-facing error. For statuses
