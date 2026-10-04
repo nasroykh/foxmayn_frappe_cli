@@ -6,7 +6,7 @@ BINARY="ffc"
 
 # Ed25519 public keys that sign checksums.txt (base64, raw 32 bytes). Keep in
 # sync with ReleaseKeys in internal/relsig/keys.go (TestInstallScriptInSync).
-RELEASE_KEYS="5r/VTDFnWuvqWN2aMxp3Gn3KZOxbDvdkwgw/8gwV6Co="
+RELEASE_KEYS="5r/VTDFnWuvqWN2aMxp3Gn3KZOxbDvdkwgw/8gwV6Co= T7oC0UPkoBuTW54rFaVG8fgvzFvsp2m1VYZ24HDUts0="
 
 # verify_signature checks checksums.txt.sig against checksums.txt with the
 # domain prefix ffc signs (internal/relsig). It needs OpenSSL 3 for Ed25519

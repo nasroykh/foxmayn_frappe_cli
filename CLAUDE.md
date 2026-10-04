@@ -43,7 +43,9 @@ git push origin v0.1.0
 
 GitHub Actions will cross-compile for linux/darwin/windows × amd64/arm64, create a GitHub Release, upload the tarballs, and generate `checksums.txt` and its Ed25519 signature `checksums.txt.sig`.
 
-**Release signing.** GoReleaser's `signs` step runs `go run ./tools/relsign sign` with the `FFC_RELEASE_SIGNING_KEY` repository secret (base64 Ed25519 seed). `ffc update` verifies the signature against `internal/relsig/keys.go` and refuses a release without a valid one. relsign refuses a secret that does not match `ReleaseKeys`, and `TestReleaseKeysConfigured` fails while `ReleaseKeys` is empty. To rotate: generate a key with `go run ./tools/relsign keygen <file>`, add its public key to `ReleaseKeys` next to the old one, ship a release signed with the old key, then switch the secret. Never commit a private key.
+**Release signing.** GoReleaser's `signs` step runs `go run ./tools/relsign sign` with the `FFC_RELEASE_SIGNING_KEY` repository secret (base64 Ed25519 seed). `ffc update` verifies the signature against `internal/relsig/keys.go` and refuses a release without a valid one. relsign refuses a secret that does not match `ReleaseKeys`, and `TestReleaseKeysConfigured` fails while `ReleaseKeys` is empty. To rotate: generate a key with `go run ./tools/relsign keygen <file>`, add its public key to `ReleaseKeys` (and `RELEASE_KEYS` in install.sh) next to the old one, ship a release signed with the old key, then switch the secret. Never commit a private key.
+
+**Backup key.** `ReleaseKeys` also holds an offline backup key (second entry) whose private half is not in CI. If the CI key is lost or leaked, switch `FFC_RELEASE_SIGNING_KEY` to the backup key (released binaries since v1.6.3 already trust it), remove the compromised key from `ReleaseKeys` and install.sh in that release, and generate a new offline backup.
 
 End users install with:
 
