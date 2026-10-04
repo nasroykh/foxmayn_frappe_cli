@@ -274,3 +274,40 @@ func TestLockReleaseKeepsAnotherHoldersLock(t *testing.T) {
 		t.Fatalf("lock still present after release: %v", err)
 	}
 }
+
+func TestRenameSite(t *testing.T) {
+	// A key parsed as a number must load as a string name after the rename.
+	p := writeTemp(t, "default_site: 8000\nsites:\n  8000: {url: x}\n  Prod: {url: y}\n")
+	if err := Edit(p, func(f *File) error { return f.RenameSite("8000", "dev") }); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Read(p)
+	if err != nil || cfg.DefaultSite != "dev" || cfg.Sites["dev"].URL != "x" {
+		t.Fatalf("got %+v, %v", cfg, err)
+	}
+	// A numeric new name round-trips too.
+	if err := Edit(p, func(f *File) error { return f.RenameSite("dev", "9000") }); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := Read(p); err != nil || cfg.Sites["9000"].URL != "x" || cfg.DefaultSite != "9000" {
+		t.Fatalf("got %+v, %v", cfg, err)
+	}
+
+	// A name differing only in case from another site is taken.
+	if err := Edit(p, func(f *File) error { return f.RenameSite("9000", "prod") }); err == nil {
+		t.Fatal("rename to a case variant of another site must fail")
+	}
+	// Changing the case of the site itself is allowed.
+	if err := Edit(p, func(f *File) error { return f.RenameSite("Prod", "PROD") }); err != nil {
+		t.Fatal(err)
+	}
+
+	// default_site that resolves case-insensitively follows the rename.
+	p = writeTemp(t, "default_site: prod\nsites:\n  Prod: {url: y}\n  dev: {url: x}\n")
+	if err := Edit(p, func(f *File) error { return f.RenameSite("Prod", "live") }); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := Read(p); cfg.DefaultSite != "live" {
+		t.Fatalf("default_site = %q, want live", cfg.DefaultSite)
+	}
+}

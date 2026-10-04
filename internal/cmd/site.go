@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -17,6 +18,10 @@ var (
 	saOAuth    bool
 	saAPIKey   bool
 	saPassword bool
+	saSetup    setupFlags
+
+	srYes bool
+	seURL string
 )
 
 // ─── ffc site ────────────────────────────────────────────────────────────────
@@ -30,7 +35,10 @@ Examples:
   ffc site list
   ffc site add
   ffc site add --oauth
-  ffc site remove staging
+  echo "$SECRET" | ffc site add --name staging --url https://staging.example.com --api-key KEY --api-secret-stdin
+  ffc site remove staging --yes
+  ffc site rename staging stage
+  ffc site edit stage --url https://stage.example.com
   ffc site use production
 `,
 }
@@ -106,6 +114,18 @@ Without flags, a menu lets you choose the authentication method.
 Use --oauth    to use the OAuth 2.0 browser flow (Authorization Code + PKCE).
 Use --apikey   to use the API key / secret flow.
 Use --password to use username/email + password (session cookie) login.
+
+Non-interactive (no terminal needed): pass --name, --url and one credential set.
+The secret is never a flag value: pipe it with --api-secret-stdin /
+--password-stdin, or set FFC_API_SECRET / FFC_PASSWORD. The credentials are
+checked against the site before it is saved. Replacing an existing site needs
+--force. OAuth is always interactive.
+
+Examples:
+  ffc site add
+  echo "$SECRET" | ffc site add --name prod --url https://erp.example.com --api-key KEY --api-secret-stdin
+  echo "$PW" | ffc site add --name dev --url http://localhost:8000 --username admin --password-stdin --force
+  FFC_API_SECRET="$SECRET" ffc site add --name prod --url erp.example.com --api-key KEY
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath, err := resolveCfgPath()
@@ -118,13 +138,35 @@ Use --password to use username/email + password (session cookie) login.
 			return err
 		}
 
+		if saSetup.active() {
+			name, site, err := saSetup.resolve(saOAuth, saAPIKey, saPassword)
+			if err != nil {
+				return err
+			}
+			if _, exists := cfg.Sites[name]; exists && !saSetup.force {
+				return usageErrorf("site %q already exists: pass --force to replace it", name)
+			}
+			if err := verifySite(cmd.Context(), site); err != nil {
+				return err
+			}
+			if err := addSiteToConfig(cfgPath, name, site); err != nil {
+				return fmt.Errorf("saving site: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "\n✓ Site %q added to %s\n", name, cfgPath)
+			printSiteSaved(name, site)
+			return nil
+		}
+
 		method, err := chooseAuthMethod("How do you want to connect to the new site?", saOAuth, saAPIKey, saPassword)
 		if err != nil {
 			return err
 		}
 		confirmOverwrite := func(name string) error {
-			if _, exists := cfg.Sites[name]; !exists {
+			if _, exists := cfg.Sites[name]; !exists || saSetup.force {
 				return nil
+			}
+			if inputDisabled() {
+				return usageErrorf("site %q already exists: pass --force to replace it", name)
 			}
 			ok, err := confirmPrompt(fmt.Sprintf("Site %q already exists.", name), "Replace it with the new credentials?")
 			if err != nil {
@@ -154,7 +196,14 @@ Use --password to use username/email + password (session cookie) login.
 var siteRemoveCmd = &cobra.Command{
 	Use:   "remove [name]",
 	Short: "Remove a site from your config",
-	Args:  cobra.MaximumNArgs(1),
+	Long: `Remove a site from your config. Without --yes a confirmation is asked; with
+no terminal that is a usage error (exit 2) and the config is left unchanged.
+
+Examples:
+  ffc site remove staging
+  ffc site remove staging --yes
+`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfgPath, err := resolveCfgPath()
 		if err != nil {
@@ -169,12 +218,10 @@ var siteRemoveCmd = &cobra.Command{
 			return err
 		}
 
-		ok, err := confirmPrompt(fmt.Sprintf("Remove site %q?", name), fmt.Sprintf("URL: %s", cfg.Sites[name].URL))
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("%w: site %q kept", errAborted, name)
+		if !srYes {
+			if err := confirm(fmt.Sprintf("Remove site %q (%s)?", name, cfg.Sites[name].URL)); err != nil {
+				return err
+			}
 		}
 
 		var wasDefault bool
@@ -198,6 +245,89 @@ var siteRemoveCmd = &cobra.Command{
 				fmt.Fprintln(os.Stderr, "  It was your default site; no sites remain.")
 			}
 		}
+		return nil
+	},
+}
+
+// ─── ffc site rename ─────────────────────────────────────────────────────────
+
+var siteRenameCmd = &cobra.Command{
+	Use:   "rename OLD NEW",
+	Short: "Rename a site in your config",
+	Long: `Rename a site, keeping its position and comments in the config file. If OLD is
+the default site, default_site follows the new name.
+
+Examples:
+  ffc site rename staging stage
+`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		oldName, newName := args[0], strings.TrimSpace(args[1])
+		if err := validateSiteName(newName); err != nil {
+			return &usageError{err}
+		}
+		cfgPath, err := resolveCfgPath()
+		if err != nil {
+			return err
+		}
+		if err := config.Edit(cfgPath, func(f *config.File) error {
+			return f.RenameSite(oldName, newName)
+		}); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "✓ Site %q renamed to %q.\n", oldName, newName)
+		return nil
+	},
+}
+
+// ─── ffc site edit ───────────────────────────────────────────────────────────
+
+var siteEditCmd = &cobra.Command{
+	Use:   "edit NAME",
+	Short: "Change the settings of a configured site",
+	Long: `Change the URL of a configured site. The stored credentials are checked against
+the new URL before anything is saved; a failing check leaves the config as it was.
+
+Examples:
+  ffc site edit staging --url https://staging2.example.com
+`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+		if !cmd.Flags().Changed("url") {
+			return usageErrorf("nothing to change: pass --url")
+		}
+		newURL, err := normalizeSiteURL(seURL)
+		if err != nil {
+			return &usageError{err}
+		}
+		cfgPath, err := resolveCfgPath()
+		if err != nil {
+			return err
+		}
+		cfg, err := readConfig(cfgPath)
+		if err != nil {
+			return err
+		}
+		site, ok := cfg.Sites[name]
+		if !ok {
+			return fmt.Errorf("site %q not found in config", name)
+		}
+		if site.IsOAuth() {
+			// The OAuth client and tokens belong to the current server.
+			return usageErrorf("site %q uses OAuth, which is registered with its current server: run 'ffc site add --oauth --force' with the new URL instead", name)
+		}
+		site.Name = name
+		site.URL = newURL
+		if err := verifySite(cmd.Context(), site); err != nil {
+			return err
+		}
+		if err := config.Edit(cfgPath, func(f *config.File) error {
+			return f.SetSiteURL(name, newURL)
+		}); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "✓ Site %q now points at %s.\n", name, newURL)
 		return nil
 	},
 }
@@ -285,6 +415,10 @@ func init() {
 	siteAddCmd.Flags().BoolVar(&saPassword, "password", false, "Use username/email + password (session cookie) login")
 	siteAddCmd.MarkFlagsMutuallyExclusive("oauth", "apikey", "password")
 
-	siteCmd.AddCommand(siteListCmd, siteAddCmd, siteRemoveCmd, siteUseCmd)
+	saSetup.register(siteAddCmd)
+	siteRemoveCmd.Flags().BoolVarP(&srYes, "yes", "y", false, "Remove without asking for confirmation")
+	siteEditCmd.Flags().StringVar(&seURL, "url", "", "New site URL")
+
+	siteCmd.AddCommand(siteListCmd, siteAddCmd, siteRemoveCmd, siteRenameCmd, siteEditCmd, siteUseCmd)
 	rootCmd.AddCommand(siteCmd)
 }

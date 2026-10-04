@@ -34,11 +34,16 @@ func LoginPassword(ctx context.Context, siteURL, usr, pwd string) (string, error
 	var body loginBody
 	jsonErr := json.Unmarshal(resp.Body(), &body)
 
-	if resp.StatusCode() >= 400 {
+	switch code := resp.StatusCode(); {
+	case code == http.StatusUnauthorized, code == http.StatusForbidden, code == http.StatusExpectationFailed:
+		// Rejected credentials (or a disabled user).
 		if body.Message != "" {
-			return "", fmt.Errorf("login failed: %s", stripHTML(body.Message))
+			return "", &AuthError{resp.StatusCode(), "login failed: " + stripHTML(body.Message)}
 		}
-		return "", fmt.Errorf("login failed (HTTP %d)", resp.StatusCode())
+		return "", &AuthError{resp.StatusCode(), fmt.Sprintf("login failed (HTTP %d)", resp.StatusCode())}
+	case code >= 400:
+		// Rate limit, server error, wrong path: not a credentials problem.
+		return "", apiError(resp, nil)
 	}
 
 	// A 2xx with a non-JSON body means we hit something other than Frappe's
@@ -51,11 +56,11 @@ func LoginPassword(ctx context.Context, siteURL, usr, pwd string) (string, error
 	// "Logged In" when two-factor authentication is required. This simple
 	// usr/pwd flow doesn't support 2FA.
 	if body.Verification != nil || body.TmpID != "" {
-		return "", fmt.Errorf("two-factor authentication is enabled for this account — use 'ffc init --oauth' or an API key instead")
+		return "", &AuthError{Message: "two-factor authentication is enabled for this account — use 'ffc init --oauth' or an API key instead"}
 	}
 
 	if body.Message != "Logged In" && body.Message != "No App" && body.FullName == "" {
-		return "", fmt.Errorf("login failed: unexpected response from server")
+		return "", &AuthError{Message: "login failed: unexpected response from server"}
 	}
 
 	sid := sidFromCookies(resp.Cookies())
@@ -63,7 +68,7 @@ func LoginPassword(ctx context.Context, siteURL, usr, pwd string) (string, error
 		sid = body.SID
 	}
 	if sid == "" || sid == "Guest" {
-		return "", fmt.Errorf("login succeeded but no session cookie was returned")
+		return "", &AuthError{Message: "login succeeded but no session cookie was returned"}
 	}
 	return sid, nil
 }

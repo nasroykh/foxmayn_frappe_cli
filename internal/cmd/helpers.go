@@ -48,13 +48,13 @@ func validateFiltersJSON(raw string) error {
 	}
 	var v interface{}
 	if err := json.Unmarshal([]byte(raw), &v); err != nil {
-		return fmt.Errorf("--filters: invalid JSON: %w", err)
+		return usageErrorf("--filters: invalid JSON: %w", err)
 	}
 	switch v.(type) {
 	case map[string]interface{}, []interface{}:
 		return nil
 	}
-	return errors.New("--filters: expected a JSON object or array")
+	return usageErrorf("--filters: expected a JSON object or array")
 }
 
 // moduleFilter builds a Frappe list-filter JSON for an optional module name,
@@ -137,6 +137,8 @@ func confirm(prompt string) error {
 	switch {
 	case errors.Is(err, errAborted):
 		return err
+	case errors.Is(err, errNoInput):
+		return &usageError{fmt.Errorf("confirmation needed: pass --yes (%w)", err)}
 	case err != nil:
 		return fmt.Errorf("confirmation prompt failed (pass --yes to skip it): %w", err)
 	case !ok:
@@ -171,7 +173,7 @@ func readInput(inline, file string) ([]byte, error) {
 	switch file {
 	case "":
 		if inline == "" {
-			return nil, errors.New("provide --data or --file")
+			return nil, usageErrorf("provide --data or --file")
 		}
 		return []byte(inline), nil
 	case "-":
@@ -196,7 +198,7 @@ func parseObject(flag, raw string) (map[string]interface{}, error) {
 		if err == nil {
 			err = errors.New("got null")
 		}
-		return nil, fmt.Errorf("%s: expected a JSON object: %w", flag, err)
+		return nil, usageErrorf("%s: expected a JSON object: %w", flag, err)
 	}
 	return m, nil
 }
@@ -246,7 +248,7 @@ func selectKeys(doc map[string]interface{}, keys string) map[string]interface{} 
 func listLimit(flag string, n int) (int, error) {
 	switch {
 	case n < 0:
-		return 0, fmt.Errorf("%s must be >= 0 (0 means no limit)", flag)
+		return 0, usageErrorf("%s must be >= 0 (0 means no limit)", flag)
 	case n == 0:
 		return -1, nil
 	}

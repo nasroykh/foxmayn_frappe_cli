@@ -39,7 +39,7 @@ Examples:
 		if ldFields != "" {
 			var err error
 			if fields, err = parseFields(ldFields); err != nil {
-				return fmt.Errorf("--fields: %w", err)
+				return usageErrorf("--fields: %w", err)
 			}
 		}
 		if err := validateFiltersJSON(ldFilters); err != nil {
@@ -50,7 +50,7 @@ Examples:
 			return err
 		}
 		if ldStart < 0 {
-			return fmt.Errorf("--start must be >= 0")
+			return usageErrorf("--start must be >= 0")
 		}
 
 		opts := client.ListOptions{
@@ -95,12 +95,12 @@ func parseFields(raw string) ([]string, error) {
 	if strings.HasPrefix(raw, "[") {
 		var fields []string
 		if err := json.Unmarshal([]byte(raw), &fields); err != nil {
-			return nil, fmt.Errorf("invalid JSON array: %w", err)
+			return nil, usageErrorf("invalid JSON array: %w", err)
 		}
 		return fields, nil
 	}
 	if strings.HasPrefix(raw, "{") {
-		return nil, fmt.Errorf("expected a JSON array or comma-separated names, not an object")
+		return nil, usageErrorf("expected a JSON array or comma-separated names, not an object")
 	}
 	return splitCSV(raw), nil
 }

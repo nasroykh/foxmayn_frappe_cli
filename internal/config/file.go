@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v3"
@@ -186,6 +187,50 @@ func (f *File) RemoveSite(name string) error {
 		}
 		f.Set("default_site", next)
 	}
+	return nil
+}
+
+// RenameSite renames a site entry in place (position and comments are kept)
+// and keeps default_site pointing at it when oldName was the default.
+func (f *File) RenameSite(oldName, newName string) error {
+	sites := mapValue(f.root, "sites")
+	if sites == nil || sites.Kind != yaml.MappingNode || mapValue(sites, oldName) == nil {
+		return fmt.Errorf("site %q not found in config", oldName)
+	}
+	// Site lookup falls back to a case-insensitive match, so a name that
+	// differs from another site only in case would make it ambiguous.
+	defaultSite, defaultExact := f.Get("default_site"), false
+	for i := 0; i+1 < len(sites.Content); i += 2 {
+		key := sites.Content[i].Value
+		if key != oldName && strings.EqualFold(key, newName) {
+			return fmt.Errorf("site %q already exists", key)
+		}
+		defaultExact = defaultExact || key == defaultSite
+	}
+	for i := 0; i+1 < len(sites.Content); i += 2 {
+		if k := sites.Content[i]; k.Value == oldName {
+			// A key parsed as a number (8000:) keeps its !!int tag otherwise,
+			// and the file no longer loads.
+			k.Value, k.Tag, k.Style = newName, "!!str", 0
+			break
+		}
+	}
+	// default_site follows the site it resolves to: an exact match, or the
+	// case-insensitive fallback config.Load uses.
+	if defaultSite == oldName || !defaultExact && strings.EqualFold(defaultSite, oldName) {
+		f.Set("default_site", newName)
+	}
+	return nil
+}
+
+// SetSiteURL changes the url of an existing site, leaving its other keys (and
+// comments) untouched.
+func (f *File) SetSiteURL(name, url string) error {
+	site := mapValue(mapValue(f.root, "sites"), name)
+	if site == nil || site.Kind != yaml.MappingNode {
+		return fmt.Errorf("site %q not found in config", name)
+	}
+	setScalar(site, "url", url, "!!str")
 	return nil
 }
 

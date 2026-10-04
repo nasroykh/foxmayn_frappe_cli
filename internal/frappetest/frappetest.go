@@ -272,6 +272,13 @@ func (s *Site) serve(w http.ResponseWriter, r *http.Request) {
 
 	user := s.authenticate(r)
 	if user == "" {
+		// Like Frappe: credentials that do not match are an
+		// AuthenticationError (401); none, or a dead session, leave the
+		// request as Guest, which gets a PermissionError (403).
+		if r.Header.Get("Authorization") != "" {
+			writeError(w, &Error{http.StatusUnauthorized, "AuthenticationError", "Invalid authorization credentials"})
+			return
+		}
 		writeError(w, Permission("User Guest does not have doctype access via role permission"))
 		return
 	}

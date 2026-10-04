@@ -13,10 +13,20 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// TestMain clears the selection variables a developer may have exported, so
+// tests start from the config they write; tests set them with t.Setenv.
+func TestMain(m *testing.M) {
+	for _, k := range []string{"FFC_SITE", "FFC_CONFIG", "FFC_TIMEOUT"} {
+		_ = os.Unsetenv(k)
+	}
+	os.Exit(m.Run())
+}
+
 // cliResult is what one ffc invocation wrote and returned.
 type cliResult struct {
 	Stdout, Stderr string
 	Err            error
+	Code           int // process exit code
 }
 
 // fakeConfig writes a config whose default site "t" points at site with the
@@ -44,15 +54,29 @@ func fakeConfig(t *testing.T, site *frappetest.Site, auth string) string {
 	return path
 }
 
-// runFFC runs ffc with args against the config at cfgPath, with stdin as
+// cliEnv holds environment variables runFFC sets after clearing the FFC_*
+// ones; a test sets it and resets it to nil when done.
+var cliEnv map[string]string
+
+// runFFC runs ffc with args against the config at cfgPath ("" passes no
+// --config), with stdin as
 // standard input, and captures stdout and stderr. Every flag is reset
 // afterwards, so runs do not leak into each other.
 func runFFC(t *testing.T, cfgPath, stdin string, args ...string) cliResult {
+	t.Helper()
+	return runFFCCtx(t, context.Background(), cfgPath, stdin, args...)
+}
+
+// runFFCCtx is runFFC with the context the command runs under.
+func runFFCCtx(t *testing.T, ctx context.Context, cfgPath, stdin string, args ...string) cliResult {
 	t.Helper()
 	t.Setenv("FFC_NO_UPDATE_CHECK", "1")
 	t.Setenv("CI", "1") // no spinner
 	for _, k := range []string{"FFC_API_KEY", "FFC_API_SECRET", "FFC_URL"} {
 		t.Setenv(k, "")
+	}
+	for k, v := range cliEnv {
+		t.Setenv(k, v)
 	}
 
 	dir := t.TempDir()
@@ -84,11 +108,16 @@ func runFFC(t *testing.T, cfgPath, stdin string, args ...string) cliResult {
 		resetFlags(rootCmd)
 	}()
 
-	rootCmd.SetArgs(append([]string{"--config", cfgPath}, args...))
-	err := rootCmd.ExecuteContext(context.Background())
+	// Cobra keeps the first context a subcommand ran with; give every
+	// command this run's context.
+	setContextAll(rootCmd, ctx)
+	if cfgPath != "" {
+		args = append([]string{"--config", cfgPath}, args...)
+	}
+	code, err := execute(ctx, args, files["stderr"])
 	out, _ := os.ReadFile(files["stdout"].Name())
 	errOut, _ := os.ReadFile(files["stderr"].Name())
-	return cliResult{string(out), string(errOut), err}
+	return cliResult{string(out), string(errOut), err, code}
 }
 
 // runCLI runs ffc with --json against a password-auth config pointing at url.
@@ -101,6 +130,7 @@ func runCLI(t *testing.T, url string, args ...string) (string, error) {
 
 // resetFlags restores every flag of c and its subcommands to its default.
 func resetFlags(c *cobra.Command) {
+
 	reset := func(f *pflag.Flag) {
 		_ = f.Value.Set(f.DefValue)
 		f.Changed = false
@@ -109,5 +139,12 @@ func resetFlags(c *cobra.Command) {
 	c.PersistentFlags().VisitAll(reset)
 	for _, sub := range c.Commands() {
 		resetFlags(sub)
+	}
+}
+
+func setContextAll(c *cobra.Command, ctx context.Context) {
+	c.SetContext(ctx)
+	for _, sub := range c.Commands() {
+		setContextAll(sub, ctx)
 	}
 }

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -54,7 +53,7 @@ Examples:
 			names = splitCSV(bdNames)
 		}
 		if len(names) == 0 {
-			return errors.New("provide --names or --file")
+			return usageErrorf("provide --names or --file")
 		}
 
 		if !bdYes {
