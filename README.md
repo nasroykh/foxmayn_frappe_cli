@@ -335,7 +335,7 @@ ffc api /private/files/contract.pdf --output-file contract.pdf
 echo '{"description":"x"}' | ffc api POST /api/resource/ToDo --input -
 ```
 
-- **Paths only.** `PATH` is relative to the site URL. Absolute and protocol-relative URLs are refused, so the credentials never reach another host. `-H` cannot override `Authorization` or `Cookie`.
+- **Paths only.** `PATH` is relative to the site URL. Absolute and protocol-relative URLs are refused, so the credentials never reach another host. `-H` cannot set `Authorization`, `Cookie`, `Host`, `X-Frappe-Site-Name` or `X-Forwarded-Host`: the last three pick the site on a multi-tenant bench.
 - **Method.** The default is GET, or POST when `--input` is given. Unlike `gh api`, fields alone do not switch to POST: on `/api/resource` that would create a document. To write, name the method.
 - **Fields.**
   - `-f key=value` sends a string.
@@ -346,7 +346,7 @@ echo '{"description":"x"}' | ffc api POST /api/resource/ToDo --input -
   - A terminal gets indented JSON or cleaned text. A binary body is refused: pass `--output-file` or redirect stdout.
   - `-i` prints the status line and headers to stderr, with cookie values hidden.
   - `--silent` prints nothing.
-  - A status of 400 or more prints the body and exits with the matching [exit code](#exit-codes).
+  - A status of 400 or more prints the body (with `--json`, only the error JSON on stderr) and exits with the matching [exit code](#exit-codes).
 - **Pagination.** `--paginate` fetches every page of a `/api/resource/<DocType>` or `/api/v2/document/<DocType>` list. The default page size is 500. It prints `{"data": [...]}`. Pages are requested by offset, so pass an `order_by` if the list may change during the run.
 - **Limits.** The request is not retried. `--timeout` bounds the whole download.
 

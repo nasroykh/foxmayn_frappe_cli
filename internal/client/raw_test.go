@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
@@ -17,6 +18,7 @@ func TestSitePath(t *testing.T) {
 		"/api/resource/Sales Invoice":  "/api/resource/Sales%20Invoice",
 		"/api/resource/A%2FB?x=1&y=2":  "/api/resource/A%2FB",
 		"/private/files/a b.pdf?v=1#f": "/private/files/a%20b.pdf",
+		"api/resource/A%2FB":           "/api/resource/A%2FB",
 	}
 	for in, want := range ok {
 		got, _, err := SitePath(in)
@@ -40,7 +42,7 @@ func TestRawRefusesAuthHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, h := range []string{"Authorization", "cookie"} {
+	for _, h := range []string{"Authorization", "cookie", "Host", "x-frappe-site-name", "X-Forwarded-Host"} {
 		hdr := http.Header{}
 		hdr.Set(h, "x")
 		if _, err := c.Raw(context.Background(), RawRequest{Method: "GET", Path: "/api/method/frappe.ping", Header: hdr}); err == nil {
@@ -62,5 +64,22 @@ func TestRawRefusesAuthHeaders(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	if resp.Status != 200 || string(b) == "" {
 		t.Fatalf("status %d body %q", resp.Status, b)
+	}
+}
+
+func TestRawReloginsExpiredSession(t *testing.T) {
+	f := &fakeSessionServer{}
+	c := newSessionClient(t, f)
+	c.mu.Lock()
+	c.loggedInAt = time.Now().Add(-time.Hour)
+	c.mu.Unlock()
+	f.valid.Store("expired")
+	resp, err := c.Raw(context.Background(), RawRequest{Method: "GET", Path: "/api/resource/ToDo/a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.Status != 200 || f.logins.Load() != 2 {
+		t.Fatalf("status %d, logins %d (want 200, 2)", resp.Status, f.logins.Load())
 	}
 }

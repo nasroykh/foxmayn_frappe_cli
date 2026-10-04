@@ -91,6 +91,13 @@ func TestAPIRefusesOtherHostsAndAuthHeaders(t *testing.T) {
 		{"api", "http:/x"},
 		{"api", "/api/method/x", "-H", "Authorization: token a:b"},
 		{"api", "/api/method/x", "-H", "cookie: sid=x"},
+		{"api", "/api/method/x", "-H", "Host: other.example"},
+		{"api", "/api/method/x", "-H", "X-Frappe-Site-Name: other"},
+		{"api", "/api/method/x", "-H", "X-Forwarded-Host: other"},
+		{"api", "POST", "/api/method/x", "--input", "-", "-F", "a=@-"},
+		{"api", "/api/method/x", "-F", "a=@"},
+		{"api", "/api/method/x", "-F", "a=[1]]"},
+		{"api", "/api/method/x", "-F", "o={}}"},
 		{"api", "/api/method/x", "-f", "novalue"},
 		{"api", "/api/method/x", "-F", "o={bad"},
 		{"api", "GET POST", "/api/method/x"},
@@ -116,9 +123,21 @@ func TestAPIErrorStatus(t *testing.T) {
 	if !strings.Contains(r.Stdout, "DoesNotExistError") {
 		t.Fatalf("stdout = %q", r.Stdout)
 	}
-	r = cmdTRun(t, s, "api", "/api/resource/ToDo/missing", "--silent")
-	if r.Code != exitNotFound || r.Stdout != "" {
-		t.Fatalf("--silent: exit %d stdout %q", r.Code, r.Stdout)
+	for _, flag := range []string{"--silent", "--json"} {
+		r = cmdTRun(t, s, "api", "/api/resource/ToDo/missing", flag)
+		if r.Code != exitNotFound || r.Stdout != "" {
+			t.Fatalf("%s: exit %d stdout %q", flag, r.Code, r.Stdout)
+		}
+	}
+
+	// A binary error body on a terminal still exits with the HTTP class.
+	s.Handle("GET /bin", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte{0, 1, 2})
+	}))
+	withTerminalStdout(t)
+	if r := cmdTRun(t, s, "api", "/bin"); r.Code != exitPermission {
+		t.Fatalf("binary 403: exit %d (%v)", r.Code, r.Err)
 	}
 }
 
@@ -219,6 +238,29 @@ func TestAPIPaginateV2(t *testing.T) {
 	req := s.RequestsTo("GET", "/api/v2/document/Currency")
 	if len(req) != 2 || req[1].Query.Get("start") != "2" || req[0].Query.Get("limit") != "500" {
 		t.Fatalf("requests = %+v", req)
+	}
+
+	// v15's v2 list has no has_next_page: a short page ends it.
+	s.Handle("GET /api/v2/document/Country", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("start") == "0" {
+			fmt.Fprint(w, `{"data":[{"name":"A"},{"name":"B"}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"data":[{"name":"C"}]}`)
+	}))
+	r = cmdTOK(t, cmdTRun(t, s, "api", "/api/v2/document/Country", "--paginate", "-f", "limit=2"))
+	if strings.TrimSpace(r.Stdout) != `{"data":[{"name":"A"},{"name":"B"},{"name":"C"}]}` {
+		t.Fatalf("v15 stdout = %q", r.Stdout)
+	}
+
+	// A server that ignores the offset is caught instead of looping.
+	s.Handle("GET /api/v2/document/Region", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":[{"name":"A"},{"name":"B"}]}`)
+	}))
+	if r := cmdTRun(t, s, "api", "/api/v2/document/Region", "--paginate", "-f", "limit=2"); r.Err == nil || !strings.Contains(r.Stderr, "ignores the offset") {
+		t.Fatalf("repeating pages: %v / %q", r.Err, r.Stderr)
 	}
 }
 

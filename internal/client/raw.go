@@ -28,6 +28,24 @@ type RawResponse struct {
 	Body   io.ReadCloser
 }
 
+// FixedHeaderError is a raw request that tries to set a header the client
+// controls.
+type FixedHeaderError struct{ Header string }
+
+func (e *FixedHeaderError) Error() string {
+	return fmt.Sprintf("the %s header is set from the site config and cannot be overridden", e.Header)
+}
+
+// CheckHeaders returns a *FixedHeaderError when h sets a header Raw refuses.
+func CheckHeaders(h http.Header) error {
+	for _, k := range fixedHeaders {
+		if _, ok := h[http.CanonicalHeaderKey(k)]; ok {
+			return &FixedHeaderError{k}
+		}
+	}
+	return nil
+}
+
 // SitePath splits a user-supplied path into its site-relative path and query.
 // Only paths on the configured site are accepted: an absolute URL or a
 // protocol-relative "//host" would send the credentials elsewhere.
@@ -39,8 +57,11 @@ func SitePath(p string) (string, url.Values, error) {
 	if u.Scheme != "" || u.Host != "" || u.User != nil || strings.HasPrefix(p, "//") {
 		return "", nil, fmt.Errorf("invalid path %q: only paths on the site are allowed, not URLs", p)
 	}
-	if !strings.HasPrefix(u.Path, "/") {
-		u.Path = "/" + u.Path
+	if !strings.HasPrefix(p, "/") {
+		// Parse again with the slash, so escapes such as %2F are kept.
+		if u, err = url.Parse("/" + p); err != nil {
+			return "", nil, fmt.Errorf("invalid path %q: %w", p, err)
+		}
 	}
 	q, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
@@ -49,19 +70,18 @@ func SitePath(p string) (string, url.Values, error) {
 	return u.EscapedPath(), q, nil
 }
 
-// authHeaders are set by the client from the site config; a request may not
-// replace them.
-var authHeaders = []string{"Authorization", "Cookie"}
+// fixedHeaders may not be set on a raw request: the credentials come from
+// the site config, and the others pick the site on a multi-tenant bench or
+// proxy, which would send those credentials to another site.
+var fixedHeaders = []string{"Authorization", "Cookie", "Host", "X-Frappe-Site-Name", "X-Forwarded-Host"}
 
 // Raw sends req with the site's credentials and returns the response without
 // decoding it or checking its status, so any endpoint (desk methods, file
 // downloads) can be used. The body is streamed: the 128 MiB cap of the other
 // methods does not apply, and the request is not retried.
 func (c *FrappeClient) Raw(ctx context.Context, req RawRequest) (*RawResponse, error) {
-	for _, h := range authHeaders {
-		if req.Header.Get(h) != "" {
-			return nil, fmt.Errorf("the %s header is set from the site config and cannot be overridden", h)
-		}
+	if err := CheckHeaders(req.Header); err != nil {
+		return nil, err
 	}
 	if !strings.HasPrefix(req.Path, "/") || strings.HasPrefix(req.Path, "//") {
 		return nil, fmt.Errorf("invalid path %q: use SitePath", req.Path)

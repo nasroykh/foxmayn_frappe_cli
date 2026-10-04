@@ -63,7 +63,8 @@ JSON body. With --input the body is the file and the fields go in the query.
 Output: the body is written to stdout as it arrives. On a terminal, JSON is
 indented, text is cleaned of control characters, and binary bodies are
 refused: use --output-file or redirect stdout. A response of 400 or more
-prints its body and exits with the matching exit code. The request is not
+prints its body (with --json, only the error JSON on stderr) and exits
+with the matching exit code. The request is not
 retried, and --timeout bounds the whole download.
 
 --paginate fetches every page of a /api/resource/<DocType> or
@@ -108,6 +109,18 @@ func buildAPIRequest(args []string) (client.RawRequest, error) {
 	}
 	req.Path, req.Query = path, query
 
+	stdinReaders := 0
+	if apiInput == "-" {
+		stdinReaders++
+	}
+	for _, f := range apiFields {
+		if _, v, _ := strings.Cut(f, "="); v == "@-" {
+			stdinReaders++
+		}
+	}
+	if stdinReaders > 1 {
+		return req, usageErrorf("stdin can be read only once: use one of --input - and -F key=@-")
+	}
 	fields, err := apiFieldValues()
 	if err != nil {
 		return req, err
@@ -127,10 +140,8 @@ func buildAPIRequest(args []string) (client.RawRequest, error) {
 		}
 		req.Header.Add(strings.TrimSpace(k), strings.TrimSpace(v))
 	}
-	for _, h := range []string{"Authorization", "Cookie"} {
-		if req.Header.Get(h) != "" {
-			return req, usageErrorf("the %s header comes from the site config and cannot be set", h)
-		}
+	if err := client.CheckHeaders(req.Header); err != nil {
+		return req, &usageError{err}
 	}
 
 	inQuery := apiInput != "" || req.Method == http.MethodGet || req.Method == http.MethodHead
@@ -198,6 +209,9 @@ func typedField(v string) (interface{}, error) {
 	case v == "null":
 		return nil, nil
 	case strings.HasPrefix(v, "@"):
+		if v == "@" {
+			return nil, usageErrorf("@ needs a file name, or - for stdin")
+		}
 		b, err := readInput("", strings.TrimPrefix(v, "@"))
 		if err != nil {
 			return nil, err
@@ -207,8 +221,11 @@ func typedField(v string) (interface{}, error) {
 		dec := json.NewDecoder(strings.NewReader(v))
 		dec.UseNumber()
 		var out interface{}
-		if err := dec.Decode(&out); err != nil || dec.More() {
+		if err := dec.Decode(&out); err != nil {
 			return nil, usageErrorf("invalid JSON value %q", v)
+		}
+		if _, err := dec.Token(); err != io.EOF {
+			return nil, usageErrorf("invalid JSON value %q: unexpected data after it", v)
 		}
 		return out, nil
 	}
@@ -257,10 +274,11 @@ func apiOnce(ctx context.Context, req client.RawRequest) error {
 		if err != nil {
 			return fmt.Errorf("reading the error response: %w", err)
 		}
-		if !apiSilent {
-			if err := writeBody(bytes.NewReader(body), resp.Header.Get("Content-Type")); err != nil {
-				return err
-			}
+		// The error body is the response, as for any status; with --json
+		// stdout stays empty and the error goes to stderr as JSON.
+		if !apiSilent && !jsonOutput {
+			// A body that cannot be shown must not hide the HTTP error.
+			_ = writeBody(bytes.NewReader(body), resp.Header.Get("Content-Type"))
 		}
 		return client.ResponseError(resp.Status, body)
 	}
@@ -404,6 +422,7 @@ func apiPaginated(ctx context.Context, req client.RawRequest) error {
 	}
 	defer c.CloseQuietly()
 	rows := []json.RawMessage{}
+	var prevFirst json.RawMessage
 	for {
 		q.Set(startKey, strconv.Itoa(start))
 		req.Query = q
@@ -415,9 +434,22 @@ func apiPaginated(ctx context.Context, req client.RawRequest) error {
 		if err != nil {
 			return err
 		}
+		// A server that ignores the offset returns the same page forever.
+		if len(page.Data) > 0 && prevFirst != nil && bytes.Equal(page.Data[0], prevFirst) {
+			return fmt.Errorf("page at %s=%d repeats the previous page: the server ignores the offset", startKey, start)
+		}
+		if len(page.Data) > 0 {
+			prevFirst = page.Data[0]
+		}
 		rows = append(rows, page.Data...)
 		start += len(page.Data)
-		if len(page.Data) == 0 || (v2 && (page.HasNextPage == nil || !*page.HasNextPage)) || (v1 && len(page.Data) < size) {
+		// v16's v2 list says whether more pages follow; v1 and v15's v2
+		// only end with a short page.
+		last := len(page.Data) < size
+		if page.HasNextPage != nil {
+			last = !*page.HasNextPage
+		}
+		if len(page.Data) == 0 || last {
 			break
 		}
 		if err := ctx.Err(); err != nil {
