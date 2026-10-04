@@ -45,8 +45,8 @@ Examples:
 			return err
 		}
 
-		if jsonOutput {
-			return output.PrintJSON(map[string]interface{}{"deleted": true, "doctype": ddDoctype, "name": ddName})
+		if machineOutput() {
+			return printResult(map[string]interface{}{"deleted": true, "doctype": ddDoctype, "name": ddName})
 		}
 		output.PrintSuccess(fmt.Sprintf("Deleted %s %s", ddDoctype, ddName))
 		return nil

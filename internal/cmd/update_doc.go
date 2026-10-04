@@ -55,8 +55,8 @@ Examples:
 			return err
 		}
 
-		if jsonOutput {
-			return output.PrintJSON(selectKeys(doc, udKeys))
+		if machineOutput() {
+			return printResult(selectKeys(doc, udKeys))
 		}
 		output.PrintSuccess(fmt.Sprintf("Updated %s %s", udDoctype, name))
 		output.PrintDocTable(doc, nil)

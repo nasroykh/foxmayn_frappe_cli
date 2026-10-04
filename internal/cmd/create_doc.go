@@ -42,8 +42,8 @@ Examples:
 			return err
 		}
 
-		if jsonOutput {
-			return output.PrintJSON(selectKeys(doc, cdKeys))
+		if machineOutput() {
+			return printResult(selectKeys(doc, cdKeys))
 		}
 		if name, ok := docName(doc["name"]); ok {
 			output.PrintSuccess(fmt.Sprintf("Created %s %s", cdDoctype, name))

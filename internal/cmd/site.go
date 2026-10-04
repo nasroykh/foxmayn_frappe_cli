@@ -74,8 +74,8 @@ var siteListCmd = &cobra.Command{
 			})
 		}
 
-		if jsonOutput {
-			return output.PrintJSON(rows)
+		if machineOutput() {
+			return printResult(rows)
 		}
 		for _, row := range rows {
 			if row["default"] == true {

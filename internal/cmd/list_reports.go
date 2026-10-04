@@ -1,9 +1,6 @@
 package cmd
 
 import (
-	"context"
-
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -13,6 +10,7 @@ import (
 var (
 	lrModule string
 	lrLimit  int
+	lrPages  pageFlags
 )
 
 var listReportsCmd = &cobra.Command{
@@ -33,23 +31,16 @@ Examples:
 		if err != nil {
 			return err
 		}
-		rows, err := callSite(cmd, "Fetching reports…", func(ctx context.Context, c *client.FrappeClient) ([]map[string]interface{}, error) {
-			return c.GetList(ctx, "Report", opts)
+		return listDocs(cmd, lrPages, "Fetching reports…", "Report", opts, reportListFields, func(rows []map[string]interface{}) error {
+			output.PrintTable(rows, []string{"name", "report_type", "module", "ref_doctype"})
+			return nil
 		})
-		if err != nil {
-			return err
-		}
-
-		if jsonOutput {
-			return output.PrintJSON(rows)
-		}
-		output.PrintTable(rows, []string{"name", "report_type", "module", "ref_doctype"})
-		return nil
 	},
 }
 
 func init() {
 	listReportsCmd.Flags().StringVarP(&lrModule, "module", "m", "", "Filter by module name (e.g. \"Accounts\")")
 	listReportsCmd.Flags().IntVarP(&lrLimit, "limit", "l", 50, "Maximum reports to return (0 = no limit)")
+	lrPages.register(listReportsCmd, "limit")
 	rootCmd.AddCommand(listReportsCmd)
 }

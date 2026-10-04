@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -52,9 +51,9 @@ Examples:
 		if err != nil {
 			return err
 		}
-		// The method's "message" can be any JSON value, so it is always printed
-		// as JSON (with or without --json).
-		return output.PrintJSON(result)
+		// The method's "message" can be any JSON value, so the table view is
+		// JSON too.
+		return printResult(result)
 	},
 }
 

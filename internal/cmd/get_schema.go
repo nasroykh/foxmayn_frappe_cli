@@ -58,7 +58,7 @@ Examples:
 		}
 		doc := res.doc
 
-		if jsonOutput {
+		if machineOutput() {
 			result := doc
 			if !gsFull {
 				result = compactSchema(doc)
@@ -71,7 +71,7 @@ Examples:
 			for _, w := range res.warnings {
 				fmt.Fprintln(os.Stderr, "warning: "+w)
 			}
-			return output.PrintJSON(result)
+			return printResult(result)
 		}
 		for _, w := range res.warnings {
 			fmt.Fprintln(os.Stderr, "warning: "+w)

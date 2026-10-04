@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -30,18 +29,19 @@ Examples:
 `,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := validateFiltersJSON(coFilters); err != nil {
+		filters, err := filtersFlag(coFilters)
+		if err != nil {
 			return err
 		}
 		count, err := callSite(cmd, fmt.Sprintf("Counting %s…", coDoctype), func(ctx context.Context, c *client.FrappeClient) (int, error) {
-			return c.GetCount(ctx, coDoctype, coFilters)
+			return c.GetCount(ctx, coDoctype, filters)
 		})
 		if err != nil {
 			return err
 		}
 
-		if jsonOutput {
-			return output.PrintJSON(map[string]interface{}{"doctype": coDoctype, "count": count})
+		if machineOutput() {
+			return printResult(map[string]interface{}{"doctype": coDoctype, "count": count})
 		}
 		fmt.Println(count)
 		return nil

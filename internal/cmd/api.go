@@ -60,7 +60,8 @@ Fields:
 For GET and HEAD the fields are sent as query parameters, otherwise as a
 JSON body. With --input the body is the file and the fields go in the query.
 
-Output: the body is written to stdout as it arrives. On a terminal, JSON is
+Output: the body is written to stdout as it arrives. --jq and --output
+render a JSON body instead (it is then read into memory first). On a terminal, JSON is
 indented, text is cleaned of control characters, and binary bodies are
 refused: use --output-file or redirect stdout. A response of 400 or more
 prints its body (with --json, only the error JSON on stderr) and exits
@@ -287,8 +288,35 @@ func apiOnce(ctx context.Context, req client.RawRequest) error {
 		return saveBody(resp.Body, apiOutFile)
 	case apiSilent:
 		return nil
+	case apiFormatted():
+		return printBody(resp.Body)
 	}
 	return writeBody(resp.Body, resp.Header.Get("Content-Type"))
+}
+
+// apiFormatted reports whether api renders the body: only with --jq or an
+// explicit --output. --json and FFC_OUTPUT keep the body unchanged (they
+// still make errors JSON).
+func apiFormatted() bool {
+	return jqCode != nil || rootCmd.PersistentFlags().Changed("output")
+}
+
+// printBody renders a JSON response with --output or --jq.
+func printBody(body io.Reader) error {
+	b, err := io.ReadAll(io.LimitReader(body, client.MaxResponseBytes+1))
+	if err != nil {
+		return fmt.Errorf("reading the response: %w", err)
+	}
+	if len(b) > client.MaxResponseBytes {
+		return fmt.Errorf("response is larger than %d MiB: --output and --jq need it in memory", client.MaxResponseBytes>>20)
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var v interface{}
+	if err := dec.Decode(&v); err != nil {
+		return fmt.Errorf("--output and --jq need a JSON response: %w", err)
+	}
+	return printResult(v)
 }
 
 // writeBody copies a response body to stdout. A pipe or file gets the bytes
@@ -462,6 +490,9 @@ func apiPaginated(ctx context.Context, req client.RawRequest) error {
 	out, err := json.Marshal(map[string]interface{}{"data": rows})
 	if err != nil {
 		return fmt.Errorf("encoding the rows: %w", err)
+	}
+	if apiFormatted() {
+		return printBody(bytes.NewReader(out))
 	}
 	return writeBody(bytes.NewReader(append(out, '\n')), "application/json")
 }

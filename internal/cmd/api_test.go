@@ -183,6 +183,30 @@ func TestAPITerminalFormatting(t *testing.T) {
 	}
 }
 
+func TestAPIJQAndOutput(t *testing.T) {
+	s := frappetest.New(t)
+	s.Handle("GET /api/method/frappe.desk.form.load.getdoc", getdocHandler)
+	r := cmdTOK(t, cmdTRun(t, s, "api", "/api/method/frappe.desk.form.load.getdoc", "-f", "name=a", "--jq", ".docs[0].name"))
+	if r.Stdout != "a\n" {
+		t.Errorf("--jq: %q", r.Stdout)
+	}
+	r = cmdTOK(t, cmdTRun(t, s, "api", "/api/method/frappe.desk.form.load.getdoc", "-f", "name=a", "--jq", ".docs", "--output", "csv"))
+	if r.Stdout != "amount,name\n1500.0,a\n" {
+		t.Errorf("--output csv: %q", r.Stdout)
+	}
+	for i := 0; i < 3; i++ {
+		s.Add("ToDo", map[string]interface{}{"name": fmt.Sprintf("p%d", i)})
+	}
+	r = cmdTOK(t, cmdTRun(t, s, "api", "/api/resource/ToDo", "--paginate", "-f", "limit=2", "--jq", ".data | length"))
+	if r.Stdout != "3\n" {
+		t.Errorf("--paginate --jq: %q", r.Stdout)
+	}
+	s.Handle("GET /page", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("<html>")) }))
+	if r := cmdTRun(t, s, "api", "/page", "--jq", "."); r.Err == nil {
+		t.Error("--jq on HTML: want error")
+	}
+}
+
 func TestAPIInclude(t *testing.T) {
 	s := frappetest.New(t)
 	s.Handle("GET /api/method/frappe.desk.form.load.getdoc", getdocHandler)

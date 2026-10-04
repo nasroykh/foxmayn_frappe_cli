@@ -811,29 +811,35 @@ func sortRows(rows []map[string]interface{}, orderBy string) error {
 	if orderBy == "" {
 		orderBy = "modified desc"
 	}
-	f := strings.Fields(orderBy)
-	if len(f) == 0 || len(f) > 2 {
-		return Validation("unsupported order_by: " + orderBy)
+	type term struct {
+		field string
+		desc  bool
 	}
-	field, desc := strings.Trim(f[0], "`"), false
-	if len(f) == 2 {
-		switch strings.ToLower(f[1]) {
-		case "desc":
-			desc = true
-		case "asc":
-		default:
+	var terms []term
+	for _, part := range strings.Split(orderBy, ",") {
+		f := strings.Fields(part)
+		if len(f) == 0 || len(f) > 2 {
 			return Validation("unsupported order_by: " + orderBy)
 		}
+		t := term{field: strings.Trim(f[0], "`")}
+		if len(f) == 2 {
+			switch strings.ToLower(f[1]) {
+			case "desc":
+				t.desc = true
+			case "asc":
+			default:
+				return Validation("unsupported order_by: " + orderBy)
+			}
+		}
+		terms = append(terms, t)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
-		c := compare(rows[i][field], rows[j][field])
-		if c == 0 {
-			c = strings.Compare(fmt.Sprint(rows[i]["name"]), fmt.Sprint(rows[j]["name"]))
+		for _, t := range terms {
+			if c := compare(rows[i][t.field], rows[j][t.field]); c != 0 {
+				return (c < 0) != t.desc
+			}
 		}
-		if desc {
-			return c > 0
-		}
-		return c < 0
+		return strings.Compare(fmt.Sprint(rows[i]["name"]), fmt.Sprint(rows[j]["name"])) < 0
 	})
 	return nil
 }

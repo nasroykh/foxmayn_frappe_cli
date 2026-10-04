@@ -87,6 +87,9 @@ internal/cmd/{ping,get_doc,list_docs,create_doc,update_doc,delete_doc,count_docs
              list_doctypes,list_reports,run_report,call_method}.go → data commands (all use callSite)
 internal/cmd/api.go          → ffc api: buildAPIRequest (-f/-F/--input/-H), writeBody (pipe raw, TTY formatted,
                                 binary refused on a TTY), saveBody, --paginate (v1 limit_start, v2 start/has_next_page)
+internal/cmd/render.go       → output layer: resolveOutput (--output/--json/--jq/FFC_OUTPUT, before RunE via applyEnv),
+                                render(v, fields, table), machineOutput/printResult, renderJQ, renderAll + listDocs
+                                (--all/--page-size, streamed for json/ndjson/csv/tsv), pageFlags
 internal/cmd/bulk.go         → runBulk worker pool, bulkReport, parseObjects/parseNames/splitUpdates, bulkFlags
 internal/cmd/bulk_{create,update,delete}.go → bulk commands (--concurrency 1-10, --fail-fast)
 internal/cmd/update.go           → self-update (size-limited download, signed checksums.txt + SHA256 check, atomic swap)
@@ -106,7 +109,8 @@ internal/client/session.go   → LoginPassword (POST /api/method/login, sid cook
 internal/config/config.go    → Config/SiteConfig, Read, Load, env overrides, default paths
 internal/config/file.go      → File (yaml.Node editor), Edit/Overwrite (lock + atomic 0600 write), WriteFileAtomic
 internal/config/format.go    → number/date formats, FormatNumber, FormatDate
-internal/output/             → lipgloss table and JSON; every server value passes through text.Sanitize
+internal/output/             → lipgloss table and JSON; every server value passes through text.Sanitize.
+                                render.go: Format, Write (json/ndjson/csv/tsv/yaml), ListStream, Normalize (UseNumber)
 internal/text/               → Sanitize: strips C0/C1 controls (terminal escape injection), bidi overrides/isolates
                                 and zero-width characters (Trojan Source); keeps LRM/RLM/ALM/ZWJ/ZWNJ
 internal/relsig/             → Ed25519 sign/verify of checksums.txt (domain-separated); ReleaseKeys in keys.go
@@ -131,7 +135,7 @@ internal/version/            → Build-time version variables (ldflags)
 - **Environment:** `applyEnv` (cobra.OnInitialize) fills `--site/--config/--timeout` from `FFC_SITE/FFC_CONFIG/FFC_TIMEOUT` when the flag is unset; an invalid value fails in the RunE wrapper (`trackRunStart`).
 - **Config precedence:** flags > env vars > config file > defaults.
 - **Auth:** Bearer token for OAuth sites; `Authorization: token key:secret` for API-key sites; `Cookie: sid=<sid>` for username/password sites. `client.New()` picks the method from `cfg.AccessToken` / `cfg.APIKey`+`cfg.APISecret` / `cfg.IsSessionAuth()`, in that order. `client.New()` is fallible because session sites log in inside it.
-- **Adding a data command:** create `internal/cmd/<name>.go`, set `Args: cobra.NoArgs`, call `callSite(cmd, title, func(ctx, c) ...)`, register via `rootCmd.AddCommand()` in `init()`. Never build a client with `client.New` directly in a command — use `newClient`/`callSite` so OAuth refresh happens.
+- **Adding a data command:** create `internal/cmd/<name>.go`, set `Args: cobra.NoArgs`, call `callSite(cmd, title, func(ctx, c) ...)`, register via `rootCmd.AddCommand()` in `init()`. Print the result with `render(v, fields, tableFn)` (or `if machineOutput() { return printResult(v) }` before the table code), never `output.PrintJSON` directly, so `--output`/`--jq` work. Lists use `listDocs` for `--all`. JSON-valued flags go through `parseObject`/`filtersFlag`/`jsonFlag` so `@FILE`/`@-` work. Never build a client with `client.New` directly in a command — use `newClient`/`callSite` so OAuth refresh happens.
 - **Adding an MCP tool:** use `toolHandler(getClient, parse)`; read JSON-valued params with `jsonArg`/`rawJSONArg`/`objectArg` (never `req.GetString` — it returns "" for a native object), integers with `intArg`. Register write tools only when `!mcpReadOnly`.
 
 ## Config
@@ -164,6 +168,8 @@ Env vars:
 - `IsOAuth()` returns true only if `AccessToken != ""`. `IsSessionAuth()` requires both `Username` and `Password`.
 - `client.LoginPassword` does not support Frappe 2FA; it returns an error pointing to OAuth or an API key.
 - `SiteConfig.Name` is a runtime-only field (`yaml:"-"`) set by `config.Load` to the exact YAML key; token writes use it as the site key.
+- **`-o` is `list-docs --order-by`**, so the output format flag is `--output` with no shorthand (a persistent `-o` would panic on the shorthand clash). Do not add `-o` elsewhere.
+- `--output json` must stay byte-identical to the old `--json` (indented, HTML-escaped by encoding/json). YAML numbers go through `yamlNode` (yaml.v3 would quote a json.Number).
 - **`ffc api` defaults to GET even with fields** (gh switches to POST): a bare `-f` on `/api/resource/X` would create a document. Only `--input` implies POST. `SitePath` refuses absolute and `//host` URLs; `CheckHeaders`/`Raw` refuse `Authorization`, `Cookie`, `Host`, `X-Frappe-Site-Name` and `X-Forwarded-Host` (the last three route to another site on a bench). Keep both checks in the client: they are the credential boundary.
 - **MCP stdout is the JSON-RPC channel.** Tool handlers must never write to stdout or call `output.Print*`. Return results via `marshalResult`/`mcp.NewToolResultText` and errors via `mcp.NewToolResultError` with a nil Go error. Stderr is safe in stdio mode (clients log it) and is `mcp.log` in detached mode — never print secrets there (the daemon prints its bearer token only to a terminal; `ffc mcp status` shows it).
 - MCP limits: results over 512 KiB are refused with a hint to narrow them; `run_report` defaults to 500 rows; bulk tools take at most 200 items; `--read-only` registers only read tools (call_method counts as a write).

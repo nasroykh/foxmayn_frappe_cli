@@ -40,8 +40,8 @@ Examples:
 		// For session-auth sites the latency includes the login round-trip.
 		elapsed := time.Since(start)
 
-		if jsonOutput {
-			return output.PrintJSON(map[string]interface{}{
+		if machineOutput() {
+			return printResult(map[string]interface{}{
 				"response": resp,
 				"url":      cfg.URL,
 				"latency":  elapsed.String(),

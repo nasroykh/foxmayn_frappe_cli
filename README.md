@@ -170,13 +170,52 @@ ffc [--site <name>] [--config <path>] [--json] <command> [flags]
 | ----------- | ----- | ----------------------------------------------- |
 | `--site`    | `-s`  | Site name from config (default: `default_site`) |
 | `--config`  | `-c`  | Config file path                                |
-| `--json`    | `-j`  | Print raw JSON instead of a table               |
+| `--json`    | `-j`  | Print raw JSON instead of a table (same as `--output json`) |
+| `--output`  |       | Output format: `table`, `json`, `ndjson`, `csv`, `tsv`, `yaml` (default `table`, or `$FFC_OUTPUT`) |
+| `--jq`      |       | Filter the JSON result with a jq expression; strings print raw |
 | `--quiet`   | `-q`  | No progress spinner (also off when stderr is not a terminal, or `NO_COLOR`/`CI` is set) |
 | `--timeout` |       | HTTP timeout per request, e.g. `2m` (default `30s`) |
 | `--no-input` |      | Never prompt; fail instead. Also on when stdin is not a terminal |
 | `--version` | `-v`  | Print version information                       |
 
-`FFC_SITE`, `FFC_CONFIG` and `FFC_TIMEOUT` set `--site`, `--config` and `--timeout` when the flag is not given (flags > environment > config).
+`FFC_SITE`, `FFC_CONFIG`, `FFC_TIMEOUT` and `FFC_OUTPUT` set `--site`, `--config`, `--timeout` and `--output` when the flag is not given (flags > environment > config).
+
+#### Output formats
+
+`--output` picks how a result is printed:
+
+- **`table`** is the default human-readable view.
+- **`json`** prints indented JSON, the same as `--json`.
+- **`ndjson`** prints one compact JSON value per line: one line per row for lists.
+- **`csv`** and **`tsv`** print a header row and then the data.
+  - The columns follow `--fields`; otherwise they are the sorted union of the keys.
+  - Nested values are JSON. Numbers are printed as the server sent them (`1500.0`), with no locale formatting.
+  - In TSV, tabs, newlines and backslashes inside values are escaped as `\t`, `\n` and `\\`.
+  - Cells are written as they are. A value that starts with `=`, `+`, `-` or `@` is run as a formula when the file is opened in a spreadsheet, so treat data from untrusted users with care.
+- **`yaml`** prints YAML.
+
+With `json` or `ndjson`, errors are reported as JSON too.
+
+`--jq EXPR` filters the JSON result before printing (jq syntax, via gojq).
+
+- With the default format, each result prints as it comes, like `jq -r`: strings raw, other values as JSON.
+- With `--output`, one result is rendered as itself. Several results print one after another for `json` and `yaml`, and as one list for `ndjson`, `csv` and `tsv`.
+- `halt_error` exits with its code. Ctrl+C stops an endless expression.
+
+`ffc api` keeps the response body unchanged with `--json` or `FFC_OUTPUT`; only `--jq` or an explicit `--output` renders it.
+
+```bash
+ffc list-docs -d "Sales Invoice" --all --output csv --fields name,customer,grand_total > invoices.csv
+ffc list-docs -d ToDo --filters '{"status":"Open"}' --jq '.[].name'
+export FFC_OUTPUT=ndjson   # scripts: machine output by default
+```
+
+**JSON from files.** Every JSON-valued flag (`--data`, `--args`, `--filters`) also takes `@FILE`, or `@-` for stdin:
+
+```bash
+ffc create-doc -d ToDo --data @todo.json
+jq -n '{status:"Open"}' | ffc count-docs -d ToDo --filters @-
+```
 
 Without a terminal (pipes, cron, CI, agents) ffc never waits for input: a command that would prompt fails with exit code 2 and a hint, for example "pass --yes" for a deletion.
 
@@ -249,7 +288,12 @@ ffc get-doc -d "System Settings" --json
 **2. `list-docs`** (List documents)
 ```bash
 ffc list-docs -d "ToDo" --filters '{"status":"Open"}' -o "modified desc"
+ffc list-docs -d "Sales Invoice" --all --output ndjson > invoices.ndjson
 ```
+
+`--all` fetches every row page by page (`--page-size`, default 500). The `json`, `ndjson`, `csv` and `tsv` formats are written as each page arrives; the table, `yaml` and `--jq` wait for the whole list. If a page fails or the run is interrupted, the rows already written stay on stdout and the exit code reports the failure; a `json` array is then left without its closing bracket. Without `--order-by`, `--all` sorts by `creation asc, name asc`, because the default order (`modified desc`) moves rows between pages while documents change. `list-doctypes` and `list-reports` take `--all` too.
+
+Note that `-o` is `--order-by` here, not the output format; use `--output` for the format.
 
 **3. `create-doc`** (Create a document)
 ```bash
@@ -348,6 +392,7 @@ echo '{"description":"x"}' | ffc api POST /api/resource/ToDo --input -
   - `--silent` prints nothing.
   - A status of 400 or more prints the body (with `--json`, only the error JSON on stderr) and exits with the matching [exit code](#exit-codes).
 - **Pagination.** `--paginate` fetches every page of a `/api/resource/<DocType>` or `/api/v2/document/<DocType>` list. The default page size is 500. It prints `{"data": [...]}`. Pages are requested by offset, so pass an `order_by` if the list may change during the run.
+- **`--jq` and `--output`** render a JSON body (read into memory first), for example `--jq ".docs[0]"`.
 - **Limits.** The request is not retried. `--timeout` bounds the whole download.
 
 ---
