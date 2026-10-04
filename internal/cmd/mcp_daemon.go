@@ -202,6 +202,15 @@ func lastLogLines(path string, n int) string {
 
 // startDetached re-execs the current binary as a background HTTP MCP server.
 func startDetached(ctx context.Context, port int) error {
+	// Resolve the site before spawning anything: a missing config or unknown
+	// site fails here instead of after the health-check timeout, and the state
+	// file records the site actually served, not just the --site flag. The
+	// child validates the credentials.
+	site, err := config.Load(siteName, configPath)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+
 	if dir := mcpStateDir(); dir != "" {
 		if err := os.MkdirAll(dir, 0o700); err != nil { // L25
 			return fmt.Errorf("creating state dir: %w", err)
@@ -251,10 +260,12 @@ func startDetached(ctx context.Context, port int) error {
 		return fmt.Errorf("finding executable: %w", err)
 	}
 
-	// Build child args: same site/config flags, explicit port, no --detach.
+	// Build child args: the resolved site, same config flag, explicit port,
+	// no --detach. Pinning the site keeps a later default_site change from
+	// moving a running daemon. An env-only site (FFC_* vars) has no name.
 	args := []string{"mcp", "--port", strconv.Itoa(port)}
-	if siteName != "" {
-		args = append(args, "--site", siteName)
+	if site.Name != "" {
+		args = append(args, "--site", site.Name)
 	}
 	if configPath != "" {
 		args = append(args, "--config", configPath)
@@ -282,7 +293,7 @@ func startDetached(ctx context.Context, port int) error {
 	if err := writeMCPState(mcpState{
 		PID:       cmd.Process.Pid,
 		Port:      port,
-		Site:      siteName,
+		Site:      site.Name,
 		StartedAt: time.Now().UTC(),
 		LogPath:   logPath,
 		Token:     token,
@@ -364,7 +375,7 @@ func runHTTPServer(ctx context.Context, port int) error {
 	defer closeProvider()
 	// Validate credentials up front so misconfiguration fails immediately.
 	if _, err := provider(ctx); err != nil {
-		return fmt.Errorf("config: %w", err)
+		return err
 	}
 
 	s := server.NewMCPServer(
