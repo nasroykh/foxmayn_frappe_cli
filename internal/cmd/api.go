@@ -288,10 +288,17 @@ func apiOnce(ctx context.Context, req client.RawRequest) error {
 		return saveBody(resp.Body, apiOutFile)
 	case apiSilent:
 		return nil
-	case machineOutput():
+	case apiFormatted():
 		return printBody(resp.Body)
 	}
 	return writeBody(resp.Body, resp.Header.Get("Content-Type"))
+}
+
+// apiFormatted reports whether api renders the body: only with --jq or an
+// explicit --output. --json and FFC_OUTPUT keep the body unchanged (they
+// still make errors JSON).
+func apiFormatted() bool {
+	return jqCode != nil || rootCmd.PersistentFlags().Changed("output")
 }
 
 // printBody renders a JSON response with --output or --jq.
@@ -484,7 +491,7 @@ func apiPaginated(ctx context.Context, req client.RawRequest) error {
 	if err != nil {
 		return fmt.Errorf("encoding the rows: %w", err)
 	}
-	if machineOutput() {
+	if apiFormatted() {
 		return printBody(bytes.NewReader(out))
 	}
 	return writeBody(bytes.NewReader(append(out, '\n')), "application/json")

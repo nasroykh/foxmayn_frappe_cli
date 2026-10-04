@@ -134,6 +134,16 @@ func TestListStreamMatchesWrite(t *testing.T) {
 	}
 }
 
+func TestYAMLQuotesBoolLikeKeys(t *testing.T) {
+	var b bytes.Buffer
+	if err := Write(&b, FormatYAML, map[string]interface{}{"yes": "no", "on": "0x1F", "plain": "x"}, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if want := "\"on\": \"0x1F\"\nplain: x\n\"yes\": \"no\"\n"; b.String() != want {
+		t.Errorf("got %q, want %q", b.String(), want)
+	}
+}
+
 func TestParseFormat(t *testing.T) {
 	if f, err := ParseFormat(" CSV "); err != nil || f != FormatCSV {
 		t.Errorf("CSV: %v %v", f, err)

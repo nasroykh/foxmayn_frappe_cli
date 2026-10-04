@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -41,6 +42,14 @@ func usageErrorf(format string, a ...interface{}) error {
 	return &usageError{fmt.Errorf(format, a...)}
 }
 
+// codeError ends the command with a given exit code, e.g. a jq halt_error.
+type codeError struct {
+	code int
+	msg  string
+}
+
+func (e *codeError) Error() string { return e.msg }
+
 // partialError is a bulk run in which some items did not succeed.
 type partialError struct{ msg string }
 
@@ -51,6 +60,7 @@ func classify(err error) (int, string) {
 	var (
 		usage   *usageError
 		partial *partialError
+		coded   *codeError
 		auth    *client.AuthError
 		api     *client.APIError
 		tr      *client.TransportError
@@ -64,6 +74,8 @@ func classify(err error) (int, string) {
 		return exitUsage, "usage"
 	case errors.As(err, &partial):
 		return exitPartial, "partial"
+	case errors.As(err, &coded):
+		return coded.code, "error"
 	case errors.As(err, &auth):
 		return exitAuth, "auth"
 	case errors.As(err, &api):
@@ -153,20 +165,28 @@ func init() {
 	rootCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{err} })
 }
 
-// argsWantJSON reports whether args ask for --json, for errors cobra returns
-// before it has parsed the flag.
+// argsWantJSON reports whether args (or FFC_OUTPUT) ask for JSON output,
+// for errors cobra returns before it has parsed the flags.
 func argsWantJSON(args []string) bool {
-	want := false
-	for _, a := range args {
+	jsonFormat := func(f string) bool {
+		f = strings.ToLower(strings.TrimSpace(f))
+		return f == "json" || f == "ndjson"
+	}
+	want, output := false, os.Getenv("FFC_OUTPUT")
+	for i, a := range args {
 		switch {
 		case a == "--":
-			return want
+			return want || jsonFormat(output)
 		case a == "--json", a == "-j":
 			want = true
 		case strings.HasPrefix(a, "--json="):
 			v, err := strconv.ParseBool(strings.TrimPrefix(a, "--json="))
 			want = err == nil && v
+		case a == "--output" && i+1 < len(args):
+			output = args[i+1]
+		case strings.HasPrefix(a, "--output="):
+			output = strings.TrimPrefix(a, "--output=")
 		}
 	}
-	return want
+	return want || jsonFormat(output)
 }

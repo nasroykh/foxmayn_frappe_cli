@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
 )
@@ -102,7 +105,7 @@ func TestOutputJQ(t *testing.T) {
 		t.Errorf("object: %q", r.Stdout)
 	}
 	r = cmdTOK(t, cmdTRun(t, s, "list-docs", "-d", "ToDo", "-o", "name asc", "-l", "2", "--jq", ".[].name", "--output", "json"))
-	if r.Stdout != "[\n  \"t0\",\n  \"t1\"\n]\n" {
+	if r.Stdout != "\"t0\"\n\"t1\"\n" {
 		t.Errorf("jq + json: %q", r.Stdout)
 	}
 	if r := cmdTRun(t, s, "count-docs", "-d", "ToDo", "--jq", "error(\"boom\")"); r.Code != exitGeneric || !strings.Contains(r.Stderr, "boom") {
@@ -199,5 +202,120 @@ func TestBulkReportFormats(t *testing.T) {
 	r := cmdTRun(t, s, "bulk-delete", "-d", "ToDo", "--names", "t0,missing", "--yes", "--output", "ndjson")
 	if r.Code != exitPartial || !strings.Contains(r.Stdout, `"failed":1`) {
 		t.Errorf("bulk ndjson: %d %q", r.Code, r.Stdout)
+	}
+}
+
+func TestOutputJQSemantics(t *testing.T) {
+	s := outputSite(t)
+	base := []string{"list-docs", "-d", "ToDo", "-o", "name asc", "-l", "2"}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--jq", "empty", "--output", "json"}, ""},
+		{[]string{"--jq", ".[].name", "--output", "json"}, "\"t0\"\n\"t1\"\n"},
+		{[]string{"--jq", ".[].name", "--output", "csv"}, "value\nt0\nt1\n"},
+		{[]string{"--jq", ".[] | {name}", "--output", "yaml"}, "name: t0\n---\nname: t1\n"},
+	} {
+		r := cmdTOK(t, cmdTRun(t, s, append(base, c.args...)...))
+		if r.Stdout != c.want {
+			t.Errorf("%v: %q, want %q", c.args, r.Stdout, c.want)
+		}
+	}
+	r := cmdTRun(t, s, append(base, "--jq", `"stop" | halt_error(3)`)...)
+	if r.Code != 3 || strings.TrimSpace(r.Stderr) != "stop" {
+		t.Errorf("halt_error: %d %q", r.Code, r.Stderr)
+	}
+	if r := cmdTOK(t, cmdTRun(t, s, append(base, "--jq", ".[0].name, halt, 1")...)); r.Stdout != "t0\n" {
+		t.Errorf("halt: %q", r.Stdout)
+	}
+}
+
+func TestOutputJQStopsOnCancel(t *testing.T) {
+	s := outputSite(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan cliResult, 1)
+	go func() {
+		done <- runFFCCtx(t, ctx, fakeConfig(t, s, "apikey"), "", "count-docs", "-d", "ToDo", "--jq", "last(range(infinite))")
+	}()
+	select {
+	case r := <-done:
+		if r.Code != exitInterrupted {
+			t.Errorf("exit %d (%v)", r.Code, r.Err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("--jq kept running after the context was cancelled")
+	}
+}
+
+// --json output is unchanged from earlier releases, struct field order
+// included.
+func TestJSONOutputUnchanged(t *testing.T) {
+	s := outputSite(t)
+	r := cmdTRun(t, s, "bulk-delete", "-d", "ToDo", "--names", "t0,missing", "--yes", "--json")
+	want := `{
+  "deleted": 1,
+  "failed": 1,
+  "results": [
+    {
+      "index": 1,
+      "name": "t0",
+      "status": "deleted"
+    },
+    {
+      "index": 2,
+      "name": "missing",
+      "status": "error",
+      "error":`
+	if !strings.HasPrefix(r.Stdout, want) {
+		t.Errorf("bulk --json:\n%s", r.Stdout)
+	}
+}
+
+func TestAPIJSONKeepsBody(t *testing.T) {
+	s := frappetest.New(t)
+	s.Handle("GET /raw", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/csv")
+		_, _ = w.Write([]byte("a,b\n1,2\n"))
+	}))
+	s.Handle("GET /obj", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"z":1,"a":"<x>"}`))
+	}))
+	for path, want := range map[string]string{"/raw": "a,b\n1,2\n", "/obj": `{"z":1,"a":"<x>"}`} {
+		r := cmdTOK(t, cmdTRun(t, s, "--json", "api", path))
+		if r.Stdout != want {
+			t.Errorf("%s: %q", path, r.Stdout)
+		}
+		t.Setenv("FFC_OUTPUT", "csv")
+		if r := cmdTOK(t, cmdTRun(t, s, "api", path)); r.Stdout != want {
+			t.Errorf("FFC_OUTPUT %s: %q", path, r.Stdout)
+		}
+		t.Setenv("FFC_OUTPUT", "")
+	}
+}
+
+func TestEarlyErrorsFollowOutput(t *testing.T) {
+	s := outputSite(t)
+	for _, args := range [][]string{
+		{"list-docs", "--bogus", "--output", "json"},
+		{"--output=ndjson", "no-such-command"},
+	} {
+		r := cmdTRun(t, s, args...)
+		if r.Code != exitUsage || !strings.HasPrefix(r.Stderr, `{"error":`) {
+			t.Errorf("%v: %d %q", args, r.Code, r.Stderr)
+		}
+	}
+	t.Setenv("FFC_OUTPUT", "json")
+	if r := cmdTRun(t, s, "list-docs", "--bogus"); !strings.HasPrefix(r.Stderr, `{"error":`) {
+		t.Errorf("FFC_OUTPUT: %q", r.Stderr)
+	}
+}
+
+func TestParseObjectTrailingData(t *testing.T) {
+	for _, raw := range []string{`{"a":1}}`, `{"a":1}]`, `{"a":1} x`} {
+		if _, err := parseObject("--data", raw); err == nil {
+			t.Errorf("%s accepted", raw)
+		}
 	}
 }

@@ -69,13 +69,16 @@ func Normalize(v interface{}) (interface{}, error) {
 // of its keys. clean strips control characters from CSV/TSV cells, for a
 // terminal.
 func Write(w io.Writer, f Format, v interface{}, fields []string, clean bool) error {
+	if f == FormatJSON {
+		// The value as given, so --json prints exactly what it always did
+		// (struct field order included).
+		return writeJSON(w, v)
+	}
 	v, err := Normalize(v)
 	if err != nil {
 		return err
 	}
 	switch f {
-	case FormatJSON:
-		return writeJSON(w, v)
 	case FormatYAML:
 		b, err := yaml.Marshal(yamlNode(v))
 		if err != nil {
@@ -109,7 +112,7 @@ func yamlNode(v interface{}) *yaml.Node {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			n.Content = append(n.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: k}, yamlNode(val[k]))
+			n.Content = append(n.Content, yamlNode(k), yamlNode(val[k]))
 		}
 		return n
 	case []interface{}:

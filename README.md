@@ -191,11 +191,18 @@ ffc [--site <name>] [--config <path>] [--json] <command> [flags]
   - The columns follow `--fields`; otherwise they are the sorted union of the keys.
   - Nested values are JSON. Numbers are printed as the server sent them (`1500.0`), with no locale formatting.
   - In TSV, tabs, newlines and backslashes inside values are escaped as `\t`, `\n` and `\\`.
+  - Cells are written as they are. A value that starts with `=`, `+`, `-` or `@` is run as a formula when the file is opened in a spreadsheet, so treat data from untrusted users with care.
 - **`yaml`** prints YAML.
 
 With `json` or `ndjson`, errors are reported as JSON too.
 
-`--jq EXPR` filters the JSON result before printing (jq syntax, via gojq). With the default format, string results print raw, one per line, and other results print as JSON. With `--output`, the results are rendered in that format.
+`--jq EXPR` filters the JSON result before printing (jq syntax, via gojq).
+
+- With the default format, each result prints as it comes, like `jq -r`: strings raw, other values as JSON.
+- With `--output`, one result is rendered as itself. Several results print one after another for `json` and `yaml`, and as one list for `ndjson`, `csv` and `tsv`.
+- `halt_error` exits with its code. Ctrl+C stops an endless expression.
+
+`ffc api` keeps the response body unchanged with `--json` or `FFC_OUTPUT`; only `--jq` or an explicit `--output` renders it.
 
 ```bash
 ffc list-docs -d "Sales Invoice" --all --output csv --fields name,customer,grand_total > invoices.csv
@@ -284,7 +291,7 @@ ffc list-docs -d "ToDo" --filters '{"status":"Open"}' -o "modified desc"
 ffc list-docs -d "Sales Invoice" --all --output ndjson > invoices.ndjson
 ```
 
-`--all` fetches every row page by page (`--page-size`, default 500). The `json`, `ndjson`, `csv` and `tsv` formats are written as each page arrives; the table, `yaml` and `--jq` wait for the whole list. Without `--order-by`, `--all` sorts by `creation asc, name asc`, because the default order (`modified desc`) moves rows between pages while documents change. `list-doctypes` and `list-reports` take `--all` too.
+`--all` fetches every row page by page (`--page-size`, default 500). The `json`, `ndjson`, `csv` and `tsv` formats are written as each page arrives; the table, `yaml` and `--jq` wait for the whole list. If a page fails or the run is interrupted, the rows already written stay on stdout and the exit code reports the failure; a `json` array is then left without its closing bracket. Without `--order-by`, `--all` sorts by `creation asc, name asc`, because the default order (`modified desc`) moves rows between pages while documents change. `list-doctypes` and `list-reports` take `--all` too.
 
 Note that `-o` is `--order-by` here, not the output format; use `--output` for the format.
 

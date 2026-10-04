@@ -226,7 +226,7 @@ func parseObject(flag, raw string) (map[string]interface{}, error) {
 	var m map[string]interface{}
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.UseNumber()
-	if err = dec.Decode(&m); err == nil && dec.More() {
+	if err = dec.Decode(&m); err == nil && dec.Decode(&struct{}{}) != io.EOF {
 		err = errors.New("unexpected data after the object")
 	}
 	if err != nil || m == nil {

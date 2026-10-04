@@ -77,55 +77,98 @@ func render(v interface{}, fields []string, table func() error) error {
 	return output.Write(os.Stdout, outFormat, v, fields, stdoutIsTerminal())
 }
 
-// renderJQ runs --jq on v. With the default format each result prints like
-// jq -r: strings as raw lines, other values as JSON. With --output the
-// results are rendered in that format: one result as itself, several as a
-// list.
+// renderJQ runs --jq on v, like jq: zero results print nothing. With the
+// default format each result prints as it comes, like jq -r (strings raw,
+// other values as JSON). With --output, a single result is rendered as
+// itself; several are rendered as a list for ndjson/csv/tsv and one after
+// another for json/yaml. Ctrl+C stops an endless generator.
 func renderJQ(v interface{}, fields []string) error {
 	in, err := output.Normalize(v)
 	if err != nil {
 		return err
 	}
+	// The command context: cobra hands the root's to every subcommand.
+	ctx := rootCmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var results []interface{}
-	iter := jqCode.Run(in)
+	iter := jqCode.RunWithContext(ctx, in)
 	for {
 		r, ok := iter.Next()
 		if !ok {
 			break
 		}
 		if err, isErr := r.(error); isErr {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			var halt *gojq.HaltError
-			if errors.As(err, &halt) && halt.Value() == nil {
-				break // halt: a normal stop
+			if errors.As(err, &halt) {
+				if halt.ExitCode() == 0 {
+					break // halt: a normal stop
+				}
+				return &codeError{halt.ExitCode(), jqValueText(halt.Value())}
 			}
 			return fmt.Errorf("--jq: %w", err)
 		}
+		if outFormat == output.FormatTable {
+			if err := printJQLine(r); err != nil {
+				return err
+			}
+			continue
+		}
 		results = append(results, r)
 	}
-	if outFormat != output.FormatTable {
-		var out interface{} = results
-		if len(results) == 1 {
-			out = results[0]
-		}
-		return output.Write(os.Stdout, outFormat, out, fields, stdoutIsTerminal())
-	}
-	for _, r := range results {
-		line, isString := r.(string)
-		if !isString {
-			b, err := json.MarshalIndent(r, "", "  ")
-			if err != nil {
-				return fmt.Errorf("--jq: encoding a result: %w", err)
+	clean := stdoutIsTerminal()
+	switch {
+	case len(results) == 0:
+		return nil
+	case len(results) == 1:
+		return output.Write(os.Stdout, outFormat, results[0], fields, clean)
+	case outFormat == output.FormatJSON || outFormat == output.FormatYAML:
+		for i, r := range results {
+			if i > 0 && outFormat == output.FormatYAML {
+				if _, err := fmt.Fprintln(os.Stdout, "---"); err != nil {
+					return err
+				}
 			}
-			line = string(b)
+			if err := output.Write(os.Stdout, outFormat, r, fields, clean); err != nil {
+				return err
+			}
 		}
-		if stdoutIsTerminal() {
-			line = text.Sanitize(line)
-		}
-		if _, err := fmt.Fprintln(os.Stdout, line); err != nil {
-			return err
-		}
+		return nil
 	}
-	return nil
+	return output.Write(os.Stdout, outFormat, results, fields, clean)
+}
+
+// printJQLine prints one --jq result for the default format.
+func printJQLine(r interface{}) error {
+	line := jqValueText(r)
+	if _, isString := r.(string); !isString {
+		b, err := json.MarshalIndent(r, "", "  ")
+		if err != nil {
+			return fmt.Errorf("--jq: encoding a result: %w", err)
+		}
+		line = string(b)
+	}
+	if stdoutIsTerminal() {
+		line = text.Sanitize(line)
+	}
+	_, err := fmt.Fprintln(os.Stdout, line)
+	return err
+}
+
+// jqValueText is a jq value as text: a string raw, anything else as JSON.
+func jqValueText(v interface{}) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(b)
 }
 
 // listPager fetches one page of a list: rows from start, at most size.
@@ -133,13 +176,16 @@ type listPager func(ctx context.Context, start, size int) ([]map[string]interfac
 
 // renderAll pages through a whole list. JSON, NDJSON, CSV and TSV are
 // written as each page arrives; the table, YAML and --jq need the whole
-// list and render it at the end. title labels the spinner.
+// list and render it at the end. title labels the spinner. When a page
+// fails or Ctrl+C stops the run, the rows so far stay on stdout (a JSON
+// array then has no closing bracket) and the exit code says it failed.
 func renderAll(ctx context.Context, title string, pageSize int, fetch listPager, fields []string, table func([]map[string]interface{}) error) error {
 	var stream *output.ListStream
 	if jqCode == nil && output.Streams(outFormat) {
 		stream = output.NewListStream(os.Stdout, outFormat, fields, stdoutIsTerminal())
 	}
 	var all []map[string]interface{}
+	var prevFirst string
 	for start := 0; ; {
 		var rows []map[string]interface{}
 		var fetchErr error
@@ -150,6 +196,14 @@ func renderAll(ctx context.Context, title string, pageSize int, fetch listPager,
 		}
 		if fetchErr != nil {
 			return fetchErr
+		}
+		// A server that ignores the offset returns the same page forever.
+		if len(rows) > 0 {
+			first, _ := json.Marshal(rows[0])
+			if string(first) == prevFirst {
+				return fmt.Errorf("the page at offset %d repeats the previous page: the server ignores the offset", start)
+			}
+			prevFirst = string(first)
 		}
 		if stream != nil {
 			if err := stream.Rows(rows); err != nil {
