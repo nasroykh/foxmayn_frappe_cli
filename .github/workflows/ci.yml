@@ -34,6 +34,13 @@ jobs:
       - name: Test
         run: go test -race ./...
 
+      # Pinned tool versions: bump deliberately, like the actions above.
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
   cross-build:
     runs-on: ubuntu-latest
     strategy:

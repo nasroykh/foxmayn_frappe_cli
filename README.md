@@ -392,7 +392,9 @@ make tidy        # Install/update all dependencies
 make build       # Compile binary to ./bin/ffc
 make install     # Install to $GOPATH/bin and set up the config
 make test        # Run tests with the race detector
-make lint        # gofmt check, go vet, staticcheck (if installed)
+make lint        # gofmt check, go vet, staticcheck
+make vuln        # govulncheck
+make contract SITE=<site>  # contract tests against a disposable real site (writes test data)
 make vet         # Run go vet
 make fmt         # Format code with gofmt
 make clean       # Remove compiled binary

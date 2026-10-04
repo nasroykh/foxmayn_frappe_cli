@@ -1,0 +1,71 @@
+name: Contract
+
+# Runs the contract tests (internal/cmd/contract_test.go, build tag
+# "contract") against real Frappe/ERPNext sites started from frappe_docker's
+# pwd.yml. Nightly, on demand, and on PRs that touch the tests or this file.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - internal/cmd/contract_test.go
+      - internal/frappetest/**
+      - .github/workflows/contract.yml
+
+permissions:
+  contents: read
+
+env:
+  # frappe_docker commit whose pwd.yml starts the site; bump deliberately.
+  FRAPPE_DOCKER_SHA: f71a386bc13f75dcc0cf7462f025f531576a04fc
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        erpnext: [v15.121.6, v16.37.0]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Start Frappe ${{ matrix.erpnext }}
+        env:
+          ERPNEXT: ${{ matrix.erpnext }}
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/frappe/frappe_docker/${FRAPPE_DOCKER_SHA}/pwd.yml" -o pwd.yml
+          sed -i -E "s#image: frappe/erpnext:v[0-9.]+#image: frappe/erpnext:${ERPNEXT}#" pwd.yml
+          # Fail if the image swap matched nothing (pwd.yml changed upstream).
+          grep -q "image: frappe/erpnext:${ERPNEXT}$" pwd.yml
+          if grep -E 'image: frappe/erpnext:' pwd.yml | grep -vq "${ERPNEXT}$"; then
+            echo "pwd.yml still references another erpnext image"; exit 1
+          fi
+          docker compose -f pwd.yml up -d
+          docker compose -f pwd.yml wait create-site
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/api/method/frappe.ping | grep -q pong; then
+              echo "site is up"; exit 0
+            fi
+            sleep 5
+          done
+          docker compose -f pwd.yml logs --tail 100 create-site backend frontend
+          exit 1
+
+      - name: Contract tests
+        env:
+          FFC_CONTRACT_URL: http://localhost:8080
+          FFC_CONTRACT_USER: Administrator
+          FFC_CONTRACT_PASSWORD: admin
+        run: go test -tags contract -count=1 -run TestContract -v ./internal/cmd/
+
+      - name: Site logs on failure
+        if: failure()
+        run: docker compose -f pwd.yml logs --tail 200 backend

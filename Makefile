@@ -13,7 +13,11 @@ LDFLAGS := -s -w \
 	-X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Commit=$(COMMIT) \
 	-X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Date=$(DATE)
 
-.PHONY: build install clean tidy vet fmt test lint help skills-init skills-init-claude skills-init-cursor skills-init-agent
+# Analysis tools, run with go run at pinned versions (same as CI).
+STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
+
+.PHONY: build install clean tidy vet fmt test lint vuln contract help skills-init skills-init-claude skills-init-cursor skills-init-agent
 
 ## build: compile binary to ./bin/ffc
 build:
@@ -46,11 +50,20 @@ fmt:
 test:
 	go test -race ./...
 
-## lint: gofmt check, go vet and staticcheck (when installed)
+## lint: gofmt check, go vet and staticcheck
 lint:
 	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 	go vet ./...
-	@if command -v staticcheck >/dev/null 2>&1; then staticcheck ./...; else echo "staticcheck not installed, skipping"; fi
+	go run $(STATICCHECK) ./...
+
+## contract: run the contract tests against a real site (SITE=<ffc config site>; it writes test data)
+contract:
+	@if [ -z "$(SITE)" ]; then echo "usage: make contract SITE=<site in your ffc config>"; exit 1; fi
+	FFC_CONTRACT_SITE=$(SITE) go test -tags contract -count=1 -run TestContract -v ./internal/cmd/
+
+## vuln: report reachable known vulnerabilities (govulncheck)
+vuln:
+	go run $(GOVULNCHECK) ./...
 
 ## clean: remove compiled binary
 clean:

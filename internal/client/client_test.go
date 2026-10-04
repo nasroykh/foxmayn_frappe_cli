@@ -84,3 +84,12 @@ func TestSidFromCookies(t *testing.T) {
 		t.Errorf("sidFromCookies(nil) = %q, want empty", got)
 	}
 }
+
+// frappeUserMessage parses body and returns its user-facing message.
+func frappeUserMessage(body []byte) string {
+	var fe frappeErrorResponse
+	if json.Unmarshal(body, &fe) != nil {
+		return ""
+	}
+	return fe.userMessage()
+}
