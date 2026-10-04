@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/mattn/go-isatty"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 	"github.com/spf13/cobra"
@@ -427,7 +426,7 @@ func runHTTPServer(ctx context.Context, port int) error {
 	fmt.Fprintf(os.Stderr, "ffc MCP HTTP server listening on http://%s/mcp\n", addr)
 	// Never write the token to a log: detached stderr is mcp.log. `ffc mcp
 	// status` shows it for detached servers (D10).
-	if isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd()) {
+	if isTerminal(os.Stderr) {
 		fmt.Fprintf(os.Stderr, "  Authorization: Bearer %s\n", token)
 	}
 

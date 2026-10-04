@@ -124,7 +124,12 @@ func spinnerEnabled() bool {
 	if quiet || os.Getenv("NO_COLOR") != "" || os.Getenv("CI") != "" {
 		return false
 	}
-	fd := os.Stderr.Fd()
+	return isTerminal(os.Stderr)
+}
+
+// isTerminal reports whether f is an interactive terminal.
+func isTerminal(f *os.File) bool {
+	fd := f.Fd()
 	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
 }
 

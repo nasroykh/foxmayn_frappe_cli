@@ -318,7 +318,37 @@ ffc get-schema -d "Sales Invoice" --json --keys name,module,fields
 ```bash
 ffc call-method --method "frappe.ping"
 ffc call-method --method "my_app.api.custom_action" --args '{"user":"john"}'
+ffc call-method --method "frappe.desk.form.load.getdoc" --args '{"doctype":"ToDo","name":"TD-0001"}' --raw
 ```
+
+`call-method` prints the response's `message`. `--raw` prints the whole response object, which includes what desk methods return next to `message` (`docs`, `docinfo`, `_server_messages`).
+
+### Any endpoint: `ffc api`
+
+**`api [METHOD] PATH`** sends a request with the site's credentials to any path of the site and prints the body. Use it for endpoints that ffc has no command for, and for file downloads.
+
+```bash
+ffc api /api/method/frappe.desk.form.load.getdoc -f doctype=ToDo -f name=TD-0001
+ffc api /api/resource/Currency --paginate -f 'fields=["name","enabled"]'
+ffc api POST /api/method/frappe.client.set_value -f doctype=ToDo -f name=TD-0001 -f fieldname=status -f value=Closed
+ffc api /private/files/contract.pdf --output-file contract.pdf
+echo '{"description":"x"}' | ffc api POST /api/resource/ToDo --input -
+```
+
+- **Paths only.** `PATH` is relative to the site URL. Absolute and protocol-relative URLs are refused, so the credentials never reach another host. `-H` cannot override `Authorization` or `Cookie`.
+- **Method.** The default is GET, or POST when `--input` is given. Unlike `gh api`, fields alone do not switch to POST: on `/api/resource` that would create a document. To write, name the method.
+- **Fields.**
+  - `-f key=value` sends a string.
+  - `-F key=value` sends a typed value: `true`, `false`, `null`, a number, a JSON object or array, or `@FILE` / `@-`.
+  - For GET and HEAD, fields go in the query string; for other methods, in a JSON body. With `--input`, the body is the file and the fields go in the query string.
+- **Output.**
+  - A pipe or file gets the body bytes unchanged.
+  - A terminal gets indented JSON or cleaned text. A binary body is refused: pass `--output-file` or redirect stdout.
+  - `-i` prints the status line and headers to stderr, with cookie values hidden.
+  - `--silent` prints nothing.
+  - A status of 400 or more prints the body and exits with the matching [exit code](#exit-codes).
+- **Pagination.** `--paginate` fetches every page of a `/api/resource/<DocType>` or `/api/v2/document/<DocType>` list. The default page size is 500. It prints `{"data": [...]}`. Pages are requested by offset, so pass an `order_by` if the list may change during the run.
+- **Limits.** The request is not retried. `--timeout` bounds the whole download.
 
 ---
 
@@ -365,7 +395,7 @@ The HTTP endpoint is `http://127.0.0.1:<port>/mcp` (Streamable HTTP transport, l
 ffc mcp --read-only --site prod
 ```
 
-Available MCP tools (15): `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method`.
+Available MCP tools (15): `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object).
 
 Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`); `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
@@ -401,6 +431,7 @@ foxmayn_frappe_cli/
 │   │   ├── ping.go, get_doc.go, list_docs.go, create_doc.go, update_doc.go,
 │   │   │   delete_doc.go, count_docs.go, get_schema.go, list_doctypes.go,
 │   │   │   list_reports.go, run_report.go, call_method.go   # data commands
+│   │   ├── api.go            # api: raw requests to any site path
 │   │   ├── bulk.go           # Bulk worker pool and input parsers
 │   │   ├── bulk_create.go, bulk_update.go, bulk_delete.go
 │   │   ├── update.go         # update (self-update)
@@ -413,6 +444,7 @@ foxmayn_frappe_cli/
 │   ├── client/
 │   │   ├── http.go           # Transport policy: timeout, body cap, redirects, retries
 │   │   ├── client.go         # Frappe REST API client (Bearer, token and session auth)
+│   │   ├── raw.go            # Raw requests (ffc api): SitePath, streamed bodies
 │   │   ├── oauth.go          # ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser
 │   │   └── session.go        # Username/password login
 │   ├── config/

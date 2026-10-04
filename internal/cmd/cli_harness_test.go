@@ -132,7 +132,12 @@ func runCLI(t *testing.T, url string, args ...string) (string, error) {
 func resetFlags(c *cobra.Command) {
 
 	reset := func(f *pflag.Flag) {
-		_ = f.Value.Set(f.DefValue)
+		if s, ok := f.Value.(pflag.SliceValue); ok {
+			// Set appends to a slice flag, and its DefValue is "[]".
+			_ = s.Replace(nil)
+		} else {
+			_ = f.Value.Set(f.DefValue)
+		}
 		f.Changed = false
 	}
 	c.Flags().VisitAll(reset)

@@ -15,6 +15,7 @@ var (
 	cmMethod string
 	cmArgs   string
 	cmGet    bool
+	cmRaw    bool
 )
 
 var callMethodCmd = &cobra.Command{
@@ -23,7 +24,10 @@ var callMethodCmd = &cobra.Command{
 	Long: `Execute a whitelisted Frappe method via POST /api/method/<method>.
 
 The --args flag accepts a JSON object of method parameters.
-The response "message" field is printed to stdout.
+The response "message" field is printed to stdout; --raw prints the whole
+response object, including what desk methods return next to "message"
+(docs, docinfo, _server_messages). For binary responses (PDFs, files) use
+'ffc api ... --output-file'.
 
 Examples:
   ffc call-method --method "frappe.ping"
@@ -40,6 +44,9 @@ Examples:
 			}
 		}
 		result, err := callSite(cmd, fmt.Sprintf("Calling %s…", cmMethod), func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
+			if cmRaw {
+				return c.CallMethodFull(ctx, cmMethod, methodArgs, cmGet)
+			}
 			return c.CallMethod(ctx, cmMethod, methodArgs, cmGet)
 		})
 		if err != nil {
@@ -55,6 +62,7 @@ func init() {
 	callMethodCmd.Flags().StringVar(&cmMethod, "method", "", "Frappe method path, e.g. frappe.ping (required)")
 	callMethodCmd.Flags().StringVar(&cmArgs, "args", "", `JSON object of method arguments, e.g. '{"doctype":"ToDo"}'`)
 	callMethodCmd.Flags().BoolVar(&cmGet, "get", false, "Send as a GET request (for methods whitelisted GET-only)")
+	callMethodCmd.Flags().BoolVar(&cmRaw, "raw", false, `Print the whole response object, not only "message"`)
 	_ = callMethodCmd.MarkFlagRequired("method")
 	rootCmd.AddCommand(callMethodCmd)
 }

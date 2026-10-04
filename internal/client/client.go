@@ -21,7 +21,8 @@ import (
 // is safe for concurrent use: the only mutable state (a session id) is guarded
 // by mu and attached per request, never by mutating the shared resty client.
 type FrappeClient struct {
-	r *resty.Client
+	r   *resty.Client
+	raw *resty.Client // r without retries, for Raw: a streamed body cannot be retried
 
 	// Username/password sites only. loginMu serialises re-logins so that
 	// concurrent requests rejected by one expired session log in once.
@@ -82,6 +83,7 @@ func New(ctx context.Context, cfg *config.SiteConfig) (*FrappeClient, error) {
 		// requests that mysteriously 403/return Guest data.
 		return nil, fmt.Errorf("site has no usable credentials (need an API key/secret, OAuth token, or username/password)")
 	}
+	c.raw = r.Clone().SetRetryCount(0)
 	return c, nil
 }
 
@@ -158,36 +160,53 @@ func (c *FrappeClient) CloseQuietly() {
 	c.Close(ctx)
 }
 
-// do executes a request and decodes the JSON response into out (if non-nil).
-func (c *FrappeClient) do(ctx context.Context, method, path string, body interface{}, query map[string]string, hints map[int]string, out interface{}) error {
-	var sid string // the session id the last send used
-	send := func() (*resty.Response, error) {
-		req := c.r.R().SetContext(ctx)
-		if body != nil {
-			req.SetBody(body)
-		}
-		if len(query) > 0 {
-			req.SetQueryParams(query)
-		}
+// send executes a request built by build on r, attaching the session cookie,
+// and repeats it once after a fresh login when the session was rejected.
+func (c *FrappeClient) send(ctx context.Context, r *resty.Client, method, path string, build func(*resty.Request)) (*resty.Response, error) {
+	var sid string // the session id the last attempt used
+	attempt := func() (*resty.Response, error) {
+		req := r.R().SetContext(ctx)
+		build(req)
 		if c.session != nil {
 			c.mu.Lock()
 			sid = c.sid
 			c.mu.Unlock()
 			req.SetHeader("Cookie", "sid="+sid)
 		}
-		return req.Execute(method, path)
+		resp, err := req.Execute(method, path)
+		if err != nil {
+			return nil, requestError(err)
+		}
+		return resp, nil
 	}
 
-	resp, err := send()
+	resp, err := attempt()
 	if err != nil {
-		return requestError(err)
+		return nil, err
 	}
 	if code := resp.StatusCode(); c.session != nil && (code == http.StatusUnauthorized || code == http.StatusForbidden) && c.relogin(ctx, sid) {
 		// The request was rejected before it ran, so repeating it (even a
 		// write) cannot duplicate anything.
-		if resp, err = send(); err != nil {
-			return requestError(err)
+		if b := resp.RawBody(); b != nil {
+			_ = b.Close()
 		}
+		return attempt()
+	}
+	return resp, nil
+}
+
+// do executes a request and decodes the JSON response into out (if non-nil).
+func (c *FrappeClient) do(ctx context.Context, method, path string, body interface{}, query map[string]string, hints map[int]string, out interface{}) error {
+	resp, err := c.send(ctx, c.r, method, path, func(req *resty.Request) {
+		if body != nil {
+			req.SetBody(body)
+		}
+		if len(query) > 0 {
+			req.SetQueryParams(query)
+		}
+	})
+	if err != nil {
+		return err
 	}
 	if resp.StatusCode() >= 400 {
 		return apiError(resp, hints)
@@ -288,9 +307,16 @@ func (fe *frappeErrorResponse) userMessage() string {
 // message; otherwise it reports the exception type and message. Non-JSON
 // bodies (proxy error pages) are truncated and sanitized.
 func apiError(resp *resty.Response, hints map[int]string) error {
-	code := resp.StatusCode()
-	body := resp.Body()
+	return responseError(resp.StatusCode(), resp.Body(), hints)
+}
 
+// ResponseError converts an error response read by a Raw caller into the
+// same *APIError the other client methods return.
+func ResponseError(status int, body []byte) error {
+	return responseError(status, body, map[int]string{http.StatusUnauthorized: authHint})
+}
+
+func responseError(code int, body []byte, hints map[int]string) error {
 	var fe frappeErrorResponse
 	isJSON := json.Unmarshal(body, &fe) == nil
 	msg := ""
@@ -438,12 +464,24 @@ func (c *FrappeClient) DeleteDoc(ctx context.Context, doctype, name string) erro
 	return c.do(ctx, http.MethodDelete, resourcePath(doctype, name), nil, nil, docHints(doctype, name, "delete"), nil)
 }
 
-// CallMethod invokes /api/method/<method>. When httpGET is true the args are
-// sent as query parameters via GET (for methods whitelisted GET-only):
-// strings are sent as-is and every other value JSON-encoded, which is what
-// Frappe's argument parsing expects (Go's %v would send "map[a:1]").
-// Otherwise they are POSTed as a JSON body. Returns the "message" field.
+// CallMethod invokes /api/method/<method> and returns its "message" field.
+// See CallMethodFull.
 func (c *FrappeClient) CallMethod(ctx context.Context, method string, args map[string]interface{}, httpGET bool) (interface{}, error) {
+	env, err := c.CallMethodFull(ctx, method, args, httpGET)
+	if err != nil {
+		return nil, err
+	}
+	return env["message"], nil
+}
+
+// CallMethodFull invokes /api/method/<method> and returns the whole response
+// object: "message" plus whatever else the method sets at the top level
+// (desk methods return "docs", "docinfo", "_server_messages"). When httpGET
+// is true the args are sent as query parameters via GET (for methods
+// whitelisted GET-only): strings are sent as-is and every other value
+// JSON-encoded, which is what Frappe's argument parsing expects (Go's %v
+// would send "map[a:1]"). Otherwise they are POSTed as a JSON body.
+func (c *FrappeClient) CallMethodFull(ctx context.Context, method string, args map[string]interface{}, httpGET bool) (map[string]interface{}, error) {
 	endpoint := "/api/method/" + url.PathEscape(method)
 	hints := map[int]string{
 		http.StatusUnauthorized: authHint,
@@ -451,13 +489,11 @@ func (c *FrappeClient) CallMethod(ctx context.Context, method string, args map[s
 		http.StatusNotFound:     fmt.Sprintf("method %q not found (404): check the method name and that it is whitelisted", method),
 	}
 
-	var result struct {
-		Message interface{} `json:"message"`
-	}
+	var result map[string]interface{}
 	var err error
 	if httpGET {
 		var qp map[string]string
-		if qp, err = queryArgs(args); err != nil {
+		if qp, err = QueryArgs(args); err != nil {
 			return nil, err
 		}
 		err = c.do(ctx, http.MethodGet, endpoint, nil, qp, hints, &result)
@@ -471,11 +507,12 @@ func (c *FrappeClient) CallMethod(ctx context.Context, method string, args map[s
 	if err != nil {
 		return nil, err
 	}
-	return result.Message, nil
+	return result, nil
 }
 
-// queryArgs encodes method arguments as query parameters.
-func queryArgs(args map[string]interface{}) (map[string]string, error) {
+// QueryArgs encodes method arguments as query parameters: strings as-is,
+// other values as JSON, nil values left out.
+func QueryArgs(args map[string]interface{}) (map[string]string, error) {
 	qp := make(map[string]string, len(args))
 	for k, v := range args {
 		switch val := v.(type) {

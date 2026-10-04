@@ -85,6 +85,8 @@ internal/cmd/setup_flags.go  → non-interactive setup flags for init and site a
 internal/cmd/config_cmd.go   → config TUI, config get, config set; escQuitKeyMap, resolveCfgPath
 internal/cmd/{ping,get_doc,list_docs,create_doc,update_doc,delete_doc,count_docs,get_schema,
              list_doctypes,list_reports,run_report,call_method}.go → data commands (all use callSite)
+internal/cmd/api.go          → ffc api: buildAPIRequest (-f/-F/--input/-H), writeBody (pipe raw, TTY formatted,
+                                binary refused on a TTY), saveBody, --paginate (v1 limit_start, v2 start/has_next_page)
 internal/cmd/bulk.go         → runBulk worker pool, bulkReport, parseObjects/parseNames/splitUpdates, bulkFlags
 internal/cmd/bulk_{create,update,delete}.go → bulk commands (--concurrency 1-10, --fail-fast)
 internal/cmd/update.go           → self-update (size-limited download, signed checksums.txt + SHA256 check, atomic swap)
@@ -97,6 +99,8 @@ internal/cmd/mcp_detach_unix.go / mcp_detach_windows.go → setSysProcAttr, term
 internal/client/http.go      → newResty (timeout, 128 MiB body cap, no cookie jar, silent logger, GET-only
                                 redirects), retry policy, requestError, warnIfInsecure, stripHTML, snippet
 internal/client/client.go    → FrappeClient; New() picks auth; one do() request path; session relogin; Close()
+internal/client/raw.go       → Raw (any site path, streamed, no retries, no 128 MiB cap), SitePath (refuses URLs),
+                                ResponseError (status+body → *APIError)
 internal/client/oauth.go     → ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser (all take ctx)
 internal/client/session.go   → LoginPassword (POST /api/method/login, sid cookie, 2FA detection)
 internal/config/config.go    → Config/SiteConfig, Read, Load, env overrides, default paths
@@ -160,6 +164,7 @@ Env vars:
 - `IsOAuth()` returns true only if `AccessToken != ""`. `IsSessionAuth()` requires both `Username` and `Password`.
 - `client.LoginPassword` does not support Frappe 2FA; it returns an error pointing to OAuth or an API key.
 - `SiteConfig.Name` is a runtime-only field (`yaml:"-"`) set by `config.Load` to the exact YAML key; token writes use it as the site key.
+- **`ffc api` defaults to GET even with fields** (gh switches to POST): a bare `-f` on `/api/resource/X` would create a document. Only `--input` implies POST. `SitePath` refuses absolute and `//host` URLs; `Raw` refuses `Authorization`/`Cookie` headers. Keep both checks in the client: they are the credential boundary.
 - **MCP stdout is the JSON-RPC channel.** Tool handlers must never write to stdout or call `output.Print*`. Return results via `marshalResult`/`mcp.NewToolResultText` and errors via `mcp.NewToolResultError` with a nil Go error. Stderr is safe in stdio mode (clients log it) and is `mcp.log` in detached mode — never print secrets there (the daemon prints its bearer token only to a terminal; `ffc mcp status` shows it).
 - MCP limits: results over 512 KiB are refused with a hint to narrow them; `run_report` defaults to 500 rows; bulk tools take at most 200 items; `--read-only` registers only read tools (call_method counts as a write).
 - The MCP detached-server state file is `~/.config/ffc/mcp.json` (pid, port, site, started_at, log_path, token, instance; 0600, the token is the HTTP bearer secret), guarded by a lock file; the log is `~/.config/ffc/mcp.log`. `ffc mcp stop --force` stops a PID that is alive but not health-confirmed.
