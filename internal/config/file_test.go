@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -138,7 +139,8 @@ sites:
 	if s, err := Load("", p); err != nil || s.Name != "dev" {
 		t.Fatalf("reload: %+v %v", s, err)
 	}
-	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
+	// Windows has no Unix permission bits; Go reports 0666/0777 there.
+	if st, _ := os.Stat(p); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Errorf("perm = %v, want 0600", st.Mode().Perm())
 	}
 }
@@ -175,7 +177,8 @@ func TestPutSiteRoundTripsTrickyValues(t *testing.T) {
 			t.Errorf("site %q password = %q", n, s.Password)
 		}
 	}
-	if st, _ := os.Stat(filepath.Dir(p)); st.Mode().Perm() != 0o700 {
+	// Windows has no Unix permission bits; Go reports 0666/0777 there.
+	if st, _ := os.Stat(filepath.Dir(p)); runtime.GOOS != "windows" && st.Mode().Perm() != 0o700 {
 		t.Errorf("dir perm = %v, want 0700", st.Mode().Perm())
 	}
 }
