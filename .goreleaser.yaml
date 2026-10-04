@@ -35,17 +35,18 @@ checksum:
   name_template: "checksums.txt"
 
 # Sign checksums.txt with the release key (tools/relsign, Ed25519). ffc update
-# refuses a release without a valid checksums.txt.sig. relsign also refuses a
-# key that does not match relsig.ReleaseKeys, and the template fails when the
-# secret is unset, so a release cannot publish an unverifiable signature.
+# refuses a release without a valid checksums.txt.sig. relsign reads
+# FFC_RELEASE_SIGNING_KEY from the inherited process environment and fails when
+# it is unset or does not match relsig.ReleaseKeys, so a release cannot publish
+# an unverifiable signature. Do not add a signs.env entry that templates
+# {{ .Env.X }}: GoReleaser evaluates those against the earlier signs.env
+# entries only, not the process environment, so it always fails.
 signs:
   - id: checksums
     artifacts: checksum
     cmd: go
     args: ["run", "./tools/relsign", "sign", "${artifact}", "${signature}"]
     signature: "${artifact}.sig"
-    env:
-      - "FFC_RELEASE_SIGNING_KEY={{ .Env.FFC_RELEASE_SIGNING_KEY }}"
 
 release:
   prerelease: auto # a tag like v1.6.0-rc1 must not become /releases/latest
