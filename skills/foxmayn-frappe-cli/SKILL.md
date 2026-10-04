@@ -50,7 +50,7 @@ Generate API keys on the Frappe site: **User > API Access > Generate Keys**. OAu
 ### Managing Sites
 
 ```bash
-ffc site list               # name, URL, auth method, default
+ffc site list               # name, URL, auth method, default (`--json`: default is true/false)
 ffc site add                # menu to choose auth method (or --oauth / --apikey / --password)
 ffc site use [name]         # set default site (menu if name omitted)
 ffc site remove [name]      # remove a site (menu if name omitted)
@@ -148,7 +148,7 @@ ffc list-docs -d "ToDo" --filters '{"status":"Open"}' -o "modified desc" --json
 | Flag         | Short | Required | Default | Description                                                       |
 | ------------ | ----- | -------- | ------- | ----------------------------------------------------------------- |
 | `--doctype`  | `-d`  | Yes      | —       | Frappe DocType to query                                           |
-| `--fields`   | `-f`  | No       | all     | Fields: `'["name","email"]'` or `name,email`                      |
+| `--fields`   | `-f`  | No       | `name`  | Fields: `'["name","email"]'` or `name,email`                      |
 | `--filters`  | —     | No       | —       | JSON filter: `'{"status":"Open"}'` or `'[["status","=","Open"]]'` |
 | `--limit`    | `-l`  | No       | 20      | Max records to return                                             |
 | `--order-by` | `-o`  | No       | —       | Sort: `"modified desc"`, `"name asc"`                             |
@@ -259,11 +259,14 @@ Both `--full` and `--keys` only apply to `--json` output. Problems merging custo
 
 **Compact JSON keeps:**
 - DocType level (always): `name`, `module`, `autoname`, `naming_rule`, `is_submittable`, `issingle`, `istable`, `is_tree`, `is_virtual`, `read_only`, `custom`
+- DocType level (if non-empty): `title_field`, `search_fields`, `sort_field`, `sort_order`, `image_field`, `description`
+- DocType level: `permissions`, one row per DocPerm with `role`, `permlevel` (if > 0) and the granted `rights` (`read`, `write`, `create`, ...)
 - DocType level (if truthy): `allow_rename`, `track_changes`
 - DocType level (if non-empty): `actions`, `links`, `states`
 - DocField level (always): `fieldname`, `label`, `fieldtype`
 - DocField level (if truthy): `reqd`, `read_only`, `hidden`, `unique`, `is_virtual`, `non_negative`, `allow_on_submit`, `in_list_view`, `in_standard_filter`, `set_only_once`, `translatable`, `ignore_user_permissions`
-- DocField level (if non-empty string): `options`, `default`, `description`, `fetch_from`, `depends_on`, `mandatory_depends_on`, `read_only_depends_on`
+- DocField level (if non-empty): `options`, `default`, `description`, `fetch_from`, `depends_on`, `mandatory_depends_on`, `read_only_depends_on`, `precision`, `link_filters`, `insert_after`
+- DocField level (if truthy): `fetch_if_empty`, `no_copy`, `search_index`, `bold`, `collapsible`, `print_hide`, `report_hide`
 - DocField level (if > 0): `length`, `permlevel`
 
 #### `ffc list-doctypes` — List available DocTypes
@@ -350,7 +353,7 @@ ffc mcp --port 8765 --site mysite
 **Detached background** — runs as a background HTTP server, doesn't block the terminal:
 ```bash
 ffc mcp --detach [--port 8765] [--site mysite]
-ffc mcp status    # PID, URL, site, uptime, log file path, bearer token
+ffc mcp status    # PID, URL, bearer token, site, start time, log file path
 ffc mcp stop      # stop the server + clean up state file
 ffc mcp stop --force   # stop the recorded PID even if it does not answer health checks
 ```
@@ -431,7 +434,7 @@ ffc update --check   # only print whether an update is available
 ffc update --yes     # update without confirmation
 ```
 
-The download is size-limited and SHA256-verified before the binary is swapped. ffc also checks for updates automatically in the background at most once per day (skipped for `update`, `mcp`, `completion`, `help`, or when `FFC_NO_UPDATE_CHECK` is set) and prints a one-line notice to stderr when a newer version is available:
+The release's `checksums.txt` must carry a valid Ed25519 signature (`checksums.txt.sig`) from a key built into ffc, and the size-limited download must match its SHA256 before the binary is swapped. ffc also checks for updates automatically in the background at most once per day (skipped for `update`, `mcp`, `completion`, `help`, or when `FFC_NO_UPDATE_CHECK` is set) and prints a one-line notice to stderr when a newer version is available:
 
 ```
 Update available: v1.2.0 → v1.3.0  (run: ffc update)

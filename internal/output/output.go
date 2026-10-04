@@ -228,6 +228,18 @@ func formatValue(key string, v interface{}) string {
 			return strconv.FormatFloat(val, 'f', -1, 64)
 		}
 		return config.FormatNumber(val)
+	case json.Number:
+		// Frappe sends Float and Currency values with a decimal point (1500.0)
+		// and Int/Check values without (2025). Only the former are amounts to
+		// group; an integer may be a year, a count or an ID.
+		s := val.String()
+		if identityKeys[key] || !strings.ContainsAny(s, ".eE") {
+			return s
+		}
+		if f, err := val.Float64(); err == nil {
+			return config.FormatNumber(f)
+		}
+		return s
 	case string:
 		if identityKeys[key] {
 			return text.Sanitize(val)

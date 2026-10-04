@@ -9,7 +9,7 @@
 default_site: dev
 
 # Number format for displaying amounts in tables and reports.
-# Run `ffc config set number_format <value>` (or `ffc config`) to change.
+# Run `ffc config set --number-format <value>` (or `ffc config`) to change.
 # Options: french (default) | us | german | plain
 #   french  →  1 000 000,00
 #   us      →  1,000,000.00
@@ -18,7 +18,7 @@ default_site: dev
 number_format: french
 
 # Date format for displaying dates in tables and reports.
-# Run `ffc config set date_format <value>` (or `ffc config`) to change.
+# Run `ffc config set --date-format <value>` (or `ffc config`) to change.
 # Options: yyyy-mm-dd (default) | dd-mm-yyyy | dd/mm/yyyy | mm/dd/yyyy
 date_format: yyyy-mm-dd
 

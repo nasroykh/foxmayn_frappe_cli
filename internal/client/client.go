@@ -59,6 +59,8 @@ func New(ctx context.Context, cfg *config.SiteConfig) (*FrappeClient, error) {
 	r := newResty(cfg.URL).
 		SetRetryCount(2).
 		SetRetryWaitTime(500*time.Millisecond).
+		SetRetryMaxWaitTime(maxRetryAfter).
+		SetRetryAfter(retryAfter).
 		AddRetryCondition(retryableGET).
 		SetHeader("Accept", "application/json")
 	c := &FrappeClient{r: r}
@@ -131,14 +133,29 @@ func (c *FrappeClient) sessionValid(ctx context.Context, sid string) bool {
 	return res.Message != "" && res.Message != "Guest"
 }
 
-// Close ends the server-side session of a username/password client so a
-// long-running process (the MCP server) does not leave it behind. It is a
-// no-op for token-authenticated clients.
+// Close ends the server-side session of a username/password client so the
+// process does not leave it behind on the server. It is a no-op for
+// token-authenticated clients. A failure is ignored: the session then
+// expires on its own.
 func (c *FrappeClient) Close(ctx context.Context) {
 	if c.session == nil {
 		return
 	}
-	_ = c.do(ctx, http.MethodPost, "/api/method/logout", nil, nil, nil, nil)
+	c.mu.Lock()
+	sid := c.sid
+	c.mu.Unlock()
+	_ = Logout(ctx, c.session.url, sid)
+}
+
+// CloseQuietly is Close bounded by its own short timeout, for deferred cleanup
+// that must still run after the command's context was cancelled (Ctrl+C).
+func (c *FrappeClient) CloseQuietly() {
+	if c.session == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c.Close(ctx)
 }
 
 // do executes a request and decodes the JSON response into out (if non-nil).
@@ -183,9 +200,17 @@ func (c *FrappeClient) do(ctx context.Context, method, path string, body interfa
 
 // decodeJSON unmarshals a 2xx body, reporting an HTML or other non-JSON page
 // (an SSO/login proxy, a wrong URL) clearly instead of "invalid character '<'".
+// Numbers decode as json.Number: integers above 2^53 keep their precision,
+// and the literal tells an Int field (2025) from a Float or Currency (1500.0).
 func decodeJSON(resp *resty.Response, out interface{}) error {
 	body := resp.Body()
-	if err := json.Unmarshal(body, out); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	err := dec.Decode(out)
+	if err == nil && dec.More() {
+		err = fmt.Errorf("unexpected data after the JSON value")
+	}
+	if err != nil {
 		ct := resp.Header().Get("Content-Type")
 		if ct != "" && !strings.Contains(ct, "json") {
 			return fmt.Errorf("unexpected non-JSON response (%s, HTTP %d): check the site URL: %s", ct, resp.StatusCode(), snippet(body))

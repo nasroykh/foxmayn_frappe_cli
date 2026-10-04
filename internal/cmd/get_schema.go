@@ -148,11 +148,11 @@ func fetchSchema(ctx context.Context, c *client.FrappeClient, doctype string) (m
 //
 // DocField level — kept when non-empty: options, default, description,
 //
-//	fetch_from, fetch_if_empty, depends_on, mandatory_depends_on,
+//	fetch_from, depends_on, mandatory_depends_on,
 //	read_only_depends_on, precision, link_filters, insert_after
 //
-// DocField level — kept when truthy: no_copy, search_index, bold, collapsible,
-// print_hide, report_hide
+// DocField level — kept when truthy: fetch_if_empty, no_copy, search_index,
+// bold, collapsible, print_hide, report_hide
 //
 // DocField level — kept when > 0: length, permlevel
 func compactSchema(doc map[string]interface{}) map[string]interface{} {
@@ -237,7 +237,7 @@ func compactField(f map[string]interface{}) map[string]interface{} {
 
 	// Include values only when non-empty. default may be numeric.
 	for _, k := range []string{
-		"options", "default", "description", "fetch_from", "fetch_if_empty",
+		"options", "default", "description", "fetch_from",
 		"depends_on", "mandatory_depends_on", "read_only_depends_on",
 		"precision", "link_filters", "insert_after",
 	} {
@@ -247,7 +247,7 @@ func compactField(f map[string]interface{}) map[string]interface{} {
 	}
 
 	// Include flags that change data handling only when truthy.
-	for _, k := range []string{"no_copy", "search_index", "bold", "collapsible", "print_hide", "report_hide"} {
+	for _, k := range []string{"fetch_if_empty", "no_copy", "search_index", "bold", "collapsible", "print_hide", "report_hide"} {
 		if v, ok := f[k]; ok && isTruthy(v) {
 			out[k] = v
 		}
@@ -256,7 +256,7 @@ func compactField(f map[string]interface{}) map[string]interface{} {
 	// Include numeric values only when > 0.
 	for _, k := range []string{"length", "permlevel"} {
 		if v, ok := f[k]; ok {
-			if n, ok := v.(float64); ok && n > 0 {
+			if n, ok := numeric(v); ok && n > 0 {
 				out[k] = v
 			}
 		}
@@ -477,15 +477,26 @@ func isEmpty(v interface{}) bool {
 
 // isTruthy reports whether v represents a non-zero numeric or boolean true.
 func isTruthy(v interface{}) bool {
-	switch val := v.(type) {
-	case float64:
-		return val != 0
-	case bool:
-		return val
-	case int:
-		return val != 0
+	if b, ok := v.(bool); ok {
+		return b
 	}
-	return false
+	n, ok := numeric(v)
+	return ok && n != 0
+}
+
+// numeric returns v as a float64 for the number types a decoded response can
+// hold (json.Number from the client, float64 from castProperty or tests).
+func numeric(v interface{}) (float64, bool) {
+	switch val := v.(type) {
+	case json.Number:
+		f, err := val.Float64()
+		return f, err == nil
+	case float64:
+		return val, true
+	case int:
+		return float64(val), true
+	}
+	return 0, false
 }
 
 func init() {

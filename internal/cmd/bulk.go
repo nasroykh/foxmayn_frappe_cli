@@ -252,6 +252,7 @@ func (f *bulkFlags) run(cmd *cobra.Command, title string, n int, done string, op
 	if err != nil {
 		return bulkReport{}, err
 	}
+	defer c.CloseQuietly()
 	var rep bulkReport
 	_ = runSpinner(title, func() {
 		rep = runBulk(cmd.Context(), n, f.concurrency, f.failFast, done, func(ctx context.Context, i int) (string, error) {

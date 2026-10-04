@@ -32,6 +32,7 @@ Examples:
 		if err != nil {
 			return err
 		}
+		defer c.CloseQuietly()
 		resp, err := c.Ping(cmd.Context())
 		if err != nil {
 			return err

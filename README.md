@@ -24,7 +24,7 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 
 Works from PowerShell or `cmd.exe`. Installs to `%LOCALAPPDATA%\Programs\ffc` and adds it to your user `PATH` automatically — restart your terminal after running.
 
-Both scripts detect your architecture (amd64/arm64), download the correct binary from the latest GitHub Release, and verify the SHA256 checksum before installing.
+Both scripts detect your architecture (amd64/arm64), download the correct binary from the latest GitHub Release, and verify the SHA256 checksum before installing. `install.sh` also checks the Ed25519 signature on `checksums.txt` when OpenSSL 3 is available (otherwise it warns and relies on the checksum; macOS ships LibreSSL, so it falls back there unless OpenSSL 3 is installed). `install.ps1` checks the checksum only.
 
 **Manually** — download a pre-built binary from the [Releases page](https://github.com/nasroykh/foxmayn_frappe_cli/releases), extract it, and place `ffc` somewhere on your `PATH`.
 
@@ -52,9 +52,9 @@ ffc init
 
 The wizard lets you choose between three authentication methods:
 
-- **OAuth 2.0** (`--oauth`) — browser login, PKCE flow; only the tokens are stored. You create an OAuth Client on Frappe once and authorize via the browser. The wizard prints the redirect URI to register, `http://127.0.0.1:<port>/callback` (earlier ffc versions used `localhost`; update an existing OAuth Client if it was registered that way).
+- **OAuth 2.0** (`--oauth`) — browser login, PKCE flow; no password is stored (the config keeps the OAuth client id/secret and the access and refresh tokens). You create an OAuth Client on Frappe once and authorize via the browser. The wizard prints the redirect URI to register, `http://127.0.0.1:<port>/callback` (earlier ffc versions used `localhost`; update an existing OAuth Client if it was registered that way).
 - **API Key** (`--apikey`) — paste your API key and secret from **User → API Access → Generate Keys**. The keys are checked against the site before they are saved. Best choice for scripts and CI.
-- **Username / password** (`--password`) — logs in with a session cookie on every run. The password is stored in the config file (mode 0600). Two-factor authentication is not supported.
+- **Username / password** (`--password`) — logs in with a session cookie on every run and logs out when the command ends. The password is stored in the config file (mode 0600). Two-factor authentication is not supported. On a site with **Deny Multiple Sessions** enabled (System Settings), each ffc login can end your other sessions, such as the browser one; use an API key or OAuth there.
 
 ```bash
 ffc init             # menu to choose auth method
@@ -96,7 +96,7 @@ sites:
     token_expiry: 1234567890
 ```
 
-OAuth access tokens are refreshed automatically before every command when they expire — you don't need to re-run `ffc init`.
+OAuth access tokens are refreshed automatically when they expire, before any command that talks to the site — you don't need to re-run `ffc init`.
 
 **Site Management (`ffc site`)**
 
@@ -107,6 +107,7 @@ ffc site list                   # show all configured sites
 ffc site add                    # add a new site (menu to choose auth method)
 ffc site add --oauth            # add a new site via OAuth browser flow
 ffc site add --apikey           # add a new site via API key form
+ffc site add --password         # add a new site via username/password form
 ffc site use [name]             # set the default site (interactive menu if name omitted)
 ffc site remove [name]          # remove a site (interactive menu if name omitted)
 ```
@@ -160,10 +161,10 @@ Commands exit non-zero on any error, declined confirmation or aborted prompt, so
 
 ### Basic Setup & Settings
 
-*   **`init`**: Interactive setup wizard — creates your initial config. Choose between OAuth 2.0 browser flow (`--oauth`) or API key/secret (`--apikey`). Auto-adds `https://` if you omit the scheme.
+*   **`init`**: Interactive setup wizard — creates your initial config. Choose between OAuth 2.0 browser flow (`--oauth`), API key/secret (`--apikey`) or username/password (`--password`). Auto-adds `https://` if you omit the scheme.
 *   **`site`**: Manage multiple Frappe sites without editing the config file:
-    *   `ffc site list` — show all configured sites (name, URL, auth method, default)
-    *   `ffc site add [--oauth|--apikey]` — add a new site interactively
+    *   `ffc site list` — show all configured sites (name, URL, auth method, default; in `--json`, `default` is a boolean)
+    *   `ffc site add [--oauth|--apikey|--password]` — add a new site interactively
     *   `ffc site use [name]` — set the default site (shows selection menu if name omitted)
     *   `ffc site remove [name]` — remove a site (shows selection menu if name omitted)
 *   **`config`**: Interactive TUI to tweak settings, or non-interactive via subcommands:
@@ -178,7 +179,7 @@ ffc update --check   # only print whether an update is available
 ffc update --yes     # update without confirmation
 ```
 
-`ffc update` installs a release only if its `checksums.txt` carries a valid Ed25519 signature (`checksums.txt.sig`) from the release key built into ffc, and the archive matches its checksum. Someone who can replace the release assets cannot also forge the signature. Versions before 1.6.1 do not check the signature, so the first update from them relies on the checksum alone. The install scripts check the checksum only; for a stronger check of a manual download, run `gh attestation verify <archive> --repo nasroykh/foxmayn_frappe_cli`.
+`ffc update` installs a release only if its `checksums.txt` carries a valid Ed25519 signature (`checksums.txt.sig`) from the release key built into ffc, and the archive matches its checksum. Someone who can replace the release assets cannot also forge the signature. Versions before 1.6.1 do not check the signature, so the first update from them relies on the checksum alone. `install.sh` checks the same signature when OpenSSL 3 is present; `install.ps1` checks the checksum only. For a manual download, run `gh attestation verify <archive> --repo nasroykh/foxmayn_frappe_cli`.
 
 ffc also checks for updates automatically (at most once a day) and prints a one-line notice to stderr when a newer version is available.
 
@@ -304,7 +305,7 @@ ffc mcp --port 8765 --site mysite
 **Detached mode** — background HTTP server, doesn't block the terminal:
 ```bash
 ffc mcp --detach [--port 8765] [--site mysite]
-ffc mcp status   # show PID, URL, uptime, log path
+ffc mcp status   # show PID, URL, bearer token, site, start time, log path
 ffc mcp stop     # stop the server and clean up (--force if it is not responding)
 ```
 
@@ -387,11 +388,15 @@ foxmayn_frappe_cli/
 ## Development
 
 ```bash
-make tidy       # Install/update all dependencies
-make build      # Compile binary
-make vet        # Run go vet
-make fmt        # Format code with gofmt
-make clean      # Remove compiled binary
+make tidy        # Install/update all dependencies
+make build       # Compile binary to ./bin/ffc
+make install     # Install to $GOPATH/bin and set up the config
+make test        # Run tests with the race detector
+make lint        # gofmt check, go vet, staticcheck (if installed)
+make vet         # Run go vet
+make fmt         # Format code with gofmt
+make clean       # Remove compiled binary
+make skills-init # Link the ffc skills (skills/) into .claude/, .cursor/ and .agent/
 ```
 
 ## Adding New Commands

@@ -300,6 +300,11 @@ func TestMCPInvalidArgsNeverReachServer(t *testing.T) {
 		{"create_doc", map[string]interface{}{"doctype": "ToDo"}},
 		{"bulk_update", map[string]interface{}{"doctype": "ToDo", "data": []interface{}{map[string]interface{}{"x": 1}}}},
 		{"bulk_create", map[string]interface{}{"doctype": "ToDo", "data": []interface{}{}}},
+		{"list_docs", map[string]interface{}{"doctype": "ToDo", "order_by": []interface{}{"name"}}},
+		{"list_doctypes", map[string]interface{}{"module": float64(3)}},
+		{"get_doc", map[string]interface{}{"doctype": "ToDo", "name": []interface{}{"a"}}},
+		{"delete_doc", map[string]interface{}{"doctype": "ToDo", "name": ""}},
+		{"get_schema", map[string]interface{}{"doctype": "ToDo", "keys": float64(1)}},
 	}
 	for _, tc := range cases {
 		if res := callTool(t, s, tc.tool, tc.args); !res.IsError {
@@ -357,5 +362,37 @@ func TestCompactReportResult(t *testing.T) {
 	}
 	if out["truncated"] != true || out["total_rows"] != 9 {
 		t.Errorf("out = %v", out)
+	}
+}
+
+// Integer-named DocTypes send names as JSON numbers. They must reach the
+// right document, not fall back to the DocType name (Single DocType rule).
+func TestMCPNumericNames(t *testing.T) {
+	s, fs := newMCPTestServer(t)
+	callTool(t, s, "get_doc", map[string]interface{}{"doctype": "ToDo", "name": float64(42)})
+	callTool(t, s, "update_doc", map[string]interface{}{"doctype": "ToDo", "name": float64(7), "data": map[string]interface{}{"x": 1}})
+	callTool(t, s, "delete_doc", map[string]interface{}{"doctype": "ToDo", "name": float64(5)})
+	callTool(t, s, "get_doc", map[string]interface{}{"doctype": "System Settings"})
+	want := []string{"/api/resource/ToDo/42", "/api/resource/ToDo/7", "/api/resource/ToDo/5", "/api/resource/System%20Settings/System%20Settings"}
+	reqs := fs.all()
+	if len(reqs) != len(want) {
+		t.Fatalf("reqs = %+v", reqs)
+	}
+	for i, w := range want {
+		if got := reqs[i].Path; got != w && got != strings.ReplaceAll(w, "%20", " ") {
+			t.Errorf("req %d path = %s, want %s", i, got, w)
+		}
+	}
+}
+
+func TestKeysArg(t *testing.T) {
+	for _, v := range []interface{}{"name, fields", []interface{}{"name", "fields"}, `["name","fields"]`} {
+		got, err := keysArg(argReq(map[string]interface{}{"keys": v}), "keys")
+		if err != nil || len(got) != 2 || got[0] != "name" || got[1] != "fields" {
+			t.Errorf("keysArg(%v) = %v, %v", v, got, err)
+		}
+	}
+	if got, err := keysArg(argReq(nil), "keys"); err != nil || len(got) != 0 {
+		t.Errorf("missing keys = %v, %v", got, err)
 	}
 }

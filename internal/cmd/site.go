@@ -58,20 +58,23 @@ var siteListCmd = &cobra.Command{
 		rows := make([]map[string]interface{}, 0, len(names))
 		for _, name := range names {
 			site := cfg.Sites[name]
-			dflt := ""
-			if name == cfg.DefaultSite {
-				dflt = "✓"
-			}
 			rows = append(rows, map[string]interface{}{
 				"name":    name,
 				"url":     site.URL,
 				"auth":    authLabel(site),
-				"default": dflt,
+				"default": name == cfg.DefaultSite,
 			})
 		}
 
 		if jsonOutput {
 			return output.PrintJSON(rows)
+		}
+		for _, row := range rows {
+			if row["default"] == true {
+				row["default"] = "✓"
+			} else {
+				row["default"] = ""
+			}
 		}
 		output.PrintTable(rows, []string{"name", "url", "auth", "default"})
 		return nil

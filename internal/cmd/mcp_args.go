@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
@@ -150,6 +151,47 @@ func intArg(req mcp.CallToolRequest, key string, def int) (int, error) {
 		return 0, fmt.Errorf("%s: expected a non-negative integer, got %v", key, v)
 	}
 	return int(f), nil
+}
+
+// stringArg reads an optional string argument. Unlike req.GetString, which
+// returns "" for any non-string value, a wrong type is an error, so a model
+// that sends an array or number learns the call was not understood.
+func stringArg(req mcp.CallToolRequest, key string) (string, error) {
+	v, ok := req.GetArguments()[key]
+	if !ok || v == nil {
+		return "", nil
+	}
+	s, isString := v.(string)
+	if !isString {
+		return "", fmt.Errorf("%s: expected a string", key)
+	}
+	return s, nil
+}
+
+// nameArg reads a document name, which may arrive as a JSON number for
+// integer-named DocTypes (the same rule as the CLI's docName).
+func nameArg(req mcp.CallToolRequest, key string, required bool) (string, error) {
+	v, ok := req.GetArguments()[key]
+	if !ok || v == nil || v == "" {
+		if required {
+			return "", fmt.Errorf("required argument %q not found", key)
+		}
+		return "", nil
+	}
+	name, valid := docName(v)
+	if !valid {
+		return "", fmt.Errorf("%s: expected a string or number", key)
+	}
+	return name, nil
+}
+
+// keysArg reads a key list given as an array of strings (native or
+// JSON-encoded) or as a comma-separated string.
+func keysArg(req mcp.CallToolRequest, key string) ([]string, error) {
+	if s, ok := req.GetArguments()[key].(string); ok && !strings.HasPrefix(strings.TrimSpace(s), "[") {
+		return splitCSV(s), nil
+	}
+	return stringsArg(req, key)
 }
 
 // stringsArg reads an array of strings (native or JSON-encoded) argument.

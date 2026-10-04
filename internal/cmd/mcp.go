@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
@@ -51,9 +50,7 @@ func newMCPClientProvider() (clientFn, func()) {
 		mu.Lock()
 		defer mu.Unlock()
 		if fc != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			fc.Close(ctx)
+			fc.CloseQuietly()
 			fc = nil
 		}
 	}
