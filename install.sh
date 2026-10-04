@@ -4,6 +4,53 @@ set -eu
 REPO="nasroykh/foxmayn_frappe_cli"
 BINARY="ffc"
 
+# Ed25519 public keys that sign checksums.txt (base64, raw 32 bytes). Keep in
+# sync with ReleaseKeys in internal/relsig/keys.go (TestInstallScriptInSync).
+RELEASE_KEYS="5r/VTDFnWuvqWN2aMxp3Gn3KZOxbDvdkwgw/8gwV6Co="
+
+# verify_signature checks checksums.txt.sig against checksums.txt with the
+# domain prefix ffc signs (internal/relsig). It needs OpenSSL 3 for Ed25519
+# (`pkeyutl -rawin`). Without it the install continues with the SHA-256 check
+# only, with a warning. Returns non-zero only for a signature that is present
+# and wrong, or missing when OpenSSL could have checked it.
+verify_signature() {
+  dir=$1
+  if [ "${FFC_SKIP_SIGNATURE:-}" = "1" ]; then
+    echo "Warning: skipping the release signature check (FFC_SKIP_SIGNATURE=1)." >&2
+    return 0
+  fi
+  case "$(openssl version 2>/dev/null)" in
+    "OpenSSL "[3-9]*) ;;
+    *)
+      echo "Warning: OpenSSL 3 not found; the release signature was not checked (SHA-256 only)." >&2
+      echo "         Install OpenSSL 3 and re-run to check it. 'ffc update' always checks signatures." >&2
+      return 0
+      ;;
+  esac
+  if [ ! -s "$dir/checksums.txt.sig" ]; then
+    echo "Error: the release has no checksums.txt.sig; refusing to install an unsigned release." >&2
+    echo "Re-run with FFC_SKIP_SIGNATURE=1 to bypass at your own risk." >&2
+    return 1
+  fi
+  printf 'ffc release checksums v1\n' > "$dir/signed-message"
+  cat "$dir/checksums.txt" >> "$dir/signed-message"
+  if ! tr -d '\r\n' < "$dir/checksums.txt.sig" | openssl base64 -d -A > "$dir/sig.bin" 2>/dev/null; then
+    echo "Error: checksums.txt.sig is not valid base64." >&2
+    return 1
+  fi
+  for key in $RELEASE_KEYS; do
+    # SubjectPublicKeyInfo for Ed25519 = fixed 12-byte prefix + raw key.
+    printf -- '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA%s\n-----END PUBLIC KEY-----\n' "$key" > "$dir/release-key.pem"
+    if openssl pkeyutl -verify -pubin -inkey "$dir/release-key.pem" -rawin \
+      -in "$dir/signed-message" -sigfile "$dir/sig.bin" > /dev/null 2>&1; then
+      echo "Release signature verified."
+      return 0
+    fi
+  done
+  echo "Error: checksums.txt.sig does not match any ffc release key. The download may have been tampered with." >&2
+  return 1
+}
+
 # --- detect OS ---
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$OS" in
@@ -49,9 +96,13 @@ CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-# --- download archive + checksums ---
+# --- download archive + checksums + signature ---
 curl -fsSL "$URL" -o "$TMP/$ARCHIVE"
 curl -fsSL "$CHECKSUM_URL" -o "$TMP/checksums.txt"
+curl -fsSL "${CHECKSUM_URL}.sig" -o "$TMP/checksums.txt.sig" || true
+
+# --- verify that checksums.txt was signed by an ffc release key ---
+verify_signature "$TMP" || exit 1
 
 # --- verify checksum ---
 # grep -F: the archive name contains '.', which are regex metacharacters.

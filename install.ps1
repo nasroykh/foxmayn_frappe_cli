@@ -48,6 +48,10 @@ try {
     Invoke-WebRequest -Uri $ChecksumUrl  -OutFile $ChecksumPath -UseBasicParsing
 
     # --- verify checksum (fail closed) ---
+    # SHA-256 only: checksums.txt comes from the same release as the archive, so
+    # this catches a corrupt download, not a tampered release. Windows has no
+    # built-in Ed25519 verifier; install.sh checks checksums.txt.sig, and every
+    # later 'ffc update' verifies it. For provenance, use gh attestation verify.
     # [regex]::Escape: the archive name contains '.', a regex metacharacter (M2).
     $Line = Get-Content $ChecksumPath |
         Where-Object { $_ -match [regex]::Escape($Archive) } |

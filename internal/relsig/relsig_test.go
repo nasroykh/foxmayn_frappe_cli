@@ -4,6 +4,8 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -90,5 +92,25 @@ func TestReleaseKeysConfigured(t *testing.T) {
 		if pub, err := base64.StdEncoding.DecodeString(k); err != nil || len(pub) != ed25519.PublicKeySize {
 			t.Fatalf("ReleaseKeys entry %q is not a base64 Ed25519 public key", k)
 		}
+	}
+}
+
+// TestInstallScriptInSync keeps install.sh, which verifies checksums.txt.sig
+// with OpenSSL, on the same keys and signed-message prefix as ffc update.
+func TestInstallScriptInSync(t *testing.T) {
+	b, err := os.ReadFile("../../install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(b)
+	m := regexp.MustCompile(`(?m)^RELEASE_KEYS="([^"]*)"`).FindStringSubmatch(script)
+	if m == nil {
+		t.Fatal("install.sh: RELEASE_KEYS not found")
+	}
+	if got, want := strings.Fields(m[1]), ReleaseKeys; strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("install.sh RELEASE_KEYS = %q, want %q (internal/relsig/keys.go)", got, want)
+	}
+	if want := "printf '" + strings.TrimSuffix(domain, "\n") + "\\n'"; !strings.Contains(script, want) {
+		t.Errorf("install.sh does not sign-check with the prefix %q", want)
 	}
 }
