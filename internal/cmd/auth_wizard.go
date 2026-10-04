@@ -204,7 +204,7 @@ func chooseAuthMethod(title string, oauth, apiKey, password bool) (string, error
 		huh.NewSelect[string]().
 			Title(title).
 			Options(
-				huh.NewOption("OAuth 2.0          — browser login, no credentials stored", authOAuth),
+				huh.NewOption("OAuth 2.0          — browser login, no password stored", authOAuth),
 				huh.NewOption("API Key            — paste your API key and secret", authAPIKey),
 				huh.NewOption("Username & Password — email/username + password login", authPassword),
 			).
@@ -348,7 +348,11 @@ func collectPasswordSite(ctx context.Context, checkName func(string) error) (str
 
 		var loginErr error
 		if err := runSpinner("Verifying credentials...", func() {
-			_, loginErr = client.LoginPassword(ctx, site.URL, site.Username, site.Password)
+			var sid string
+			if sid, loginErr = client.LoginPassword(ctx, site.URL, site.Username, site.Password); loginErr == nil {
+				// The check only proves the password; end its session.
+				_ = client.Logout(ctx, site.URL, sid)
+			}
 		}); err != nil || ctx.Err() != nil {
 			return "", config.SiteConfig{}, errAborted
 		}

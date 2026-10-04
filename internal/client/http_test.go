@@ -2,8 +2,10 @@ package client
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -148,6 +150,46 @@ func TestRetryPolicy(t *testing.T) {
 		defer srv.Close()
 		c := newKeyClient(t, srv.URL)
 		if _, err := c.CreateDoc(context.Background(), "ToDo", map[string]interface{}{"a": 1}); err == nil {
+			t.Fatal("want error")
+		}
+		if n.Load() != 1 {
+			t.Errorf("requests = %d, want 1", n.Load())
+		}
+	})
+	t.Run("GET waits for a short Retry-After", func(t *testing.T) {
+		var n atomic.Int32
+		var first time.Time
+		var gap time.Duration
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if n.Add(1) == 1 {
+				first = time.Now()
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			gap = time.Since(first)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		}))
+		defer srv.Close()
+		c := newKeyClient(t, srv.URL)
+		c.r.SetRetryMaxWaitTime(maxRetryAfter) // newKeyClient shortens waits
+		if _, err := c.GetList(context.Background(), "ToDo", ListOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		if n.Load() != 2 || gap < 900*time.Millisecond {
+			t.Errorf("requests = %d, gap = %v; want 2 and about 1s", n.Load(), gap)
+		}
+	})
+	t.Run("GET not retried on a long Retry-After", func(t *testing.T) {
+		var n atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			n.Add(1)
+			w.Header().Set("Retry-After", "120")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		defer srv.Close()
+		c := newKeyClient(t, srv.URL)
+		if _, err := c.GetList(context.Background(), "ToDo", ListOptions{}); err == nil {
 			t.Fatal("want error")
 		}
 		if n.Load() != 1 {
@@ -366,5 +408,24 @@ func TestLoginPasswordErrors(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestWarnIfInsecureSkipsLoopback(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr := os.Stderr
+	os.Stderr = w
+	for _, u := range []string{"http://localhost:8000", "http://127.0.0.1", "http://mysite.localhost:8000"} {
+		warnIfInsecure(u)
+	}
+	warnIfInsecure("http://erp.example.com")
+	os.Stderr = stderr
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	if got := strings.Count(string(out), "warning:"); got != 1 || !strings.Contains(string(out), "erp.example.com") {
+		t.Errorf("warnings = %q, want one for erp.example.com", out)
 	}
 }

@@ -1,6 +1,7 @@
 package output
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -45,6 +46,11 @@ func TestFormatValue(t *testing.T) {
 		{"posting_date", "2025-01-02", "01/02/2025"},
 		{"description", "evil\x1b]0;title\x07text", "evil]0;titletext"},
 		{"enabled", true, "true"},
+		{"year", json.Number("2025"), "2025"},
+		{"grand_total", json.Number("1500.0"), "1,500"},
+		{"rate", json.Number("1234.5"), "1,234.50"},
+		{"idx", json.Number("12345.0"), "12345.0"},
+		{"id", json.Number("9007199254740993"), "9007199254740993"},
 	}
 	for _, c := range cases {
 		if got := formatValue(c.key, c.v); got != c.want {

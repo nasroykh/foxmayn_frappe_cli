@@ -152,6 +152,7 @@ func callSite[T any](cmd *cobra.Command, title string, fn func(ctx context.Conte
 	if err != nil {
 		return zero, err
 	}
+	defer c.CloseQuietly()
 	var out T
 	var apiErr error
 	spinErr := runSpinner(title, func() { out, apiErr = fn(cmd.Context(), c) })

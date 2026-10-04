@@ -45,3 +45,36 @@ func TestNewNoCredentials(t *testing.T) {
 		t.Error("New with no credentials: want error, got nil")
 	}
 }
+
+// TestNumbersKeepPrecisionAndLiteral verifies responses decode numbers as
+// json.Number: integers above 2^53 survive a round trip and the literal keeps
+// Frappe's Int (no decimal point) vs Float/Currency (decimal point) shape.
+func TestNumbersKeepPrecisionAndLiteral(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"name":"a","big":9007199254740993,"year":2025,"total":1500.0}}`))
+	}))
+	defer srv.Close()
+	fc, err := New(context.Background(), &config.SiteConfig{URL: srv.URL, APIKey: "k", APISecret: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fc.GetDoc(context.Background(), "ToDo", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := json.Marshal(doc); string(b) != `{"big":9007199254740993,"name":"a","total":1500.0,"year":2025}` {
+		t.Errorf("round trip = %s", b)
+	}
+}
+
+// TestTrailingDataRejected keeps the strictness json.Unmarshal had.
+func TestTrailingDataRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"name":"a"}} {"x":1}`))
+	}))
+	defer srv.Close()
+	fc, _ := New(context.Background(), &config.SiteConfig{URL: srv.URL, APIKey: "k", APISecret: "s"})
+	if _, err := fc.GetDoc(context.Background(), "ToDo", "a"); err == nil {
+		t.Error("want an error for trailing data")
+	}
+}

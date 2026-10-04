@@ -68,6 +68,21 @@ func LoginPassword(ctx context.Context, siteURL, usr, pwd string) (string, error
 	return sid, nil
 }
 
+// Logout ends the server-side session sid (POST /api/method/logout).
+func Logout(ctx context.Context, siteURL, sid string) error {
+	resp, err := newResty(siteURL).R().
+		SetContext(ctx).
+		SetHeader("Cookie", "sid="+sid).
+		Post("/api/method/logout")
+	if err != nil {
+		return requestError(err)
+	}
+	if resp.StatusCode() >= 400 {
+		return fmt.Errorf("logout failed (HTTP %d)", resp.StatusCode())
+	}
+	return nil
+}
+
 // sidFromCookies extracts the "sid" cookie value from a set of response cookies.
 func sidFromCookies(cookies []*http.Cookie) string {
 	for _, c := range cookies {

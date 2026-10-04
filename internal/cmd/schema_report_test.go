@@ -139,6 +139,8 @@ func TestCompactSchemaKeepsMeaningful(t *testing.T) {
 				"precision": "3", "default": float64(5), "reqd": float64(0), "hidden": float64(0),
 				"read_only": float64(0), "bold": float64(0), "idx": float64(4), "length": float64(0),
 				"creation": "2020", "options": "",
+				// Responses are decoded with UseNumber: flags arrive as json.Number.
+				"fetch_if_empty": json.Number("0"), "no_copy": json.Number("1"), "permlevel": json.Number("0"),
 			},
 		},
 	}
@@ -166,7 +168,10 @@ func TestCompactSchemaKeepsMeaningful(t *testing.T) {
 	if f["precision"] != "3" || f["default"] != 5.0 {
 		t.Errorf("field = %#v", f)
 	}
-	for _, k := range []string{"reqd", "hidden", "read_only", "bold", "idx", "length", "creation", "options"} {
+	if f["no_copy"] != json.Number("1") {
+		t.Errorf("no_copy dropped: %#v", f)
+	}
+	for _, k := range []string{"reqd", "hidden", "read_only", "bold", "idx", "length", "creation", "options", "fetch_if_empty", "permlevel"} {
 		if _, ok := f[k]; ok {
 			t.Errorf("field kept %q", k)
 		}

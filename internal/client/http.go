@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -85,12 +86,45 @@ func retryableGET(resp *resty.Response, err error) bool {
 	}
 	switch resp.StatusCode() {
 	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return true
+		// A server that asks for a longer pause than we are willing to wait
+		// gets its error reported instead of a retry it has refused.
+		return retryAfterDelay(resp) <= maxRetryAfter
 	}
 	return false
 }
 
 // requestError wraps a transport error with a hint for the common cases.
+// maxRetryAfter is the longest Retry-After a GET retry waits for.
+const maxRetryAfter = 10 * time.Second
+
+// retryAfterDelay parses a Retry-After header (seconds or an HTTP date). It
+// returns 0 when the header is absent or invalid, which leaves the default
+// backoff in place.
+func retryAfterDelay(resp *resty.Response) time.Duration {
+	v := strings.TrimSpace(resp.Header().Get("Retry-After"))
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs < 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// retryAfter is the resty RetryAfter callback: it honours the server's
+// Retry-After (retryableGET already refused waits over maxRetryAfter).
+func retryAfter(_ *resty.Client, resp *resty.Response) (time.Duration, error) {
+	return retryAfterDelay(resp), nil
+}
+
 func requestError(err error) error {
 	if errors.Is(err, resty.ErrResponseBodyTooLarge) {
 		return fmt.Errorf("response larger than %d MiB: narrow the request with a limit, fields or filters", MaxResponseBytes>>20)
@@ -113,8 +147,9 @@ func warnIfInsecure(rawURL string) {
 	if err != nil || u.Scheme != "http" {
 		return
 	}
-	switch u.Hostname() {
-	case "localhost", "127.0.0.1", "::1", "":
+	switch host := u.Hostname(); {
+	case host == "localhost", host == "127.0.0.1", host == "::1", host == "",
+		strings.HasSuffix(host, ".localhost"): // RFC 6761: always loopback
 		return
 	}
 	if _, seen := insecureWarned.LoadOrStore(rawURL, true); seen {
