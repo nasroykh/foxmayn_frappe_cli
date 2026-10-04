@@ -298,26 +298,34 @@ func apiError(resp *resty.Response, hints map[int]string) error {
 		msg = fe.userMessage()
 	}
 
+	e := &APIError{Status: code, ExcType: fe.ExcType}
 	if hint, ok := hints[code]; ok {
 		if msg != "" {
-			return fmt.Errorf("%s — %s (HTTP %d)", hint, msg, code)
+			e.Message = fmt.Sprintf("%s — %s (HTTP %d)", hint, msg, code)
+		} else {
+			e.Message = fmt.Sprintf("%s (HTTP %d)", hint, code)
 		}
-		return fmt.Errorf("%s (HTTP %d)", hint, code)
+		return e
 	}
 	if !isJSON {
+		e.ExcType = ""
 		if s := snippet(body); s != "" {
-			return fmt.Errorf("server error %d: %s", code, s)
+			e.Message = fmt.Sprintf("server error %d: %s", code, s)
+		} else {
+			e.Message = fmt.Sprintf("server error %d", code)
 		}
-		return fmt.Errorf("server error %d", code)
+		return e
 	}
 	excType := fe.ExcType
 	if excType == "" {
 		excType = "ServerError"
 	}
 	if msg != "" {
-		return fmt.Errorf("[%s] %s (HTTP %d)", excType, msg, code)
+		e.Message = fmt.Sprintf("[%s] %s (HTTP %d)", excType, msg, code)
+	} else {
+		e.Message = fmt.Sprintf("server error %d (%s)", code, excType)
 	}
-	return fmt.Errorf("server error %d (%s)", code, excType)
+	return e
 }
 
 const authHint = "authentication failed (401): check your credentials or run 'ffc init' to reconfigure"

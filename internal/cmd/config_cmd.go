@@ -378,7 +378,7 @@ func validateNumberFormat(s string) error {
 	for i, f := range config.AllFormats {
 		valid[i] = string(f.Key)
 	}
-	return fmt.Errorf("invalid number format %q; valid values: %s", s, strings.Join(valid, ", "))
+	return usageErrorf("invalid number format %q; valid values: %s", s, strings.Join(valid, ", "))
 }
 
 // validateDateFormat returns an error if s is not a valid date format key.
@@ -392,7 +392,7 @@ func validateDateFormat(s string) error {
 	for i, f := range config.AllDateFormats {
 		valid[i] = string(f.Key)
 	}
-	return fmt.Errorf("invalid date format %q; valid values: %s", s, strings.Join(valid, ", "))
+	return usageErrorf("invalid date format %q; valid values: %s", s, strings.Join(valid, ", "))
 }
 
 // escQuitKeyMap returns a keymap with both ctrl+c and esc mapped to Quit.

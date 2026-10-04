@@ -266,7 +266,7 @@ func TestAuth(t *testing.T) {
 		t.Fatalf("bearer: %d", r.Status)
 	}
 	wrong := func(r *http.Request) { r.Header.Set("Authorization", "token test-key:wrong") }
-	if r := fkDo(t, s, "GET", path, "", wrong); r.Status != 403 || r.Body["exc_type"] != "PermissionError" {
+	if r := fkDo(t, s, "GET", path, "", wrong); r.Status != 401 || r.Body["exc_type"] != "AuthenticationError" {
 		t.Fatalf("wrong secret: %d %s", r.Status, r.Raw)
 	}
 	if r := fkDo(t, s, "GET", path, "", nil); r.Status != 403 {

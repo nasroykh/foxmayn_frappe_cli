@@ -134,7 +134,7 @@ func (r bulkReport) err() error {
 	if r.Failed == 0 && r.Skipped == 0 {
 		return nil
 	}
-	return fmt.Errorf("%d of %d items did not succeed (%d failed or interrupted, %d skipped)", r.Failed+r.Skipped, r.Total, r.Failed, r.Skipped)
+	return &partialError{fmt.Sprintf("%d of %d items did not succeed (%d failed or interrupted, %d skipped)", r.Failed+r.Skipped, r.Total, r.Failed, r.Skipped)}
 }
 
 // printBulkReport renders a report for the CLI and returns the exit error.
@@ -166,7 +166,7 @@ func printBulkReport(rep bulkReport, doctype string) error {
 func parseObjects(raw []byte) ([]map[string]interface{}, error) {
 	var elems []json.RawMessage
 	if err := json.Unmarshal(raw, &elems); err != nil {
-		return nil, fmt.Errorf("expected a JSON array of objects: %w", err)
+		return nil, usageErrorf("expected a JSON array of objects: %w", err)
 	}
 	if len(elems) == 0 {
 		return nil, errors.New("the array is empty")
@@ -174,7 +174,7 @@ func parseObjects(raw []byte) ([]map[string]interface{}, error) {
 	items := make([]map[string]interface{}, len(elems))
 	for i, e := range elems {
 		if err := json.Unmarshal(e, &items[i]); err != nil || items[i] == nil {
-			return nil, fmt.Errorf("item %d is not a JSON object", i+1)
+			return nil, usageErrorf("item %d is not a JSON object", i+1)
 		}
 	}
 	return items, nil
@@ -215,16 +215,16 @@ func withoutName(data map[string]interface{}) map[string]interface{} {
 func parseNames(raw []byte) ([]string, error) {
 	var elems []interface{}
 	if err := json.Unmarshal(raw, &elems); err != nil {
-		return nil, fmt.Errorf("expected a JSON array of names: %w", err)
+		return nil, usageErrorf("expected a JSON array of names: %w", err)
 	}
 	if len(elems) == 0 {
-		return nil, errors.New("the names array is empty")
+		return nil, usageErrorf("the names array is empty")
 	}
 	names := make([]string, len(elems))
 	for i, e := range elems {
 		n, ok := docName(e)
 		if !ok {
-			return nil, fmt.Errorf("name %d is empty or not a string/number", i+1)
+			return nil, usageErrorf("name %d is empty or not a string/number", i+1)
 		}
 		names[i] = n
 	}
@@ -246,7 +246,7 @@ func (f *bulkFlags) register(cmd *cobra.Command) {
 // spinner.
 func (f *bulkFlags) run(cmd *cobra.Command, title string, n int, done string, op func(ctx context.Context, c *client.FrappeClient, i int) (string, error)) (bulkReport, error) {
 	if f.concurrency < 1 || f.concurrency > maxBulkWorkers {
-		return bulkReport{}, fmt.Errorf("--concurrency must be between 1 and %d", maxBulkWorkers)
+		return bulkReport{}, usageErrorf("--concurrency must be between 1 and %d", maxBulkWorkers)
 	}
 	c, err := newClient(cmd.Context())
 	if err != nil {

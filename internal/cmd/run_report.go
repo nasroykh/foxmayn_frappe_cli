@@ -41,7 +41,7 @@ Examples:
 			}
 		}
 		if rrLimit < 0 {
-			return fmt.Errorf("--limit must be >= 0 (0 means all rows)")
+			return usageErrorf("--limit must be >= 0 (0 means all rows)")
 		}
 
 		result, err := callSite(cmd, fmt.Sprintf("Running report %q…", rrName), func(ctx context.Context, c *client.FrappeClient) (map[string]interface{}, error) {

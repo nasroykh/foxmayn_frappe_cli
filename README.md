@@ -63,6 +63,13 @@ ffc init --apikey    # go straight to the API key form
 ffc init --password  # go straight to the username/password form
 ```
 
+Without a terminal (CI, scripts, agents), pass the site and one credential set as flags. The secret is never a flag value: pipe it with `--api-secret-stdin` / `--password-stdin` (one line), or set `FFC_API_SECRET` / `FFC_PASSWORD`. The credentials are checked against the site before the config is written; an existing config is replaced only with `--force`.
+
+```bash
+echo "$SECRET" | ffc init --name prod --url https://erp.example.com --api-key KEY --api-secret-stdin
+echo "$PW" | ffc init --name dev --url http://localhost:8000 --username admin --password-stdin --force
+```
+
 ## Configuration
 
 **`~/.config/ffc/config.yaml`**
@@ -110,7 +117,20 @@ ffc site add --apikey           # add a new site via API key form
 ffc site add --password         # add a new site via username/password form
 ffc site use [name]             # set the default site (interactive menu if name omitted)
 ffc site remove [name]          # remove a site (interactive menu if name omitted)
+ffc site remove NAME --yes      # remove without a prompt (required without a terminal)
+ffc site rename OLD NEW         # rename a site; default_site follows if OLD was the default
+ffc site edit NAME --url URL    # change the URL; stored credentials are re-checked against it first
 ```
+
+Non-interactive `site add` (no terminal needed; `--name`, `--url` and one credential set; `--force` to replace an existing site):
+
+```bash
+echo "$SECRET" | ffc site add --name staging --url https://staging.example.com --api-key KEY --api-secret-stdin
+echo "$PW" | ffc site add --name dev --url http://localhost:8000 --username admin --password-stdin
+FFC_API_SECRET="$SECRET" ffc site add --name prod --url erp.example.com --api-key KEY --force
+```
+
+OAuth setup stays interactive.
 
 **Settings Management (`ffc config`)**
 
@@ -153,9 +173,37 @@ ffc [--site <name>] [--config <path>] [--json] <command> [flags]
 | `--json`    | `-j`  | Print raw JSON instead of a table               |
 | `--quiet`   | `-q`  | No progress spinner (also off when stderr is not a terminal, or `NO_COLOR`/`CI` is set) |
 | `--timeout` |       | HTTP timeout per request, e.g. `2m` (default `30s`) |
+| `--no-input` |      | Never prompt; fail instead. Also on when stdin is not a terminal |
 | `--version` | `-v`  | Print version information                       |
 
-Commands exit non-zero on any error, declined confirmation or aborted prompt, so scripts can rely on the exit status.
+`FFC_SITE`, `FFC_CONFIG` and `FFC_TIMEOUT` set `--site`, `--config` and `--timeout` when the flag is not given (flags > environment > config).
+
+Without a terminal (pipes, cron, CI, agents) ffc never waits for input: a command that would prompt fails with exit code 2 and a hint, for example "pass --yes" for a deletion.
+
+#### Exit codes
+
+| Code | Meaning |
+| ---- | ------- |
+| 0 | Success |
+| 1 | Other error (config file, unexpected response, declined confirmation) |
+| 2 | Usage: unknown command or flag, wrong arguments, invalid flag value, input needed but no terminal |
+| 3 | Authentication: rejected credentials (401), failed login |
+| 4 | Not found (404) |
+| 5 | Permission denied (403) |
+| 6 | Validation or conflict: 417 (e.g. ValidationError, LinkExistsError), 409 duplicate, 400, TimestampMismatchError |
+| 7 | Network or server: no connection, timeout, 429, 5xx |
+| 8 | Partial bulk failure: some items of a bulk command did not succeed |
+| 130 | Interrupted (Ctrl+C) |
+
+Before v1.7.0 every failure exited with 1. Scripts that test for "non-zero" are unaffected; scripts that test `-eq 1` should test `-ne 0` instead.
+
+With `--json`, an error is printed on stderr as one JSON object, and stdout carries no data:
+
+```json
+{"error":{"code":"not_found","exit_code":4,"status":404,"exc_type":"DoesNotExistError","message":"ToDo \"x\" not found (404) — ToDo x not found (HTTP 404)"}}
+```
+
+`code` is one of `usage`, `auth`, `not_found`, `permission`, `validation`, `network`, `server`, `partial`, `interrupted`, `error`. `status` and `exc_type` are present when the site answered.
 
 ---
 
@@ -166,7 +214,8 @@ Commands exit non-zero on any error, declined confirmation or aborted prompt, so
     *   `ffc site list` — show all configured sites (name, URL, auth method, default; in `--json`, `default` is a boolean)
     *   `ffc site add [--oauth|--apikey|--password]` — add a new site interactively
     *   `ffc site use [name]` — set the default site (shows selection menu if name omitted)
-    *   `ffc site remove [name]` — remove a site (shows selection menu if name omitted)
+    *   `ffc site remove [name] [--yes]` — remove a site (shows selection menu if name omitted)
+    *   `ffc site rename OLD NEW` / `ffc site edit NAME --url URL` — rename a site / change its URL
 *   **`config`**: Interactive TUI to tweak settings, or non-interactive via subcommands:
     *   `ffc config get [--json|--yaml]` — print all settings
     *   `ffc config set --default-site <name> --number-format <fmt> --date-format <fmt>` — update settings

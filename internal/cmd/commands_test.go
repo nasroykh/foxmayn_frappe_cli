@@ -984,7 +984,7 @@ func TestCmdAuthModesSendCredentials(t *testing.T) {
 		if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		cmdTFail(t, cmdTExec(t, cfg, "", "get-doc", "-d", "ToDo", "-n", "TD-1"), "403")
+		cmdTFail(t, cmdTExec(t, cfg, "", "get-doc", "-d", "ToDo", "-n", "TD-1"), "401")
 	})
 	t.Run("bad password", func(t *testing.T) {
 		s := cmdTSite(t)

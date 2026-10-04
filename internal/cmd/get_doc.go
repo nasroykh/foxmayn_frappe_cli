@@ -40,7 +40,7 @@ Examples:
 		if gdFields != "" {
 			var err error
 			if fields, err = parseFields(gdFields); err != nil {
-				return fmt.Errorf("--fields: %w", err)
+				return usageErrorf("--fields: %w", err)
 			}
 		}
 		name := docNameOrSingle(gdName, gdDoctype)

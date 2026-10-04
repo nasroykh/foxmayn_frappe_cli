@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/huh"
+	"github.com/mattn/go-isatty"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 )
@@ -25,9 +26,26 @@ const (
 	authPassword = "password"
 )
 
+// errNoInput is returned instead of prompting when input is disabled.
+var errNoInput = &usageError{errors.New("this needs interactive input, but --no-input is set or stdin is not a terminal")}
+
+// inputDisabled reports whether prompts must not be shown: --no-input, or a
+// stdin that is not a terminal (a pipe, a file, CI).
+func inputDisabled() bool {
+	if noInput {
+		return true
+	}
+	fd := os.Stdin.Fd()
+	return !isatty.IsTerminal(fd) && !isatty.IsCygwinTerminal(fd)
+}
+
 // runForm runs a huh form with Esc bound to quit. Esc/Ctrl+C becomes
-// errAborted; any other error (e.g. no TTY available) is returned unchanged.
+// errAborted; with input disabled it returns errNoInput without prompting;
+// any other error is returned unchanged.
 func runForm(groups ...*huh.Group) error {
+	if inputDisabled() {
+		return errNoInput
+	}
 	err := huh.NewForm(groups...).WithKeyMap(escQuitKeyMap()).Run()
 	if errors.Is(err, huh.ErrUserAborted) {
 		return errAborted
@@ -307,6 +325,17 @@ func verifyAPIKey(ctx context.Context, site config.SiteConfig) (string, error) {
 	return user, nil
 }
 
+// verifyPassword proves the username and password by logging in. The check
+// only proves the password, so its session is ended again.
+func verifyPassword(ctx context.Context, site config.SiteConfig) error {
+	sid, err := client.LoginPassword(ctx, site.URL, site.Username, site.Password)
+	if err != nil {
+		return err
+	}
+	_ = client.Logout(ctx, site.URL, sid)
+	return nil
+}
+
 // ─── Username / password ─────────────────────────────────────────────────────
 
 func collectPasswordSite(ctx context.Context, checkName func(string) error) (string, config.SiteConfig, error) {
@@ -348,11 +377,7 @@ func collectPasswordSite(ctx context.Context, checkName func(string) error) (str
 
 		var loginErr error
 		if err := runSpinner("Verifying credentials...", func() {
-			var sid string
-			if sid, loginErr = client.LoginPassword(ctx, site.URL, site.Username, site.Password); loginErr == nil {
-				// The check only proves the password; end its session.
-				_ = client.Logout(ctx, site.URL, sid)
-			}
+			loginErr = verifyPassword(ctx, site)
 		}); err != nil || ctx.Err() != nil {
 			return "", config.SiteConfig{}, errAborted
 		}

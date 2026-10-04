@@ -134,7 +134,7 @@ func requestError(err error) error {
 	if errors.Is(err, resty.ErrResponseBodyTooLarge) {
 		return fmt.Errorf("response larger than %d MiB: narrow the request with a limit, fields or filters", MaxResponseBytes>>20)
 	}
-	return fmt.Errorf("HTTP request failed: %w", err)
+	return &TransportError{Err: err}
 }
 
 type nopLogger struct{}

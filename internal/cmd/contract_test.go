@@ -83,7 +83,7 @@ func TestContract(t *testing.T) {
 	t.Run("child table PUT replaces rows", func(t *testing.T) { contractChildPut(t, c) })
 	t.Run("lifecycle submit cancel amend", func(t *testing.T) { contractLifecycle(t, c) })
 	t.Run("schema merges custom field and property setter", func(t *testing.T) { contractSchema(t, c) })
-	t.Run("errors match the fake", func(t *testing.T) { contractErrors(t, c) })
+	t.Run("errors match the fake", func(t *testing.T) { contractErrors(t, c, sc.URL) })
 	t.Run("password session", func(t *testing.T) { contractSession(t, sc) })
 }
 
@@ -347,41 +347,49 @@ func contractSchema(t *testing.T, c *client.FrappeClient) {
 
 // contractErrors runs the same failing calls against the real site and the
 // fake, and checks they fail the same way, so the fake stays honest.
-func contractErrors(t *testing.T, real *client.FrappeClient) {
+func contractErrors(t *testing.T, real *client.FrappeClient, realURL string) {
 	fake := frappetest.New(t)
 	fake.Add(contractDT, map[string]interface{}{"name": "x", "title": "t"})
 	fc, err := client.New(contractCtx(t), &config.SiteConfig{URL: fake.URL, APIKey: frappetest.APIKey, APISecret: frappetest.APISecret})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cases := map[string]func(c *client.FrappeClient) error{
-		"missing document": func(c *client.FrappeClient) error {
+	cases := map[string]func(c *client.FrappeClient, url string) error{
+		"missing document": func(c *client.FrappeClient, url string) error {
 			_, err := c.GetDoc(contractCtx(t), contractDT, "ffc-contract-missing")
 			return err
 		},
-		"missing doctype": func(c *client.FrappeClient) error {
+		"missing doctype": func(c *client.FrappeClient, url string) error {
 			_, err := c.GetList(contractCtx(t), "FFC Contract No Such DocType", client.ListOptions{})
 			return err
 		},
-		"unknown field": func(c *client.FrappeClient) error {
+		"unknown field": func(c *client.FrappeClient, url string) error {
 			_, err := c.GetList(contractCtx(t), contractDT, client.ListOptions{Fields: []string{"ffc_no_such_field"}})
 			return err
 		},
-		"unknown filter field": func(c *client.FrappeClient) error {
+		"unknown filter field": func(c *client.FrappeClient, url string) error {
 			_, err := c.GetList(contractCtx(t), contractDT, client.ListOptions{Filters: `[["ffc_no_such_field","=","1"]]`})
 			return err
 		},
-		"unknown method": func(c *client.FrappeClient) error {
+		"unknown method": func(c *client.FrappeClient, url string) error {
 			_, err := c.CallMethod(contractCtx(t), "frappe.ffc_no_such.method", nil, false)
 			return err
 		},
-		"delete missing": func(c *client.FrappeClient) error {
+		"wrong api key": func(c *client.FrappeClient, url string) error {
+			bad, err := client.New(contractCtx(t), &config.SiteConfig{URL: url, APIKey: "ffc-contract-bad", APISecret: "bad"})
+			if err != nil {
+				return err
+			}
+			_, err = bad.GetList(contractCtx(t), contractDT, client.ListOptions{})
+			return err
+		},
+		"delete missing": func(c *client.FrappeClient, url string) error {
 			return c.DeleteDoc(contractCtx(t), contractDT, "ffc-contract-missing")
 		},
 	}
 	for name, call := range cases {
 		t.Run(name, func(t *testing.T) {
-			realErr, fakeErr := call(real), call(fc)
+			realErr, fakeErr := call(real, realURL), call(fc, fake.URL)
 			if realErr == nil || fakeErr == nil {
 				t.Fatalf("real = %v, fake = %v; want both to fail", realErr, fakeErr)
 			}

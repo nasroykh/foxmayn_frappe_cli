@@ -79,7 +79,9 @@ internal/cmd/auth_wizard.go  → Shared auth wizard: collectSite → collectAPIK
                                 normalizeSiteURL, writeInitConfig (Overwrite), addSiteToConfig (Edit)
 internal/cmd/init.go         → init subcommand (--oauth/--apikey/--password)
 internal/cmd/oauth_flow.go   → OAuth PKCE: callbackServer (127.0.0.1, single-use delivery), collectOAuthSite
-internal/cmd/site.go         → site list / add / remove / use
+internal/cmd/site.go         → site list / add / remove / rename / edit / use
+internal/cmd/setup_flags.go  → non-interactive setup flags for init and site add (--name/--url/--api-key/--username,
+                                secrets via stdin or env), verifySite (same checks as the wizard)
 internal/cmd/config_cmd.go   → config TUI, config get, config set; escQuitKeyMap, resolveCfgPath
 internal/cmd/{ping,get_doc,list_docs,create_doc,update_doc,delete_doc,count_docs,get_schema,
              list_doctypes,list_reports,run_report,call_method}.go → data commands (all use callSite)
@@ -120,7 +122,9 @@ internal/version/            → Build-time version variables (ldflags)
 
 - **Error handling:** Wrap with `fmt.Errorf("context: %w", err)`. Never log and return; return and let caller decide.
 - **Stdout vs stderr:** Data goes to stdout, diagnostics/errors go to stderr.
-- **Exit codes:** any abort, declined confirmation or partial bulk failure is a non-zero exit (`errAborted`, `bulkReport.err()`). Only the config TUI's explicit "Cancel" exits 0.
+- **Exit codes (`exit.go`, part of the CLI contract; README table):** 0 ok, 1 generic, 2 usage, 3 auth, 4 not found, 5 permission, 6 validation/conflict, 7 network/server, 8 partial bulk, 130 interrupted. `classify` maps typed errors: `client.APIError` (status + exc_type), `client.AuthError` (login), `client.TransportError` (no response), `usageError` (`usageErrorf` for invalid flag values; anything cobra rejects before RunE is wrapped automatically), `partialError` (bulk). Return these types instead of plain errors where the class matters. With `--json`, `reportError` prints `{"error":{code,exit_code,status,exc_type,message}}` on stderr. Only the config TUI's explicit "Cancel" exits 0.
+- **No prompts without a terminal.** `runForm` returns `errNoInput` (a usage error) when `--no-input` is set or stdin is not a TTY; `confirm` turns it into "pass --yes". New prompts must go through `runForm`.
+- **Environment:** `applyEnv` (cobra.OnInitialize) fills `--site/--config/--timeout` from `FFC_SITE/FFC_CONFIG/FFC_TIMEOUT` when the flag is unset; an invalid value fails in the RunE wrapper (`trackRunStart`).
 - **Config precedence:** flags > env vars > config file > defaults.
 - **Auth:** Bearer token for OAuth sites; `Authorization: token key:secret` for API-key sites; `Cookie: sid=<sid>` for username/password sites. `client.New()` picks the method from `cfg.AccessToken` / `cfg.APIKey`+`cfg.APISecret` / `cfg.IsSessionAuth()`, in that order. `client.New()` is fallible because session sites log in inside it.
 - **Adding a data command:** create `internal/cmd/<name>.go`, set `Args: cobra.NoArgs`, call `callSite(cmd, title, func(ctx, c) ...)`, register via `rootCmd.AddCommand()` in `init()`. Never build a client with `client.New` directly in a command — use `newClient`/`callSite` so OAuth refresh happens.
