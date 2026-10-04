@@ -60,21 +60,21 @@ clean:
 help:
 	@sed -n 's/^##//p' $(MAKEFILE_LIST) | column -t -s ':' | sed -e 's/^/ /'
 
-## skills-init: Initialize skills for AI agents
+## skills-init: Link the ffc skills (skills/) into each AI agent's skills folder
 skills-init:
 	$(MAKE) skills-init-claude skills-init-cursor skills-init-agent
 
 ## skills-init-claude: Initialize skills for Claude
 skills-init-claude:
-	mkdir -p .claude/skills/ && find .claude/skills/ -mindepth 1 -maxdepth 1 -type l -delete && cd .claude/skills/ && ln -s ../../.agents/skills/*/ .
+	mkdir -p .claude/skills/ && find .claude/skills/ -mindepth 1 -maxdepth 1 -type l -delete && cd .claude/skills/ && ln -s ../../skills/*/ .
 	echo "Skills initialized for Claude"
 
 ## skills-init-cursor: Initialize skills for Cursor
 skills-init-cursor:
-	mkdir -p .cursor/skills/ && find .cursor/skills/ -mindepth 1 -maxdepth 1 -type l -delete && cd .cursor/skills/ && ln -s ../../.agents/skills/*/ .
+	mkdir -p .cursor/skills/ && find .cursor/skills/ -mindepth 1 -maxdepth 1 -type l -delete && cd .cursor/skills/ && ln -s ../../skills/*/ .
 	echo "Skills initialized for Cursor"
 
 ## skills-init-agent: Initialize skills for Agent
 skills-init-agent:
-	mkdir -p .agent/skills/ && find .agent/skills/ -mindepth 1 -maxdepth 1 -type l -delete && cd .agent/skills/ && ln -s ../../.agents/skills/*/ .
+	mkdir -p .agent/skills/ && find .agent/skills/ -mindepth 1 -maxdepth 1 -type l -delete && cd .agent/skills/ && ln -s ../../skills/*/ .
 	echo "Skills initialized for Antigravity, Gemini CLI, Codex, ...etc"

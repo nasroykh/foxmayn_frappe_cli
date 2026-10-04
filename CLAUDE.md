@@ -6,14 +6,14 @@
 
 ## Tech Stack
 
-- **Language:** Go 1.25
+- **Language:** Go 1.26 (toolchain go1.27.1)
 - **CLI framework:** [cobra](https://github.com/spf13/cobra)
 - **Config:** [go.yaml.in/yaml/v3](https://github.com/yaml/go-yaml) (read as structs, edited as `yaml.Node` trees) + env vars
 - **HTTP client:** [resty](https://github.com/go-resty/resty)
 - **Table & styling:** [lipgloss v2](https://charm.land/lipgloss/v2) + built-in `table` sub-package
 - **Forms & prompts:** [huh](https://github.com/charmbracelet/huh)
 - **Spinner:** [huh/spinner](https://github.com/charmbracelet/huh) (standalone, no bubbletea loop needed)
-- **MCP server:** [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) v0.46.0 (stdio + StreamableHTTP transports)
+- **MCP server:** [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) v1.1.1 (stdio + StreamableHTTP transports)
 
 ## Build & Run
 
@@ -98,7 +98,8 @@ internal/config/config.go    → Config/SiteConfig, Read, Load, env overrides, d
 internal/config/file.go      → File (yaml.Node editor), Edit/Overwrite (lock + atomic 0600 write), WriteFileAtomic
 internal/config/format.go    → number/date formats, FormatNumber, FormatDate
 internal/output/             → lipgloss table and JSON; every server value passes through text.Sanitize
-internal/text/               → Sanitize: strips C0/C1 control characters (terminal escape injection)
+internal/text/               → Sanitize: strips C0/C1 controls (terminal escape injection), bidi overrides/isolates
+                                and zero-width characters (Trojan Source); keeps LRM/RLM/ALM/ZWJ/ZWNJ
 internal/relsig/             → Ed25519 sign/verify of checksums.txt (domain-separated); ReleaseKeys in keys.go
 tools/relsign/               → keygen / sign / verify for the release key (run by GoReleaser, not shipped)
 internal/version/            → Build-time version variables (ldflags)
@@ -128,13 +129,14 @@ Env vars:
 - The `config.yaml` in the project root is gitignored — it's for local dev only. Do not commit credentials.
 - **All config writes go through `config.Edit` (or `config.Overwrite` for a fresh file).** They take `config.yaml.lock`, re-read the file, apply the callback to a `config.File` (yaml.Node tree: keeps comments and key order), and write atomically at 0600, following symlinks. Return `config.ErrUnchanged` from the callback to skip the write. Any network call made while holding the lock must be bounded by `config.MaxLockHold` (30 s; the lock is considered stale after 3×), and release removes the lock only if it still holds this process's token. Never write config.yaml with `os.WriteFile` or by marshalling the struct.
 - Site names keep their case and may contain dots (`Prod`, `erp.example.com`). `--site`/`default_site` match exactly first, then fall back to a unique case-insensitive match (what viper users relied on). viper was removed because it lowercased keys and split them on dots; do not reintroduce it. `Config`/`SiteConfig` carry `yaml` tags only.
+- Response JSON is decoded with `UseNumber`, so numbers arrive as `json.Number` (exact large ints, `0.0` stays `0.0` in `--json`). Code that inspects a numeric value must handle `json.Number` (see `numeric` in get_schema.go); `output.formatValue` prints integer literals as-is and formats the rest with the number format. Trailing data after the JSON body is an error.
 - Frappe API wraps list results in `"data"` (v14+) or `"message"` (older). The client handles both. A 2xx single-document response without `data` is an error, not an empty doc.
 - Frappe error responses contain nested JSON strings with Python tracebacks. `frappeErrorResponse.userMessage()` extracts the user-facing message; non-JSON error bodies are cut to 300 runes and sanitised.
 - **Redirects:** only GET/HEAD follow redirects. A redirected POST/PUT/DELETE fails with the target URL, because Go would otherwise replay it as a body-less GET and report success (e.g. delete-doc against an `http://` URL that redirects to `https://`).
 - Non-site HTTP (GitHub release API, downloads) uses `client.NewHTTPClient(timeout)`, never `resty.New()` — resty's default logger prints `WARN RESTY` lines on stderr.
-- **Retries:** only GET, only on 429/502/503/504, never after a timeout or cancel. Do not add retries to writes.
+- **Retries:** only GET, on 429/502/503/504 and on transport errors, never after a timeout or cancel. A Retry-After up to 10 s (`maxRetryAfter`) is honoured; a longer one is reported instead of retried. Do not add retries to writes.
 - **OAuth refresh** happens in `loadSite` (site_client.go), only for commands that talk to a site, under the config lock; it re-checks expiry after taking the lock so concurrent processes refresh once. Failures warn on stderr and the command proceeds (it then gets a 401). There is no refresh in `PersistentPreRunE` any more.
-- Username/password (session-cookie) auth has no `sid` in config. CLI commands log in once per invocation (short-lived process). Long-lived users of one client (MCP daemon, bulk runs) rely on `FrappeClient.relogin`: on a 401/403 with a session older than 1 minute it first asks `frappe.auth.get_logged_user` whether the session is still valid (then it is a real permission error, no new login), and logins are single-flight under `loginMu`, keyed by the sid each request used. `Close(ctx)` logs out; the MCP provider drops a replaced client without logging out (in-flight calls may still use it). Do not persist a `sid` to config.
+- Username/password (session-cookie) auth has no `sid` in config. CLI commands log in once per invocation and log out when they finish (`callSite`, `bulkFlags.run` and `ping` defer `c.CloseQuietly()`, which POSTs `/api/method/logout` with a fresh 5 s context); without that, every run left a live session in the `Sessions` table. A command that builds its own client must do the same. Long-lived users of one client (MCP daemon, bulk runs) rely on `FrappeClient.relogin`: on a 401/403 with a session older than 1 minute it first asks `frappe.auth.get_logged_user` whether the session is still valid (then it is a real permission error, no new login), and logins are single-flight under `loginMu`, keyed by the sid each request used. `Close(ctx)` logs out; the MCP provider drops a replaced client without logging out (in-flight calls may still use it). Do not persist a `sid` to config.
 - The plaintext `password` field in `SiteConfig` is stored at 0600 — same protection as `api_secret`. ffc has no OS-keychain integration.
 - In huh v1.0.0, only `ctrl+c` is bound to Quit by default. Use `runForm` (auth_wizard.go), which adds Escape via `escQuitKeyMap()` and maps an abort to `errAborted`.
 - `update_check.go` sets `rootCmd.PersistentPreRunE` in its `init()`. Do not set it anywhere else — it would silently overwrite the hook.
@@ -145,12 +147,12 @@ Env vars:
 - `SiteConfig.Name` is a runtime-only field (`yaml:"-"`) set by `config.Load` to the exact YAML key; token writes use it as the site key.
 - **MCP stdout is the JSON-RPC channel.** Tool handlers must never write to stdout or call `output.Print*`. Return results via `marshalResult`/`mcp.NewToolResultText` and errors via `mcp.NewToolResultError` with a nil Go error. Stderr is safe in stdio mode (clients log it) and is `mcp.log` in detached mode — never print secrets there (the daemon prints its bearer token only to a terminal; `ffc mcp status` shows it).
 - MCP limits: results over 512 KiB are refused with a hint to narrow them; `run_report` defaults to 500 rows; bulk tools take at most 200 items; `--read-only` registers only read tools (call_method counts as a write).
-- The MCP detached-server state file is `~/.config/ffc/mcp.json` (pid, port, site, started_at, log_path, instance), guarded by a lock file; the log is `~/.config/ffc/mcp.log`. `ffc mcp stop --force` stops a PID that is alive but not health-confirmed.
+- The MCP detached-server state file is `~/.config/ffc/mcp.json` (pid, port, site, started_at, log_path, token, instance; 0600, the token is the HTTP bearer secret), guarded by a lock file; the log is `~/.config/ffc/mcp.log`. `ffc mcp stop --force` stops a PID that is alive but not health-confirmed.
 - `mcp_detach_unix.go` / `mcp_detach_windows.go` use build tags. Keep `syscall`/`golang.org/x/sys/windows` fields out of untagged files.
 - `get-schema --json` returns a compact view by default (`compactSchema` in get_schema.go); `--full` gives the raw response, `--keys` filters top-level keys. `fetchSchema` is shared by the CLI and MCP: it merges Custom Fields (`mergeCustomFields`, by `insert_after`) and then applies every Property Setter (`applyPropertySetters`: DocField and DocType level, values cast by `property_type`, `field_order` reorders fields). Problems become warnings (`_warnings` in CLI JSON), not failures.
 - `get-doc` and `update-doc` default `--name` to the DocType name (Single DocTypes); `delete-doc` keeps `--name` required. `update-doc` strips a `name` key from `--data` with a warning (the name comes from the URL).
 - MCP `run_report` returns only `columns`, `result`, `report_summary` (if non-null), `total_rows` and `truncated` (`compactReportResult`). CLI `run-report --json` returns the full response; `--limit` applies to both table and JSON.
 - `list-docs --limit 0` means no limit; negative `--limit`/`--start` are rejected. `--filters` must be a JSON object or array.
-- `go.mod` has `toolchain go1.25.14`. CI and GoReleaser install Go from `go-version-file: go.mod`, which can resolve to the `go` line (1.25.5); the toolchain line guarantees the patched release either way (setup-go or `GOTOOLCHAIN=auto` switches to it). Without it, release binaries were built with Go 1.25.0 and carried 30 reachable stdlib vulnerabilities (`GOTOOLCHAIN=go1.25.0 govulncheck ./...`). Bump it with each Go patch release.
-- Go directive stays on 1.25 (1.25.5, the minimum mcp-go v1.1.1 needs): the newest `golang.org/x/*` releases require Go 1.26, so they are pinned to the last 1.25-compatible versions (net v0.58.0, text v0.41.0, sys v0.47.0, sync v0.22.0). Check `go.mod` before bumping, and reject Dependabot PRs that move the `go` line to 1.26 unless that move is intended.
+- `go.mod` has `go 1.26.0` and `toolchain go1.27.1`. CI and GoReleaser install Go from `go-version-file: go.mod`, which can resolve to the `go` line; the toolchain line guarantees the patched release either way (setup-go or `GOTOOLCHAIN=auto` switches to it). Without it, release binaries were once built with Go 1.25.0 and carried 30 reachable stdlib vulnerabilities. Bump the toolchain with each Go patch release and run `govulncheck ./...`.
+- Go 1.25 is end of life, so the `go` line moved to 1.26 and `golang.org/x/*` is no longer pinned to old versions. Keep the `go` line one release behind the toolchain (it is the minimum users building from source need); move it only when a dependency requires it.
 - mcp-go v1.x speaks MCP protocol 2026-07-28 and every earlier revision, chosen per request; tool registration is unchanged. Input-schema validation (`server.WithInputSchemaValidation`) stays off: the arg helpers in mcp_args.go accept numeric strings and JSON-encoded strings that a strict schema would reject.

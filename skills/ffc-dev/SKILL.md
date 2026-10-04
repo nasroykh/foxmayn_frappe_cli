@@ -24,7 +24,7 @@ Build and extend the ffc CLI — a Go tool for interacting with Frappe ERP sites
 | Tables & styling | lipgloss v2    | `charm.land/lipgloss/v2` + `charm.land/lipgloss/v2/table` |
 | Forms & prompts  | huh v1.0.0     | `github.com/charmbracelet/huh`                            |
 | Spinner          | huh/spinner    | `github.com/charmbracelet/huh/spinner`                    |
-| MCP server       | mcp-go v0.46.0 | `github.com/mark3labs/mcp-go/mcp` + `.../server`          |
+| MCP server       | mcp-go v1.1.1  | `github.com/mark3labs/mcp-go/mcp` + `.../server`          |
 
 ## Project Layout
 
@@ -52,7 +52,7 @@ internal/cmd/run_report.go    → run-report subcommand, limitReportRows
 internal/cmd/call_method.go   → call-method subcommand
 internal/cmd/bulk.go          → runBulk worker pool, bulkReport, parseObjects/parseNames/splitUpdates, bulkFlags
 internal/cmd/bulk_{create,update,delete}.go → bulk commands (--concurrency 1-10, --fail-fast)
-internal/cmd/update.go            → update subcommand: size-limited download, SHA256 check, atomic binary swap
+internal/cmd/update.go            → update subcommand: size-limited download, signed checksums.txt (relsig) + SHA256 check, atomic binary swap
 internal/cmd/update_check.go      → background update check; owns rootCmd.PersistentPreRunE + state file
 internal/cmd/mcp.go               → mcp subcommand: stdio/HTTP/detach routing, --detach/--port/--read-only, newMCPClientProvider (cached client)
 internal/cmd/mcp_args.go          → toolHandler, marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
@@ -187,7 +187,7 @@ func (c *FrappeClient) CreateDoc(ctx context.Context, doctype string, data map[s
 
 Every method takes a `ctx` (Ctrl+C cancels the in-flight request). `do()` turns >= 400 responses into errors via `apiError`: the hint for that status (if any) plus the Frappe message, otherwise the exception type and message (`frappeErrorResponse.userMessage()`); non-JSON bodies are cut to 300 runes and sanitised.
 
-**Transport rules** (`http.go`): only GET follows redirects (a redirected POST/PUT/DELETE fails with the target URL); retries only for GET on 429/502/503/504, never after a timeout or cancel — do not add retries to writes; non-site HTTP (GitHub API, downloads) uses `client.NewHTTPClient(timeout)`, never `resty.New()`.
+**Transport rules** (`http.go`): only GET follows redirects (a redirected POST/PUT/DELETE fails with the target URL); retries only for GET, on 429/502/503/504 (honouring a Retry-After up to 10 s; a longer one is reported, not retried) and on transport errors other than a timeout or cancel — do not add retries to writes; non-site HTTP (GitHub API, downloads) uses `client.NewHTTPClient(timeout)`, never `resty.New()`.
 
 ### Frappe API essentials
 
@@ -453,7 +453,7 @@ Key details:
 - **Asset naming** matches GoReleaser's template: `ffc_<version-without-v>_<goos>_<goarch>.tar.gz` (or `.zip` on Windows). Version comes from `release.TagName` with the `v` stripped.
 - **Binary swap (Unix)**: `os.Rename(tmp, current)` — atomic on the same filesystem.
 - **Binary swap (Windows)**: rename current → `ffc.exe.old` (allowed for running exe), rename new → `ffc.exe`. The `.old` file is cleaned up on the next update run.
-- **Download safety**: the download is size-limited and its SHA256 is verified against `checksums.txt` before the swap.
+- **Download safety**: `checksums.txt.sig` must verify against a key in `internal/relsig/keys.go`, and the size-limited download must match its SHA256 in `checksums.txt`, before the swap.
 - **Permission error** on `os.CreateTemp` is caught and surfaces a `try running with sudo` message.
 - **Version comparison** in `newerThan()` strips any `v` prefix and pre-release suffix before comparing major.minor.patch integers — handles GoReleaser injecting without `v` and GitHub tags using `v`.
 
@@ -472,4 +472,4 @@ Key details:
 5. If the command needs pre-run logic, add it inside `rootCmd.PersistentPreRunE` in `update_check.go` — do not reassign it. (Site-related setup such as OAuth refresh belongs in `loadSite`, not there.)
    If it should also be an MCP tool, add it in `mcp_tools.go` (write tools after the `mcpReadOnly` check)
 6. Run `make fmt && make lint && make test && make build` to verify
-7. Update README.md, CLAUDE.md, and the skill files (`skills/` and `.agents/skills/`) if adding user-facing commands
+7. Update README.md, CLAUDE.md, and the skill files in `skills/` if adding user-facing commands
