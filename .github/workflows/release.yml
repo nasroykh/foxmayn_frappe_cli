@@ -38,6 +38,27 @@ jobs:
       - name: Test
         run: go test ./...
 
+      # An rc tag and the final tag can sit on the same commit. Without these,
+      # GoReleaser picks the tag itself (v1.6.1 was first built as v1.6.1-rc2
+      # and failed with already_exists) and diffs the changelog against the rc.
+      # Current = the tag that triggered this run; previous = the highest
+      # final release below it.
+      - name: Resolve release tags
+        run: |
+          cur="${GITHUB_REF_NAME}"
+          base="${cur%%-*}"
+          prev=$(git tag --merged HEAD --list 'v*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | while read -r t; do
+                if [ "$t" != "$base" ] && [ "$(printf '%s\n%s\n' "$t" "$base" | sort -V | head -1)" = "$t" ]; then
+                  echo "$t"
+                  break
+                fi
+              done)
+          echo "GORELEASER_CURRENT_TAG=$cur" >> "$GITHUB_ENV"
+          if [ -n "$prev" ]; then echo "GORELEASER_PREVIOUS_TAG=$prev" >> "$GITHUB_ENV"; fi
+          echo "current=$cur previous=${prev:-none}"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
