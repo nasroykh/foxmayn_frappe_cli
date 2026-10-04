@@ -109,6 +109,11 @@ func retryAfterDelay(resp *resty.Response) time.Duration {
 		if secs < 0 {
 			return 0
 		}
+		// Clamp before multiplying: a huge value would overflow into a
+		// negative Duration and look like "retry now".
+		if secs > int(maxRetryAfter/time.Second) {
+			return maxRetryAfter + time.Second
+		}
 		return time.Duration(secs) * time.Second
 	}
 	if t, err := http.ParseTime(v); err == nil {

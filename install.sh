@@ -34,8 +34,11 @@ verify_signature() {
   fi
   printf 'ffc release checksums v1\n' > "$dir/signed-message"
   cat "$dir/checksums.txt" >> "$dir/signed-message"
-  if ! tr -d '\r\n' < "$dir/checksums.txt.sig" | openssl base64 -d -A > "$dir/sig.bin" 2>/dev/null; then
-    echo "Error: checksums.txt.sig is not valid base64." >&2
+  # openssl base64 -d exits 0 on bad input, so check the decoded size: an
+  # Ed25519 signature is exactly 64 bytes.
+  tr -d '\r\n' < "$dir/checksums.txt.sig" | openssl base64 -d -A > "$dir/sig.bin" 2>/dev/null || true
+  if [ "$(wc -c < "$dir/sig.bin" | tr -d ' ')" != "64" ]; then
+    echo "Error: checksums.txt.sig is not a valid Ed25519 signature." >&2
     return 1
   fi
   for key in $RELEASE_KEYS; do
@@ -99,7 +102,14 @@ trap 'rm -rf "$TMP"' EXIT
 # --- download archive + checksums + signature ---
 curl -fsSL "$URL" -o "$TMP/$ARCHIVE"
 curl -fsSL "$CHECKSUM_URL" -o "$TMP/checksums.txt"
-curl -fsSL "${CHECKSUM_URL}.sig" -o "$TMP/checksums.txt.sig" || true
+# An HTTP error such as 404 (curl exit 22) means no signature was published,
+# which verify_signature reports; any other failure is a download error.
+SIG_STATUS=0
+curl -fsSL "${CHECKSUM_URL}.sig" -o "$TMP/checksums.txt.sig" || SIG_STATUS=$?
+if [ "$SIG_STATUS" -ne 0 ] && [ "$SIG_STATUS" -ne 22 ]; then
+  echo "Error: could not download checksums.txt.sig (curl exit $SIG_STATUS)." >&2
+  exit 1
+fi
 
 # --- verify that checksums.txt was signed by an ffc release key ---
 verify_signature "$TMP" || exit 1

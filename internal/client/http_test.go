@@ -180,22 +180,25 @@ func TestRetryPolicy(t *testing.T) {
 			t.Errorf("requests = %d, gap = %v; want 2 and about 1s", n.Load(), gap)
 		}
 	})
-	t.Run("GET not retried on a long Retry-After", func(t *testing.T) {
-		var n atomic.Int32
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			n.Add(1)
-			w.Header().Set("Retry-After", "120")
-			w.WriteHeader(http.StatusTooManyRequests)
-		}))
-		defer srv.Close()
-		c := newKeyClient(t, srv.URL)
-		if _, err := c.GetList(context.Background(), "ToDo", ListOptions{}); err == nil {
-			t.Fatal("want error")
-		}
-		if n.Load() != 1 {
-			t.Errorf("requests = %d, want 1", n.Load())
-		}
-	})
+	// 10000000000 s wraps to a negative time.Duration if multiplied unchecked.
+	for _, after := range []string{"120", "10000000000"} {
+		t.Run("GET not retried on Retry-After "+after, func(t *testing.T) {
+			var n atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				n.Add(1)
+				w.Header().Set("Retry-After", after)
+				w.WriteHeader(http.StatusTooManyRequests)
+			}))
+			defer srv.Close()
+			c := newKeyClient(t, srv.URL)
+			if _, err := c.GetList(context.Background(), "ToDo", ListOptions{}); err == nil {
+				t.Fatal("want error")
+			}
+			if n.Load() != 1 {
+				t.Errorf("requests = %d, want 1", n.Load())
+			}
+		})
+	}
 	t.Run("GET not retried on timeout", func(t *testing.T) {
 		old := Timeout
 		Timeout = 100 * time.Millisecond
