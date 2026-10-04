@@ -20,6 +20,7 @@ import (
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/relsig"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -170,15 +171,18 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	// Find the matching release asset for this OS/arch, plus the checksums file.
+	// Find the matching release asset for this OS/arch, plus the checksums
+	// file and its signature.
 	target := releaseAssetName(latest)
-	var downloadURL, checksumsURL string
+	var downloadURL, checksumsURL, sigURL string
 	for _, a := range release.Assets {
 		switch a.Name {
 		case target:
 			downloadURL = a.BrowserDownloadURL
 		case "checksums.txt":
 			checksumsURL = a.BrowserDownloadURL
+		case relsig.SignatureName:
+			sigURL = a.BrowserDownloadURL
 		}
 	}
 	if downloadURL == "" {
@@ -201,7 +205,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	// Download archive and replace binary.
 	var installErr error
 	if err := runSpinner(fmt.Sprintf("Downloading ffc %s…", latest), func() {
-		installErr = downloadAndInstall(ctx, downloadURL, checksumsURL, target)
+		installErr = downloadAndInstall(ctx, downloadURL, checksumsURL, sigURL, target)
 	}); err != nil {
 		return err
 	}
@@ -241,16 +245,18 @@ func fetchLimited(ctx context.Context, url string, timeout time.Duration, max in
 }
 
 // downloadAndInstall fetches the release archive, verifies its SHA-256 against
-// the release's checksums.txt, and replaces the running binary.
-func downloadAndInstall(ctx context.Context, downloadURL, checksumsURL, assetName string) error {
+// the release's signed checksums.txt, and replaces the running binary.
+func downloadAndInstall(ctx context.Context, downloadURL, checksumsURL, sigURL, assetName string) error {
 	archive, err := fetchLimited(ctx, downloadURL, 5*time.Minute, maxArchiveBytes)
 	if err != nil {
 		return fmt.Errorf("downloading: %w", err)
 	}
 
 	// Verify the download against the published checksum before trusting it —
-	// TLS alone doesn't protect against a compromised release (H1).
-	if err := verifyChecksum(ctx, archive, checksumsURL, assetName); err != nil {
+	// TLS alone doesn't protect against a compromised release (H1), and the
+	// signature keeps someone who can replace release assets from also
+	// replacing checksums.txt (D19).
+	if err := verifyChecksum(ctx, archive, checksumsURL, sigURL, assetName); err != nil {
 		return err
 	}
 
@@ -272,15 +278,27 @@ func downloadAndInstall(ctx context.Context, downloadURL, checksumsURL, assetNam
 	return replaceBinary(binData)
 }
 
-// verifyChecksum computes the SHA-256 of archive and compares it against the
-// entry for assetName in the release's checksums.txt (H1).
-func verifyChecksum(ctx context.Context, archive []byte, checksumsURL, assetName string) error {
+// verifyChecksum checks the release's checksums.txt against its Ed25519
+// signature (relsig.ReleaseKeys), then compares the SHA-256 of archive with the
+// entry for assetName (H1, D19). The archive name carries the version, so a
+// signed checksums.txt from an older release cannot vouch for this one.
+func verifyChecksum(ctx context.Context, archive []byte, checksumsURL, sigURL, assetName string) error {
 	if checksumsURL == "" {
 		return fmt.Errorf("release has no checksums.txt — refusing to install an unverified binary")
+	}
+	if sigURL == "" {
+		return fmt.Errorf("release has no %s — refusing to install an unverified binary", relsig.SignatureName)
 	}
 	body, err := fetchLimited(ctx, checksumsURL, 30*time.Second, maxChecksumsBytes)
 	if err != nil {
 		return fmt.Errorf("fetching checksums: %w", err)
+	}
+	sig, err := fetchLimited(ctx, sigURL, 30*time.Second, relsig.MaxSignatureBytes)
+	if err != nil {
+		return fmt.Errorf("fetching checksums signature: %w", err)
+	}
+	if err := relsig.Verify(relsig.ReleaseKeys, body, sig); err != nil {
+		return fmt.Errorf("checksums.txt signature check failed — refusing to install: %w", err)
 	}
 
 	sum := sha256.Sum256(archive)

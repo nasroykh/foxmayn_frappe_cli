@@ -46,6 +46,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ed25519 seed that signs checksums.txt (tools/relsign).
+          FFC_RELEASE_SIGNING_KEY: ${{ secrets.FFC_RELEASE_SIGNING_KEY }}
 
       # Signed, verifiable provenance for every published archive + checksums (M4).
       - name: Attest build provenance
@@ -55,3 +57,4 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/checksums.txt
+            dist/checksums.txt.sig

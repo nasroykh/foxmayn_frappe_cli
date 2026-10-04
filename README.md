@@ -178,6 +178,8 @@ ffc update --check   # only print whether an update is available
 ffc update --yes     # update without confirmation
 ```
 
+`ffc update` installs a release only if its `checksums.txt` carries a valid Ed25519 signature (`checksums.txt.sig`) from the release key built into ffc, and the archive matches its checksum. Someone who can replace the release assets cannot also forge the signature. Versions before 1.6.1 do not check the signature, so the first update from them relies on the checksum alone. The install scripts check the checksum only; for a stronger check of a manual download, run `gh attestation verify <archive> --repo nasroykh/foxmayn_frappe_cli`.
+
 ffc also checks for updates automatically (at most once a day) and prints a one-line notice to stderr when a newer version is available.
 
 ---
@@ -368,8 +370,10 @@ foxmayn_frappe_cli/
 │   │   ├── file.go           # Locked, atomic, comment-preserving config edits
 │   │   └── format.go         # Number/date formatting
 │   ├── output/output.go      # Table (lipgloss) and JSON formatters
+│   ├── relsig/               # Ed25519 signing of checksums.txt; release public keys (keys.go)
 │   ├── text/text.go          # Strips terminal control characters from server data
 │   └── version/version.go    # Build-time version injection
+├── tools/relsign/            # Release key generation and checksums.txt signing (not shipped)
 ├── config.example.yaml       # Example config
 ├── Makefile                  # build, install, test, lint, tidy, vet, fmt
 ├── .goreleaser.yaml          # Cross-compilation and release config

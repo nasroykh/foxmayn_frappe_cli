@@ -41,7 +41,9 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-GitHub Actions will cross-compile for linux/darwin/windows × amd64/arm64, create a GitHub Release, upload the tarballs, and generate `checksums.txt`.
+GitHub Actions will cross-compile for linux/darwin/windows × amd64/arm64, create a GitHub Release, upload the tarballs, and generate `checksums.txt` and its Ed25519 signature `checksums.txt.sig`.
+
+**Release signing.** GoReleaser's `signs` step runs `go run ./tools/relsign sign` with the `FFC_RELEASE_SIGNING_KEY` repository secret (base64 Ed25519 seed). `ffc update` verifies the signature against `internal/relsig/keys.go` and refuses a release without a valid one. relsign refuses a secret that does not match `ReleaseKeys`, and `TestReleaseKeysConfigured` fails while `ReleaseKeys` is empty. To rotate: generate a key with `go run ./tools/relsign keygen <file>`, add its public key to `ReleaseKeys` next to the old one, ship a release signed with the old key, then switch the secret. Never commit a private key.
 
 End users install with:
 
@@ -80,7 +82,7 @@ internal/cmd/{ping,get_doc,list_docs,create_doc,update_doc,delete_doc,count_docs
              list_doctypes,list_reports,run_report,call_method}.go → data commands (all use callSite)
 internal/cmd/bulk.go         → runBulk worker pool, bulkReport, parseObjects/parseNames/splitUpdates, bulkFlags
 internal/cmd/bulk_{create,update,delete}.go → bulk commands (--concurrency 1-10, --fail-fast)
-internal/cmd/update.go           → self-update (size-limited download, SHA256 check, atomic swap)
+internal/cmd/update.go           → self-update (size-limited download, signed checksums.txt + SHA256 check, atomic swap)
 internal/cmd/update_check.go     → background update check; owns rootCmd.PersistentPreRunE
 internal/cmd/mcp.go              → mcp subcommand, --read-only, newMCPClientProvider (cached client)
 internal/cmd/mcp_args.go         → toolHandler, marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
@@ -97,6 +99,8 @@ internal/config/file.go      → File (yaml.Node editor), Edit/Overwrite (lock +
 internal/config/format.go    → number/date formats, FormatNumber, FormatDate
 internal/output/             → lipgloss table and JSON; every server value passes through text.Sanitize
 internal/text/               → Sanitize: strips C0/C1 control characters (terminal escape injection)
+internal/relsig/             → Ed25519 sign/verify of checksums.txt (domain-separated); ReleaseKeys in keys.go
+tools/relsign/               → keygen / sign / verify for the release key (run by GoReleaser, not shipped)
 internal/version/            → Build-time version variables (ldflags)
 ```
 

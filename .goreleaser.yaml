@@ -34,6 +34,19 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# Sign checksums.txt with the release key (tools/relsign, Ed25519). ffc update
+# refuses a release without a valid checksums.txt.sig. relsign also refuses a
+# key that does not match relsig.ReleaseKeys, and the template fails when the
+# secret is unset, so a release cannot publish an unverifiable signature.
+signs:
+  - id: checksums
+    artifacts: checksum
+    cmd: go
+    args: ["run", "./tools/relsign", "sign", "${artifact}", "${signature}"]
+    signature: "${artifact}.sig"
+    env:
+      - "FFC_RELEASE_SIGNING_KEY={{ .Env.FFC_RELEASE_SIGNING_KEY }}"
+
 release:
   prerelease: auto # a tag like v1.6.0-rc1 must not become /releases/latest
 
