@@ -58,7 +58,7 @@ func jsonParam(name, desc string, opts ...mcp.PropertyOption) mcp.ToolOption {
 
 func registerPing(s *server.MCPServer, getClient clientFn) {
 	tool := mcp.NewTool("ping",
-		mcp.WithDescription("Check connectivity to the Frappe site. Returns the server response and URL. Use this first to verify the connection is working before making other calls."),
+		mcp.WithDescription("Check that the Frappe site is reachable. frappe.ping answers without credentials, so a pong does not prove the configured login works; any other tool call does."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(true),
 	)
@@ -92,7 +92,11 @@ func registerGetDoc(s *server.MCPServer, getClient clientFn) {
 		if err != nil {
 			return nil, err
 		}
-		name := docNameOrSingle(req.GetString("name", ""), doctype)
+		name, err := nameArg(req, "name", false)
+		if err != nil {
+			return nil, err
+		}
+		name = docNameOrSingle(name, doctype)
 		fields, err := stringsArg(req, "fields")
 		if err != nil {
 			return nil, err
@@ -151,12 +155,16 @@ func registerListDocs(s *server.MCPServer, getClient clientFn) {
 			return nil, err
 		}
 		limit, _ = listLimit("limit", limit)
+		orderBy, err := stringArg(req, "order_by")
+		if err != nil {
+			return nil, err
+		}
 		opts := client.ListOptions{
 			Fields:  fields,
 			Filters: filters,
 			Limit:   limit,
 			Start:   start,
-			OrderBy: req.GetString("order_by", ""),
+			OrderBy: orderBy,
 		}
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
 			return c.GetList(ctx, doctype, opts)
@@ -206,9 +214,7 @@ func registerGetSchema(s *server.MCPServer, getClient clientFn) {
 		mcp.WithBoolean("full",
 			mcp.Description("Set to true to return the complete unfiltered Frappe response instead of the compact view."),
 		),
-		mcp.WithString("keys",
-			mcp.Description("Comma-separated top-level keys to include, e.g. 'fields' or 'name,module,fields'. Applied after compact/full filtering."),
-		),
+		jsonParam("keys", `Top-level keys to include, as an array (["name","module","fields"]) or a comma-separated string ("name,module,fields"). Applied after compact/full filtering.`),
 	)
 	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
@@ -216,7 +222,10 @@ func registerGetSchema(s *server.MCPServer, getClient clientFn) {
 			return nil, err
 		}
 		full := req.GetBool("full", false)
-		keys := splitCSV(req.GetString("keys", ""))
+		keys, err := keysArg(req, "keys")
+		if err != nil {
+			return nil, err
+		}
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
 			doc, warnings, err := fetchSchema(ctx, c, doctype)
 			if err != nil {
@@ -260,7 +269,11 @@ func registerModuleList(s *server.MCPServer, getClient clientFn, name, desc, doc
 		if err != nil {
 			return nil, err
 		}
-		opts, err := moduleListOptions(fields, req.GetString("module", ""), limit)
+		module, err := stringArg(req, "module")
+		if err != nil {
+			return nil, err
+		}
+		opts, err := moduleListOptions(fields, module, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -368,7 +381,11 @@ func registerUpdateDoc(s *server.MCPServer, getClient clientFn) {
 		if err != nil {
 			return nil, err
 		}
-		name := docNameOrSingle(req.GetString("name", ""), doctype)
+		name, err := nameArg(req, "name", false)
+		if err != nil {
+			return nil, err
+		}
+		name = docNameOrSingle(name, doctype)
 		data, err := objectArg(req, "data", true)
 		if err != nil {
 			return nil, err
@@ -401,12 +418,9 @@ func registerDeleteDoc(s *server.MCPServer, getClient clientFn) {
 		if err != nil {
 			return nil, err
 		}
-		name, err := req.RequireString("name")
+		name, err := nameArg(req, "name", true)
 		if err != nil {
 			return nil, err
-		}
-		if name == "" {
-			return nil, fmt.Errorf("name must not be empty")
 		}
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
 			if err := c.DeleteDoc(ctx, doctype, name); err != nil {
