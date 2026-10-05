@@ -122,6 +122,8 @@ type toolScope struct {
 	Method   string
 	Report   string // run_report: checked through the report's ref_doctype
 	Confirm  bool   // destroys or merges documents: ask the user first
+	// Field references of filters, fields and order_by (queryScope).
+	FilterFields, SelectFields []string
 }
 
 // scopeOf reads what a tool call touches from its arguments. The tool's own
@@ -163,6 +165,9 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 		sc.Method = str("method")
 		sc.Doctypes = append(sc.Doctypes, methodDoctypes(args["args"])...)
 	}
+	q := queryScope(req)
+	sc.Doctypes = append(sc.Doctypes, q.doctypes...)
+	sc.FilterFields, sc.SelectFields = q.filterFields, q.selectFields
 	for i, dt := range sc.Doctypes {
 		if text.Sanitize(dt) != dt {
 			return sc, fmt.Errorf("policy: DocType name %q contains control or invisible characters", dt)
@@ -306,6 +311,9 @@ func (p mcpPolicy) check(tool string, sc toolScope) error {
 		if err := p.doctypeAllowed(dt, sc.Action != actRead); err != nil {
 			return err
 		}
+	}
+	if err := p.checkQueryFields(sc); err != nil {
+		return err
 	}
 	if sc.Action == actMethod {
 		if err := checkMethodName(sc.Method); err != nil {

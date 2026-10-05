@@ -9,10 +9,11 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 )
 
-// registerAggregate adds the aggregate tool: ffc aggregate for a model. It
-// takes the same plain field names as the CLI, so a group-by never joins a
-// linked DocType the policy has not checked (Frappe v16 would follow
-// "link_field.field" into the linked DocType's table).
+// registerAggregate adds the aggregate tool: ffc aggregate for a model. Its
+// group-by, aggregate and order-by fields are plain fieldnames, as in the
+// CLI, so they never join another table (Frappe v16 would follow
+// "link_field.field" into the linked DocType). Its filters can, like
+// list_docs': scopeOf checks them (queryScope in mcp_query_scope.go).
 func registerAggregate(s *server.MCPServer, env *mcpEnv) {
 	fieldList := func(name, what string) mcp.ToolOption {
 		return jsonParam(name, fmt.Sprintf(`Fields to %s, as an array ["grand_total"] or a comma-separated string. Each becomes the column "%s_<field>".`, what, name))
