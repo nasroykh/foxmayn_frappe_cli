@@ -183,7 +183,7 @@ ffc [--site <name>] [--config <path>] [--json] <command> [flags]
 
 #### Dry run
 
-Every command that writes (`create-doc`, `update-doc`, `delete-doc`, the bulk commands, the lifecycle commands, `workflow apply` and `bulk-apply`, `call-method` and `api`) takes `--dry-run`. It prints the request it would send, with secrets redacted, sends nothing that writes and exits 0. Reads still run, so the dry run fails where the real run would (a missing document, a draft that cannot be amended). `update-doc --dry-run` also shows which fields would change, and `delete-doc --dry-run` checks that the document exists. No confirmation is asked. `call-method` and `api` send nothing at all, since any request to a method can write. A username/password site still logs in and out, and an OAuth site with an expired token still refreshes it, so the reads can run.
+Every command that writes (`create-doc`, `update-doc`, `edit-doc`, `delete-doc`, the bulk commands, the lifecycle commands, `workflow apply` and `bulk-apply`, `call-method` and `api`) takes `--dry-run`. It prints the request it would send, with secrets redacted, sends nothing that writes and exits 0. Reads still run, so the dry run fails where the real run would (a missing document, a draft that cannot be amended). `update-doc --dry-run` also shows which fields would change, and `delete-doc --dry-run` checks that the document exists. No confirmation is asked. `call-method` and `api` send nothing at all, since any request to a method can write. A username/password site still logs in and out, and an OAuth site with an expired token still refreshes it, so the reads can run.
 
 ```bash
 ffc update-doc -d ToDo -n TD-0001 --data '{"status":"Closed"}' --dry-run
@@ -366,7 +366,20 @@ For Single DocTypes, `--name` can be omitted — the DocType name is used automa
 ```bash
 ffc update-doc -d "ToDo" -n "83a12bf99c" --data '{"status":"Closed"}'
 ffc update-doc -d "System Settings" --data '{"default_currency":"USD"}'
+ffc update-doc -d "ToDo" -n "83a12bf99c" --data '{"status":"Closed"}' --diff
+ffc update-doc -d "ToDo" -n "83a12bf99c" --data '{"status":"Closed"}' --if-unmodified "2026-10-05 16:41:58.083711"
 ```
+
+`--diff` reads the document first and, once the update is saved, prints each field it changed (old → new) on stderr (add `--dry-run` to only look). The update carries the `modified` it read, so a save in between fails with exit 6 rather than making the diff wrong. `--if-unmodified` sends the `modified` value you read (`get-doc --keys modified`): if anyone saved the document since, Frappe refuses the update and nothing is saved (exit 6).
+
+**4b. `edit-doc`** (Edit a document in your editor)
+
+```bash
+ffc edit-doc -d "Sales Order" -n SO-0001
+EDITOR="code --wait" ffc edit-doc -d ToDo -n 83a12bf99c
+```
+
+Like `kubectl edit`: the editable fields open as YAML in `$VISUAL` or `$EDITOR` (`vi`, or `notepad` on Windows). Read-only, hidden, computed, system and Password fields are left out, and so are fields Frappe would not let you change: a permission level your roles do not write, or (v16) a masked field. On a submitted document only the fields allowed on submit are shown, and rows of a table that is not allowed on submit cannot be added, removed or moved. Child tables are lists of rows keyed by row `name`: delete a row to remove it, add one without `name` to add it (a row whose `name:` line was deleted but is otherwise unchanged is refused: it would replace the row and lose its other columns). After you save, ffc shows the changes (removed rows stand out) and asks before saving (`--yes` skips the question, `--dry-run` shows the request). Only the changed fields are sent, with the `modified` timestamp you opened: if someone saved the document in between, nothing is saved (exit 6). A changed child table is sent whole, because Frappe replaces a table with the rows it gets. A file with a YAML error opens again with the error on top (save it unchanged to give up); an unchanged or empty file cancels (with `--json`: `{"cancelled":true,"reason":...}`). If the saved document does not have a value as sent, ffc warns instead of reporting success. The file lives in a private temporary directory (0600) that is removed afterwards. `edit-doc` needs a terminal and fails with `--no-input`. `$VISUAL`/`$EDITOR` is split into words like a shell would (quotes group a path with spaces: `EDITOR="'/opt/my editor/ed' --wait"`), without running a shell.
 
 **5. `delete-doc`** (Delete a document)
 ```bash
@@ -689,7 +702,7 @@ Prompts (guidance only; they call nothing): `inspect-doctype` (doctype), `safe-b
 
 **Progress and structured results.** `bulk_create`, `bulk_update` and `bulk_delete` send `notifications/progress` after each item when the call carries a progress token; cancelling the call stops starting new items. Progress is best effort: a notification can be dropped when the client reads slowly, or arrive after the result. `count_docs` (`{count, doctype}`), `whoami` (the same object as its text) and `list_sites` (`{sites}`; its text stays the bare list) declare an output schema and return `structuredContent`; their text is unchanged. Every tool has a title.
 
-Available MCP tools (27): `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `get_doc_context` (versions, comments, attachments, assignments, links; `ffc doc-info` without `--onload`, at most 50 comments, emails and workflow log entries, 100 attachments, assignments, shares and tags, 50 changes per version and 100 timeline entries, the rest counted in `omitted`), `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
+Available MCP tools (27): `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `get_doc_context` (versions, comments, attachments, assignments, links; `ffc doc-info` without `--onload`, at most 50 comments, emails and workflow log entries, 100 attachments, assignments, shares and tags, 50 changes per version and 100 timeline entries, the rest counted in `omitted`), `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc` (`if_unmodified: <modified>` fails with TimestampMismatchError if the document was saved since it was read), `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
 
 Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`), except rows: `list_docs` then returns the rows that fit as `{"data": [...], "truncated": true, "next_start": N, "hint": "..."}` (call again with `start: N` for the rest; a list that fits is still a plain array), and `run_report` drops rows from the end and adds `truncated`, `total_rows` and a `hint` saying how many were dropped. Tools whose result can be large tell the client the cap (`_meta` `anthropic/maxResultSizeChars`), so Claude Code does not cut the JSON. `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
@@ -724,7 +737,7 @@ foxmayn_frappe_cli/
 │   │   ├── config_cmd.go     # Interactive settings menu, config get/set
 │   │   ├── whoami.go, can.go, doctor.go, server_cache.go  # identity, permissions, health; version cache
 │   │   ├── meta_cache.go, cache_cmd.go, completion.go  # DocType/report/schema cache, ffc cache, shell completion
-│   │   ├── ping.go, get_doc.go, list_docs.go, create_doc.go, update_doc.go,
+│   │   ├── ping.go, get_doc.go, list_docs.go, create_doc.go, update_doc.go, edit_doc.go,
 │   │   │   delete_doc.go, count_docs.go, get_schema.go, list_doctypes.go,
 │   │   │   list_reports.go, run_report.go, search.go, doc_info.go, call_method.go   # data commands
 │   │   ├── api.go            # api: raw requests to any site path

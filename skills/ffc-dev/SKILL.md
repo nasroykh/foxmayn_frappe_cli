@@ -50,7 +50,9 @@ internal/cmd/mcp_completion.go → MCP completion/complete for resource template
 internal/cmd/get_doc.go       → get-doc subcommand
 internal/cmd/list_docs.go     → list-docs subcommand + parseFields()
 internal/cmd/create_doc.go    → create-doc subcommand
-internal/cmd/update_doc.go    → update-doc subcommand + docNameOrSingle()
+internal/cmd/update_doc.go    → update-doc subcommand (--diff, --if-unmodified) + docNameOrSingle(), printFieldChanges
+internal/cmd/edit_doc.go      → edit-doc: newEditForm (editable fields from client.FormMetas), YAML render/parse, edit loop
+                                (runEditor/editInputDisabled test hooks), diff, body (full tables), conflictError
 internal/cmd/delete_doc.go    → delete-doc subcommand
 internal/cmd/count_docs.go    → count-docs subcommand
 internal/cmd/get_schema.go    → get-schema subcommand, fetchSchema, compactSchema, mergeCustomFields, applyPropertySetters
@@ -460,6 +462,7 @@ Use `docNameOrSingle(name, doctype)` (update_doc.go) rather than re-implementing
 **Which commands apply this:**
 - `get-doc` (`get_doc.go`) ✓
 - `update-doc` (`update_doc.go`) ✓
+- `edit-doc` (`edit_doc.go`) ✓
 - MCP `get_doc` and `update_doc` tools in `mcp_tools.go` ✓
 
 **`delete-doc` is intentionally excluded** — Frappe does not allow deleting Single DocTypes, so defaulting the name there would only produce a confusing API error with no valid use case.
@@ -486,6 +489,8 @@ make install  # → $GOPATH/bin + config setup
 ```
 
 Version is injected at build time via ldflags into `internal/version` (Version, Commit, Date).
+
+**Editor and optimistic-concurrency tests.** `edit-doc` tests replace `runEditor` (a func that rewrites the temp file) and `editInputDisabled` (see `edTEditor` in edit_doc_test.go). The fake enforces Frappe's `check_if_latest`: a PUT whose `modified` differs from the stored one is a 417 `TimestampMismatchError`. It also checks updates of submitted documents by value (`AllowOnSubmit`, row counts of tables that are not), keeps the names of rows sent with one, and `FieldProp(doctype, field, prop, value)` sets meta properties (`read_only`, `hidden`, `is_virtual`, `fetch_from`, `set_only_once`) returned by getdoctype. For a non-admin user with permission rows (`SetUser`, `DocPerm`, `Permlevel`) it drops changes to fields at levels the roles do not write and to masked fields, like Frappe (`keepNoWriteAccess`).
 
 ## Self-Update Mechanism
 
