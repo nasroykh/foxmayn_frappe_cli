@@ -127,7 +127,8 @@ func contractAggregate(t *testing.T, c *client.FrappeClient, sc *config.SiteConf
 // DocType names are ASCII letters, digits, spaces, "_" and "-".)
 const contractPermDT = "FFC Contract Perm"
 
-// contractAggregatePermlevel pins what the fake models with HighPermlevel:
+// contractAggregatePermlevel pins what the fake models with Permlevel and
+// DocPerm:
 // a list query naming a field above the caller's permission level is a
 // PermissionError on v16, while v15 drops it from fields without a word
 // (reportview.validate_fields) and refuses it in group_by; ffc aggregate
@@ -217,6 +218,14 @@ func contractAggregatePermlevel(t *testing.T, c *client.FrappeClient, sc *config
 			}
 		}
 		t.Logf("v%d drops the permlevel 1 aggregate: %v", major, res)
+		// Ordered by the dropped alias, MariaDB fails (the fake's 1054).
+		_, err = uc.CallMethod(ctx, "frappe.client.get_list", map[string]interface{}{
+			"doctype": contractPermDT, "fields": fields, "group_by": "grp", "order_by": "s desc",
+		}, true)
+		if !errors.As(err, &api) || api.Status != http.StatusInternalServerError || api.ExcType != "OperationalError" ||
+			!strings.Contains(api.Message, "Unknown column 's'") {
+			t.Errorf("v%d ORDER BY the dropped alias: %v; want 500 OperationalError 1054", major, err)
+		}
 	}
 
 	uc2 := contractConfig(t, &config.SiteConfig{URL: sc.URL, Username: contractUser, Password: contractUserPwd})

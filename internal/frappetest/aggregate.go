@@ -42,29 +42,41 @@ func (s *Site) Postgres() {
 	s.postgres = true
 }
 
-// HighPermlevel puts fields of doctype above the permission level the
-// caller may read, for grouped and aggregate list queries: v16 refuses
-// them with a PermissionError; v15's reportview.validate_fields silently
-// drops them from fields (reportview.py:131-133), and its group_by check
-// refuses them (db_query.py:1578).
-func (s *Site) HighPermlevel(doctype string, fields ...string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.highPerms == nil {
-		s.highPerms = map[string]map[string]bool{}
-	}
-	if s.highPerms[doctype] == nil {
-		s.highPerms[doctype] = map[string]bool{}
-	}
-	for _, f := range fields {
-		s.highPerms[doctype][f] = true
-	}
-}
-
+// highPerm reports whether field of doctype is above the permission levels
+// the fake's user reads: a declared field (DocField) at a level (Permlevel)
+// that none of the user's roles (SetUser) reads in the DocType's permission
+// rows (DocPerm). Administrator, and a DocType without permission rows,
+// read every level. In grouped and aggregate list queries v16 refuses such
+// a field with a PermissionError; v15's reportview.validate_fields drops it
+// from fields without a word (reportview.py:131-133) and its group_by check
+// refuses it (db_query.py:1578).
 func (s *Site) highPerm(doctype, field string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.highPerms[doctype][field]
+	rows := s.docPerms[doctype]
+	if s.isAdmin() || len(rows) == 0 {
+		return false
+	}
+	level := -1
+	for _, f := range s.meta[doctype] {
+		if f.name == field {
+			level = f.permlevel
+		}
+	}
+	if level <= 0 {
+		return false
+	}
+	have := map[string]bool{"All": true, "Guest": true}
+	for _, r := range s.roles {
+		have[r] = true
+	}
+	for _, row := range rows {
+		role, _ := row["role"].(string)
+		if have[role] && fmt.Sprint(row["permlevel"]) == strconv.Itoa(level) && fmt.Sprint(row["read"]) == "1" {
+			return false
+		}
+	}
+	return true
 }
 
 // v15 checks group_by and order_by text (db_query.py:71, 1535-1561): any
@@ -321,6 +333,23 @@ func (s *Site) aggregateList(w http.ResponseWriter, q url.Values, doctype string
 		}
 		f, _ := unqualify(doctype, w[0])
 		terms = append(terms, strings.Join(append([]string{f}, w[1:]...), " "))
+	}
+	if !v16 {
+		// MariaDB resolves ORDER BY against the select aliases and the
+		// table's columns; an alias whose field validate_fields dropped is
+		// neither.
+		aliases := map[string]bool{}
+		for _, c := range cols {
+			aliases[c.alias] = true
+		}
+		for _, t := range terms {
+			col := strings.Fields(t)[0]
+			if !aliases[col] && !s.knownField(doctype, col) {
+				writeError(w, &Error{http.StatusInternalServerError, "OperationalError",
+					fmt.Sprintf("(1054, \"Unknown column '%s' in 'ORDER BY'\")", col)})
+				return
+			}
+		}
 	}
 	if len(terms) == 0 && len(cols) > 0 {
 		terms = []string{cols[0].alias + " asc"} // a stable order for tests

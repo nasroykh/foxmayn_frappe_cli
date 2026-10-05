@@ -324,6 +324,14 @@ var aggregateFetchCap = 10000
 // ignored the order: ffc then fetches up to aggregateFetchCap groups, sorts
 // and cuts them itself, and warns when even that was not every group.
 func runAggregate(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, doctype string, q client.AggregateQuery) (aggregateResult, error) {
+	// A field the user may not read is refused up front on every version
+	// (v15 would drop it silently). When the meta cannot be read, the
+	// client's backstops still turn v15's answer into the same error.
+	if access, err := c.ReadableFields(ctx, doctype); err == nil {
+		if err := q.CheckReadable(doctype, access); err != nil {
+			return aggregateResult{}, err
+		}
+	}
 	want := q.Limit
 	if want > 0 {
 		q.Limit = max(want+1, aggregateProbeRows) // one more tells whether the limit cut groups off

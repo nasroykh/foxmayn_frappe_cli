@@ -282,24 +282,66 @@ func TestCmdAggregateV15NonASCIIDocType(t *testing.T) {
 	}
 }
 
-// A field above the caller's permission level: v16 refuses it, v15 drops
-// the aggregate silently (ffc notices) and refuses to group by it.
+// aggTPermSite is aggTSite with hours at permission level 1, which the
+// signed-in user (Projects User) may not read.
+func aggTPermSite(t *testing.T, version string) *frappetest.Site {
+	t.Helper()
+	s := aggTSite(t, version)
+	s.DocField("ToDo", "status", "Select")
+	s.DocField("ToDo", "hours", "Float")
+	s.Permlevel("ToDo", "hours", 1)
+	for _, row := range []map[string]interface{}{
+		{"role": "System Manager", "permlevel": 0, "read": 1}, {"role": "System Manager", "permlevel": 1, "read": 1},
+		{"role": "Projects User", "permlevel": 0, "read": 1},
+	} {
+		s.DocPerm("ToDo", row)
+	}
+	s.SetUser("u@x.com", "Projects User")
+	return s
+}
+
+// A field above the caller's permission level is refused before anything
+// is sent, on every version: v16 would refuse it too, but v15 drops it from
+// fields without a word, and then fails on its alias in ORDER BY.
 func TestCmdAggregatePermlevel(t *testing.T) {
 	for _, v := range []string{"16.36.1", "15.121.3"} {
-		s := aggTSite(t, v)
-		s.HighPermlevel("ToDo", "hours")
-		r := cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "status", "--sum", "hours", "--count")
-		if r.Code != exitPermission || !strings.Contains(r.Stderr, "hours") {
-			t.Errorf("v%s sum: exit %d, %s", v, r.Code, r.Stderr)
+		s := aggTPermSite(t, v)
+		for _, args := range [][]string{
+			{"--group-by", "status", "--sum", "hours"}, // ordered by sum_hours
+			{"--group-by", "status", "--sum", "hours", "--count"},
+			{"--group-by", "hours"},
+			{"--max", "hours"},
+		} {
+			r := cmdTRun(t, s, append([]string{"--json", "aggregate", "-d", "ToDo"}, args...)...)
+			if r.Code != exitPermission || !strings.Contains(r.Stderr, "hours") {
+				t.Errorf("v%s %v: exit %d, %s", v, args, r.Code, r.Stderr)
+			}
 		}
-		if strings.HasPrefix(v, "15") {
-			cmdTHas(t, r.Stderr, "left SUM(ToDo.hours) out of the result")
-		}
-		r = cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "hours")
-		if r.Code != exitPermission {
-			t.Errorf("v%s group: exit %d, %s", v, r.Code, r.Stderr)
+		if n := len(s.RequestsTo("GET", "/api/resource/ToDo")); n != 0 {
+			t.Errorf("v%s: %d list requests for refused queries", v, n)
 		}
 		cmdTOK(t, cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "status"))
+	}
+}
+
+// Without the check up front (the meta was unreadable), v15's answers still
+// end in a permission error: a missing column (checkColumns), or MariaDB's
+// 1054 for the alias of the dropped field in ORDER BY.
+func TestAggregateV15DroppedFieldBackstops(t *testing.T) {
+	s := aggTPermSite(t, "15.121.3")
+	c, err := client.New(context.Background(), &config.SiteConfig{URL: s.URL, APIKey: frappetest.APIKey, APISecret: frappetest.APISecret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, order := range []string{"sum_hours", "count"} {
+		q := client.AggregateQuery{GroupBy: []string{"status"},
+			Aggregates: []client.AggregateField{{Func: client.AggCount, Alias: "count"}, {Func: client.AggSum, Field: "hours", Alias: "sum_hours"}},
+			OrderBy:    []client.OrderTerm{{Column: order, Desc: true}}}
+		_, err := c.Aggregate(context.Background(), "ToDo", q, client.SyntaxString)
+		var api *client.APIError
+		if !errors.As(err, &api) || api.Status != 403 || api.ExcType != "PermissionError" || !strings.Contains(api.Message, "SUM(ToDo.hours)") {
+			t.Errorf("order by %s: %v", order, err)
+		}
 	}
 }
 

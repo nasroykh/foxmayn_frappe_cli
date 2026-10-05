@@ -94,9 +94,7 @@ type Site struct {
 	metaFlag map[string]map[string]interface{}
 	noV2     bool
 
-	// aggregate.go
-	postgres  bool
-	highPerms map[string]map[string]bool
+	postgres bool // aggregate.go
 
 	oauth oauthState // oauth.go
 

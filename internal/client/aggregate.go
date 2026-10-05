@@ -292,7 +292,7 @@ func (c *FrappeClient) Aggregate(ctx context.Context, doctype string, q Aggregat
 		Message []map[string]interface{} `json:"message"`
 	}
 	if err := c.do(ctx, http.MethodGet, resourcePath(doctype), nil, params, readHints(doctype), &result); err != nil {
-		return nil, err
+		return nil, q.droppedColumn(doctype, err)
 	}
 	rows := result.Data
 	if rows == nil {
@@ -304,27 +304,75 @@ func (c *FrappeClient) Aggregate(ctx context.Context, doctype string, q Aggregat
 	return rows, q.checkColumns(doctype, rows)
 }
 
-// checkColumns fails when a requested column is missing from the rows. v15's
-// reportview.validate_fields silently drops a field the user may not read
-// at its permission level (reportview.py ~131), so its aggregate would just
-// be absent; v16 refuses such a field with a PermissionError instead.
+// A field the user may not read at its permission level: v16 refuses it
+// (PermissionError), v15's reportview.validate_fields drops it from fields
+// without a word (reportview.py:131-133). Its aggregate is then missing
+// from the rows, or, when the query orders by its alias, MariaDB fails with
+// 1054 "Unknown column '<alias>' in 'ORDER BY'". CheckReadable refuses such
+// fields before sending; checkColumns and droppedColumn turn v15's answers
+// into the same permission error when the check could not run.
+
+func unreadableError(what string) error {
+	return &APIError{Status: http.StatusForbidden, ExcType: "PermissionError",
+		Message: fmt.Sprintf("your user may not read %s (permission level)", what)}
+}
+
+func (a AggregateField) describe(doctype string) string {
+	return fmt.Sprintf("%s(%s.%s)", a.Func, doctype, a.Field)
+}
+
+// CheckReadable refuses a group-by or aggregate field that is a DocField of
+// the DocType the user may not read (access from ReadableFields). Standard
+// columns (name, owner, modified, ...) are no DocFields and always pass.
+func (q AggregateQuery) CheckReadable(doctype string, access *FieldAccess) error {
+	hidden := func(f string) bool {
+		_, declared := access.fields[doctype][f]
+		return declared && !access.Readable(f)
+	}
+	for _, g := range q.GroupBy {
+		if hidden(g) {
+			return unreadableError(doctype + "." + g)
+		}
+	}
+	for _, a := range q.Aggregates {
+		if a.Field != "" && hidden(a.Field) {
+			return unreadableError(a.describe(doctype))
+		}
+	}
+	return nil
+}
+
+// checkColumns fails when a requested column is missing from the rows.
 func (q AggregateQuery) checkColumns(doctype string, rows []map[string]interface{}) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	for _, g := range q.GroupBy {
 		if _, ok := rows[0][g]; !ok {
-			return &APIError{Status: http.StatusForbidden, ExcType: "PermissionError",
-				Message: fmt.Sprintf("the site left %s.%s out of the result: your user may not read that field (permission level)", doctype, g)}
+			return unreadableError(doctype + "." + g + " (the site left it out of the result)")
 		}
 	}
 	for _, a := range q.Aggregates {
 		if _, ok := rows[0][a.Alias]; !ok {
-			return &APIError{Status: http.StatusForbidden, ExcType: "PermissionError",
-				Message: fmt.Sprintf("the site left %s(%s.%s) out of the result: your user may not read that field (permission level)", a.Func, doctype, a.Field)}
+			return unreadableError(a.describe(doctype) + " (the site left it out of the result)")
 		}
 	}
 	return nil
+}
+
+// droppedColumn turns MariaDB's 1054 for one of the query's aliases into
+// the permission error: the site dropped the field the alias stands for.
+func (q AggregateQuery) droppedColumn(doctype string, err error) error {
+	var e *APIError
+	if !errors.As(err, &e) || e.Status != http.StatusInternalServerError || e.ExcType != "OperationalError" {
+		return err
+	}
+	for _, a := range q.Aggregates {
+		if strings.Contains(e.Message, "Unknown column '"+a.Alias+"'") {
+			return unreadableError(a.describe(doctype) + " (the site dropped it from the query)")
+		}
+	}
+	return err
 }
 
 // SyntaxRejected reports whether err is how a site that wants the other
