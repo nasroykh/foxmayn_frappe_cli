@@ -47,6 +47,15 @@ func contractDocInfo(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig
 	}, false); err != nil {
 		t.Fatalf("add_comment: %v", err)
 	}
+	// add_tag creates the Tag master, which outlives the document: untag,
+	// then delete it.
+	t.Cleanup(func() {
+		ctx := contractCtx(t)
+		_, _ = c.CallMethod(ctx, "frappe.desk.doctype.tag.tag.remove_tag", map[string]interface{}{"tag": "ffc-contract-tag", "dt": contractDT, "dn": name}, false)
+		if err := c.DeleteDoc(ctx, "Tag", "ffc-contract-tag"); err != nil {
+			t.Logf("cleanup: delete Tag: %v", err)
+		}
+	})
 	if _, err := c.CallMethod(ctx, "frappe.desk.doctype.tag.tag.add_tag", map[string]interface{}{"tag": "ffc-contract-tag", "dt": contractDT, "dn": name}, false); err != nil {
 		t.Fatalf("add_tag: %v", err)
 	}
