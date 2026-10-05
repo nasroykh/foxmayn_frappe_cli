@@ -432,14 +432,20 @@ func castProperty(v, propertyType interface{}) interface{} {
 	if !ok {
 		return v
 	}
+	// A json.Number, like every number the site sends (UseNumber): the table
+	// prints it the same whether it was just fetched or read from the cache.
+	// A float is written as encoding/json writes a float64, so the JSON
+	// output is what it was; NaN and Inf stay strings.
 	switch propertyType {
 	case "Check", "Int":
 		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
-			return float64(n)
+			return json.Number(strconv.Itoa(n))
 		}
 	case "Float", "Currency", "Percent":
 		if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
-			return f
+			if b, err := json.Marshal(f); err == nil {
+				return json.Number(b)
+			}
 		}
 	}
 	return s

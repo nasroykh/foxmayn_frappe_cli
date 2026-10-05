@@ -237,6 +237,31 @@ func TestGetSchemaCache(t *testing.T) {
 	}
 }
 
+// TestGetSchemaCacheNumericSetter: a Property Setter that makes a default
+// numeric prints the same in the table fetched and cached (both are
+// json.Number now; the fetch used to print a float64 with the number
+// format).
+func TestGetSchemaCacheNumericSetter(t *testing.T) {
+	cacheTEnv(t)
+	s := cmdTSchemaSite(t)
+	s.Add("Custom Field")
+	s.Add("Property Setter",
+		map[string]interface{}{"name": "ps1", "doc_type": "Ticket", "doctype_or_field": "DocField", "field_name": "notes", "property": "default", "property_type": "Int", "value": "1500"},
+		map[string]interface{}{"name": "ps2", "doc_type": "Ticket", "doctype_or_field": "DocField", "field_name": "status", "property": "default", "property_type": "Float", "value": "2.50"})
+	cfg := fakeConfig(t, s, "apikey") // number_format: us
+	for _, args := range [][]string{{"get-schema", "-d", "Ticket"}, {"--output", "csv", "get-schema", "-d", "Ticket"}, {"--json", "get-schema", "-d", "Ticket"}} {
+		fresh := cmdTOK(t, runFFC(t, cfg, "", append(args, "--refresh")...))
+		cached := cmdTOK(t, runFFC(t, cfg, "", args...))
+		if fresh.Stdout != cached.Stdout {
+			t.Errorf("%v differs:\nfresh:\n%s\ncached:\n%s", args, fresh.Stdout, cached.Stdout)
+		}
+	}
+	table := cmdTOK(t, runFFC(t, cfg, "", "get-schema", "-d", "Ticket")).Stdout
+	if !strings.Contains(table, " 1500 ") || !strings.Contains(table, " 2.50 ") {
+		t.Errorf("an Int default prints as the integer, a Float with the number format:\n%s", table)
+	}
+}
+
 // TestListCommandsFillTheCache: only a complete, unfiltered list is cached.
 func TestListCommandsFillTheCache(t *testing.T) {
 	cacheTEnv(t)
