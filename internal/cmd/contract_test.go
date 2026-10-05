@@ -94,6 +94,7 @@ func TestContract(t *testing.T) {
 	t.Run("errors match the fake", func(t *testing.T) { contractErrors(t, c, sc.URL) })
 	t.Run("password session", func(t *testing.T) { contractSession(t, sc) })
 	t.Run("identity and permissions", func(t *testing.T) { contractIdentity(t, c, sc) })
+	t.Run("document context", func(t *testing.T) { contractDocInfo(t, c, sc) })
 	// Last: an active workflow changes how the DocType submits.
 	t.Run("workflow", func(t *testing.T) { contractWorkflow(t, c, sc) })
 }
@@ -116,7 +117,7 @@ func setupContract(t *testing.T, c *client.FrappeClient) {
 	})
 	mustCreate("DocType", map[string]interface{}{
 		"name": contractDT, "module": "Custom", "custom": 1, "is_submittable": 1, "autoname": "hash", "description": contractMarker,
-		"allow_rename": 1,
+		"allow_rename": 1, "track_changes": 1,
 		"fields": []interface{}{
 			map[string]interface{}{"fieldname": "title", "label": "Title", "fieldtype": "Data"},
 			map[string]interface{}{"fieldname": "ref_no", "label": "Ref No", "fieldtype": "Data", "no_copy": 1},
@@ -532,6 +533,23 @@ func contractErrors(t *testing.T, real *client.FrappeClient, realURL string) {
 				return err
 			}
 			_, err = bad.GetList(contractCtx(t), contractDT, client.ListOptions{})
+			return err
+		},
+		// The document context methods (doc-info, get_doc_context).
+		"docinfo missing document": func(c *client.FrappeClient, url string) error {
+			_, err := c.DocInfo(contractCtx(t), contractDT, "ffc-contract-missing")
+			return err
+		},
+		"docinfo missing doctype": func(c *client.FrappeClient, url string) error {
+			_, err := c.DocInfo(contractCtx(t), "FFC Contract No Such DocType", "x")
+			return err
+		},
+		"getdoc missing document": func(c *client.FrappeClient, url string) error {
+			_, _, err := c.FormLoad(contractCtx(t), contractDT, "ffc-contract-missing")
+			return err
+		},
+		"link counts missing document": func(c *client.FrappeClient, url string) error {
+			_, err := c.LinkCounts(contractCtx(t), contractDT, "ffc-contract-missing")
 			return err
 		},
 		"delete missing": func(c *client.FrappeClient, url string) error {

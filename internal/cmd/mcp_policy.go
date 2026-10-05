@@ -28,7 +28,7 @@ var toolActions = map[string]toolAction{
 	"list_sites": actRead, "ping": actRead, "get_doc": actRead, "list_docs": actRead, "count_docs": actRead,
 	"get_schema": actRead, "list_doctypes": actRead, "list_reports": actRead,
 	"run_report": actRead, "get_transitions": actRead, "search": actRead,
-	"whoami": actRead, "check_permission": actRead,
+	"whoami": actRead, "check_permission": actRead, "get_doc_context": actRead,
 
 	"create_doc": actWrite, "update_doc": actWrite, "delete_doc": actWrite,
 	"bulk_create": actWrite, "bulk_update": actWrite, "bulk_delete": actWrite,
@@ -62,6 +62,7 @@ var toolSurface = map[string]struct {
 	"list_reports":     {toolsetCore, "List reports", true},
 	"run_report":       {toolsetCore, "Run report", true},
 	"search":           {toolsetCore, "Search documents", true},
+	"get_doc_context":  {toolsetCore, "Get document context", true},
 	"create_doc":       {toolsetCore, "Create document", false},
 	"update_doc":       {toolsetCore, "Update document", false},
 	"delete_doc":       {toolsetCore, "Delete document", false},

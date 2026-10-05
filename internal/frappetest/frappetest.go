@@ -95,6 +95,10 @@ type Site struct {
 	noV2     bool
 
 	oauth oauthState // oauth.go
+
+	// docinfo.go
+	dashboards map[string]map[string]string
+	onload     map[string]map[string]interface{}
 }
 
 // New starts a fake site, closed when the test ends.
@@ -116,6 +120,7 @@ func New(t testing.TB) *Site {
 	s.registerLifecycle()
 	s.registerSearch()
 	s.registerIdentity()
+	s.registerDocInfo()
 	// Every Frappe site has these; ffc reads them before some actions.
 	s.AddDocType("Workflow", "workflow_name", "document_type", "is_active", "workflow_state_field")
 	s.AddDocType("Deleted Document", "deleted_doctype", "deleted_name", "restored", "data")

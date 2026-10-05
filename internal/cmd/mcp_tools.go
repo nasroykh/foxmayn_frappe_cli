@@ -64,6 +64,7 @@ func registerAllTools(s *server.MCPServer, env *mcpEnv) {
 	registerListReports(s, env)
 	registerRunReport(s, env)
 	registerSearch(s, env)
+	registerGetDocContext(s, env)
 	registerGetTransitions(s, env)
 	registerCreateDoc(s, env)
 	registerUpdateDoc(s, env)
