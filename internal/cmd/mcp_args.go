@@ -79,6 +79,9 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 	if err := policy.check(req.Params.Name, scope); err != nil {
 		return fail(auditDenied, err)
 	}
+	if res := policy.confirm(ctx, req, scope, rec); res != nil {
+		return res
+	}
 	c, err := env.client(ctx, site)
 	if err != nil {
 		return fail(auditError, err)

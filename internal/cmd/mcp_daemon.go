@@ -544,6 +544,9 @@ func daemonArgs(site string, port int) []string {
 			args = append(args, f.flag+"="+v)
 		}
 	}
+	if mcpFlags.Confirm != "" {
+		args = append(args, "--confirm="+mcpFlags.Confirm)
+	}
 	if level := debugLevelName(client.Debug); level != "" {
 		args = append(args, "--debug="+level) // the trace goes to mcp.log (0600)
 	}

@@ -503,6 +503,7 @@ sites:
       deny_doctypes: [Salary Slip]
       allow_methods: [erpnext.selling.*]              # call_method; a trailing * is a prefix
       deny_methods: [frappe.client.delete]
+      confirm: always                                 # always | if-supported (default) | never
 ```
 
 - Built in, whatever the config says:
@@ -515,13 +516,22 @@ sites:
 - A refused call sends nothing to the site and returns an error starting with `policy:` that names the setting to change.
 - A misspelt key under `mcp:` is an error, so a policy is never silently ignored.
 
+**Confirmation.** Before `delete_doc`, `bulk_delete`, `cancel_doc`, `rename_doc` with `merge` and the `call_method` equivalents (`frappe.client.delete`, `frappe.client.cancel`, `frappe.desk.reportview.delete_items`, `frappe.desk.form.save.cancel`, and `frappe.client.rename_doc` or `update_document_title` with `merge`), ffc asks the user through the MCP client (elicitation): the client shows what will be deleted, cancelled or merged, and nothing is sent to the site unless the user ticks Confirm. A "no" returns `cancelled by the user; nothing was changed`.
+
+- `confirm: if-supported` (the default) asks when the client supports elicitation and goes ahead without asking when it does not.
+- `confirm: always` refuses the call when the client cannot ask, and names the `ffc` command to run in a terminal instead.
+- `confirm: never` never asks.
+- `--confirm always` or `--confirm if-supported` can only tighten the site's setting; `--confirm never` is refused.
+- An answer is bound to the call it was asked for (site, tool and arguments), expires after 10 minutes and works once.
+- ffc trusts the MCP client to show the question to a person; it cannot tell a person's answer from the client's.
+
 Some checks are best effort:
 
-- `call_method` refuses a method name with `/` or spaces (Frappe would cut or strip it and run another method). An undotted name is matched both as itself (an API Server Script) and as `frappe.handler.<name>`. It is checked against the DocTypes its arguments name (`doctype`, `dt`, a `doc` given as an object or JSON string, …), and a `frappe.client` or form-save call that names none is refused. A custom method can still change any DocType without naming it, so `deny_doctypes` and the sensitive list do not bind it. For a hard limit, set `allow_doctypes` (which requires `allow_methods`), leave `call_method` out of `allow_tools`, or use `read_only`.
+- `call_method` refuses a method name with `/` or spaces (Frappe would cut or strip it and run another method). An undotted name is matched both as itself (an API Server Script) and as `frappe.handler.<name>`. It is checked against the DocTypes its arguments name (`doctype`, `dt`, a `doc` given as an object or JSON string, …), and a `frappe.client` or form-save call that names none is refused. A custom method can still change any DocType without naming it, so `deny_doctypes` and the sensitive list do not bind it, and confirmation does not catch it. For a hard limit, set `allow_doctypes` (which requires `allow_methods`), leave `call_method` out of `allow_tools`, or use `read_only`.
 - A Query or Script Report can read tables other than its `ref_doctype`.
 - `list_doctypes` and `list_reports` list DocType and report names whatever the DocType lists say.
 
-**Audit log.** Every tool call, allowed or refused, appends one JSON line to `~/.config/ffc/mcp-audit.jsonl` (next to the config file, 0600). It records the time, site, the client's self-reported name, tool, DocTypes, document names (up to 20), status (`ok`, `error`, `denied`, `invalid`), error and duration. The arguments are logged with secrets redacted, and document data and method arguments reduced to their keys and size. The file is rotated to `mcp-audit.jsonl.1` at 10 MiB.
+**Audit log.** Every tool call, allowed or refused, appends one JSON line to `~/.config/ffc/mcp-audit.jsonl` (next to the config file, 0600). It records the time, site, the client's self-reported name, tool, DocTypes, document names (up to 20), status (`ok`, `error`, `denied`, `invalid`, `confirm_pending`, `declined`), error and duration. The arguments are logged with secrets redacted, and document data and method arguments reduced to their keys and size. The file is rotated to `mcp-audit.jsonl.1` at 10 MiB.
 
 Available MCP tools (22): `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
 
@@ -569,6 +579,7 @@ foxmayn_frappe_cli/
 │   │   ├── mcp.go            # mcp subcommand (stdio/HTTP/detach, --read-only, policy flags)
 │   │   ├── mcp_policy.go     # per-site MCP policy (DocTypes, tools, methods)
 │   │   ├── mcp_audit.go      # MCP audit log (mcp-audit.jsonl)
+│   │   ├── mcp_confirm.go    # confirmation through MCP elicitation
 │   │   ├── mcp_args.go       # MCP argument parsing and result limits
 │   │   ├── mcp_tools.go      # MCP tool definitions (22 with mcp_lifecycle_tools.go)
 │   │   ├── mcp_lifecycle_tools.go  # submit/cancel/amend/copy/rename/workflow tools

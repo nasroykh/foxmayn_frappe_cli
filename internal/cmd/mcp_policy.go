@@ -74,6 +74,7 @@ type toolScope struct {
 	Names    []string
 	Method   string
 	Report   string // run_report: checked through the report's ref_doctype
+	Confirm  bool   // destroys or merges documents: ask the user first
 }
 
 // scopeOf reads what a tool call touches from its arguments. The tool's own
@@ -117,6 +118,7 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 		}
 		sc.Doctypes[i] = strings.TrimSpace(dt)
 	}
+	sc.Confirm = needsConfirm(req, sc.Method)
 	return sc, nil
 }
 

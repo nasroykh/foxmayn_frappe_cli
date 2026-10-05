@@ -25,10 +25,12 @@ const (
 
 // Audit statuses.
 const (
-	auditOK      = "ok"
-	auditError   = "error"   // the site or ffc failed the call
-	auditDenied  = "denied"  // the policy refused it; nothing was sent
-	auditInvalid = "invalid" // bad arguments; nothing was sent
+	auditOK       = "ok"
+	auditError    = "error"           // the site or ffc failed the call
+	auditDenied   = "denied"          // the policy refused it; nothing was sent
+	auditInvalid  = "invalid"         // bad arguments; nothing was sent
+	auditPending  = "confirm_pending" // the user was asked; the call comes again
+	auditDeclined = "declined"        // the user said no; nothing was sent
 )
 
 // auditRecord is one line of the MCP audit log: who called which tool on
