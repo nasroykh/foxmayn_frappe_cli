@@ -33,7 +33,7 @@ const (
 	schemaCacheTTL  = time.Hour
 
 	// maxSchemaCacheFiles bounds the schema directory; writing one more
-	// evicts the oldest written.
+	// evicts the least recently used.
 	maxSchemaCacheFiles = 100
 	// maxCacheFileBytes is the most a cache read takes from one file. A
 	// compact Sales Invoice schema is about 100 KiB.
@@ -201,8 +201,8 @@ func readSchemaCache(cfg *config.SiteConfig, doctype string, now time.Time) *sch
 }
 
 // writeSchemaCache stores a fetched schema (its compact view and table rows;
-// the full definition is not kept) and evicts the oldest schemas beyond
-// maxSchemaCacheFiles.
+// the full definition is not kept) and evicts the least recently used
+// schemas beyond maxSchemaCacheFiles.
 func writeSchemaCache(cfg *config.SiteConfig, doctype string, compact map[string]interface{}, rows []map[string]interface{}, warnings []string) error {
 	path, err := schemaCachePath(cfg, doctype)
 	if err != nil {
@@ -217,8 +217,19 @@ func writeSchemaCache(cfg *config.SiteConfig, doctype string, compact map[string
 	return nil
 }
 
-// evictSchemas removes the oldest written schema files of dir until at most
-// keep remain.
+// touchSchemaCache marks a schema as just used, so eviction drops the least
+// recently used one. Only get-schema calls it on a hit; completion never
+// writes to the cache, not even a time stamp. The fetched_at inside the file,
+// not the file time, decides whether the entry is fresh.
+func touchSchemaCache(cfg *config.SiteConfig, doctype string) {
+	if path, err := schemaCachePath(cfg, doctype); err == nil {
+		now := time.Now()
+		_ = os.Chtimes(path, now, now)
+	}
+}
+
+// evictSchemas removes the least recently used schema files of dir (by file
+// time: written, or touched by a get-schema hit) until at most keep remain.
 func evictSchemas(dir string, keep int) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

@@ -297,7 +297,7 @@ ffc get-schema -d "Sales Invoice" --json --refresh   # after a Customize Form ch
 | `--keys`    | —     | No       | Comma-separated top-level keys to include, e.g. `fields` |
 | `--refresh` | —     | No       | Fetch from the site instead of the local cache           |
 
-**The schema is cached locally for 1 hour** per site (the compact view; same output, no request). If a field was just added or changed in Customize Form, pass `--refresh`. `--full` always fetches.
+**The schema is cached locally for 1 hour** per site (the compact view; same output, no request). If a field was just added or changed in Customize Form, pass `--refresh`. `--full` always fetches. A cache hit does not check the credentials or that the DocType still exists; `--refresh` does.
 
 Both `--full` and `--keys` only apply to `--json` output. Problems merging custom fields or Property Setters are reported as warnings (`_warnings` in the JSON), not failures. Property Setter overrides (DocField and DocType level, `field_order`) are applied after custom fields are merged.
 

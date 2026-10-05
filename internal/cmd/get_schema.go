@@ -39,9 +39,12 @@ Flags (JSON mode only):
   --keys    Comma-separated top-level keys to include in the output.
             Use --keys fields to get just the field definitions array.
 
-The schema is cached locally for 1 hour per site (the compact view): a repeat
-call prints the same output without a request. --refresh fetches it again
-(after a Customize Form change); --full always fetches.
+The schema is cached locally for 1 hour per site and login (the compact
+view): a repeat call prints the same output without a request. A cache hit
+does not check the credentials or that the DocType still exists: a revoked
+key or a deleted DocType shows only once the entry expires or with
+--refresh, which fetches it again (also after a Customize Form change).
+--full always fetches.
 
 Examples:
   ffc get-schema -d "Sales Invoice"
@@ -96,11 +99,13 @@ type schemaResult struct {
 // loadSchema answers from the local cache while it is fresh, unless full
 // (the cache keeps only the compact view) or refresh is set; otherwise it
 // fetches the schema and caches it. A cache hit sends no request and does
-// not sign in. --debug says which it was.
+// not sign in, so it checks neither the credentials nor that the DocType
+// still exists (documented in the help). --debug says which it was.
 func loadSchema(cmd *cobra.Command, doctype string, full, refresh bool) (schemaResult, error) {
 	if !full && !refresh {
 		if cfg, err := loadSiteConfig(); err == nil {
 			if sc := readSchemaCache(cfg, doctype, time.Now()); sc != nil {
+				touchSchemaCache(cfg, doctype)
 				client.DebugNote(fmt.Sprintf("schema of %q from the local cache, fetched %s ago (--refresh fetches it)",
 					doctype, time.Since(sc.FetchedAt).Round(time.Second)))
 				return schemaResult{compact: sc.Schema, rows: sc.Rows, warnings: sc.Warnings}, nil

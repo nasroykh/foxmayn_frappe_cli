@@ -449,7 +449,7 @@ ffc get-schema -d "Sales Invoice" --json --keys name,module,fields
 ffc get-schema -d "Sales Invoice" --refresh   # skip the local cache
 ```
 
-`get-schema` caches the compact schema per site for **1 hour** and answers from the cache until then: no request and no login, the same output. `--refresh` fetches it again (do that right after a Customize Form change); `--full` always fetches, because the cache keeps only the compact view. `--debug` says when the answer came from the cache.
+`get-schema` caches the compact schema per site for **1 hour** and answers from the cache until then: no request and no login, the same output. `--refresh` fetches it again (do that right after a Customize Form change); `--full` always fetches, because the cache keeps only the compact view. **A cache hit does not check credentials** (or that the DocType still exists): a revoked key or a deleted DocType still gets the cached schema, exit 0, until the entry expires; `--refresh` does check. `--debug` says when the answer came from the cache.
 
 ### Shell completion and the local cache
 
@@ -469,7 +469,7 @@ Completion reads only the config file and the local cache. It never sends a requ
 | `server.json` (app versions) | 24 h | `whoami` |
 | `doctypes.json` | 24 h | `list-doctypes` returning the whole list (no `--module`; `--all`, `--limit 0` or fewer rows than the limit), `cache warm` |
 | `reports.json` (with `ref_doctype`) | 24 h | `list-reports`, same rule, `cache warm` |
-| `schema/<doctype>.json` (compact, at most 100; the oldest is evicted) | 1 h | `get-schema`, `cache warm --doctypes` |
+| `schema/<doctype>.json` (compact, at most 100; the least recently used is evicted) | 1 h | `get-schema`, `cache warm --doctypes` |
 
 The lists change only when an app or a DocType/report is added, and a stale name costs one failed command, so they last a day. A schema is what writes are built from and Customize Form changes it at once, so it lasts an hour. Documents are never cached.
 

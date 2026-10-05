@@ -176,6 +176,60 @@ func TestSchemaCacheEvictsOldest(t *testing.T) {
 	}
 }
 
+// TestSchemaCacheEvictsLeastRecentlyUsed: a get-schema hit touches the
+// file, so the schema in use survives eviction; completion reads without
+// touching.
+func TestSchemaCacheEvictsLeastRecentlyUsed(t *testing.T) {
+	cacheTEnv(t)
+	s := cmdTSchemaSite(t)
+	cfgPath := fakeConfig(t, s, "apikey")
+	cfg, err := config.Load("t", cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().Add(-time.Hour)
+	setTime := func(dt string, at time.Time) {
+		p, _ := schemaCachePath(cfg, dt)
+		if err := os.Chtimes(p, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mtime := func(dt string) time.Time {
+		p, _ := schemaCachePath(cfg, dt)
+		st, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.ModTime()
+	}
+	cmdTOK(t, runFFC(t, cfgPath, "", "get-schema", "-d", "Ticket"))
+	setTime("Ticket", base.Add(-time.Minute)) // the oldest file
+	for i := 0; i < maxSchemaCacheFiles-1; i++ {
+		dt := fmt.Sprintf("DT %03d", i)
+		_ = writeSchemaCache(cfg, dt, map[string]interface{}{"name": dt}, nil, nil)
+		setTime(dt, base.Add(time.Duration(i)*time.Second))
+	}
+
+	before := mtime("Ticket")
+	complT(t, cfgPath, "list-docs", "-d", "Ticket", "--fields", "")
+	if !mtime("Ticket").Equal(before) {
+		t.Error("completion touched the cache")
+	}
+	n := len(s.Requests())
+	cmdTOK(t, runFFC(t, cfgPath, "", "get-schema", "-d", "Ticket"))
+	if len(s.Requests()) != n || !mtime("Ticket").After(before) {
+		t.Fatal("a get-schema hit must send nothing and touch the file")
+	}
+
+	_ = writeSchemaCache(cfg, "Newest", map[string]interface{}{"name": "Newest"}, nil, nil)
+	if readSchemaCache(cfg, "Ticket", time.Now()) == nil {
+		t.Error("the schema just used was evicted")
+	}
+	if readSchemaCache(cfg, "DT 000", time.Now()) != nil {
+		t.Error("the least recently used schema must be evicted")
+	}
+}
+
 // TestGetSchemaCache: a fresh cache answers get-schema with no request (no
 // login on a password site) and the same output; --refresh and --full fetch.
 func TestGetSchemaCache(t *testing.T) {
