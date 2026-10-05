@@ -137,7 +137,8 @@ func runSpinner(title string, fn func()) error {
 // an interactive stderr, and not when --quiet, NO_COLOR or CI is set. A
 // redirected stderr (2>log, cron) would otherwise fill up with ANSI frames.
 func spinnerEnabled() bool {
-	if quiet || os.Getenv("NO_COLOR") != "" || os.Getenv("CI") != "" {
+	// The --debug trace shares stderr with the spinner.
+	if quiet || client.Debug != client.DebugOff || os.Getenv("NO_COLOR") != "" || os.Getenv("CI") != "" {
 		return false
 	}
 	return isTerminal(os.Stderr)

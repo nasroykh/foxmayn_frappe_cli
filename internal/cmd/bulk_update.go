@@ -71,5 +71,6 @@ func init() {
 	_ = bulkUpdateCmd.MarkFlagRequired("doctype")
 	bulkUpdateCmd.MarkFlagsMutuallyExclusive("data", "file")
 
+	addDryRun(bulkUpdateCmd, false)
 	rootCmd.AddCommand(bulkUpdateCmd)
 }

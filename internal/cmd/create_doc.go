@@ -61,5 +61,6 @@ func init() {
 	_ = createDocCmd.MarkFlagRequired("doctype")
 	_ = createDocCmd.MarkFlagRequired("data")
 
+	addDryRun(createDocCmd, false)
 	rootCmd.AddCommand(createDocCmd)
 }

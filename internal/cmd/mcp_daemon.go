@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"net/http"
 	"net/url"
 	"os"
@@ -271,6 +272,9 @@ func startDetached(ctx context.Context, port int) error {
 	}
 	if mcpReadOnly {
 		args = append(args, "--read-only")
+	}
+	if level := debugLevelName(client.Debug); level != "" {
+		args = append(args, "--debug="+level) // the trace goes to mcp.log (0600)
 	}
 
 	cmd := exec.Command(exe, args...)

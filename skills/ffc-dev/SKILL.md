@@ -55,6 +55,7 @@ internal/cmd/bulk_{create,update,delete}.go → bulk commands (--concurrency 1-1
 internal/cmd/{submit_doc,cancel_doc,discard_doc,amend_doc,rename_doc,restore_doc}.go → lifecycle commands
                                   (amend_doc.go also has copy-doc); refuseWorkflow in submit_doc.go
 internal/cmd/workflow.go          → workflow transitions / apply / bulk-apply (bulkFlags) / pending
+internal/cmd/dryrun.go            → addDryRun, withDryRun (trackRunStart), printPlan, fieldChanges; planAll in bulk.go
 internal/cmd/update.go            → update subcommand: size-limited download, signed checksums.txt (relsig) + SHA256 check, atomic binary swap
 internal/cmd/update_check.go      → background update check; owns rootCmd.PersistentPreRunE + state file
 internal/cmd/mcp.go               → mcp subcommand: stdio/HTTP/detach routing, --detach/--port/--read-only, newMCPClientProvider (cached client)
@@ -68,6 +69,8 @@ internal/client/http.go           → newResty (timeout, 128 MiB body cap, no co
 internal/client/client.go         → FrappeClient; New() picks auth; single do() request path; session relogin; Close(); GetDoc, GetList, …
 internal/client/oauth.go          → ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser (all take ctx)
 internal/client/session.go        → LoginPassword (POST /api/method/login, sid cookie, 2FA detection)
+internal/client/debug.go          → --debug trace (debugTransport under resty), DebugLevel; redaction helpers shared with dry runs
+internal/client/dryrun.go         → WithDryRun(ctx, scope), DryRunError; send() holds back writes (scope all: every request)
 internal/client/lifecycle.go      → SubmitDoc/CancelDoc/AmendDoc/DuplicateDoc (GetDoc + clean; no-copy fields from getdoctype),
                                     RenameDoc, RestoreDeleted (returns new_name), DiscardDoc (v16), workflow methods
 internal/config/config.go         → Config/SiteConfig, Read, Load, env overrides, default paths

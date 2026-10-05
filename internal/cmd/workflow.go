@@ -138,7 +138,7 @@ Examples:
 		if len(names) == 0 {
 			return usageErrorf("provide --names or --file")
 		}
-		if !wbYes {
+		if !wbYes && !dryRunOn(cmd) {
 			if err := confirm(fmt.Sprintf("Apply %q to %d %s document(s)?", wbAction, len(names), wbDoctype)); err != nil {
 				return err
 			}
@@ -215,6 +215,8 @@ func init() {
 	workflowPendingCmd.Flags().IntVarP(&wpLimit, "limit", "l", 50, "Maximum actions to return (0 = no limit)")
 	wpPages.register(workflowPendingCmd, "limit")
 
+	addDryRun(workflowApplyCmd, false)
+	addDryRun(workflowBulkApplyCmd, false)
 	workflowCmd.AddCommand(workflowTransitionsCmd, workflowApplyCmd, workflowBulkApplyCmd, workflowPendingCmd)
 	rootCmd.AddCommand(workflowCmd)
 }

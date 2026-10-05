@@ -82,5 +82,6 @@ func init() {
 	restoreDocCmd.Flags().StringVar(&rsDeleted, "deleted", "", "Name of the Deleted Document record")
 	restoreDocCmd.MarkFlagsMutuallyExclusive("deleted", "doctype")
 	restoreDocCmd.MarkFlagsMutuallyExclusive("deleted", "name")
+	addDryRun(restoreDocCmd, false)
 	rootCmd.AddCommand(restoreDocCmd)
 }

@@ -114,6 +114,7 @@ func init() {
 		c.cmd.Flags().StringVar(c.keys, "keys", "", "Comma-separated keys to include in data output, e.g. name,amended_from")
 		_ = c.cmd.MarkFlagRequired("doctype")
 		_ = c.cmd.MarkFlagRequired("name")
+		addDryRun(c.cmd, false)
 		rootCmd.AddCommand(c.cmd)
 	}
 }

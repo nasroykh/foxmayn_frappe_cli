@@ -33,13 +33,13 @@ const MaxResponseBytes = 128 << 20
 // log lines on stderr (they duplicated errors and leaked query strings), and a
 // redirect policy that refuses to silently turn a write into a GET.
 func newResty(baseURL string) *resty.Client {
-	return resty.New().
+	return withDebug(resty.New().
 		SetBaseURL(strings.TrimRight(baseURL, "/")).
 		SetTimeout(Timeout).
 		SetResponseBodyLimit(MaxResponseBytes).
 		SetCookieJar(nil).
 		SetLogger(nopLogger{}).
-		SetRedirectPolicy(resty.RedirectPolicyFunc(checkRedirect))
+		SetRedirectPolicy(resty.RedirectPolicyFunc(checkRedirect)))
 }
 
 // NewHTTPClient returns a resty client with the same transport policy as site

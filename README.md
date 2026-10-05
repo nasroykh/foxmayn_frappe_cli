@@ -176,9 +176,27 @@ ffc [--site <name>] [--config <path>] [--json] <command> [flags]
 | `--quiet`   | `-q`  | No progress spinner (also off when stderr is not a terminal, or `NO_COLOR`/`CI` is set) |
 | `--timeout` |       | HTTP timeout per request, e.g. `2m` (default `30s`) |
 | `--no-input` |      | Never prompt; fail instead. Also on when stdin is not a terminal |
+| `--debug`   |       | Trace every HTTP request on stderr, secrets redacted; `--debug=body` adds headers and bodies (or `$FFC_DEBUG`) |
 | `--version` | `-v`  | Print version information                       |
 
-`FFC_SITE`, `FFC_CONFIG`, `FFC_TIMEOUT` and `FFC_OUTPUT` set `--site`, `--config`, `--timeout` and `--output` when the flag is not given (flags > environment > config).
+`FFC_SITE`, `FFC_CONFIG`, `FFC_TIMEOUT`, `FFC_OUTPUT` and `FFC_DEBUG` set `--site`, `--config`, `--timeout`, `--output` and `--debug` when the flag is not given (flags > environment > config).
+
+#### Dry run
+
+Every command that writes (`create-doc`, `update-doc`, `delete-doc`, the bulk commands, the lifecycle commands, `workflow apply` and `bulk-apply`, `call-method` and `api`) takes `--dry-run`. It prints the request it would send, with secrets redacted, sends nothing that writes and exits 0. Reads still run, so the dry run fails where the real run would (a missing document, a draft that cannot be amended). `update-doc --dry-run` also shows which fields would change, and `delete-doc --dry-run` checks that the document exists. No confirmation is asked. `call-method` and `api` send nothing at all, since any request to a method can write. A username/password site still logs in and out, and an OAuth site with an expired token still refreshes it, so the reads can run.
+
+```bash
+ffc update-doc -d ToDo -n TD-0001 --data '{"status":"Closed"}' --dry-run
+ffc bulk-delete -d Note --file names.json --dry-run --json   # {"dry_run":true,"requests":[{method,url,body}...]}
+```
+
+#### Debugging requests
+
+`--debug` writes one line per HTTP exchange to stderr: method, URL, status, Frappe `exc_type`, time and sizes. `--debug=body` adds the headers and bodies (the first 64 KiB of each). Credentials never appear: `Authorization`, cookies and session ids, API keys, and any password, secret, token, OAuth code or verifier in a URL, header or body are shown as `***`, also inside JSON passed as a string argument and in a body cut at the 64 KiB limit. A `frappe.client.set_value` of a password field hides the value too. The trace is stderr only, so it is safe with `--json` and with `ffc mcp` (in detached mode it goes to `mcp.log`). Use `--debug=body`, not `--debug body`.
+
+```text
+debug #2 GET https://erp.example.com/api/resource/ToDo/nope → 404 DoesNotExistError (91ms, sent 0 B, received 316 B)
+```
 
 #### Output formats
 
@@ -568,6 +586,7 @@ make skills-init # Link the ffc skills (skills/) into .claude/, .cursor/ and .ag
 1. Create `internal/cmd/<command_name>.go`
 2. Define a `*cobra.Command` variable
 3. In `init()`, call `rootCmd.AddCommand(yourCmd)`
+4. A command that writes calls `addDryRun(yourCmd, false)` and skips its confirmation prompt when `dryRunOn(cmd)`
 
 The global `siteName`, `configPath`, and `jsonOutput` flags are available package-wide.
 

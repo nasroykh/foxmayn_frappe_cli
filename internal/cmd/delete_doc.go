@@ -32,13 +32,19 @@ Examples:
 `,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !ddYes {
+		if !ddYes && !dryRunOn(cmd) {
 			if err := confirm(fmt.Sprintf("Delete %s %q? This cannot be undone.", ddDoctype, ddName)); err != nil {
 				return err
 			}
 		}
 
 		_, err := callSite(cmd, fmt.Sprintf("Deleting %s %s…", ddDoctype, ddName), func(ctx context.Context, c *client.FrappeClient) (struct{}, error) {
+			if client.IsDryRun(ctx) {
+				// A dry run still proves the document is there to delete.
+				if _, err := c.GetDoc(ctx, ddDoctype, ddName); err != nil {
+					return struct{}{}, err
+				}
+			}
 			return struct{}{}, c.DeleteDoc(ctx, ddDoctype, ddName)
 		})
 		if err != nil {
@@ -61,5 +67,6 @@ func init() {
 	_ = deleteDocCmd.MarkFlagRequired("doctype")
 	_ = deleteDocCmd.MarkFlagRequired("name")
 
+	addDryRun(deleteDocCmd, false)
 	rootCmd.AddCommand(deleteDocCmd)
 }

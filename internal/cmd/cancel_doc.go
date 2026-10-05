@@ -42,7 +42,7 @@ Examples:
 		if cnCheck {
 			return cancelCheck(cmd)
 		}
-		if !cnYes {
+		if !cnYes && !dryRunOn(cmd) {
 			if err := confirm(fmt.Sprintf("Cancel %s %q? A cancelled document cannot be submitted again.", cnDoctype, cnName)); err != nil {
 				return err
 			}
@@ -93,7 +93,9 @@ func init() {
 	cancelDocCmd.Flags().BoolVar(&cnCheck, "check", false, "List the submitted documents that block the cancel; cancel nothing")
 	cancelDocCmd.Flags().BoolVarP(&cnYes, "yes", "y", false, "Skip confirmation prompt")
 	cancelDocCmd.Flags().StringVar(&cnKeys, "keys", "", "Comma-separated keys to include in data output, e.g. name,docstatus")
+	addDryRun(cancelDocCmd, false)
 	cancelDocCmd.MarkFlagsMutuallyExclusive("check", "yes")
+	cancelDocCmd.MarkFlagsMutuallyExclusive("check", "dry-run")
 	_ = cancelDocCmd.MarkFlagRequired("doctype")
 	_ = cancelDocCmd.MarkFlagRequired("name")
 	rootCmd.AddCommand(cancelDocCmd)

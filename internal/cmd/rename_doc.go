@@ -35,7 +35,7 @@ Examples:
 `,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if rnMerge && !rnYes {
+		if rnMerge && !rnYes && !dryRunOn(cmd) {
 			if err := confirm(fmt.Sprintf("Merge %s %q into %q? This cannot be undone.", rnDoctype, rnName, rnTo)); err != nil {
 				return err
 			}
@@ -67,5 +67,6 @@ func init() {
 	for _, f := range []string{"doctype", "name", "to"} {
 		_ = renameDocCmd.MarkFlagRequired(f)
 	}
+	addDryRun(renameDocCmd, false)
 	rootCmd.AddCommand(renameDocCmd)
 }

@@ -114,8 +114,16 @@ ffc get-doc -d "Sales Invoice" -n "SINV-0001"
 | `--json`    | `-j`  | Output raw JSON instead of a table                                          |
 | `--quiet`   | `-q`  | No progress spinner (also off when stderr is not a terminal, or `NO_COLOR`/`CI` is set) |
 | `--timeout` | —     | HTTP timeout per request, e.g. `2m` (default `30s`; raise it for heavy reports) |
+| `--debug`   | —     | Trace each HTTP request on stderr, secrets redacted; `--debug=body` adds headers and bodies (`FFC_DEBUG`) |
 
 Commands exit non-zero on any error, declined confirmation or aborted prompt, so scripts can rely on the exit status. Data goes to stdout; spinner, warnings and errors go to stderr.
+
+**Preview writes with `--dry-run`.** Every write command (create/update/delete, bulk, lifecycle, `workflow apply`/`bulk-apply`, `call-method`, `api`) accepts `--dry-run`: it prints the request it would send (`{"dry_run":true,"requests":[{method,url,body,changes?}]}` with `--json`), sends nothing that writes, asks no confirmation and exits 0. Reads still run, so a missing document or a wrong state fails exactly like the real run. `update-doc --dry-run` adds `changes` (field → from/to). Use it before any destructive or bulk write when unsure.
+
+```bash
+ffc update-doc -d ToDo -n TD-0001 --data '{"status":"Closed"}' --dry-run --json
+ffc bulk-delete -d Note --file names.json --dry-run --json
+```
 
 ---
 

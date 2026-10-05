@@ -154,6 +154,7 @@ func trackRunStart(c *cobra.Command) {
 			if envErr != nil {
 				return envErr
 			}
+			cmd.SetContext(withDryRun(cmd))
 			return run(cmd, args)
 		}
 	}
