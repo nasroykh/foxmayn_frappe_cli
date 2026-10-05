@@ -55,13 +55,23 @@ type MCPPolicy struct {
 	// also the only way to call a method on the built-in deny list.
 	AllowMethods []string `yaml:"allow_methods,omitempty"`
 	DenyMethods  []string `yaml:"deny_methods,omitempty"`
+	// Confirm is when a destructive tool call asks the user first:
+	// ConfirmAlways, ConfirmIfSupported (the default) or ConfirmNever.
+	Confirm string `yaml:"confirm,omitempty"`
 }
+
+// MCP confirmation modes (MCPPolicy.Confirm).
+const (
+	ConfirmNever       = "never"        // never ask
+	ConfirmIfSupported = "if-supported" // ask when the MCP client can
+	ConfirmAlways      = "always"       // ask, and refuse when the client cannot
+)
 
 // mcpPolicyKeys are the keys MCPPolicy accepts. A misspelt key is an error,
 // not ignored: a policy that silently does not apply fails open.
 var mcpPolicyKeys = map[string]bool{
 	"read_only": true, "allow_tools": true, "allow_doctypes": true, "deny_doctypes": true,
-	"allow_methods": true, "deny_methods": true,
+	"allow_methods": true, "deny_methods": true, "confirm": true,
 }
 
 // UnmarshalYAML decodes a policy, refusing unknown keys and empty allow
@@ -76,6 +86,13 @@ func (p *MCPPolicy) UnmarshalYAML(node *yaml.Node) error {
 		if strings.HasPrefix(k.Value, "allow_") && ((v.Kind == yaml.SequenceNode && len(v.Content) == 0) || v.Tag == "!!null") {
 			return fmt.Errorf("line %d: mcp.%s is empty; list at least one entry, or remove the key for no limit", k.Line, k.Value)
 		}
+		if k.Value == "confirm" {
+			switch strings.TrimSpace(v.Value) {
+			case ConfirmNever, ConfirmIfSupported, ConfirmAlways:
+			default:
+				return fmt.Errorf("line %d: mcp.confirm is %q; use always, if-supported or never", k.Line, v.Value)
+			}
+		}
 	}
 	type plain MCPPolicy
 	if err := node.Decode((*plain)(p)); err != nil {
@@ -86,6 +103,7 @@ func (p *MCPPolicy) UnmarshalYAML(node *yaml.Node) error {
 			(*list)[i] = strings.TrimSpace(v)
 		}
 	}
+	p.Confirm = strings.TrimSpace(p.Confirm)
 	return nil
 }
 

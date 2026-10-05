@@ -365,6 +365,8 @@ func TestMCPPolicyRefusesAmbiguousForms(t *testing.T) {
 		"empty allow list": "      allow_doctypes: []\n",
 		"null allow list":  "      allow_tools:\n",
 		"misspelt mcp key": "",
+		"unknown confirm":  "      confirm: sometimes\n",
+		"confirm as list":  "      confirm: [always]\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			site := "    mcp:\n" + body
@@ -379,5 +381,16 @@ func TestMCPPolicyRefusesAmbiguousForms(t *testing.T) {
 				t.Fatal("loaded")
 			}
 		})
+	}
+}
+
+func TestMCPPolicyConfirm(t *testing.T) {
+	p := writeTemp(t, "default_site: dev\nsites:\n  dev:\n    url: https://a.example\n    mcp:\n      confirm: \" always \"\n")
+	cfg, err := Load("", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MCP == nil || cfg.MCP.Confirm != ConfirmAlways {
+		t.Errorf("policy = %+v", cfg.MCP)
 	}
 }

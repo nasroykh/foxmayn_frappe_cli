@@ -25,10 +25,12 @@ const (
 
 // Audit statuses.
 const (
-	auditOK      = "ok"
-	auditError   = "error"   // the site or ffc failed the call
-	auditDenied  = "denied"  // the policy refused it; nothing was sent
-	auditInvalid = "invalid" // bad arguments; nothing was sent
+	auditOK       = "ok"
+	auditError    = "error"           // the site or ffc failed the call
+	auditDenied   = "denied"          // the policy refused it; nothing was sent
+	auditInvalid  = "invalid"         // bad arguments; nothing was sent
+	auditPending  = "confirm_pending" // the user was asked; the call comes again
+	auditDeclined = "declined"        // the user said no; nothing was sent
 )
 
 // auditRecord is one line of the MCP audit log: who called which tool on
@@ -44,6 +46,7 @@ type auditRecord struct {
 	Method     string      `json:"method,omitempty"`
 	Args       interface{} `json:"args,omitempty"`
 	Status     string      `json:"status"`
+	Confirm    string      `json:"confirm,omitempty"` // a call that needed confirmation: confirmed, unsupported or never
 	Error      string      `json:"error,omitempty"`
 	DurationMS int64       `json:"duration_ms"`
 }

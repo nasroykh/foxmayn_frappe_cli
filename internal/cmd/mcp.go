@@ -86,6 +86,13 @@ func cleanMCPFlags(cmd *cobra.Command) error {
 		}
 		*list = out
 	}
+	switch mcpFlags.Confirm = strings.TrimSpace(mcpFlags.Confirm); mcpFlags.Confirm {
+	case "", config.ConfirmIfSupported, config.ConfirmAlways:
+	case config.ConfirmNever:
+		return usageErrorf("--confirm can only tighten the site's setting; to turn confirmation off, set sites.<site>.mcp.confirm: never in the config")
+	default:
+		return usageErrorf("--confirm must be always or if-supported, not %q", mcpFlags.Confirm)
+	}
 	return nil
 }
 
@@ -193,6 +200,7 @@ func init() {
 	mcpCmd.Flags().StringSliceVar(&mcpFlags.DenyDoctypes, "deny-doctypes", nil, "Refuse these DocTypes, in addition to the config")
 	mcpCmd.Flags().StringSliceVar(&mcpFlags.AllowMethods, "allow-methods", nil, "call_method may call only these methods (narrows the config; a trailing * is a prefix)")
 	mcpCmd.Flags().StringSliceVar(&mcpFlags.DenyMethods, "deny-methods", nil, "Refuse these methods in call_method, in addition to the config")
+	mcpCmd.Flags().StringVar(&mcpFlags.Confirm, "confirm", "", "Ask the user before deleting, cancelling or merging: always (refuse when the client cannot ask) or if-supported (tightens the config)")
 	mcpCmd.Flags().IntVarP(&mcpPort, "port", "p", 0, fmt.Sprintf("Port for HTTP mode (default %d, implies HTTP transport)", defaultMCPPort))
 	rootCmd.AddCommand(mcpCmd)
 }
