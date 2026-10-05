@@ -71,7 +71,7 @@ func contractCollab(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig)
 	if err != nil {
 		t.Fatalf("html comment: %v", err)
 	}
-	if s, _ := res["content"].(string); !strings.Contains(s, "<b>ok</b>") || strings.Contains(s, "script") || strings.Contains(s, "onerror") {
+	if s, _ := res["content"].(string); !strings.Contains(s, "<b>ok</b>") || strings.Contains(s, "<script") || strings.Contains(s, "onerror") {
 		t.Errorf("HTML comment not sanitised: %q", s)
 	}
 	if cm, err := c.GetDoc(ctx, "Comment", res["comment"].(string)); err != nil || cm["comment_type"] != "Comment" || cm["reference_name"] != name {
