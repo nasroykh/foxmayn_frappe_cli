@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -167,8 +168,12 @@ func (env *mcpEnv) runSiteless(ctx context.Context, req mcp.CallToolRequest, par
 	if err != nil {
 		return fail(auditError, err)
 	}
+	res := toolResult(out)
 	rec.Status = auditOK
-	return marshalResult(out)
+	if res.IsError {
+		rec.Status = auditError // the result was too large to return
+	}
+	return res
 }
 
 // anyAllows returns nil when some policy allows tool, else the default
@@ -198,6 +203,11 @@ func authKind(s *config.SiteConfig) string {
 	return "none"
 }
 
+// listSitesSchema is list_sites' output schema (its structuredContent).
+var listSitesSchema = json.RawMessage(`{"type":"object","properties":{"sites":{"type":"array","items":{"type":"object",` +
+	`"properties":{"name":{"type":"string"},"url":{"type":"string"},"auth":{"type":"string","enum":["oauth","api_key","password","none"]},` +
+	`"read_only":{"type":"boolean"},"default":{"type":"boolean"}},"required":["name","url","auth","read_only"]}}},"required":["sites"]}`)
+
 func registerListSites(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("list_sites",
 		mcp.WithDescription("List the Frappe sites this MCP server serves: name, URL, how ffc signs in, and whether MCP may only read it. When the server serves several sites, every other tool requires one of these names in its site argument; there is no default."),
@@ -205,6 +215,7 @@ func registerListSites(s *server.MCPServer, env *mcpEnv) {
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithRawOutputSchema(listSitesSchema),
 	)
 	s.AddTool(tool, toolHandler(env, func(mcp.CallToolRequest) (toolCall, error) {
 		return func(ctx context.Context, _ *client.FrappeClient) (interface{}, error) {
@@ -223,7 +234,8 @@ func registerListSites(s *server.MCPServer, env *mcpEnv) {
 				}
 				out = append(out, row)
 			}
-			return out, nil
+			// The text stays the bare list it always was.
+			return structuredOut{Text: out, Structured: map[string]interface{}{"sites": out}}, nil
 		}, nil
 	}))
 }

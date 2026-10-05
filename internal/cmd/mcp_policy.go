@@ -38,6 +38,47 @@ var toolActions = map[string]toolAction{
 	"call_method": actMethod,
 }
 
+// Tool sets (`ffc mcp --toolsets`).
+const (
+	toolsetCore      = "core"
+	toolsetLifecycle = "lifecycle"
+)
+
+// toolSurface describes every MCP tool to the client: its tool set, its
+// human-readable title, and whether its result can be large (it then
+// carries the anthropic/maxResultSizeChars hint). TestMCPToolSurface keeps
+// it in step with registerTools, so a new tool must be classified here.
+var toolSurface = map[string]struct {
+	toolset, title string
+	big            bool
+}{
+	"list_sites":    {toolsetCore, "List served sites", false},
+	"ping":          {toolsetCore, "Ping site", false},
+	"get_doc":       {toolsetCore, "Get document", true},
+	"list_docs":     {toolsetCore, "List documents", true},
+	"count_docs":    {toolsetCore, "Count documents", false},
+	"get_schema":    {toolsetCore, "Get DocType schema", true},
+	"list_doctypes": {toolsetCore, "List DocTypes", true},
+	"list_reports":  {toolsetCore, "List reports", true},
+	"run_report":    {toolsetCore, "Run report", true},
+	"search":        {toolsetCore, "Search documents", true},
+	"create_doc":    {toolsetCore, "Create document", false},
+	"update_doc":    {toolsetCore, "Update document", false},
+	"delete_doc":    {toolsetCore, "Delete document", false},
+	"bulk_create":   {toolsetCore, "Create documents in bulk", false},
+	"bulk_update":   {toolsetCore, "Update documents in bulk", false},
+	"bulk_delete":   {toolsetCore, "Delete documents in bulk", false},
+	"call_method":   {toolsetCore, "Call server method", true},
+
+	"submit_doc":      {toolsetLifecycle, "Submit document", false},
+	"cancel_doc":      {toolsetLifecycle, "Cancel document", false},
+	"amend_doc":       {toolsetLifecycle, "Amend cancelled document", false},
+	"copy_doc":        {toolsetLifecycle, "Duplicate document", false},
+	"rename_doc":      {toolsetLifecycle, "Rename or merge document", false},
+	"apply_workflow":  {toolsetLifecycle, "Apply workflow action", false},
+	"get_transitions": {toolsetLifecycle, "Get workflow transitions", false},
+}
+
 // sensitiveDoctypes control users, permissions, credentials or server-side
 // code. MCP may read them, but writes are refused unless the site's config
 // lists the DocType in mcp.allow_doctypes (D4).

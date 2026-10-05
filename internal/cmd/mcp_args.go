@@ -38,6 +38,8 @@ type mcpEnv struct {
 	client func(ctx context.Context, site *config.SiteConfig) (*client.FrappeClient, error)
 	flags  config.MCPPolicy
 	audit  *auditLog // nil: no audit log
+	// toolsets are the tool sets `ffc mcp --toolsets` exposes; nil is all.
+	toolsets []string
 }
 
 // toolHandler runs a tool call in a fixed order: validate the arguments (so
@@ -48,7 +50,7 @@ type mcpEnv struct {
 // treating it as a protocol failure.
 func toolHandler(env *mcpEnv, parse func(req mcp.CallToolRequest) (toolCall, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rec := auditRecord{Time: time.Now().UTC(), Tool: req.Params.Name, Client: mcpClientName(ctx)}
+		rec := auditRecord{Time: time.Now().UTC(), Tool: req.Params.Name, Client: mcpClientName(ctx), Via: viaFrom(ctx)}
 		res := env.run(ctx, req, parse, &rec)
 		rec.DurationMS = time.Since(rec.Time).Milliseconds()
 		env.audit.write(rec, req.GetArguments())
@@ -103,16 +105,11 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 	if err := policy.checkReport(ctx, c, scope); err != nil {
 		return fail(auditDenied, err)
 	}
-	out, err := call(withSite(withPolicy(ctx, policy), site), c)
+	out, err := call(withProgress(withSite(withPolicy(ctx, policy), site), req), c)
 	if err != nil {
 		return fail(auditError, err)
 	}
-	var res *mcp.CallToolResult
-	if s, ok := out.(string); ok {
-		res = mcp.NewToolResultText(s)
-	} else {
-		res = marshalResult(out)
-	}
+	res := toolResult(out)
 	rec.Status = auditOK
 	if res.IsError {
 		rec.Status = auditError // the result was too large to return
@@ -130,6 +127,29 @@ func mcpClientName(ctx context.Context) string {
 		return s.GetClientInfo().Name
 	}
 	return ""
+}
+
+// structuredOut is a tool result with structured content (for a tool that
+// declares an output schema): Text is marshalled as the text content, as
+// before, and Structured, a JSON object, is the structuredContent.
+type structuredOut struct {
+	Text       interface{}
+	Structured interface{}
+}
+
+// toolResult turns what a toolCall returned into the tool result.
+func toolResult(out interface{}) *mcp.CallToolResult {
+	switch v := out.(type) {
+	case string:
+		return mcp.NewToolResultText(v)
+	case structuredOut:
+		res := marshalResult(v.Text)
+		if !res.IsError {
+			res.StructuredContent = v.Structured
+		}
+		return res
+	}
+	return marshalResult(out)
 }
 
 // marshalResult serializes data as compact JSON, refusing oversized results.

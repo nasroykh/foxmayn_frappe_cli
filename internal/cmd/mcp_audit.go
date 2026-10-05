@@ -40,6 +40,7 @@ type auditRecord struct {
 	Site       string      `json:"site,omitempty"`
 	Client     string      `json:"client,omitempty"` // as the MCP client names itself
 	Tool       string      `json:"tool"`
+	Via        string      `json:"via,omitempty"` // "resource": a resources/read served by the tool
 	Doctypes   []string    `json:"doctypes,omitempty"`
 	Names      []string    `json:"names,omitempty"`
 	NamesTotal int         `json:"names_total,omitempty"` // set when names were cut

@@ -271,11 +271,14 @@ func TestMCPFakeListDocsTooLarge(t *testing.T) {
 	for i := 0; i < 60; i++ {
 		site.Add("Note", map[string]interface{}{"name": fmt.Sprintf("N%02d", i), "content": blob})
 	}
-	mcpTErr(t, s, "list_docs", map[string]interface{}{"doctype": "Note", "limit": 0, "fields": []interface{}{"name", "content"}},
+	// Too many rows are cut to the ones that fit (TestMCPListDocsTruncates);
+	// a single row too large to return is refused.
+	site.Add("Note", map[string]interface{}{"name": "Huge", "content": strings.Repeat("x", maxToolResultBytes)})
+	mcpTErr(t, s, "list_docs", map[string]interface{}{"doctype": "Note", "limit": 0, "fields": []interface{}{"name", "content"}, "filters": map[string]interface{}{"name": "Huge"}},
 		"narrow it with limit, fields, filters or keys")
 	// Narrowing works.
 	rows := mcpTRows(t, mcpTOK(t, s, "list_docs", map[string]interface{}{"doctype": "Note", "limit": 0}))
-	if len(rows) != 60 {
+	if len(rows) != 61 {
 		t.Errorf("narrowed rows = %d", len(rows))
 	}
 }
