@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -35,17 +36,21 @@ func compactReportResult(r map[string]interface{}) map[string]interface{} {
 //
 // With several sites, a tool is registered when some site's policy allows
 // it, each call is checked against its own site's policy, and every site
-// tool gets a required `site` argument.
+// tool gets a required `site` argument. --toolsets narrows the tools too.
+// The resources, prompts and instructions (mcp_surface.go) follow the tools
+// that remain.
 func registerTools(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy) {
 	registerAllTools(s, env)
 	var drop []string
 	for name := range s.ListTools() {
-		if anyAllows(policies, name) != nil {
+		if anyAllows(policies, name) != nil || !env.inToolsets(name) {
 			drop = append(drop, name)
 		}
 	}
 	s.DeleteTools(drop...)
+	describeTools(s)
 	addSiteParam(s, env)
+	registerSurface(s, env, policies)
 }
 
 func registerAllTools(s *server.MCPServer, env *mcpEnv) {
@@ -145,7 +150,7 @@ func registerListDocs(s *server.MCPServer, env *mcpEnv) {
 		jsonParam("fields", `Array of field names to return, e.g. ["name","status","grand_total"]. If omitted, returns default fields.`),
 		jsonParam("filters", `Filter expression. Object format: {"status":"Paid"} or array format: [["status","=","Paid"]]`),
 		mcp.WithNumber("limit",
-			mcp.Description("Maximum number of records to return. Default: 20. 0 means no limit (results over 512 KiB are refused)."),
+			mcp.Description("Maximum number of records to return. Default: 20. 0 means no limit. Rows that do not fit in 512 KiB are cut: the answer is then {data, truncated, next_start, hint}; call again with start=next_start for the rest."),
 		),
 		mcp.WithNumber("start",
 			mcp.Description("Offset into the result set, for pagination. Default: 0."),
@@ -188,10 +193,17 @@ func registerListDocs(s *server.MCPServer, env *mcpEnv) {
 			OrderBy: orderBy,
 		}
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
-			return c.GetList(ctx, doctype, opts)
+			rows, err := c.GetList(ctx, doctype, opts)
+			if err != nil {
+				return nil, err
+			}
+			return fitListRows(rows, start), nil
 		}, nil
 	}))
 }
+
+// countDocsSchema is count_docs' output schema (its structuredContent).
+var countDocsSchema = json.RawMessage(`{"type":"object","properties":{"doctype":{"type":"string"},"count":{"type":"integer","minimum":0}},"required":["doctype","count"]}`)
 
 func registerCountDocs(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("count_docs",
@@ -203,6 +215,7 @@ func registerCountDocs(s *server.MCPServer, env *mcpEnv) {
 			mcp.Description("The Frappe DocType"),
 		),
 		jsonParam("filters", `Filter expression, e.g. {"status":"Open"} or [["status","=","Open"]]`),
+		mcp.WithRawOutputSchema(countDocsSchema),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
@@ -218,7 +231,8 @@ func registerCountDocs(s *server.MCPServer, env *mcpEnv) {
 			if err != nil {
 				return nil, err
 			}
-			return map[string]interface{}{"doctype": doctype, "count": count}, nil
+			m := map[string]interface{}{"doctype": doctype, "count": count}
+			return structuredOut{Text: m, Structured: m}, nil
 		}, nil
 	}))
 }
@@ -327,7 +341,7 @@ func registerRunReport(s *server.MCPServer, env *mcpEnv) {
 		),
 		jsonParam("filters", `Report filter values as an object, e.g. {"company":"My Company","from_date":"2025-01-01"}`),
 		mcp.WithNumber("limit",
-			mcp.Description("Maximum number of result rows to return. Default: 500. Use 0 for all rows (results over 512 KiB are refused)."),
+			mcp.Description("Maximum number of result rows to return. Default: 500. Use 0 for all rows. Rows that do not fit in 512 KiB are dropped from the end (truncated, total_rows and a hint say so): narrow the filters instead."),
 		),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
@@ -349,7 +363,7 @@ func registerRunReport(s *server.MCPServer, env *mcpEnv) {
 				return nil, err
 			}
 			limitReportRows(result, limit)
-			return compactReportResult(result), nil
+			return fitReportRows(compactReportResult(result)), nil
 		}, nil
 	}))
 }
@@ -549,8 +563,12 @@ func bulkTool(n int, done string, op func(ctx context.Context, c *client.FrappeC
 		return nil, fmt.Errorf("too many items (%d): a single call may touch at most %d documents", n, maxMCPBulkItems)
 	}
 	return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
+		finished := 0 // one worker: items finish in order
 		rep := runBulk(ctx, n, 1, false, done, func(ctx context.Context, i int) (string, error) {
-			return op(ctx, c, i)
+			name, err := op(ctx, c, i)
+			finished++
+			notifyProgress(ctx, finished, n)
+			return name, err
 		})
 		return rep.JSON(), nil
 	}, nil

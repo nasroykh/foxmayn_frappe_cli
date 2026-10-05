@@ -87,9 +87,10 @@ func newMCPEnv(sites []string) (*mcpEnv, func(), error) {
 			}
 			return site, nil
 		},
-		client: get,
-		flags:  mcpFlags,
-		audit:  audit,
+		client:   get,
+		flags:    mcpFlags,
+		audit:    audit,
+		toolsets: mcpToolsets,
 	}
 	env.flags.ReadOnly = mcpReadOnly
 	return env, closeFn, nil
@@ -113,6 +114,9 @@ func cleanMCPFlags(cmd *cobra.Command) error {
 			return usageErrorf("--%s needs at least one value", name)
 		}
 		*list = out
+	}
+	if err := cleanToolsets(cmd); err != nil {
+		return err
 	}
 	switch mcpFlags.Confirm = strings.TrimSpace(mcpFlags.Confirm); mcpFlags.Confirm {
 	case "", config.ConfirmIfSupported, config.ConfirmAlways:
@@ -160,7 +164,10 @@ func startMCP(ctx context.Context) (*server.MCPServer, func(), error) {
 		"ffc",
 		version.Version,
 		server.WithToolCapabilities(false),
+		server.WithResourceCapabilities(false, false),
+		server.WithPromptCapabilities(false),
 		server.WithRecovery(),
+		server.WithResourceRecovery(),
 	)
 	registerTools(s, env, policies)
 	if len(sites) > 1 {
@@ -251,6 +258,7 @@ func init() {
 	mcpCmd.Flags().StringSliceVar(&mcpFlags.DenyDoctypes, "deny-doctypes", nil, "Refuse these DocTypes, in addition to the config")
 	mcpCmd.Flags().StringSliceVar(&mcpFlags.AllowMethods, "allow-methods", nil, "call_method may call only these methods (narrows the config; a trailing * is a prefix)")
 	mcpCmd.Flags().StringSliceVar(&mcpFlags.DenyMethods, "deny-methods", nil, "Refuse these methods in call_method, in addition to the config")
+	mcpCmd.Flags().StringSliceVar(&mcpToolsets, "toolsets", nil, "Expose only these tool sets: core (documents, reports, bulk, call_method, whoami, check_permission) and lifecycle (submit, cancel, amend, copy, rename, workflow); default both")
 	mcpCmd.Flags().StringVar(&mcpFlags.Confirm, "confirm", "", "Ask the user before deleting, cancelling or merging: always (refuse when the client cannot ask) or if-supported (tightens the config)")
 	mcpCmd.Flags().IntVarP(&mcpPort, "port", "p", 0, fmt.Sprintf("Port for HTTP mode (default %d, implies HTTP transport)", defaultMCPPort))
 	rootCmd.AddCommand(mcpCmd)

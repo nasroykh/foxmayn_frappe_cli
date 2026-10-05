@@ -561,6 +561,13 @@ Every tool then takes a required `site` argument (one of the served sites), so a
 ffc mcp --read-only --site prod
 ```
 
+**Tool sets** — expose only part of the tools:
+```bash
+ffc mcp --toolsets core        # documents, schema, reports, search, bulk, call_method, whoami, check_permission
+ffc mcp --toolsets lifecycle   # submit_doc, cancel_doc, amend_doc, copy_doc, rename_doc, apply_workflow, get_transitions
+```
+The default is both. `list_sites` is always there. Like `--allow-tools`, it only narrows what the policy allows; an unknown set name is a usage error.
+
 **Policy.** Each site can limit what MCP tools may do, in its config entry:
 
 ```yaml
@@ -609,11 +616,24 @@ Some checks are best effort:
 - A Query or Script Report can read tables other than its `ref_doctype`.
 - `list_doctypes` and `list_reports` list DocType and report names whatever the DocType lists say.
 
-**Audit log.** Every tool call, allowed or refused, appends one JSON line to `~/.config/ffc/mcp-audit.jsonl` (next to the config file, 0600). It records the time, site, the client's self-reported name, tool, DocTypes, document names (up to 20), status (`ok`, `error`, `denied`, `invalid`, `confirm_pending`, `declined`), error and duration. The arguments are logged with secrets redacted, and document data and method arguments reduced to their keys and size. The file is rotated to `mcp-audit.jsonl.1` at 10 MiB.
+**Audit log.** Every tool call and resource read, allowed or refused, appends one JSON line to `~/.config/ffc/mcp-audit.jsonl` (next to the config file, 0600). It records the time, site, the client's self-reported name, tool, DocTypes, document names (up to 20), status (`ok`, `error`, `denied`, `invalid`, `confirm_pending`, `declined`), error and duration. A resource read is logged under the tool that served it with `"via": "resource"`. The arguments are logged with secrets redacted, and document data and method arguments reduced to their keys and size. The file is rotated to `mcp-audit.jsonl.1` at 10 MiB.
+
+**Instructions, resources and prompts.** On connecting, the client receives instructions for the model: filter syntax, `get_schema` before writing, `docstatus` and the lifecycle tools, `fields` and `limit` on lists, name versus title (`search` resolves one to the other), which sites are read-only and, with several sites, that every call needs `site`. They mention only the tools this server exposes.
+
+Resources (read-only, JSON):
+- `ffc://sites`: the served sites (as `list_sites`).
+- `ffc://{site}/schema/{doctype}`: the compact schema (as `get_schema`).
+- `ffc://{site}/doc/{doctype}/{name}`: a document (as `get_doc`). Percent-encode each segment: `ffc://prod/doc/Sales%20Invoice/SINV%2F0001`.
+
+A resource read runs through the same tool handler: the site must be served, the site's policy applies (a denied DocType is refused, `read_only` does not matter for reads), it is audited, and the 512 KiB cap applies. A template is offered only when its tool is. A failed read is a JSON-RPC error whose message is the tool's (a refusal starts with `policy:`); mcp-go v1.1.1 gives every such error the code -32603, so read the message, not the code. A URI that does not fit a template (an extra segment, a bad `%` escape) is answered as resource not found.
+
+Prompts (guidance only; they call nothing): `inspect-doctype` (doctype), `safe-bulk-import` (doctype, optional source), `audit-doc-changes` (doctype, name) and `explain-report` (report_name). Each lists which tools to call in which order and what to check, leaving out steps whose tools this server does not expose. With several sites they take a required `site`. A prompt whose essential tools are not exposed is not offered. Arguments are quoted as JSON in the text, and one longer than its limit (140 characters, 500 for `source`) is refused, never cut.
+
+**Progress and structured results.** `bulk_create`, `bulk_update` and `bulk_delete` send `notifications/progress` after each item when the call carries a progress token; cancelling the call stops starting new items. Progress is best effort: a notification can be dropped when the client reads slowly, or arrive after the result. `count_docs` (`{count, doctype}`), `whoami` (the same object as its text) and `list_sites` (`{sites}`; its text stays the bare list) declare an output schema and return `structuredContent`; their text is unchanged. Every tool has a title.
 
 Available MCP tools (26): `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
 
-Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`); `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
+Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`), except rows: `list_docs` then returns the rows that fit as `{"data": [...], "truncated": true, "next_start": N, "hint": "..."}` (call again with `start: N` for the rest; a list that fits is still a plain array), and `run_report` drops rows from the end and adds `truncated`, `total_rows` and a `hint` saying how many were dropped. Tools whose result can be large tell the client the cap (`_meta` `anthropic/maxResultSizeChars`), so Claude Code does not cut the JSON. `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
 **Example Claude Desktop config:**
 ```json

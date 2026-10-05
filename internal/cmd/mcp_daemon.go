@@ -577,6 +577,9 @@ func daemonArgs(sites []string, port int) []string {
 	if mcpReadOnly {
 		args = append(args, "--read-only")
 	}
+	for _, v := range mcpToolsets {
+		args = append(args, "--toolsets="+csvField(v))
+	}
 	for _, f := range []struct {
 		flag string
 		list []string

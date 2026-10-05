@@ -40,6 +40,7 @@ type auditRecord struct {
 	Site       string      `json:"site,omitempty"`
 	Client     string      `json:"client,omitempty"` // as the MCP client names itself
 	Tool       string      `json:"tool"`
+	Via        string      `json:"via,omitempty"` // "resource": a resources/read served by the tool
 	Doctypes   []string    `json:"doctypes,omitempty"`
 	Names      []string    `json:"names,omitempty"`
 	NamesTotal int         `json:"names_total,omitempty"` // set when names were cut
@@ -49,6 +50,8 @@ type auditRecord struct {
 	Confirm    string      `json:"confirm,omitempty"` // a call that needed confirmation: confirmed, unsupported or never
 	Error      string      `json:"error,omitempty"`
 	DurationMS int64       `json:"duration_ms"`
+
+	cause error // the failure itself, for a resource read's error; not logged
 }
 
 // auditLog appends records to mcp-audit.jsonl next to the config file.
