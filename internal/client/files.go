@@ -9,9 +9,12 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,12 +32,25 @@ const DefaultAttachFolder = "Home/Attachments"
 // FileUpload is a file to attach to a document.
 type FileUpload struct {
 	Filename string
-	Content  []byte
-	Doctype  string
-	Docname  string
-	Field    string // Attach field to set to the file URL; "" for none
-	Folder   string // "" is DefaultAttachFolder
-	Private  bool
+	// Content is the file in memory. UploadFile can stream it instead: with
+	// File set, it sends Size bytes read from File (Content is ignored).
+	// AttachFile needs Content.
+	Content []byte
+	File    io.ReaderAt
+	Size    int64
+	Doctype string
+	Docname string
+	Field   string // Attach field to set to the file URL; "" for none
+	Folder  string // "" is DefaultAttachFolder
+	Private bool
+}
+
+// source is the file's content and size.
+func (u FileUpload) source() (io.ReaderAt, int64) {
+	if u.File != nil {
+		return u.File, u.Size
+	}
+	return bytes.NewReader(u.Content), int64(len(u.Content))
 }
 
 func (u FileUpload) folder() string {
@@ -47,12 +63,13 @@ func (u FileUpload) folder() string {
 // planFields describes an upload in a dry-run plan: the form fields and the
 // file's name, size and type, never its content.
 func (u FileUpload) planFields(contentField string) map[string]interface{} {
+	_, n := u.source()
 	m := map[string]interface{}{
 		"doctype":    u.Doctype,
 		"docname":    u.Docname,
 		"folder":     u.folder(),
 		"is_private": boolInt(u.Private),
-		contentField: fmt.Sprintf("(%s, %d bytes, not shown)", u.Filename, len(u.Content)),
+		contentField: fmt.Sprintf("(%s, %d bytes, not shown)", u.Filename, n),
 	}
 	if u.Field != "" {
 		m["fieldname"] = u.Field
@@ -112,8 +129,11 @@ func fileHints(doctype, name string) map[int]string {
 // /api/method/upload_file (multipart, the field "file"), as the desk does,
 // and returns the File document. Like every write it is never retried. The
 // request is repeated only after a session re-login or token refresh, when
-// the site refused it before it ran; the form is rebuilt from u.Content
-// then, so it is sent intact.
+// the site refused it before it ran; the body is rebuilt from the start of
+// the content then, so it is sent intact.
+//
+// The body is streamed (multipartBody), never copied into memory: resty
+// would buffer a multipart form twice.
 func (c *FrappeClient) UploadFile(ctx context.Context, u FileUpload) (map[string]interface{}, error) {
 	form := map[string]string{
 		"doctype":    u.Doctype,
@@ -129,9 +149,11 @@ func (c *FrappeClient) UploadFile(ctx context.Context, u FileUpload) (map[string
 	if _, err := c.GetDoc(ctx, u.Doctype, u.Docname); err != nil {
 		return nil, err
 	}
+	src, n := u.source()
 	resp, err := c.send(ctx, c.r, http.MethodPost, "/api/method/upload_file", func(r *resty.Request) {
-		r.SetMultipartFormData(form)
-		r.SetMultipartField("file", u.Filename, contentType(u.Filename), bytes.NewReader(u.Content))
+		body, length, ct := multipartBody(form, "file", u.Filename, contentType(u.Filename), src, n)
+		r.SetBody(body).SetHeader("Content-Type", ct).
+			SetContext(context.WithValue(r.Context(), bodyLengthKey{}, length))
 	})
 	if err != nil {
 		var plan *DryRunError
@@ -155,11 +177,54 @@ func (c *FrappeClient) UploadFile(ctx context.Context, u FileUpload) (map[string
 	return res.Message, nil
 }
 
+// multipartBody is a multipart form with fields and one file part whose
+// content is read from src only as the body is sent: a fresh reader over
+// the same content each call. It returns the body, its exact length (see
+// setBodyLength) and the Content-Type with the boundary.
+func multipartBody(fields map[string]string, field, filename, ct string, src io.ReaderAt, n int64) (io.Reader, int64, string) {
+	var head bytes.Buffer
+	w := multipart.NewWriter(&head)
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	// Writes to a bytes.Buffer do not fail.
+	for _, k := range keys {
+		_ = w.WriteField(k, fields[k])
+	}
+	quote := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, quote(field), quote(filename)))
+	h.Set("Content-Type", ct)
+	_, _ = w.CreatePart(h)
+	tail := "\r\n--" + w.Boundary() + "--\r\n" // what w.Close writes
+	body := io.MultiReader(bytes.NewReader(head.Bytes()), io.NewSectionReader(src, 0, n), strings.NewReader(tail))
+	return body, int64(head.Len()) + n + int64(len(tail)), w.FormDataContentType()
+}
+
+// bodyLengthKey carries a streamed request body's length to setBodyLength.
+type bodyLengthKey struct{}
+
+// setBodyLength is the resty pre-request hook that gives a streamed body
+// (multipartBody) its Content-Length. Without it Go sends the body chunked,
+// which not every server or proxy accepts, and the site could not refuse an
+// oversized file (413) before reading it.
+func setBodyLength(_ *resty.Client, req *http.Request) error {
+	if n, ok := req.Context().Value(bodyLengthKey{}).(int64); ok {
+		req.ContentLength = n
+	}
+	return nil
+}
+
 // AttachFile attaches u through frappe.client.attach_file, which takes the
 // content base64-encoded in a JSON body. It needs only read access to the
 // document (and create on File); with Field set, the document is saved,
 // which needs write.
 func (c *FrappeClient) AttachFile(ctx context.Context, u FileUpload) (map[string]interface{}, error) {
+	if u.File != nil {
+		return nil, errors.New("AttachFile takes the content in memory (Content), not File")
+	}
 	args := map[string]interface{}{
 		"doctype":       u.Doctype,
 		"docname":       u.Docname,

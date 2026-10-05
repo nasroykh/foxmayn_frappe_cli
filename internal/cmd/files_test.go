@@ -107,6 +107,34 @@ func TestUploadSizeLimit(t *testing.T) {
 	}
 }
 
+// stdin is held in memory, so it has ffc's own cap; a regular file is
+// streamed and only the site's limit applies.
+func TestUploadInMemoryCap(t *testing.T) {
+	site := cmdTSite(t)
+	cfg := fakeConfig(t, site, "apikey")
+	site.SetMaxFileSize(1000)
+	old := maxUploadInMemory
+	maxUploadInMemory = 8
+	defer func() { maxUploadInMemory = old }()
+	r := runFFC(t, cfg, strings.Repeat("x", 11), "upload", "-", "--filename", "in.txt", "-d", "ToDo", "-n", "TD-1")
+	if r.Code != exitValidation || !strings.Contains(r.Stderr, "save it to a file") {
+		t.Errorf("stdin over the cap: exit %d %s", r.Code, r.Stderr)
+	}
+	src := filepath.Join(t.TempDir(), "disk.txt")
+	content := []byte("streamed from disk")
+	if err := os.WriteFile(src, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r = runFFC(t, cfg, "", "upload", src, "-d", "ToDo", "-n", "TD-1", "--json")
+	var doc map[string]interface{}
+	if r.Code != 0 || json.Unmarshal([]byte(r.Stdout), &doc) != nil {
+		t.Fatalf("file over the in-memory cap: exit %d %s", r.Code, r.Stderr)
+	}
+	if got, _ := site.File(doc["file_url"].(string)); !bytes.Equal(got, content) {
+		t.Errorf("site got %q", got)
+	}
+}
+
 func TestUploadDryRun(t *testing.T) {
 	site := cmdTSite(t)
 	cfg := fakeConfig(t, site, "apikey")

@@ -138,6 +138,53 @@ func TestUploadFileTooLargeAndNotRetried(t *testing.T) {
 	}
 }
 
+// An upload from File is streamed with an exact Content-Length (not
+// chunked), and every send reads the content from its start.
+func TestUploadFileStreamed(t *testing.T) {
+	site := frappetest.New(t)
+	site.Add("ToDo", map[string]interface{}{"name": "TD-1"})
+	content := bytes.Repeat([]byte("0123456789"), 1000)
+	var got [][]byte
+	site.Handle("POST /api/method/upload_file", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if r.ContentLength != int64(len(raw)) || len(r.TransferEncoding) != 0 {
+			t.Errorf("Content-Length %d, body %d bytes, Transfer-Encoding %v", r.ContentLength, len(raw), r.TransferEncoding)
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Errorf("multipart: %v", err)
+			return
+		}
+		if r.FormValue("doctype") != "ToDo" || r.FormValue("is_private") != "1" {
+			t.Errorf("form %v", r.MultipartForm.Value)
+		}
+		f, h, err := r.FormFile("file")
+		if err != nil {
+			t.Errorf("file part: %v", err)
+			return
+		}
+		b, _ := io.ReadAll(f)
+		got = append(got, b)
+		if h.Filename != `we"ird.txt` {
+			t.Errorf("filename %q", h.Filename)
+		}
+		_, _ = io.WriteString(w, `{"message":{"name":"F-1","file_url":"/private/files/x.txt"}}`)
+	}))
+	c := fakeClient(t, site)
+	u := FileUpload{Filename: `we"ird.txt`, File: bytes.NewReader(content), Size: int64(len(content)), Doctype: "ToDo", Docname: "TD-1", Private: true}
+	for range 2 {
+		if _, err := c.UploadFile(context.Background(), u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(got) != 2 || !bytes.Equal(got[0], content) || !bytes.Equal(got[1], content) {
+		t.Errorf("site got %d uploads", len(got))
+	}
+	if _, err := c.AttachFile(context.Background(), u); err == nil {
+		t.Error("AttachFile accepted File")
+	}
+}
+
 func TestUploadDryRunHidesContent(t *testing.T) {
 	site := frappetest.New(t)
 	site.Add("ToDo", map[string]interface{}{"name": "TD-1"})
