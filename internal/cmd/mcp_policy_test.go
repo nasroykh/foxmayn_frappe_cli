@@ -135,6 +135,16 @@ func TestMCPPolicyRules(t *testing.T) {
 			map[string]interface{}{"doctype": "ToDo ", "name": "TD-1"}, `DocType "ToDo" is denied`},
 		{"invisible characters in a DocType", nil, config.MCPPolicy{}, "get_doc",
 			map[string]interface{}{"doctype": "Us\u200ber", "name": "x"}, "invisible characters"},
+		// Second review: Frappe cuts a method at "/" and runs undotted names
+		// as Server Script APIs first.
+		{"a method cut at a slash", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.desk.doctype.system_console.system_console.execute_code/x", nil), "may only contain"},
+		{"an undotted name on a deny list", &config.MCPPolicy{DenyMethods: []string{"wipe_all"}}, config.MCPPolicy{}, "call_method",
+			method("wipe_all", nil), "denied by sites.prod.mcp.deny_methods"},
+		{"an undotted name on an allow list", &config.MCPPolicy{AllowMethods: []string{"my_api"}}, config.MCPPolicy{}, "call_method",
+			method("my_api", nil), ""},
+		{"a frappe.client method without a DocType that is safe", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.client.get_time_zone", nil), ""},
 		{"deny_methods", &config.MCPPolicy{DenyMethods: []string{"frappe.client.*"}}, config.MCPPolicy{}, "call_method",
 			method("frappe.client.get_count", map[string]interface{}{"doctype": "ToDo"}), "denied by sites.prod.mcp.deny_methods"},
 	}

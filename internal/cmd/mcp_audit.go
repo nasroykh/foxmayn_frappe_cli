@@ -101,8 +101,10 @@ func (l *auditLog) append(line []byte) error {
 	defer l.mu.Unlock()
 	fi, err := os.Lstat(l.path)
 	switch {
-	case err == nil && !fi.Mode().IsRegular():
+	case err == nil && fi.Mode()&(os.ModeSymlink|os.ModeDevice|os.ModeNamedPipe|os.ModeSocket|os.ModeDir) != 0:
 		// A symlink or device planted at the path would redirect the log.
+		// (Not !IsRegular: Windows reports cloud-file placeholders as
+		// irregular.)
 		return fmt.Errorf("%s is not a regular file", l.path)
 	case err == nil && fi.Size()+int64(len(line)) > auditMaxBytes:
 		l.rotate()

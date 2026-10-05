@@ -517,7 +517,7 @@ sites:
 
 Some checks are best effort:
 
-- `call_method` is checked against the DocTypes its arguments name (`doctype`, `dt`, a `doc` given as an object or JSON string, …), and a `frappe.client` or form-save call that names none is refused. A custom method can still change any DocType without naming it, so `deny_doctypes` and the sensitive list do not bind it. For a hard limit, set `allow_doctypes` (which requires `allow_methods`), leave `call_method` out of `allow_tools`, or use `read_only`.
+- `call_method` refuses a method name with `/` or spaces (Frappe would cut or strip it and run another method). An undotted name is matched both as itself (an API Server Script) and as `frappe.handler.<name>`. It is checked against the DocTypes its arguments name (`doctype`, `dt`, a `doc` given as an object or JSON string, …), and a `frappe.client` or form-save call that names none is refused. A custom method can still change any DocType without naming it, so `deny_doctypes` and the sensitive list do not bind it. For a hard limit, set `allow_doctypes` (which requires `allow_methods`), leave `call_method` out of `allow_tools`, or use `read_only`.
 - A Query or Script Report can read tables other than its `ref_doctype`.
 - `list_doctypes` and `list_reports` list DocType and report names whatever the DocType lists say.
 

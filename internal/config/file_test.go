@@ -323,11 +323,11 @@ sites:
     access_token: tok
     mcp:
       read_only: true
-      allow_doctypes: [ToDo, User]
+      allow_doctypes: ["ToDo ", User]
       deny_methods: ["frappe.x.*"]
 `)
 	s, err := Load("", p)
-	if err != nil || s.MCP == nil || !s.MCP.ReadOnly || len(s.MCP.AllowDoctypes) != 2 || s.MCP.DenyMethods[0] != "frappe.x.*" {
+	if err != nil || s.MCP == nil || !s.MCP.ReadOnly || len(s.MCP.AllowDoctypes) != 2 || s.MCP.DenyMethods[0] != "frappe.x.*" || s.MCP.AllowDoctypes[0] != "ToDo" {
 		t.Fatalf("got %+v, %v", s.MCP, err)
 	}
 
@@ -368,10 +368,13 @@ func TestMCPPolicyRefusesAmbiguousForms(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			site := "    mcp:\n" + body
-			if body == "" {
+			switch body {
+			case "":
 				site = "    MCP:\n      read_only: true\n"
+			case "merge":
+				site = "    <<: *b\n"
 			}
-			p := writeTemp(t, "default_site: dev\nsites:\n  dev:\n    url: https://a.example\n"+site)
+			p := writeTemp(t, "x: &e []\nbase: &b {MCP: {read_only: true}}\ndefault_site: dev\nsites:\n  dev:\n    url: https://a.example\n"+site)
 			if _, err := Load("", p); err == nil {
 				t.Fatal("loaded")
 			}

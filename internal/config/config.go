@@ -66,34 +66,75 @@ var mcpPolicyKeys = map[string]bool{
 
 // UnmarshalYAML decodes a policy, refusing unknown keys and empty allow
 // lists: "allow_doctypes: []" reads as "none" but would mean "no limit".
+// Entries are trimmed, as call arguments are.
 func (p *MCPPolicy) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			k, v := node.Content[i], node.Content[i+1]
-			if !mcpPolicyKeys[k.Value] {
-				return fmt.Errorf("line %d: unknown mcp policy key %q", k.Line, k.Value)
-			}
-			if strings.HasPrefix(k.Value, "allow_") && ((v.Kind == yaml.SequenceNode && len(v.Content) == 0) || v.Tag == "!!null") {
-				return fmt.Errorf("line %d: mcp.%s is empty; list at least one entry, or remove the key for no limit", k.Line, k.Value)
-			}
+	for _, kv := range mappingPairs(node) {
+		k, v := kv[0], resolveAlias(kv[1])
+		if !mcpPolicyKeys[k.Value] {
+			return fmt.Errorf("line %d: unknown mcp policy key %q", k.Line, k.Value)
+		}
+		if strings.HasPrefix(k.Value, "allow_") && ((v.Kind == yaml.SequenceNode && len(v.Content) == 0) || v.Tag == "!!null") {
+			return fmt.Errorf("line %d: mcp.%s is empty; list at least one entry, or remove the key for no limit", k.Line, k.Value)
 		}
 	}
 	type plain MCPPolicy
-	return node.Decode((*plain)(p))
+	if err := node.Decode((*plain)(p)); err != nil {
+		return err
+	}
+	for _, list := range []*[]string{&p.AllowTools, &p.AllowDoctypes, &p.DenyDoctypes, &p.AllowMethods, &p.DenyMethods} {
+		for i, v := range *list {
+			(*list)[i] = strings.TrimSpace(v)
+		}
+	}
+	return nil
 }
 
 // UnmarshalYAML decodes a site entry. A key that only differs from "mcp" in
 // case is an error, because the policy it holds would silently not apply.
 func (s *SiteConfig) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			if k := node.Content[i]; k.Value != "mcp" && strings.EqualFold(k.Value, "mcp") {
-				return fmt.Errorf("line %d: the MCP policy key is %q, not %q", k.Line, "mcp", k.Value)
-			}
+	for _, kv := range mappingPairs(node) {
+		if k := kv[0]; k.Value != "mcp" && strings.EqualFold(k.Value, "mcp") {
+			return fmt.Errorf("line %d: the MCP policy key is %q, not %q", k.Line, "mcp", k.Value)
 		}
 	}
 	type plain SiteConfig
 	return node.Decode((*plain)(s))
+}
+
+// mappingPairs returns the key/value pairs of a mapping, following aliases
+// and "<<" merge keys, so a key cannot hide behind either.
+func mappingPairs(node *yaml.Node) [][2]*yaml.Node {
+	var out [][2]*yaml.Node
+	var walk func(n *yaml.Node, depth int)
+	walk = func(n *yaml.Node, depth int) {
+		n = resolveAlias(n)
+		if n == nil || depth > 16 {
+			return
+		}
+		switch n.Kind {
+		case yaml.MappingNode:
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				if n.Content[i].Value == "<<" && n.Content[i].Tag == "!!merge" {
+					walk(n.Content[i+1], depth+1)
+					continue
+				}
+				out = append(out, [2]*yaml.Node{n.Content[i], n.Content[i+1]})
+			}
+		case yaml.SequenceNode: // "<<: [*a, *b]"
+			for _, c := range n.Content {
+				walk(c, depth+1)
+			}
+		}
+	}
+	walk(node, 0)
+	return out
+}
+
+func resolveAlias(n *yaml.Node) *yaml.Node {
+	for i := 0; n != nil && n.Kind == yaml.AliasNode && i < 16; i++ {
+		n = n.Alias
+	}
+	return n
 }
 
 // IsOAuth reports whether this site uses OAuth Bearer tokens for authentication.

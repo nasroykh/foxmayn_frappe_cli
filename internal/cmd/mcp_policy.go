@@ -53,7 +53,7 @@ var sensitiveDoctypes = []string{
 	// in browsers.
 	"Server Script", "Client Script", "Report", "Print Format", "Website Script",
 	"Web Page", "Web Form", "Custom HTML Block", "Webhook", "Notification",
-	"Auto Email Report", "Assignment Rule", "Energy Point Rule", "Scheduled Job Type",
+	"Auto Email Report", "Assignment Rule", "Energy Point Rule", "Scheduled Job Type", "System Console",
 	// Bulk paths into any DocType, and file visibility.
 	"Data Import", "File",
 }
@@ -170,15 +170,32 @@ var docMethods = []string{
 	"frappe.model.workflow.*", "frappe.desk.form.utils.*", "frappe.desk.reportview.*",
 }
 
-// canonicalMethod is the method Frappe runs for name: it trims spaces and
-// slashes and, like frappe.handler, resolves an undotted name in
-// frappe.handler (run_doc_method is frappe.handler.run_doc_method).
-func canonicalMethod(name string) string {
-	m := strings.Trim(strings.TrimSpace(name), "/")
-	if !strings.Contains(m, ".") {
-		m = "frappe.handler." + m
+// docMethodsWithoutDoctype take no DocType argument but are safe: they read
+// the site's time zone or edit a comment.
+var docMethodsWithoutDoctype = []string{
+	"frappe.client.get_time_zone",
+	"frappe.desk.form.utils.update_comment", "frappe.desk.form.utils.update_comment_publicity",
+}
+
+// methodNames are the names a method call is matched under. Frappe runs an
+// undotted name as an API Server Script of that name or, failing that, as
+// frappe.handler.<name> (run_doc_method), so both count: a deny entry for
+// either refuses the call, an allow entry for either allows it.
+func methodNames(method string) []string {
+	if strings.Contains(method, ".") {
+		return []string{method}
 	}
-	return m
+	return []string{method, "frappe.handler." + method}
+}
+
+// checkMethodName refuses a method name Frappe would read differently from
+// the policy: it cuts the name at the first "/" (so ".../execute_code/x"
+// runs execute_code) and strips spaces.
+func checkMethodName(method string) error {
+	if method == "" || strings.ContainsAny(method, "/ \t\r\n") || text.Sanitize(method) != method {
+		return fmt.Errorf("policy: method name %q may only contain letters, digits, dots and underscores", method)
+	}
+	return nil
 }
 
 // mcpPolicy is the policy for one site: the site's config, which may
@@ -238,11 +255,14 @@ func (p mcpPolicy) check(tool string, sc toolScope) error {
 		}
 	}
 	if sc.Action == actMethod {
-		m := canonicalMethod(sc.Method)
-		if matchMethod(docMethods, m) && len(sc.Doctypes) == 0 {
+		if err := checkMethodName(sc.Method); err != nil {
+			return err
+		}
+		names := methodNames(sc.Method)
+		if anyMatch(docMethods, names) && !anyMatch(docMethodsWithoutDoctype, names) && len(sc.Doctypes) == 0 {
 			return fmt.Errorf("policy: %s works on documents but its arguments name no DocType, so the DocType rules cannot be checked; pass doctype", sc.Method)
 		}
-		return p.methodAllowed(m)
+		return p.methodAllowed(sc.Method)
 	}
 	return nil
 }
@@ -264,16 +284,17 @@ func (p mcpPolicy) doctypeAllowed(dt string, write bool) error {
 }
 
 func (p mcpPolicy) methodAllowed(method string) error {
+	names := methodNames(method)
 	switch {
-	case matchMethod(p.cfg.DenyMethods, method):
+	case anyMatch(p.cfg.DenyMethods, names):
 		return fmt.Errorf("policy: method %q is denied by %s", method, p.key("deny_methods"))
-	case matchMethod(p.flag.DenyMethods, method):
+	case anyMatch(p.flag.DenyMethods, names):
 		return fmt.Errorf("policy: method %q is denied by %s", method, p.flagKey("deny_methods"))
-	case matchMethod(deniedMethods, method) && !matchMethod(p.cfg.AllowMethods, method):
+	case anyMatch(deniedMethods, names) && !anyMatch(p.cfg.AllowMethods, names):
 		return fmt.Errorf("policy: method %q runs code, changes apps or rotates a credential, so MCP may not call it unless %s lists it", method, p.key("allow_methods"))
-	case len(p.cfg.AllowMethods) > 0 && !matchMethod(p.cfg.AllowMethods, method):
+	case len(p.cfg.AllowMethods) > 0 && !anyMatch(p.cfg.AllowMethods, names):
 		return fmt.Errorf("policy: method %q is not in %s", method, p.key("allow_methods"))
-	case len(p.flag.AllowMethods) > 0 && !matchMethod(p.flag.AllowMethods, method):
+	case len(p.flag.AllowMethods) > 0 && !anyMatch(p.flag.AllowMethods, names):
 		return fmt.Errorf("policy: method %q is not in %s", method, p.flagKey("allow_methods"))
 	// A method can reach any DocType, so allow_doctypes needs a method
 	// allowlist from the same source or a stricter one: a flag list must not
@@ -307,6 +328,16 @@ func (p mcpPolicy) checkReport(ctx context.Context, c *client.FrappeClient, sc t
 func contains(list []string, s string, fold bool) bool {
 	for _, x := range list {
 		if x == s || fold && strings.EqualFold(x, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyMatch reports whether any of names is in list (see matchMethod).
+func anyMatch(list, names []string) bool {
+	for _, n := range names {
+		if matchMethod(list, n) {
 			return true
 		}
 	}
