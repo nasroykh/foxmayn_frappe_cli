@@ -290,4 +290,11 @@ func TestUnknownDocTypeIsNotFound(t *testing.T) {
 			t.Errorf("%s: exit %d, stderr %s", args[0], r.Code, r.Stderr)
 		}
 	}
+
+	// A broken controller of a DocType that exists stays a server error.
+	s.Handle("GET /api/resource/ToDo/TD-1", frappetest.ErrorHandler(&frappetest.Error{
+		Status: http.StatusInternalServerError, ExcType: "ImportError", Message: "No module named 'frappe.core.doctype.todo'"}))
+	if r := cmdTRun(t, s, "get-doc", "-d", "ToDo", "-n", "TD-1"); r.Code != exitNetwork {
+		t.Errorf("broken controller: exit %d, stderr %s", r.Code, r.Stderr)
+	}
 }

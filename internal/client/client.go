@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -351,11 +351,6 @@ func responseError(code int, body []byte, hints map[int]string) error {
 	if excType == "" {
 		excType = "ServerError"
 	}
-	if m := missingDocTypeRe.FindStringSubmatch(msg); m != nil && excType == "ImportError" {
-		e.MissingDocType = true
-		e.Message = fmt.Sprintf("DocType not found: Frappe found no controller %s (%s, HTTP %d)", m[1], excType, code)
-		return e
-	}
 	if msg != "" {
 		e.Message = fmt.Sprintf("[%s] %s (HTTP %d)", excType, msg, code)
 	} else {
@@ -363,11 +358,6 @@ func responseError(code int, body []byte, hints map[int]string) error {
 	}
 	return e
 }
-
-// missingDocTypeRe matches the error Frappe raises when a document of a
-// DocType that does not exist is read, created or updated: with no DocType
-// record, the module defaults to Core and importing the controller fails.
-var missingDocTypeRe = regexp.MustCompile(`^No module named '(frappe\.core\.doctype\.[a-z0-9_]+)'$`)
 
 const authHint = "authentication failed (401): check your credentials or run 'ffc init' to reconfigure"
 
@@ -449,7 +439,7 @@ func (c *FrappeClient) GetList(ctx context.Context, doctype string, opts ListOpt
 func (c *FrappeClient) GetDoc(ctx context.Context, doctype, name string) (map[string]interface{}, error) {
 	var env dataEnvelope
 	if err := c.do(ctx, http.MethodGet, resourcePath(doctype, name), nil, nil, docHints(doctype, name, "read"), &env); err != nil {
-		return nil, err
+		return nil, c.missingDocType(ctx, doctype, err)
 	}
 	return env.doc()
 }
@@ -460,7 +450,7 @@ func (c *FrappeClient) CreateDoc(ctx context.Context, doctype string, data map[s
 	hints[http.StatusForbidden] = fmt.Sprintf("permission denied (403): your user may not have create access to %s", doctype)
 	var env dataEnvelope
 	if err := c.do(ctx, http.MethodPost, resourcePath(doctype), data, nil, hints, &env); err != nil {
-		return nil, err
+		return nil, c.missingDocType(ctx, doctype, err)
 	}
 	return env.doc()
 }
@@ -469,9 +459,29 @@ func (c *FrappeClient) CreateDoc(ctx context.Context, doctype string, data map[s
 func (c *FrappeClient) UpdateDoc(ctx context.Context, doctype, name string, data map[string]interface{}) (map[string]interface{}, error) {
 	var env dataEnvelope
 	if err := c.do(ctx, http.MethodPut, resourcePath(doctype, name), data, nil, docHints(doctype, name, "write"), &env); err != nil {
-		return nil, err
+		return nil, c.missingDocType(ctx, doctype, err)
 	}
 	return env.doc()
+}
+
+// missingDocType turns the 500 ImportError Frappe returns for a document of
+// a DocType that does not exist (it looks for the controller in Core) into
+// a not-found error. The message alone cannot tell it from a broken
+// controller, and sites that hide tracebacks send none, so it asks the
+// DocType's list, which is a 404 only when the DocType has no record.
+func (c *FrappeClient) missingDocType(ctx context.Context, doctype string, err error) error {
+	var e *APIError
+	if !errors.As(err, &e) || e.Status != http.StatusInternalServerError || e.ExcType != "ImportError" {
+		return err
+	}
+	probe := c.do(ctx, http.MethodGet, resourcePath(doctype), nil,
+		map[string]string{"fields": `["name"]`, "limit_page_length": "1"}, nil, nil)
+	var pe *APIError
+	if errors.As(probe, &pe) && pe.Status == http.StatusNotFound {
+		e.MissingDocType = true
+		e.Message = fmt.Sprintf("doctype %q not found on this site (%s, HTTP %d)", doctype, e.ExcType, e.Status)
+	}
+	return err
 }
 
 // DeleteDoc sends a DELETE request to remove a document. Returns nil on success.

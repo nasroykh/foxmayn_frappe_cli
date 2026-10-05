@@ -422,6 +422,9 @@ func contractErrors(t *testing.T, real *client.FrappeClient, realURL string) {
 			_, err := c.CreateDoc(contractCtx(t), "FFC Contract No Such DocType", map[string]interface{}{"title": "x"})
 			return err
 		},
+		"missing doctype delete": func(c *client.FrappeClient, url string) error {
+			return c.DeleteDoc(contractCtx(t), "FFC Contract No Such DocType", "x")
+		},
 		"unknown field": func(c *client.FrappeClient, url string) error {
 			_, err := c.GetList(contractCtx(t), contractDT, client.ListOptions{Fields: []string{"ffc_no_such_field"}})
 			return err
