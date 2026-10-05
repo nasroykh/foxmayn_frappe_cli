@@ -64,7 +64,8 @@ internal/cmd/dryrun.go            → addDryRun, withDryRun (trackRunStart), pri
 internal/cmd/update.go            → update subcommand: size-limited download, signed checksums.txt (relsig) + SHA256 check, atomic binary swap
 internal/cmd/update_check.go      → background update check; owns rootCmd.PersistentPreRunE + state file
 internal/cmd/mcp.go               → mcp subcommand: stdio/HTTP/detach routing, --detach/--port/--read-only + policy flags, newMCPEnv, startMCP
-internal/cmd/mcp_policy.go        → per-site MCP policy: toolActions, scopeOf, mcpPolicy.check, sensitive DocTypes, denied methods
+internal/cmd/mcp_policy.go        → per-site MCP policy: toolActions, toolSurface (tool set, title, large-result hint), scopeOf, mcpPolicy.check, sensitive DocTypes, denied methods
+internal/cmd/mcp_surface.go       → --toolsets, describeTools (titles, _meta), mcpInstructions, resources (served by the tool handlers), prompts, notifyProgress, fitListRows/fitReportRows
 internal/cmd/mcp_audit.go         → MCP audit log mcp-audit.jsonl (0600, rotated at 10 MiB)
 internal/cmd/mcp_sites.go         → multi-site MCP: mcpSites, siteFor, list_sites, addSiteParam
 internal/cmd/mcp_confirm.go       → confirmation through MCP elicitation: needsConfirm, mcpPolicy.confirm, HMAC request state
@@ -328,10 +329,12 @@ The `mcp` command is structurally different from all other ffc commands — it's
 - **Never write to stdout** from a tool handler. Stdout is the MCP JSON-RPC channel.
 - **Never call `output.Print*`** — those write to stdout/stderr for human consumption.
 - Return results via `mcp.NewToolResultText(jsonString)` and errors via `mcp.NewToolResultError(msg)` with a **nil** Go error.
-- Use `marshalResult(data)` (defined in `mcp_args.go`) for any structured response — it JSON-marshals compactly, refuses results over 512 KiB with a hint to narrow the request, and wraps in `NewToolResultText`.
+- Use `marshalResult(data)` (defined in `mcp_args.go`) for any structured response — it JSON-marshals compactly, refuses results over 512 KiB with a hint to narrow the request, and wraps in `NewToolResultText`. A toolCall may return `structuredOut{Text, Structured}` for a tool that declares an output schema (`WithRawOutputSchema`): the text stays `Text`, `Structured` becomes structuredContent.
+- A row list that can exceed the cap is cut instead of refused: `fitListRows` (list_docs: `{data, truncated, next_start, hint}`) and `fitReportRows` (run_report keeps its shape) binary-search the largest prefix that fits.
 - Handlers are built with `toolHandler(getClient, parse)`: `parse` validates arguments first (a bad call never costs a login or request) and returns a `toolCall`; every error becomes a tool error with a nil Go error. A non-nil Go error from a handler is a protocol-level crash — reserve it for truly unexpected failures.
 - Never print secrets to stderr (it is `mcp.log` in detached mode).
-- Limits: results over 512 KiB are refused; `run_report` defaults to 500 rows; bulk tools take at most 200 items (`maxMCPBulkItems`).
+- Limits: results over 512 KiB are refused (list_docs and run_report rows are cut instead); `run_report` defaults to 500 rows; bulk tools take at most 200 items (`maxMCPBulkItems`).
+- Bulk tools call `notifyProgress(ctx, done, total)` after each item; it sends `notifications/progress` only when the request had a progress token (`withProgress` in `env.run`).
 
 ### Adding a new MCP tool
 
@@ -364,15 +367,22 @@ func registerMyTool(s *server.MCPServer, env *mcpEnv) {
 }
 ```
 
-Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`, and add the tool to `toolActions` in `mcp_policy.go` (`actRead`, `actWrite` or `actMethod`; it must match the read-only annotation). `registerTools` drops what the site's policy does not allow (`read_only`, `allow_tools`), and `toolHandler` checks the policy on every call before any request. If the tool names DocTypes or documents in arguments other than `doctype`/`name`, teach `scopeOf` about them.
+Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`, add the tool to `toolActions` in `mcp_policy.go` (`actRead`, `actWrite` or `actMethod`; it must match the read-only annotation) and to `toolSurface` next to it (tool set `core` or `lifecycle`, a title, and `big` when its result can approach 512 KiB). `TestMCPPolicyCoversEveryTool` and `TestMCPToolSurface` fail until both are filled in. If the instructions (`mcpInstructions`) or a prompt should mention the tool, add it there, guarded by whether the tool is registered. `registerTools` drops what the site's policy does not allow (`read_only`, `allow_tools`), and `toolHandler` checks the policy on every call before any request. If the tool names DocTypes or documents in arguments other than `doctype`/`name`, teach `scopeOf` about them.
 
 **Argument extraction** (`mcp_args.go`): never use `req.GetString` for JSON-valued params — it returns `""` for a native object and silently drops filters. Use `jsonArg` / `rawJSONArg` / `objectArg` (accept native JSON or a JSON-encoded string), `stringsArg` (array or CSV), and `intArg` (validated integers). `req.RequireString("key")` and `req.GetString("key", "default")` are fine for plain strings.
+
+### Resources, prompts, instructions (`mcp_surface.go`)
+
+`registerTools` ends with `registerSurface`, so all three follow the tools that survived the policy and `--toolsets`:
+- **Resources** (`ffc://sites`, `ffc://{site}/schema/{doctype}`, `ffc://{site}/doc/{doctype}/{name}`) are served by `resourceReader`, which builds a `CallToolRequest` and calls the registered tool's handler with `withVia(ctx, "resource")`. Never give a resource its own path to the site: going through the tool handler is what applies `siteFor`, `scopeOf`, the policy, the audit line (`"via":"resource"`) and the size cap. A template is registered only when its tool is. URI segments are percent-decoded by `splitFFCURI`; the URI template already rejects extra segments and bad escapes ("resource not found").
+- **Prompts** (`mcpPrompts`) are static guidance and make no site calls; each is offered only when the tools in its `needs` are registered. With several sites they take a required `site`, checked with `siteFor`.
+- **Instructions** (`mcpInstructions`) are set after registration with `server.WithInstructions(text)(s)`, and mention only registered tools, the served sites and which are read-only. Keep them 15-25 lines (`TestMCPInstructions`).
 
 ### Daemon/detach pattern (`mcp_daemon.go`)
 
 - State file: `~/.config/ffc/mcp.json` (0600) — JSON with `pid`, `port`, `site`, `started_at`, `log_path`, `token`, `instance`; guarded by `~/.config/ffc/mcp.lock` (`acquireMCPLock`)
 - Log file: `~/.config/ffc/mcp.log` — stderr of detached child process, truncated per start
-- `startDetached(ctx, port)` re-execs the binary with `mcp --port PORT [--site X] [--config X] [--read-only]` (no `--detach`), passes the bearer token and instance id via env (`FFC_MCP_TOKEN`, `FFC_MCP_INSTANCE`, never argv), calls `setSysProcAttr` (Setsid on Unix), writes the state file, and waits for a health check whose instance id matches
+- `startDetached(ctx, port)` re-execs the binary with `daemonArgs`: `mcp --port PORT [--site X] [--sites=…] [--config X] [--read-only] [--toolsets=…]` plus the policy and debug flags (no `--detach`), passes the bearer token and instance id via env (`FFC_MCP_TOKEN`, `FFC_MCP_INSTANCE`, never argv), calls `setSysProcAttr` (Setsid on Unix), writes the state file, and waits for a health check whose instance id matches
 - The HTTP server binds `127.0.0.1` only, requires `Authorization: Bearer <token>` (`mcpAuthMiddleware`) and rejects non-local Origins; `ffc mcp status` shows the token
 - `ffc mcp stop` verifies the PID via health check before terminating (`terminateProcess`); `--force` stops a PID that is alive but not health-confirmed
 - Long-lived clients: `newMCPEnv` caches one client while the site credentials are unchanged; every call reads the site again (`loadSiteConfig`, so policy and credential edits apply at once) and `refreshSite` refreshes an expired OAuth token

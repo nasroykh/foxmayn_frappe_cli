@@ -430,10 +430,13 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `--allow-tools`, `--allow-doctypes`, `--deny-doctypes`, `--allow-methods`, `--deny-methods` | — | Narrow the site's MCP policy (never widen it) |
 | `--sites`, `--all-sites` | — | Serve several sites; every tool call then needs `site` (see `list_sites`) |
 | `--confirm` | — | `always` or `if-supported`: tighten when destructive calls ask the user |
+| `--toolsets` | — | `core` and/or `lifecycle` (default both): expose only these tool sets; `list_sites` is always there |
 
 **Policy and audit.** A site's config entry may hold an `mcp:` block with `read_only`, `allow_tools`, `allow_doctypes`, `deny_doctypes`, `allow_methods`, `deny_methods` and `confirm`. A misspelt key is an error. MCP may read but never write the sensitive DocTypes (User, Role, DocType, DocPerm, System Settings, Server Script, …) unless the site's `allow_doctypes` lists them. `call_method` refuses `execute_code`, `generate_keys` and the Frappe Cloud app installer unless `allow_methods` lists them. With `allow_doctypes` set, `call_method` needs `allow_methods`. A refused call returns an error starting with `policy:` that names the setting, and sends nothing. Every tool call is logged to `~/.config/ffc/mcp-audit.jsonl` with secrets redacted and document data reduced to its keys.
 
 **Confirmation.** `delete_doc`, `bulk_delete`, `cancel_doc`, `rename_doc` with `merge`, `apply_workflow` and the matching `call_method` methods (`frappe.client.delete`, `frappe.client.cancel`, `run_doc_method` cancel, …) ask the user through the MCP client first. `confirm: if-supported` (default) asks when the client supports elicitation, `always` refuses when it cannot (the error names the `ffc` command to run in a terminal), `never` does not ask. A declined call returns `cancelled by the user; nothing was changed`: do not retry it another way.
+
+**Instructions, resources, prompts.** The server sends the model instructions on connecting (filter syntax, `get_schema` before writes, `docstatus` and lifecycle, `fields` + `limit`, name vs title, read-only sites, `site` with several sites). Resources: `ffc://sites`, `ffc://{site}/schema/{doctype}` and `ffc://{site}/doc/{doctype}/{name}` (percent-encode segments: `Sales%20Invoice`, `/` as `%2F`); a read goes through the `get_schema`/`get_doc` tool path, so the same policy and audit apply (the audit line has `"via":"resource"`). Prompts: `inspect-doctype`, `safe-bulk-import`, `audit-doc-changes`, `explain-report` (step-by-step plans; no site calls). Bulk tools send progress notifications when the call has a progress token. `count_docs` and `list_sites` also return `structuredContent`.
 
 **Available MCP tools** (used by the AI agent, not called directly):
 
@@ -474,7 +477,7 @@ MCP tools always return JSON — no `--json` flag needed.
 - `get_schema` returns the compact view by default (same as `ffc get-schema --json`). The LLM can pass `full=true` for the raw Frappe response, or `keys="fields"` / `keys="name,module,fields"` to select specific top-level properties.
 - `run_report` returns only `columns`, `result`, `report_summary` (if non-null), plus `total_rows` and `truncated` when rows were cut — strips `execution_time`, `chart`, `add_total_row`, `message`. Defaults to 500 rows unless `limit` is given.
 - `search` takes `text` (required), `doctype` (optional) and `limit` (default 20, at most 100). With `doctype` it is search_link (names; Frappe marks it cacheable for 60 s, so a proxy may serve a minute-old answer); without, global search over Global Search Settings DocTypes only, and under an `allow_doctypes`/`deny_doctypes` policy its hits are filtered to the DocTypes the policy allows. A global search answers `{results, hidden_by_policy}` (the number of hits dropped by the policy), a DocType search a plain list.
-- A tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`).
+- A tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`). Rows are cut instead: `list_docs` returns `{data, truncated: true, next_start, hint}` (call again with `start = next_start`; a list that fits is a plain array), and `run_report` keeps `columns`/`result` and adds `truncated`, `total_rows` and a `hint` with the number of rows dropped (narrow the filters).
 - Bulk tools take at most 200 items per call.
 - JSON-valued arguments (`filters`, `fields`, `data`, `args`, …) may be passed as native JSON or as a JSON-encoded string.
 
