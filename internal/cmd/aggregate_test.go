@@ -89,8 +89,7 @@ func TestCmdAggregateV15String(t *testing.T) {
 		t.Fatalf("rows %v", rows)
 	}
 	fields, groupBy, orderBy, _ := aggTLast(t, s)
-	want := []interface{}{"`tabToDo`.`status`", "avg(`tabToDo`.`hours`) as avg_hours",
-		"min(`tabToDo`.`date`) as min_date", "max(`tabToDo`.`date`) as max_date"}
+	want := []interface{}{"status", "avg(hours) as avg_hours", "min(date) as min_date", "max(date) as max_date"}
 	if fmt.Sprint(fields) != fmt.Sprint(want) {
 		t.Errorf("fields %q", fields)
 	}
@@ -104,8 +103,17 @@ func TestCmdAggregateV15String(t *testing.T) {
 	// A count on v15 counts the name column: count(*) fails its
 	// reportview.validate_fields.
 	cmdTOK(t, cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo"))
-	if fields, _, _, _ = aggTLast(t, s); fields[0] != "count(`tabToDo`.`name`) as count" {
+	if fields, _, _, _ = aggTLast(t, s); fields[0] != "count(name) as count" {
 		t.Errorf("count field %q", fields[0])
+	}
+
+	// The fake fails like v15 for a qualified field inside min(): its
+	// extract_tables reads "min(`tabToDo`" as a table (the v15 contract
+	// failure of PR #41).
+	r = cmdTRun(t, s, "--json", "api", "/api/resource/ToDo", "-f", "fields=[\"min(`tabToDo`.`date`) as d\"]", "-f", "group_by=status")
+	var api *client.APIError
+	if !errors.As(r.Err, &api) || api.Status != 404 || !strings.Contains(api.Message, "DocType (`tabToDo` not found") {
+		t.Errorf("qualified min on v15: %v", r.Err)
 	}
 }
 

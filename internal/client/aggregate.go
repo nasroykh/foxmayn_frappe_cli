@@ -135,41 +135,48 @@ func (q AggregateQuery) validate(doctype string) error {
 }
 
 // fields returns the list query's fields, group_by and order_by in syntax.
-// The string syntax qualifies the selected fields with their table, as
-// Frappe's own list view does: a filter on a child table joins it, and a
-// bare "name" or "status" would then be ambiguous. group_by and order_by
-// are qualified only when the filters can join another table: v15 checks
-// them against ORDER_GROUP_PATTERN (db_query.py ~1542), which refuses any
-// character outside [a-z0-9-_ ,`'".()] after lower-casing, so a qualified
-// name of a DocType with any other character would be "Illegal SQL Query".
-// Frappe has accepted only ASCII letters, digits, spaces, "_" and "-" in
-// new DocType names since v15 (doctype.py START_WITH_LETTERS_PATTERN), so
-// this concerns DocTypes named before that; the bare fieldname is also
-// what Frappe's own get_group_by_count sends.
+//
+// The string syntax (v15) leaves names bare unless the filters can join
+// another table (a child-table or link filter), where a bare "name" or
+// "status" would be ambiguous; then it qualifies them as `tabX`.`f`, as
+// Frappe's own list view does. Bare is the default because v15 reads text:
+//   - DatabaseQuery.extract_tables (db_query.py:768) takes everything
+//     before the first "." of a field that holds "tab" and "." as a table
+//     name, skipping only fields with count(, sum(, avg( and a few others.
+//     "min(`tabX`.`f`)" therefore names the table "(`tabX`" and fails with
+//     "DocType (`tabX` not found" (404), so MIN and MAX take a bare field
+//     even with a join (MariaDB then refuses a column both tables have as
+//     ambiguous, which is an error, not a wrong result).
+//   - group_by and order_by pass ORDER_GROUP_PATTERN (db_query.py:71,
+//     checked at 1542), which refuses any character outside
+//     [a-z0-9-_ ,`'".()] after lower-casing: a qualified name of a DocType
+//     named before Frappe restricted DocType names to ASCII would be
+//     "Illegal SQL Query".
+//
+// Bare names are also what Frappe's own get_group_by_count sends.
 func (q AggregateQuery) fields(doctype string, syntax AggregateSyntax) (fields []interface{}, groupBy, orderBy string) {
 	qual := func(f string) string { return f }
-	clause := qual
-	if syntax == SyntaxString {
+	if syntax == SyntaxString && filtersJoin(q.Filters, doctype) {
 		qual = func(f string) string { return "`tab" + doctype + "`.`" + f + "`" }
-		if filtersJoin(q.Filters, doctype) {
-			clause = qual
-		}
 	}
 	groups := map[string]bool{}
 	var gb []string
 	for _, g := range q.GroupBy {
 		fields = append(fields, qual(g))
-		gb = append(gb, clause(g))
+		gb = append(gb, qual(g))
 		groups[g] = true
 	}
 	for _, a := range q.Aggregates {
 		switch syntax {
 		case SyntaxString:
-			arg := qual(a.Field)
-			if a.Field == "" {
+			arg := a.Field
+			switch {
+			case a.Field == "":
 				// count(*) fails reportview.validate_fields on v15 ("*" is
 				// not a field); the name column is never null.
 				arg = qual("name")
+			case a.Func == AggCount || a.Func == AggSum || a.Func == AggAvg:
+				arg = qual(a.Field)
 			}
 			fields = append(fields, fmt.Sprintf("%s(%s) as %s", strings.ToLower(a.Func), arg, a.Alias))
 		default:
@@ -184,7 +191,7 @@ func (q AggregateQuery) fields(doctype string, syntax AggregateSyntax) (fields [
 	for _, o := range q.OrderBy {
 		col := o.Column
 		if groups[col] {
-			col = clause(col)
+			col = qual(col)
 		}
 		dir := "asc"
 		if o.Desc {

@@ -65,13 +65,28 @@ func TestAggregateFields(t *testing.T) {
 		OrderBy:    []OrderTerm{{Column: "count", Desc: true}, {Column: "status"}},
 	}
 	f, gb, ob := q.fields("Sales Invoice", SyntaxString)
-	if len(f) != 3 || f[0] != "`tabSales Invoice`.`status`" || f[1] != "count(`tabSales Invoice`.`name`) as count" ||
-		f[2] != "sum(`tabSales Invoice`.`grand_total`) as sum_grand_total" {
+	if len(f) != 3 || f[0] != "status" || f[1] != "count(name) as count" || f[2] != "sum(grand_total) as sum_grand_total" {
 		t.Errorf("string fields %q", f)
 	}
 	if gb != "status" || ob != "count desc, status asc" {
 		t.Errorf("string group_by %q order_by %q", gb, ob)
 	}
+	// A filter that joins: qualified, except inside min( and max(, whose
+	// qualified form v15's extract_tables reads as the table "(`tabX`".
+	q.Filters = `[["Sales Invoice Item","item_code","=","X"]]`
+	q.Aggregates = append(q.Aggregates, AggregateField{Func: AggMin, Field: "posting_date", Alias: "min_posting_date"},
+		AggregateField{Func: AggMax, Field: "posting_date", Alias: "max_posting_date"})
+	f, gb, ob = q.fields("Sales Invoice", SyntaxString)
+	if len(f) != 5 || f[0] != "`tabSales Invoice`.`status`" || f[1] != "count(`tabSales Invoice`.`name`) as count" ||
+		f[2] != "sum(`tabSales Invoice`.`grand_total`) as sum_grand_total" ||
+		f[3] != "min(posting_date) as min_posting_date" || f[4] != "max(posting_date) as max_posting_date" {
+		t.Errorf("joined string fields %q", f)
+	}
+	if gb != "`tabSales Invoice`.`status`" || ob != "count desc, `tabSales Invoice`.`status` asc" {
+		t.Errorf("joined group_by %q order_by %q", gb, ob)
+	}
+	q.Filters = ""
+	q.Aggregates = q.Aggregates[:2]
 	f, gb, ob = q.fields("Sales Invoice", SyntaxDict)
 	if m, ok := f[1].(map[string]interface{}); !ok || m["COUNT"] != "*" || m["as"] != "count" || gb != "status" || ob != "count desc, status asc" {
 		t.Errorf("dict fields %v group_by %q order_by %q", f, gb, ob)

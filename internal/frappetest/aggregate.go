@@ -76,6 +76,52 @@ var (
 	v15OperatorRE   = regexp.MustCompile(`\b(if|regexp|rlike|like)\b`)
 )
 
+// v15SQLFunctions are the substrings that make v15's extract_tables skip a
+// field (db_query.py:771); min( and max( are not among them.
+var v15SQLFunctions = []string{"dayofyear(", "extract(", "locate(", "strpos(", "count(", "sum(", "avg("}
+
+// v15ExtractTables is DatabaseQuery.extract_tables (db_query.py:768): a
+// field holding "tab" and "." names a table by its text before the first
+// ".", so "min(`tabToDo`.`date`)" names "(`tabToDo`" and the DocType
+// lookup fails.
+func (s *Site) v15ExtractTables(doctype string, raw []interface{}) *Error {
+	for _, x := range raw {
+		f, ok := x.(string)
+		if !ok || !strings.Contains(f, "tab") || !strings.Contains(f, ".") {
+			continue
+		}
+		skip := false
+		for _, fn := range v15SQLFunctions {
+			skip = skip || strings.Contains(f, fn)
+		}
+		if skip {
+			continue
+		}
+		table := strings.SplitN(f, ".", 2)[0]
+		if strings.HasPrefix(strings.ToLower(table), "group_concat(") {
+			table = table[13:]
+		}
+		if strings.HasPrefix(strings.ToLower(table), "distinct") {
+			table = strings.TrimSpace(table[8:])
+		}
+		if !strings.HasPrefix(table, "`") {
+			table = "`" + table + "`"
+		}
+		if table == "`tab"+doctype+"`" || len(table) < 5 {
+			continue
+		}
+		dt := table[4 : len(table)-1]
+		s.mu.Lock()
+		_, known := s.doctypes[dt]
+		_, declared := s.fields[dt]
+		s.mu.Unlock()
+		if !known && !declared {
+			return NotFound(fmt.Sprintf("DocType %s not found", dt))
+		}
+	}
+	return nil
+}
+
 func v15CheckOrderGroup(clause string) *Error {
 	lower := strings.ToLower(clause)
 	if v15OrderGroupRE.MatchString(lower) || v15OperatorRE.MatchString(v15TableRE.ReplaceAllString(lower, " doc ")) {
@@ -137,6 +183,10 @@ func (s *Site) aggregateList(w http.ResponseWriter, q url.Values, doctype string
 				writeError(w, err)
 				return
 			}
+		}
+		if err := s.v15ExtractTables(doctype, raw); err != nil {
+			writeError(w, err)
+			return
 		}
 	}
 	var cols []aggCol
