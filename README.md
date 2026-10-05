@@ -543,6 +543,26 @@ The text is a positional argument (several words are joined; put `--` before a t
 
 ---
 
+### Document context
+
+**`doc-info`** (What the form sidebar and timeline show for one document)
+```bash
+ffc doc-info -d "Sales Invoice" -n ACC-SINV-2026-00001           # versions, comments, files, assignments, shares, tags, workflow log
+ffc doc-info -d "Sales Invoice" -n ACC-SINV-2026-00001 --links   # + linked documents per DocType
+ffc doc-info -d "Sales Invoice" -n ACC-SINV-2026-00001 --timeline --json
+ffc doc-info -d Customer -n "Acme" --onload                      # + party dashboard (billing this year, total unpaid)
+```
+
+It reads `frappe.desk.form.load.get_docinfo`, which changes nothing: who changed which fields (the last 10 versions, only for DocTypes with **Track Changes**), comments, emails, attachments (names, not contents), open assignments, shares, tags, the workflow log and your permissions on the document. `--name` defaults to the DocType for Single DocTypes.
+
+- `--links` adds `frappe.desk.notifications.get_open_count`, the counts of the form's **Connections** panel: the DocTypes come from the DocType's dashboard, each count stops at 100 (`capped`), a count that ran over one second is `timed_out`, and the counts ignore your permissions (the desk shows them the same way). `internal` entries list the documents this one's own fields point to (an invoice's Sales Order). ffc does not use `frappe.desk.form.linked_with.get`: it covers every Link field but loads every linked document without a limit.
+- `--timeline` adds `frappe.desk.form.activity.get_activity_timeline` (Frappe v16 and v15 releases from August 2026 on): every change field by field with its label, emails, comments and logs, oldest first, with the fields you may not read left out. On an older release ffc prints a note and the rest.
+- `--onload` loads the document through `frappe.desk.form.load.getdoc` and shows its `__onload` values, such as the Customer and Supplier dashboard, which is not reachable over RPC otherwise. **It writes**: a View Log entry on DocTypes that track views, the "seen" mark on DocTypes that track it, and whatever the controller's `onload` does.
+- `--json` prints a compact object: `doctype`, `name`, `permissions`, `versions` (`{name, by, at, changed: [{field, from, to}], rows_added, rows_removed, impersonated_by}`, newest first; a change in a child row is the field `items[2].qty`), `comments` (`{name, by, at, text}`), `communications`, `attachments` (`{name, file_name, file_url, is_private, size}`), `assignments` (`{user, status, description}`), `shares`, `tags`, `workflow_log`, and with the flags `links` (`{doctype, count, open_count, capped, timed_out, internal, names}`), `timeline` (`{at, by, type, field, text}`), `onload`, plus `notes`. Text is stripped of HTML and cut to 500 characters, version values to 200. `--full` prints the raw responses instead.
+- Version values are formatted as Frappe stored them (`"د.ج 300.00"`), and a Password field shows only asterisks. Frappe caches per DocType whether any document has tags, and does not always clear a cached "no", so a tag added to the first tagged document of a DocType can be missing from `tags` for a while.
+
+---
+
 ### Reports
 
 **1. `list-reports`** (List available query and script reports)
@@ -598,7 +618,7 @@ ffc mcp --read-only --site prod
 
 **Tool sets** — expose only part of the tools:
 ```bash
-ffc mcp --toolsets core        # documents, schema, reports, search, bulk, call_method, whoami, check_permission
+ffc mcp --toolsets core        # documents, schema, reports, search, get_doc_context, bulk, call_method, whoami, check_permission
 ffc mcp --toolsets lifecycle   # submit_doc, cancel_doc, amend_doc, copy_doc, rename_doc, apply_workflow, get_transitions
 ```
 The default is both. `list_sites` is always there. Like `--allow-tools`, it only narrows what the policy allows; an unknown set name is a usage error.
@@ -622,7 +642,7 @@ sites:
 - Built in, whatever the config says:
   - MCP may read but not write the sensitive DocTypes: users, roles and permissions (User, Role, Has Role, Role Profile, Module Profile, User Type, User Group, DocType, DocPerm, Custom DocPerm, User Permission, DocShare, Custom Field, Property Setter, Customize Form), settings and credentials (System Settings, OAuth Client, OAuth Provider Settings, OAuth Bearer Token, OAuth Authorization Code, Connected App, Token Cache, Social Login Key, LDAP Settings, Email Account), code and templates (Server Script, Client Script, Report, Print Format, Website Script, Web Page, Web Form, Custom HTML Block, Webhook, Notification, Auto Email Report, Assignment Rule, Energy Point Rule, Scheduled Job Type), Data Import and File. Listing one in the site's `allow_doctypes` allows writes to it.
   - `call_method` refuses `system_console.execute_code`, `user.generate_keys` and the Frappe Cloud app installer (`frappe.integrations.frappe_providers.*`) unless the site's `allow_methods` lists them.
-- With `allow_doctypes` set, `call_method` may call only the methods in `allow_methods`, since a method can reach any DocType. `run_report` is checked through the report's `ref_doctype`. `search` with a `doctype` is checked like any read of that DocType; a global `search` names none, so its hits are filtered to the DocTypes the rules allow; the tool then answers `{results, hidden_by_policy}`, where `hidden_by_policy` counts the dropped hits.
+- With `allow_doctypes` set, `call_method` may call only the methods in `allow_methods`, since a method can reach any DocType. `run_report` is checked through the report's `ref_doctype`. `search` with a `doctype` is checked like any read of that DocType; a global `search` names none, so its hits are filtered to the DocTypes the rules allow; the tool then answers `{results, hidden_by_policy}`, where `hidden_by_policy` counts the dropped hits. `get_doc_context` is checked against the document's DocType; the parts it reads from other DocTypes (Version, Comment, Communication, File, ToDo, DocShare, Tag Link, the linked DocTypes, and the timeline entries by their source) are emptied or dropped when the rules do not allow reading that DocType, and `hidden_by_policy` names them: `{sections, linked_doctypes, timeline_entries}`.
 - An `allow_` list that is present but empty is an error, so it never reads as "none" while meaning "no limit". The same goes for a policy flag given with no value.
 - The flags `--allow-tools`, `--allow-doctypes`, `--deny-doctypes`, `--allow-methods` and `--deny-methods` only narrow the config, so an MCP client's config cannot widen what the site's owner allowed.
 - The policy is read again on every call, so an edit that narrows it applies at once. Widening the tool list needs a restart.
@@ -668,7 +688,7 @@ Prompts (guidance only; they call nothing): `inspect-doctype` (doctype), `safe-b
 
 **Progress and structured results.** `bulk_create`, `bulk_update` and `bulk_delete` send `notifications/progress` after each item when the call carries a progress token; cancelling the call stops starting new items. Progress is best effort: a notification can be dropped when the client reads slowly, or arrive after the result. `count_docs` (`{count, doctype}`), `whoami` (the same object as its text) and `list_sites` (`{sites}`; its text stays the bare list) declare an output schema and return `structuredContent`; their text is unchanged. Every tool has a title.
 
-Available MCP tools (26): `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
+Available MCP tools (27): `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `get_doc_context` (versions, comments, attachments, assignments, links; `ffc doc-info` without `--onload`, at most 50 comments and 100 timeline entries, the rest counted in `omitted`), `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
 
 Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`), except rows: `list_docs` then returns the rows that fit as `{"data": [...], "truncated": true, "next_start": N, "hint": "..."}` (call again with `start: N` for the rest; a list that fits is still a plain array), and `run_report` drops rows from the end and adds `truncated`, `total_rows` and a `hint` saying how many were dropped. Tools whose result can be large tell the client the cap (`_meta` `anthropic/maxResultSizeChars`), so Claude Code does not cut the JSON. `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
@@ -705,7 +725,7 @@ foxmayn_frappe_cli/
 │   │   ├── meta_cache.go, cache_cmd.go, completion.go  # DocType/report/schema cache, ffc cache, shell completion
 │   │   ├── ping.go, get_doc.go, list_docs.go, create_doc.go, update_doc.go,
 │   │   │   delete_doc.go, count_docs.go, get_schema.go, list_doctypes.go,
-│   │   │   list_reports.go, run_report.go, search.go, call_method.go   # data commands
+│   │   │   list_reports.go, run_report.go, search.go, doc_info.go, call_method.go   # data commands
 │   │   ├── api.go            # api: raw requests to any site path
 │   │   ├── bulk.go           # Bulk worker pool and input parsers
 │   │   ├── bulk_create.go, bulk_update.go, bulk_delete.go
@@ -719,7 +739,7 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_confirm.go    # confirmation through MCP elicitation
 │   │   ├── mcp_sites.go      # multi-site MCP (--sites, --all-sites, list_sites)
 │   │   ├── mcp_args.go       # MCP argument parsing and result limits
-│   │   ├── mcp_tools.go      # MCP tool definitions (26 with mcp_lifecycle_tools.go, mcp_identity_tools.go)
+│   │   ├── mcp_tools.go      # MCP tool definitions (27 with mcp_lifecycle_tools.go, mcp_identity_tools.go, mcp_doc_context.go)
 │   │   ├── mcp_lifecycle_tools.go  # submit/cancel/amend/copy/rename/workflow tools
 │   │   ├── mcp_completion.go # completion/complete for resource templates and prompts (cache only)
 │   │   ├── mcp_daemon.go     # detached server, status/stop, state file

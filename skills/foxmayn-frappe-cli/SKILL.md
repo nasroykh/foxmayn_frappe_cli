@@ -91,7 +91,7 @@ export FFC_API_SECRET="your_secret"
 
 **MANDATORY for AI/LLM usage:** Always append `--json` (or `-j`) to every ffc command that supports it. The default table output is formatted for human reading and is not reliably parseable. JSON output is structured, complete, and easy to process.
 
-Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `delete-doc`, `count-docs`, `bulk-create`, `bulk-update`, `bulk-delete`, the lifecycle and `workflow` commands, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `search`, `ping`, `whoami`, `can`, `doctor`, `site list`. (`call-method` always outputs JSON regardless. MCP tools always return JSON by design.)
+Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `delete-doc`, `count-docs`, `bulk-create`, `bulk-update`, `bulk-delete`, the lifecycle and `workflow` commands, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `search`, `doc-info`, `ping`, `whoami`, `can`, `doctor`, `site list`. (`call-method` always outputs JSON regardless. MCP tools always return JSON by design.)
 
 ```bash
 # Always do this:
@@ -361,6 +361,33 @@ TEXT is a positional argument (several words are joined with spaces; `--` before
 
 ---
 
+### Document context
+
+#### `ffc doc-info` — Who changed what, comments, files, links
+
+```bash
+ffc doc-info -d "Sales Invoice" -n ACC-SINV-2026-00001 --json            # versions, comments, files, assignments, shares, tags, workflow log
+ffc doc-info -d "Sales Invoice" -n ACC-SINV-2026-00001 --links --json    # + linked document counts per DocType
+ffc doc-info -d "Sales Invoice" -n ACC-SINV-2026-00001 --timeline --json # + activity timeline, field by field
+ffc doc-info -d Customer -n "Acme" --onload --json                      # + __onload: party dashboard (billing this year, total unpaid)
+```
+
+| Flag | Short | Required | Description |
+| ---- | ----- | -------- | ----------- |
+| `--doctype` | `-d` | Yes | DocType |
+| `--name` | `-n` | No | Document name (defaults to the DocType for Single DocTypes) |
+| `--links` | — | No | Count linked documents per DocType (the form's Connections panel) |
+| `--timeline` | — | No | Activity timeline (Frappe releases from August 2026; a note otherwise) |
+| `--onload` | — | No | Load as the desk does and return `__onload`. **Writes** a View Log / seen mark when the DocType tracks them |
+| `--full` | — | No | Raw Frappe responses (JSON only) |
+
+- Use it to answer "who changed X on this document and what links to it" in one call: `versions[].changed[]` is `{field, from, to}` (child rows as `items[2].qty`), `versions[].by` the user, newest first, only the last 10 and only when the DocType has Track Changes.
+- JSON keys: `doctype`, `name`, `permissions`, `versions`, `comments` (`{name, by, at, text}`, HTML stripped, 500 chars), `communications`, `attachments` (`{name, file_name, file_url, is_private, size}`), `assignments` (`{user, status, description}`), `shares`, `tags`, `workflow_log`, `links` (`{doctype, count, open_count, capped, timed_out, internal, names}`), `timeline` (`{at, by, type, field, text}`), `onload`, `notes`.
+- Link counts come from the DocType's dashboard, stop at 100 (`capped`), and ignore the user's permissions. `internal` entries are documents this one points to. A DocType without a dashboard (most custom ones) has no links; use `list-docs --filters` on the linking DocType instead.
+- Version values are formatted strings (`"د.ج 300.00"`), not numbers. `tags` can lag on a DocType's first tag (Frappe caches "no tags").
+
+---
+
 ### Reports
 
 #### `ffc list-reports` — List available reports
@@ -474,6 +501,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `list_reports`  | `ffc list-reports`     |
 | `run_report`    | `ffc run-report`       |
 | `search`        | `ffc search`           |
+| `get_doc_context` | `ffc doc-info --links` (no `--onload`) |
 | `call_method`   | `ffc call-method`      |
 | `bulk_create`   | `ffc bulk-create`      |
 | `bulk_update`   | `ffc bulk-update`      |
@@ -486,7 +514,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `get_transitions` | `ffc workflow transitions` |
 | `apply_workflow`  | `ffc workflow apply`       |
 
-With `--read-only`, only `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search` and `get_transitions` are registered.
+With `--read-only`, only `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_doc_context` and `get_transitions` are registered.
 
 MCP tools always return JSON — no `--json` flag needed.
 
@@ -495,6 +523,7 @@ MCP tools always return JSON — no `--json` flag needed.
 - `get_schema` returns the compact view by default (same as `ffc get-schema --json`). The LLM can pass `full=true` for the raw Frappe response, or `keys="fields"` / `keys="name,module,fields"` to select specific top-level properties.
 - `run_report` returns only `columns`, `result`, `report_summary` (if non-null), plus `total_rows` and `truncated` when rows were cut — strips `execution_time`, `chart`, `add_total_row`, `message`. Defaults to 500 rows unless `limit` is given.
 - `search` takes `text` (required), `doctype` (optional) and `limit` (default 20, at most 100). With `doctype` it is search_link (names; Frappe marks it cacheable for 60 s, so a proxy may serve a minute-old answer); without, global search over Global Search Settings DocTypes only, and under an `allow_doctypes`/`deny_doctypes` policy its hits are filtered to the DocTypes the policy allows. A global search answers `{results, hidden_by_policy}` (the number of hits dropped by the policy), a DocType search a plain list.
+- `get_doc_context` takes `doctype`, `name`, `links` (default true) and `timeline` (default false) and returns the `ffc doc-info --json` object, with at most 50 comments and 100 timeline entries (the rest counted in `omitted`). Under a DocType policy, parts read from DocTypes the policy does not allow (Version, Comment, Communication, File, ToDo, DocShare, Tag Link, linked DocTypes, timeline entries) are left out and reported in `hidden_by_policy` (`{sections, linked_doctypes, timeline_entries}`).
 - A tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`). Rows are cut instead: `list_docs` returns `{data, truncated: true, next_start, hint}` (call again with `start = next_start`; a list that fits is a plain array), and `run_report` keeps `columns`/`result` and adds `truncated`, `total_rows` and a `hint` with the number of rows dropped (narrow the filters).
 - Bulk tools take at most 200 items per call.
 - JSON-valued arguments (`filters`, `fields`, `data`, `args`, …) may be passed as native JSON or as a JSON-encoded string.
