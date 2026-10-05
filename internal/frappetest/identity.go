@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 )
 
 // App is an installed app as frappe.utils.change_log.get_versions reports it.
@@ -149,6 +150,74 @@ func (s *Site) hasPermission(_ *http.Request, args map[string]interface{}) (inte
 
 // isAdmin reports whether the fake's user is Administrator (the default).
 func (s *Site) isAdmin() bool { return s.userName == "" || s.userName == "Administrator" }
+
+// keepNoWriteAccess undoes, in an update, the changes Frappe drops without
+// an error: a field at a permission level the user's roles do not write
+// (validate_higher_perm_levels) and, in v16, a masked field the user's roles
+// do not unmask (_restore_masked_fields_from_db). Child rows use the
+// parent's permission rows. The caller holds s.mu.
+func (s *Site) keepNoWriteAccess(doctype string, doc, patch map[string]interface{}) {
+	rows := s.docPerms[doctype]
+	if s.isAdmin() || len(rows) == 0 {
+		return
+	}
+	have := map[string]bool{"All": true, "Guest": true}
+	for _, r := range s.roles {
+		have[r] = true
+	}
+	write, mask := map[int]bool{0: true}, map[int]bool{}
+	for _, row := range rows {
+		if role, _ := row["role"].(string); !have[role] {
+			continue
+		}
+		level, _ := strconv.Atoi(fmt.Sprint(row["permlevel"]))
+		if fmt.Sprint(row["write"]) == "1" {
+			write[level] = true
+		}
+		if fmt.Sprint(row["mask"]) == "1" {
+			mask[level] = true
+		}
+	}
+	dropped := func(dt string) map[string]bool {
+		out := map[string]bool{}
+		for _, f := range s.meta[dt] {
+			if !write[f.permlevel] || (fmt.Sprint(f.props["mask"]) == "1" && !mask[f.permlevel]) {
+				out[f.name] = true
+			}
+		}
+		return out
+	}
+	for f := range dropped(doctype) {
+		delete(patch, f)
+	}
+	for field, child := range s.tables[doctype] {
+		sent, ok := patch[field].([]interface{})
+		if !ok {
+			continue
+		}
+		stored := map[string]map[string]interface{}{}
+		for _, r := range rowList(doc[field]) {
+			if row, ok := r.(map[string]interface{}); ok {
+				stored[fmt.Sprint(row["name"])] = row
+			}
+		}
+		drop := dropped(child)
+		for _, r := range sent {
+			row, ok := r.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			old := stored[fmt.Sprint(row["name"])]
+			for f := range drop {
+				if old != nil {
+					row[f] = old[f]
+				} else {
+					delete(row, f)
+				}
+			}
+		}
+	}
+}
 
 // allowed reports whether ptype is a right the fake knows and nobody denied.
 func (s *Site) allowed(doctype, ptype string) bool {

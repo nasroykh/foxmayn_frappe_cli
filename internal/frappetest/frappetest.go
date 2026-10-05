@@ -624,6 +624,7 @@ func (s *Site) update(w http.ResponseWriter, doctype, name string, body []byte, 
 			name, doctype, doc["modified"], m)})
 		return
 	}
+	s.keepNoWriteAccess(doctype, doc, patch)
 	if fmt.Sprint(doc["docstatus"]) != "0" {
 		if e := s.updateAfterSubmit(doctype, doc, patch); e != nil {
 			writeError(w, e)

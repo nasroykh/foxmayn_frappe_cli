@@ -83,10 +83,13 @@ func runEditDoc(cmd *cobra.Command, _ []string) error {
 
 	var doc map[string]interface{}
 	var metas map[string]*client.FormMeta
-	var apiErr error
+	var access *client.FieldAccess
+	var apiErr, accessErr error
 	spinErr := runSpinner(fmt.Sprintf("Reading %s %s…", doctype, name), func() {
 		if doc, apiErr = c.GetDoc(ctx, doctype, name); apiErr == nil {
-			metas, apiErr = c.FormMetas(ctx, doctype)
+			if metas, apiErr = c.FormMetas(ctx, doctype); apiErr == nil {
+				access, accessErr = c.ReadableFields(ctx, doctype)
+			}
 		}
 	})
 	if apiErr != nil {
@@ -95,8 +98,17 @@ func runEditDoc(cmd *cobra.Command, _ []string) error {
 	if spinErr != nil {
 		return spinErr
 	}
+	if accessErr != nil {
+		if ctx.Err() != nil {
+			return accessErr
+		}
+		// Without the roles, only level-0 fields that are not masked are
+		// certainly kept.
+		access = nil
+		output.PrintWarning(fmt.Sprintf("warning: your permission levels are unknown (%v): only level-0 fields are shown", accessErr))
+	}
 
-	form, err := newEditForm(doctype, name, doc, metas)
+	form, err := newEditForm(doctype, name, doc, metas, access)
 	if err != nil {
 		return err
 	}
@@ -140,11 +152,60 @@ func runEditDoc(cmd *cobra.Command, _ []string) error {
 	if spinErr != nil {
 		return spinErr
 	}
+	lost := form.notKept(edited, d, saved)
+	for _, l := range lost {
+		output.PrintWarning("warning: " + l)
+	}
 	if machineOutput() {
 		return printResult(selectKeys(saved, edKeys))
 	}
+	if len(lost) > 0 {
+		output.PrintWarning(fmt.Sprintf("Updated %s %s, but the site did not keep %d change(s) as sent", doctype, name, len(lost)))
+		return nil
+	}
 	output.PrintSuccess(fmt.Sprintf("Updated %s %s", doctype, name))
 	return nil
+}
+
+// notKept compares the saved document with the changes sent and describes
+// each one the site did not keep: Frappe drops changes to fields the user
+// may not write instead of refusing them, and a controller may rewrite a
+// value on save.
+func (f *editForm) notKept(ed *editValues, d *editDiff, saved map[string]interface{}) []string {
+	var out []string
+	for _, c := range d.fields {
+		if got := saved[c.field]; !sameValue(got, c.to) {
+			out = append(out, fmt.Sprintf("%s: sent %s, saved %s", text.Sanitize(c.field), diffValue(c.to), diffValue(got)))
+		}
+	}
+	for _, td := range d.tables {
+		sent, got := ed.tables[td.field], rowsOf(saved[td.field])
+		if len(got) != len(sent) {
+			out = append(out, fmt.Sprintf("%s: sent %d rows, saved %d", text.Sanitize(td.field), len(sent), len(got)))
+			continue
+		}
+		changed := map[string][]fieldChange{}
+		for _, rc := range td.changed {
+			changed[rc.name] = rc.changes
+		}
+		for i, r := range sent {
+			check := changed[r.name]
+			if r.name == "" {
+				for _, k := range f.tables[td.field].order {
+					if v, ok := r.values[k]; ok {
+						check = append(check, fieldChange{field: k, to: v})
+					}
+				}
+			}
+			for _, c := range check {
+				if v := got[i][c.field]; !sameValue(v, c.to) {
+					out = append(out, fmt.Sprintf("%s row %d %s: sent %s, saved %s", text.Sanitize(td.field), i+1,
+						text.Sanitize(c.field), diffValue(c.to), diffValue(v)))
+				}
+			}
+		}
+	}
+	return out
 }
 
 // conflictError explains Frappe's TimestampMismatchError: the document was
@@ -211,8 +272,12 @@ type editRow struct {
 	values map[string]interface{}
 }
 
-func editableField(f client.FormField, submitted bool, value interface{}) bool {
+// editableField reports whether the user may change f: writable reports
+// whether the site keeps a change to it (permission level and mask).
+func editableField(f client.FormField, submitted bool, value interface{}, writable bool) bool {
 	switch {
+	case !writable:
+		return false
 	case f.Fieldname == "", editSkipFields[f.Fieldname], editSkipTypes[f.Fieldtype], f.ReadOnly, f.Hidden, f.IsVirtual:
 		return false
 	case f.FetchFrom != "" && !f.FetchIfEmpty: // fetched again on every save
@@ -229,29 +294,44 @@ func emptyValue(v interface{}) bool {
 	return v == nil || v == ""
 }
 
-func newEditForm(doctype, name string, doc map[string]interface{}, metas map[string]*client.FormMeta) (*editForm, error) {
+// newEditForm picks the fields the user may edit. access says which fields
+// the site keeps a change to; nil (unknown) keeps only level-0 fields that
+// are not masked.
+func newEditForm(doctype, name string, doc map[string]interface{}, metas map[string]*client.FormMeta, access *client.FieldAccess) (*editForm, error) {
 	ds := fmt.Sprint(doc["docstatus"])
 	if ds == "2" {
 		return nil, &client.StateError{Message: fmt.Sprintf("%s %s is cancelled and cannot be edited; amend it with 'ffc amend-doc'", doctype, name)}
 	}
 	f := &editForm{doctype: doctype, name: name, doc: doc, submitted: ds == "1",
 		fields: map[string]client.FormField{}, tables: map[string]*editTable{}}
+	writable := func(fd client.FormField) bool {
+		if access == nil {
+			return fd.Permlevel == 0 && !fd.Mask
+		}
+		return access.Writable(fd.Fieldname)
+	}
+	writableRow := func(table string, fd client.FormField) bool {
+		if access == nil {
+			return fd.Permlevel == 0 && !fd.Mask
+		}
+		return access.WritableRow(table, fd.Fieldname)
+	}
 	for _, fd := range metas[doctype].Fields {
 		if !editTableTypes[fd.Fieldtype] {
-			if editableField(fd, f.submitted, doc[fd.Fieldname]) {
+			if editableField(fd, f.submitted, doc[fd.Fieldname], writable(fd)) {
 				f.fields[fd.Fieldname] = fd
 				f.order = append(f.order, fd.Fieldname)
 			}
 			continue
 		}
 		cm := metas[fd.Options]
-		if cm == nil || editSkipFields[fd.Fieldname] || fd.ReadOnly || fd.Hidden || fd.IsVirtual {
+		if cm == nil || editSkipFields[fd.Fieldname] || fd.ReadOnly || fd.Hidden || fd.IsVirtual || !writable(fd) {
 			continue
 		}
 		t := &editTable{child: fd.Options, fields: map[string]client.FormField{}, rows: map[string]map[string]interface{}{},
 			fixed: f.submitted && !fd.AllowOnSubmit}
 		for _, rf := range cm.Fields {
-			if !editTableTypes[rf.Fieldtype] && !rf.SetOnlyOnce && editableField(rf, f.submitted, nil) {
+			if !editTableTypes[rf.Fieldtype] && !rf.SetOnlyOnce && editableField(rf, f.submitted, nil, writableRow(fd.Fieldname, rf)) {
 				t.fields[rf.Fieldname] = rf
 				t.order = append(t.order, rf.Fieldname)
 			}
@@ -311,7 +391,7 @@ func (f *editForm) header() string {
 	if f.submitted {
 		b.WriteString("# The document is submitted: only the fields allowed on submit are shown.\n")
 	}
-	b.WriteString("# Read-only, hidden, computed and system fields are not shown.\n")
+	b.WriteString("# Read-only, hidden, computed and system fields, and fields you may not write, are not shown.\n")
 	return b.String()
 }
 

@@ -15,7 +15,12 @@ import (
 type FieldAccess struct {
 	// levels are the readable permission levels; nil when the DocType has
 	// no permission rows (Frappe then treats every level as readable).
-	levels  map[int]bool
+	levels map[int]bool
+	// write and mask are the permission levels the user's roles write and
+	// unmask; admin is Administrator, who has every level.
+	write   map[int]bool
+	mask    map[int]bool
+	admin   bool
 	fields  map[string]map[string]accessField // DocType → fieldname → field
 	tables  map[string]string                 // table fieldname of the DocType → child DocType
 	doctype string
@@ -24,6 +29,7 @@ type FieldAccess struct {
 type accessField struct {
 	fieldtype string
 	permlevel int
+	mask      bool // v16 "mask": shown masked to roles without mask access
 }
 
 // Readable reports whether the user may read field of the DocType. docstatus
@@ -42,6 +48,34 @@ func (a *FieldAccess) Readable(field string) bool {
 func (a *FieldAccess) ReadableRow(table, field string) bool {
 	child, ok := a.tables[table]
 	return ok && a.Readable(table) && a.readable(child, field)
+}
+
+// Writable reports whether a change the user sends to field of the
+// DocType is kept. Frappe does not refuse the others, it drops the change:
+// validate_higher_perm_levels resets a field whose permission level the
+// user's roles do not write, and (v16) _restore_masked_fields_from_db puts
+// back a masked field. The field must also be readable.
+func (a *FieldAccess) Writable(field string) bool {
+	return a.Readable(field) && a.writable(a.doctype, field)
+}
+
+// WritableRow is Writable for a field of a row of table. Child rows use the
+// parent's permission rows.
+func (a *FieldAccess) WritableRow(table, field string) bool {
+	return a.ReadableRow(table, field) && a.writable(a.tables[table], field)
+}
+
+func (a *FieldAccess) writable(doctype, field string) bool {
+	if a.admin {
+		return true
+	}
+	f := a.fields[doctype][field]
+	if f.mask && !a.mask[f.permlevel] {
+		return false
+	}
+	// Level 0 is never reset (a user who may not write it cannot save at
+	// all); without permission rows nothing is reset either.
+	return f.permlevel == 0 || a.write == nil || a.write[f.permlevel]
 }
 
 func (a *FieldAccess) readable(doctype, field string) bool {
@@ -77,17 +111,19 @@ func (c *FrappeClient) ReadableFields(ctx context.Context, doctype string) (*Fie
 			Fieldtype string      `json:"fieldtype"`
 			Options   string      `json:"options"`
 			Permlevel interface{} `json:"permlevel"`
+			Mask      interface{} `json:"mask"`
 		} `json:"fields"`
 		Permissions []map[string]interface{} `json:"permissions"`
 	}
 	if err := convert(env["docs"], &docs); err != nil || len(docs) == 0 || docs[0].Name != doctype {
 		return nil, fmt.Errorf("unexpected response from getdoctype: no meta for %s", doctype)
 	}
-	a := &FieldAccess{doctype: doctype, fields: map[string]map[string]accessField{}, tables: map[string]string{}}
+	a := &FieldAccess{doctype: doctype, fields: map[string]map[string]accessField{}, tables: map[string]string{},
+		admin: user == "Administrator", mask: map[int]bool{}}
 	for i, d := range docs {
 		m := map[string]accessField{}
 		for _, f := range d.Fields {
-			m[f.Fieldname] = accessField{fieldtype: f.Fieldtype, permlevel: permlevel(f.Permlevel)}
+			m[f.Fieldname] = accessField{fieldtype: f.Fieldtype, permlevel: permlevel(f.Permlevel), mask: truthy(f.Mask)}
 			if i == 0 && (f.Fieldtype == "Table" || f.Fieldtype == "Table MultiSelect") && f.Options != "" {
 				a.tables[f.Fieldname] = f.Options
 			}
@@ -109,11 +145,21 @@ func (c *FrappeClient) ReadableFields(ctx context.Context, doctype string) (*Fie
 			have[r] = true
 		}
 	}
-	a.levels = map[int]bool{0: true}
+	a.levels, a.write = map[int]bool{0: true}, map[int]bool{0: true}
 	for _, row := range rows {
 		role, _ := row["role"].(string)
-		if (admin || have[role]) && truthy(row["read"]) {
-			a.levels[permlevel(row["permlevel"])] = true
+		if !admin && !have[role] {
+			continue
+		}
+		level := permlevel(row["permlevel"])
+		if truthy(row["read"]) {
+			a.levels[level] = true
+		}
+		if truthy(row["write"]) {
+			a.write[level] = true
+		}
+		if truthy(row["mask"]) {
+			a.mask[level] = true
 		}
 	}
 	return a, nil
