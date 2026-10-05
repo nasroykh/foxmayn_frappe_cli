@@ -77,18 +77,29 @@ func retryableGET(resp *resty.Response, err error) bool {
 		return false
 	}
 	if err != nil {
-		var ne net.Error
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
-			(errors.As(err, &ne) && ne.Timeout()) {
-			return false
-		}
-		return true
+		return retryableTransport(err)
 	}
-	switch resp.StatusCode() {
+	return retryableStatus(resp.StatusCode(), resp.Header())
+}
+
+// retryableTransport reports whether a GET that got no response is worth
+// repeating: not after a timeout or a cancel.
+func retryableTransport(err error) bool {
+	var ne net.Error
+	return !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) &&
+		(!errors.As(err, &ne) || !ne.Timeout())
+}
+
+// retryableStatus reports whether a GET answered with code is worth
+// repeating: rate limits and gateway errors, including the 503 Frappe v16
+// sends when a concurrency-limited method (download_pdf) found no free slot
+// within 10 s (Retry-After: 10).
+func retryableStatus(code int, h http.Header) bool {
+	switch code {
 	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		// A server that asks for a longer pause than we are willing to wait
 		// gets its error reported instead of a retry it has refused.
-		return retryAfterDelay(resp) <= maxRetryAfter
+		return retryAfterDelay(h) <= maxRetryAfter
 	}
 	return false
 }
@@ -100,8 +111,8 @@ const maxRetryAfter = 10 * time.Second
 // retryAfterDelay parses a Retry-After header (seconds or an HTTP date). It
 // returns 0 when the header is absent or invalid, which leaves the default
 // backoff in place.
-func retryAfterDelay(resp *resty.Response) time.Duration {
-	v := strings.TrimSpace(resp.Header().Get("Retry-After"))
+func retryAfterDelay(h http.Header) time.Duration {
+	v := strings.TrimSpace(h.Get("Retry-After"))
 	if v == "" {
 		return 0
 	}
@@ -127,7 +138,7 @@ func retryAfterDelay(resp *resty.Response) time.Duration {
 // retryAfter is the resty RetryAfter callback: it honours the server's
 // Retry-After (retryableGET already refused waits over maxRetryAfter).
 func retryAfter(_ *resty.Client, resp *resty.Response) (time.Duration, error) {
-	return retryAfterDelay(resp), nil
+	return retryAfterDelay(resp.Header()), nil
 }
 
 func requestError(err error) error {

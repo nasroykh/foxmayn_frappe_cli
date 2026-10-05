@@ -198,6 +198,10 @@ func TestMCPToolsets(t *testing.T) {
 	if n := len(mcpTToolNames(t, mcpTToolsets(t, knownToolsets))); n != len(toolSurface) {
 		t.Errorf("every set = %d tools, want %d", n, len(toolSurface))
 	}
+	files := []string{"attach_file", "get_print_html", "list_attachments", "list_sites"}
+	if got := mcpTToolNames(t, mcpTToolsets(t, []string{"files"})); !reflect.DeepEqual(got, files) {
+		t.Errorf("files = %v", got)
+	}
 
 	// The flag: an unknown or missing name is a usage error.
 	site := cmdTSite(t)

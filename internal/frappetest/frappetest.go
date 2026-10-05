@@ -5,6 +5,8 @@
 // get_count, query_report.run, search_link, global search, the OAuth token
 // endpoint's refresh grant) and any method registered with HandleMethod.
 // OAuth access tokens can be made to expire (ExpireToken, ExpireTokenAfter).
+// Files (files.go): upload_file (multipart), attach_file, /files and
+// /private/files, get_max_file_size, download_pdf and get_html_and_style.
 // Errors use the shapes a real Frappe v15/v16 site returns (exc_type,
 // _server_messages, exception), captured from a live site.
 //
@@ -104,6 +106,11 @@ type Site struct {
 	// docinfo.go
 	dashboards map[string]map[string]string
 	onload     map[string]map[string]interface{}
+	// files.go
+	files       map[string][]byte // file URL → content
+	maxFileSize int
+	printHTML   string
+	printStyle  string
 }
 
 // New starts a fake site, closed when the test ends.
@@ -128,6 +135,7 @@ func New(t testing.TB) *Site {
 	s.registerDocInfo()
 	s.registerAggregate()
 	s.registerCollab()
+	s.registerFiles()
 	// Every Frappe site has these; ffc reads them before some actions.
 	s.AddDocType("Workflow", "workflow_name", "document_type", "is_active", "workflow_state_field")
 	s.AddDocType("Deleted Document", "deleted_doctype", "deleted_name", "restored", "data")
@@ -332,6 +340,9 @@ func (s *Site) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.fileRoute(w, r) {
+		return
+	}
 	path := r.URL.Path
 	switch {
 	case path == "/api/method/login":

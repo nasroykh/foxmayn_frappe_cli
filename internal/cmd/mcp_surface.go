@@ -31,7 +31,7 @@ func cleanToolsets(cmd *cobra.Command) error {
 	for _, v := range mcpToolsets {
 		switch v = strings.TrimSpace(v); v {
 		case "":
-		case toolsetCore, toolsetLifecycle, toolsetCollab, toolsetAdmin:
+		case toolsetCore, toolsetLifecycle, toolsetCollab, toolsetAdmin, toolsetFiles:
 			if !contains(out, v, false) {
 				out = append(out, v)
 			}
@@ -201,6 +201,9 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 		if has("assign_to") {
 			line("When someone should act on a document, assign_to it rather than share_doc it.")
 		}
+	}
+	if w := which("list_attachments", "attach_file", "get_print_html"); w != "" {
+		line("Files: %s. No tool returns file contents or PDFs: the user downloads them with the CLI (ffc download, ffc pdf).", w)
 	}
 	line(`An error starting with "policy:" means this server's configuration refuses the call and nothing was sent; "cancelled by the user" means the user declined. Do not retry either another way.`)
 	if len(resources) > 0 {

@@ -98,6 +98,7 @@ func TestContract(t *testing.T) {
 	t.Run("document context", func(t *testing.T) { contractDocInfo(t, c, sc) })
 	t.Run("edit-doc and if-unmodified", func(t *testing.T) { contractEdit(t, c, sc) })
 	t.Run("comments, assignments, tags and shares", func(t *testing.T) { contractCollab(t, c, sc) })
+	t.Run("files upload download pdf", func(t *testing.T) { contractFiles(t, c, sc) })
 	// Last: an active workflow changes how the DocType submits.
 	t.Run("workflow", func(t *testing.T) { contractWorkflow(t, c, sc) })
 }
@@ -162,6 +163,12 @@ func teardownContract(t *testing.T, c *client.FrappeClient) {
 		}
 	}
 	teardownWorkflow(ctx, t, c)
+	// Files attached to fixture documents (an interrupted files test).
+	if files, err := c.GetList(ctx, "File", client.ListOptions{Filters: `{"attached_to_doctype":"` + contractDT + `"}`, Limit: -1}); err == nil {
+		for _, f := range files {
+			_ = c.DeleteDoc(ctx, "File", fmt.Sprint(f["name"]))
+		}
+	}
 	rows, err := c.GetList(ctx, contractDT, client.ListOptions{Fields: []string{"name", "docstatus"}, Limit: -1})
 	if err == nil {
 		// Longer names first: "x-1-1" before "x-1" before "x".

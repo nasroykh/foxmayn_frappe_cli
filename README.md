@@ -577,6 +577,25 @@ echo '{"description":"x"}' | ffc api POST /api/resource/ToDo --input -
 
 ---
 
+### Files and PDF
+
+```bash
+ffc upload contract.pdf -d Customer -n "ACME Corp"                 # private, in Home/Attachments
+ffc upload logo.png -d Item -n ITEM-001 --field image --public     # also sets Item.image
+tar cz notes | ffc upload - --filename notes.tgz -d ToDo -n TD-0001
+ffc attachments -d Customer -n "ACME Corp"                         # name, file_name, file_url, is_private, file_size
+ffc download /private/files/contract.pdf                           # saved as ./contract.pdf
+ffc download /files/logo.png -o - | sha256sum
+ffc pdf -d "Sales Invoice" -n SINV-0001 --format "Detailed Invoice" --no-letterhead -o inv.pdf
+```
+
+- **`upload FILE`** posts the file to `upload_file` (multipart), as the desk's Attach button does. Files are **private** unless `--public` (Frappe's own default is public). FILE `-` reads stdin and needs `--filename`. The document must exist: `upload_file` would otherwise attach the file to nothing. A file over the site's limit (System Settings > Max File Size, 25 MiB by default) is refused before it is sent (exit 6); the site's allowed file extensions still apply. `--field` also sets that Attach field of the document to the file URL (a second request). Uploads are never retried. `--dry-run` shows the request with the file's name and size, never its content.
+- **`download FILE_URL`** takes a File's `file_url` (`/files/…` or `/private/files/…`) or a full URL of the site itself (same scheme, host and port); other hosts are refused, so the credentials never leave the site. The file goes to `--output-file`/`-o` (default: its name in the current directory) through a temporary file, so an interrupted download leaves nothing; an existing file is replaced only with `--force`. `-o -` writes to stdout (binary is refused on a terminal). A private file that is missing and one you may not read both get Frappe's 403 (exit 5). Private files are saved 0600.
+- **`attachments`** lists the File documents attached to a document, oldest first (`--limit`, default 100; `--all`).
+- **`pdf`** saves `frappe.utils.print_format.download_pdf` (`--format`, `--letterhead` or `--no-letterhead`, `--lang`) to `-o` (default `<name>.pdf`). A response that is not `application/pdf` starting with `%PDF-` is never saved. Frappe v16 renders only a few PDFs at a time and answers 503 with `Retry-After: 10` when no slot frees up within 10 s; like every GET, the request is retried twice. A site in Docker whose wkhtmltopdf cannot reach the site's own URL fails with `OSError` (500).
+
+---
+
 ### Search and name resolution
 
 **`search`** (Find a document by text)
@@ -674,8 +693,9 @@ ffc mcp --toolsets core        # documents, schema, reports, search, aggregate, 
 ffc mcp --toolsets lifecycle   # submit_doc, cancel_doc, amend_doc, copy_doc, rename_doc, apply_workflow, get_transitions
 ffc mcp --toolsets core,lifecycle,collab   # + add_comment, assign_to, remove_assignment, add_tag, remove_tag
 ffc mcp --toolsets core,admin  # + share_doc, unshare_doc
+ffc mcp --toolsets core,lifecycle,files   # + list_attachments, attach_file, get_print_html
 ```
-The default is `core,lifecycle`: the `collab` and `admin` sets are exposed only when named. `list_sites` is always there. Like `--allow-tools`, it only narrows what the policy allows; an unknown set name is a usage error.
+The default is `core,lifecycle`: the `collab`, `admin` and `files` sets are exposed only when named. `list_sites` is always there. Like `--allow-tools`, it only narrows what the policy allows; an unknown set name is a usage error.
 
 **Policy.** Each site can limit what MCP tools may do, in its config entry:
 
@@ -744,7 +764,7 @@ Prompts (guidance only; they call nothing): `inspect-doctype` (doctype), `safe-b
 
 **Progress and structured results.** `bulk_create`, `bulk_update` and `bulk_delete` send `notifications/progress` after each item when the call carries a progress token; cancelling the call stops starting new items. Progress is best effort: a notification can be dropped when the client reads slowly, or arrive after the result. `count_docs` (`{count, doctype}`), `whoami` (the same object as its text) and `list_sites` (`{sites}`; its text stays the bare list) declare an output schema and return `structuredContent`; their text is unchanged. Every tool has a title.
 
-Available MCP tools (35): `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `get_doc_context` (versions, comments, attachments, assignments, links; `ffc doc-info` without `--onload`, at most 50 comments, emails and workflow log entries, 100 attachments, assignments, shares and tags, 50 changes per version and 100 timeline entries, the rest counted in `omitted`), `list_docs`, `count_docs`, `aggregate`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc` (`if_unmodified: <modified>` fails with TimestampMismatchError if the document was saved since it was read), `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`, and, in the `collab` and `admin` tool sets, `add_comment`, `assign_to`, `remove_assignment`, `add_tag`, `remove_tag`, `share_doc`, `unshare_doc`.
+Available MCP tools (38): `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `get_doc_context` (versions, comments, attachments, assignments, links; `ffc doc-info` without `--onload`, at most 50 comments, emails and workflow log entries, 100 attachments, assignments, shares and tags, 50 changes per version and 100 timeline entries, the rest counted in `omitted`), `list_docs`, `count_docs`, `aggregate`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc` (`if_unmodified: <modified>` fails with TimestampMismatchError if the document was saved since it was read), `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`, and, in the `collab` and `admin` tool sets, `add_comment`, `assign_to`, `remove_assignment`, `add_tag`, `remove_tag`, `share_doc`, `unshare_doc`. The `files` set (only with `--toolsets …,files`) adds `list_attachments`, `get_print_html` (`{html, style}`, or `{text}` with `text_only`; over 512 KiB the style is dropped, then the HTML cut with `truncated: true`) and the write tool `attach_file` (`frappe.client.attach_file`; `data` base64 or `encoding: text`, at most 5 MiB decoded, private unless `is_private: false`). No tool returns file contents or PDFs. `attach_file` writes a File, which is a sensitive DocType: it is refused unless the site's `allow_doctypes` lists `File` (and, being an allowlist, the DocTypes to attach to). `list_attachments` and `attach_file` are also checked against the rules for `File`.
 
 Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`), except rows: `list_docs` then returns the rows that fit as `{"data": [...], "truncated": true, "next_start": N, "hint": "..."}` (call again with `start: N` for the rest; a list that fits is still a plain array), and `run_report` drops rows from the end and adds `truncated`, `total_rows` and a `hint` saying how many were dropped. Tools whose result can be large tell the client the cap (`_meta` `anthropic/maxResultSizeChars`), so Claude Code does not cut the JSON. `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
@@ -796,7 +816,8 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_confirm.go    # confirmation through MCP elicitation
 │   │   ├── mcp_sites.go      # multi-site MCP (--sites, --all-sites, list_sites)
 │   │   ├── mcp_args.go       # MCP argument parsing and result limits
-│   │   ├── mcp_tools.go      # MCP tool definitions (35 with mcp_lifecycle_tools.go, mcp_identity_tools.go, mcp_doc_context.go, mcp_aggregate.go, mcp_collab_tools.go)
+│   │   ├── mcp_tools.go      # MCP tool definitions (38 with mcp_lifecycle_tools.go, mcp_identity_tools.go, mcp_doc_context.go, mcp_aggregate.go, mcp_collab_tools.go, mcp_files_tools.go)
+│   │   ├── files.go / pdf.go # upload, download, attachments, pdf
 │   │   ├── mcp_lifecycle_tools.go  # submit/cancel/amend/copy/rename/workflow tools
 │   │   ├── mcp_collab_tools.go     # comment/assign/tag (collab) and share (admin) tools
 │   │   ├── mcp_completion.go # completion/complete for resource templates and prompts (cache only)
