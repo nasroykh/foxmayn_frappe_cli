@@ -48,6 +48,15 @@ func TestMCPAttachFilePolicy(t *testing.T) {
 	if got, _ := site.File("/files/n.txt"); string(got) != "plain note" || doc["folder"] != "Home" {
 		t.Errorf("doc %v, stored %q", doc, got)
 	}
+	// With field, the document's field is set to the file URL.
+	doc = mcpTObj(t, mcpTOK(t, s, "attach_file", map[string]interface{}{"doctype": "ToDo", "name": "TD-1", "filename": "f.txt",
+		"data": "in a field", "encoding": "text", "field": "description"}))
+	if td, _ := site.Doc("ToDo", "TD-1"); doc["attached_to_field"] != "description" || td["description"] != doc["file_url"] {
+		t.Errorf("doc %v, ToDo description %v", doc, td["description"])
+	}
+	if last := site.Requests()[len(site.Requests())-1]; !strings.Contains(last.Body, `"docfield":"description"`) {
+		t.Errorf("attach_file body %s", last.Body)
+	}
 	// The audit line keeps the content's size, never the content.
 	raw, err := os.ReadFile(audit)
 	if err != nil {

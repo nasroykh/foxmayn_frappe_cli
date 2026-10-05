@@ -146,7 +146,8 @@ func (s *Site) uploadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 // attachFile is frappe.client.attach_file: the document must exist (it is
-// read first), the content is base64 when decode_base64 is set.
+// read first), the content is base64 when decode_base64 is set, and docfield
+// is set to the file URL on the saved document.
 func (s *Site) attachFile(_ *http.Request, args map[string]interface{}) (interface{}, error) {
 	dt, name := argString(args, "doctype"), argString(args, "docname")
 	if _, ok := s.Doc(dt, name); !ok {
@@ -160,10 +161,21 @@ func (s *Site) attachFile(_ *http.Request, args map[string]interface{}) (interfa
 		}
 		data = dec
 	}
-	doc, err := s.newFile(argString(args, "filename"), data, dt, name, argString(args, "docfield"),
+	field := argString(args, "docfield")
+	doc, err := s.newFile(argString(args, "filename"), data, dt, name, field,
 		argString(args, "folder"), truthy(args["is_private"]))
 	if err != nil {
 		return nil, err
+	}
+	// With docfield, attach_file sets the field to the file URL and saves
+	// the document.
+	if field != "" {
+		s.mu.Lock()
+		if d := s.doctypes[dt][name]; d != nil {
+			d[field] = doc["file_url"]
+			s.stamp(dt, d, false)
+		}
+		s.mu.Unlock()
 	}
 	return doc, nil
 }
