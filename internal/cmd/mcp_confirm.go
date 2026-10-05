@@ -63,22 +63,57 @@ var argMethods = []struct {
 	{"frappe.desk.doctype.bulk_update.bulk_update.submit_cancel_or_update_docs", "action", []string{"cancel"}},
 }
 
+// widenMethods give users access to a document: frappe.share.add shares
+// it, and an assignment shares it read-only with an assignee who cannot
+// read it (assign_to.py, _add). frappe.share.set_permission widens only
+// with a true value (see widensAccess).
+var widenMethods = []string{
+	"frappe.share.add",
+	"frappe.desk.form.assign_to.add", "frappe.desk.form.assign_to.add_multiple",
+}
+
+// widensAccess reports whether a call_method call may give users access to
+// a document.
+func widensAccess(method string, args map[string]interface{}) bool {
+	names := methodNames(method)
+	if anyMatch(widenMethods, names) {
+		return true
+	}
+	if anyMatch([]string{"frappe.share.set_permission"}, names) {
+		v, ok := args["value"]
+		return !ok || cintTrue(v) // Frappe's default value is 1
+	}
+	return false
+}
+
+// cintTrue reads a flag as Frappe's cint does: a string is a number ("0"
+// and text that is not a number are 0), a bool or number is itself.
+func cintTrue(v interface{}) bool {
+	if s, ok := v.(string); ok {
+		f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		return err == nil && int64(f) != 0
+	}
+	return truthy(v)
+}
+
 // mergeMethods rename a document and, with merge set, merge it into another
 // one, which then no longer exists.
 var mergeMethods = []string{"frappe.client.rename_doc", "frappe.model.rename_doc.update_document_title"}
 
 // needsConfirm reports whether a call destroys, cancels or merges
-// documents, or runs a workflow action.
+// documents, runs a workflow action, or may widen who can see a document
+// (a share, or an assignment, which shares the document with an assignee
+// who cannot read it).
 func needsConfirm(req mcp.CallToolRequest, method string) bool {
 	switch req.Params.Name {
-	case "delete_doc", "bulk_delete", "cancel_doc", "apply_workflow":
+	case "delete_doc", "bulk_delete", "cancel_doc", "apply_workflow", "share_doc", "assign_to":
 		return true
 	case "rename_doc":
 		return req.GetBool("merge", false) // as the tool reads it
 	case "call_method":
 		names := methodNames(method)
 		args := methodArgs(req.GetArguments()["args"])
-		if anyMatch(destructiveMethods, names) {
+		if anyMatch(destructiveMethods, names) || widensAccess(method, args) {
 			return true
 		}
 		if anyMatch(mergeMethods, names) {
@@ -246,7 +281,7 @@ var confirmSchema = map[string]interface{}{
 	"properties": map[string]interface{}{
 		"confirm": map[string]interface{}{
 			"type": "boolean", "title": "Confirm", "default": false,
-			"description": "Check to go ahead. This cannot be undone.",
+			"description": "Check to go ahead.",
 		},
 	},
 	"required": []string{"confirm"},
@@ -390,12 +425,41 @@ func confirmMessage(site string, req mcp.CallToolRequest, sc toolScope) string {
 		what = fmt.Sprintf("Apply the workflow action %s to %s %s. It may submit or cancel the document.", quoted(action, 100), dt, name(0))
 	case "call_method":
 		what = fmt.Sprintf("Call %s with %s.", quoted(sc.Method, 200), methodSummary(args["args"]))
+	case "share_doc":
+		user, everyone, _ := shareTargetArgs(req)
+		who := "every user"
+		if !everyone {
+			who = "user " + quoted(user, 140)
+		}
+		return fmt.Sprintf("An AI agent asks to share %s %s on site %s with %s (%s). They will be able to open it whatever their roles allow.",
+			dt, name(0), confirmSite(site), who, shareRights(shareArgs(req)))
+	case "assign_to":
+		users, _ := listArg(req, "users", "user", true)
+		list := make([]string, 0, len(users))
+		for _, u := range users {
+			list = append(list, quoted(u, 140))
+		}
+		return fmt.Sprintf("An AI agent asks to assign %s %s on site %s to %s. Each gets a ToDo and a notification; one who cannot read the document gets read access to it through a share.",
+			dt, name(0), confirmSite(site), strings.Join(list, ", "))
 	}
-	site = quoted(site, 100)
-	if site == `""` {
-		site = "(from the environment)"
+	if req.Params.Name == "call_method" && widensAccess(sc.Method, methodArgs(args["args"])) {
+		return fmt.Sprintf("An AI agent asks to change site %s. %s It may give users access to documents beyond what their roles allow.", confirmSite(site), what)
 	}
-	return fmt.Sprintf("An AI agent asks to change site %s. %s This cannot be undone.", site, what)
+	return fmt.Sprintf("An AI agent asks to change site %s. %s This cannot be undone.", confirmSite(site), what)
+}
+
+// confirmSite shows the site a question is about.
+func confirmSite(site string) string {
+	if site = quoted(site, 100); site == `""` {
+		return "(from the environment)"
+	}
+	return site
+}
+
+// shareArgs reads the rights share_doc grants, as the tool does.
+func shareArgs(req mcp.CallToolRequest) client.ShareOptions {
+	return client.ShareOptions{Write: req.GetBool("write", false), Submit: req.GetBool("submit", false),
+		Share: req.GetBool("share", false), Notify: req.GetBool("notify", false)}
 }
 
 // cliEquivalent is the ffc command that does what the call asked, for a
@@ -433,6 +497,36 @@ func cliEquivalent(site string, req mcp.CallToolRequest, sc toolScope) string {
 		action, _ := args["action"].(string)
 		cmdName = "ffc workflow apply"
 		parts = append(parts, "workflow", "apply", "--doctype", q(dt), "--name", q(sc.Names[0]), "--action", q(action))
+	case "assign_to":
+		users, _ := listArg(req, "users", "user", true)
+		for _, u := range users {
+			if strings.Contains(u, ",") {
+				return cmdName
+			}
+		}
+		parts = append(parts, "assign", "--doctype", q(dt), "--name", q(sc.Names[0]), "--to", q(strings.Join(users, ",")))
+		for _, k := range []string{"description", "date", "priority"} {
+			if v, _ := args[k].(string); v != "" {
+				parts = append(parts, "--"+k, q(v))
+			}
+		}
+	case "share_doc":
+		user, everyone, _ := shareTargetArgs(req)
+		parts = append(parts, "share", "--doctype", q(dt), "--name", q(sc.Names[0]))
+		if everyone {
+			parts = append(parts, "--everyone")
+		} else {
+			parts = append(parts, "--user", q(user))
+		}
+		o := shareArgs(req)
+		for _, f := range []struct {
+			on   bool
+			flag string
+		}{{o.Write, "--write"}, {o.Submit, "--submit"}, {o.Share, "--share"}, {o.Notify, "--notify"}} {
+			if f.on {
+				parts = append(parts, f.flag)
+			}
+		}
 	case "call_method":
 		parts = append(parts, "call-method", "--method", q(sc.Method))
 		if a := args["args"]; a != nil {

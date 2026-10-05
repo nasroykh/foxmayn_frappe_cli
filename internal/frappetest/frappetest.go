@@ -42,6 +42,7 @@ const (
 var standardFields = map[string]bool{
 	"name": true, "owner": true, "creation": true, "modified": true,
 	"modified_by": true, "docstatus": true, "idx": true, "doctype": true,
+	"_assign": true, "_user_tags": true, "_comments": true, "_liked_by": true,
 }
 
 // Request is one recorded HTTP request.
@@ -98,6 +99,8 @@ type Site struct {
 
 	oauth oauthState // oauth.go
 
+	cannotRead map[string]map[string]bool // collab.go: DocType -> lower-case user
+
 	// docinfo.go
 	dashboards map[string]map[string]string
 	onload     map[string]map[string]interface{}
@@ -124,6 +127,7 @@ func New(t testing.TB) *Site {
 	s.registerIdentity()
 	s.registerDocInfo()
 	s.registerAggregate()
+	s.registerCollab()
 	// Every Frappe site has these; ffc reads them before some actions.
 	s.AddDocType("Workflow", "workflow_name", "document_type", "is_active", "workflow_state_field")
 	s.AddDocType("Deleted Document", "deleted_doctype", "deleted_name", "restored", "data")

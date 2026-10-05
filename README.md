@@ -183,7 +183,7 @@ ffc [--site <name>] [--config <path>] [--json] <command> [flags]
 
 #### Dry run
 
-Every command that writes (`create-doc`, `update-doc`, `edit-doc`, `delete-doc`, the bulk commands, the lifecycle commands, `workflow apply` and `bulk-apply`, `call-method` and `api`) takes `--dry-run`. It prints the request it would send, with secrets redacted, sends nothing that writes and exits 0. Reads still run, so the dry run fails where the real run would (a missing document, a draft that cannot be amended). `update-doc --dry-run` also shows which fields would change, and `delete-doc --dry-run` checks that the document exists. No confirmation is asked. `call-method` and `api` send nothing at all, since any request to a method can write. A username/password site still logs in and out, and an OAuth site with an expired token still refreshes it, so the reads can run.
+Every command that writes (`create-doc`, `update-doc`, `edit-doc`, `delete-doc`, the bulk commands, the lifecycle commands, `workflow apply` and `bulk-apply`, the collaboration commands, `call-method` and `api`) takes `--dry-run`. It prints the request it would send, with secrets redacted, sends nothing that writes and exits 0. Reads still run, so the dry run fails where the real run would (a missing document, a draft that cannot be amended). `update-doc --dry-run` also shows which fields would change, and `delete-doc --dry-run` checks that the document exists. No confirmation is asked. `call-method` and `api` send nothing at all, since any request to a method can write. A username/password site still logs in and out, and an OAuth site with an expired token still refreshes it, so the reads can run.
 
 ```bash
 ffc update-doc -d ToDo -n TD-0001 --data '{"status":"Closed"}' --dry-run
@@ -458,6 +458,26 @@ ffc workflow pending -d "Leave Application"                            # open Wo
 
 `bulk-apply` applies the action one document at a time and reports each result like the bulk commands (`--concurrency`, `--fail-fast`, exit 8 if any failed).
 
+### Collaboration
+
+Comments, assignments, tags and shares go through the methods the desk calls, so Frappe's permission checks, notifications and timeline entries apply.
+
+```bash
+ffc comment -d Task -n TASK-0042 "Called the customer, waiting for the PO"   # plain text; "-" reads stdin
+ffc assign   -d Task -n TASK-0042 --to jane@example.com,bob@example.com --priority High --date 2026-11-01
+ffc unassign -d Task -n TASK-0042 --to bob@example.com
+ffc tag      -d Customer -n "Acme Ltd" vip export
+ffc untag    -d Customer -n "Acme Ltd" vip
+ffc share    -d Project -n PROJ-0001 --user jane@example.com --write --yes   # or --everyone; asks without --yes
+ffc unshare  -d Project -n PROJ-0001 --user jane@example.com
+```
+
+- `comment` posts as the user ffc signs in as. The text is escaped, so `<b>` shows as typed, and line breaks are kept; `--html` sends HTML, which Frappe sanitises (scripts, forms and event attributes are removed). It needs read permission on the document.
+- `assign` creates an open ToDo per user and Frappe notifies them. A user already assigned is reported (`already_assigned`), not assigned twice. An assignee who cannot read the document gets it shared read-only, or the call fails when document sharing is disabled. `unassign` cancels the ToDo; a user not assigned is reported (`not_assigned`).
+- `tag` needs write permission and creates missing Tag records; a tag cannot contain a comma. `untag` ignores case, like Frappe.
+- `share` grants read plus `--write`, `--submit` (submittable DocTypes only) and `--share`; `--notify` sends a notification. Sharing again with the same user replaces that share's rights. It widens access, so it asks for confirmation unless `--yes` is given. `unshare` removes the share (there is no whitelisted `frappe.share.remove`; it clears the read right with `frappe.share.set_permission`, as the desk does) and reports `removed: false` when there was none.
+- Each command reads the current state first and reports what changed; with `--json` the result lists it (`assigned`, `assignees`, `tags`, the share's rights).
+
 ---
 
 ### Schema & Introspection
@@ -652,8 +672,10 @@ ffc mcp --read-only --site prod
 ```bash
 ffc mcp --toolsets core        # documents, schema, reports, search, aggregate, get_doc_context, bulk, call_method, whoami, check_permission
 ffc mcp --toolsets lifecycle   # submit_doc, cancel_doc, amend_doc, copy_doc, rename_doc, apply_workflow, get_transitions
+ffc mcp --toolsets core,lifecycle,collab   # + add_comment, assign_to, remove_assignment, add_tag, remove_tag
+ffc mcp --toolsets core,admin  # + share_doc, unshare_doc
 ```
-The default is both. `list_sites` is always there. Like `--allow-tools`, it only narrows what the policy allows; an unknown set name is a usage error.
+The default is `core,lifecycle`: the `collab` and `admin` sets are exposed only when named. `list_sites` is always there. Like `--allow-tools`, it only narrows what the policy allows; an unknown set name is a usage error.
 
 **Policy.** Each site can limit what MCP tools may do, in its config entry:
 
@@ -673,6 +695,7 @@ sites:
 
 - Built in, whatever the config says:
   - MCP may read but not write the sensitive DocTypes: users, roles and permissions (User, Role, Has Role, Role Profile, Module Profile, User Type, User Group, DocType, DocPerm, Custom DocPerm, User Permission, DocShare, Custom Field, Property Setter, Customize Form), settings and credentials (System Settings, OAuth Client, OAuth Provider Settings, OAuth Bearer Token, OAuth Authorization Code, Connected App, Token Cache, Social Login Key, LDAP Settings, Email Account), code and templates (Server Script, Client Script, Report, Print Format, Website Script, Web Page, Web Form, Custom HTML Block, Webhook, Notification, Auto Email Report, Assignment Rule, Energy Point Rule, Scheduled Job Type), Data Import and File. Listing one in the site's `allow_doctypes` allows writes to it.
+  - The collaboration tools are also checked against the DocType they write besides the document: `add_comment` Comment, `assign_to` and `remove_assignment` ToDo, `add_tag` Tag Link and Tag, `remove_tag` Tag Link, `share_doc` and `unshare_doc` DocShare. DocShare is sensitive, so `share_doc` and `unshare_doc` are refused unless the site's `allow_doctypes` lists DocShare (and then the DocTypes to share). `call_method` with the same Frappe methods (`frappe.share.add`, `frappe.desk.form.assign_to.add`, …) is checked the same way. Frappe saves data-URI images in a comment's HTML as private File records, so `add_comment` with `html` and an image (or `call_method` of `frappe.desk.form.utils.add_comment` with one) is also checked against File, which is sensitive. `call_method` of `add_comment` is refused when `comment_email` or `comment_by` names anyone but the signed-in user: Frappe stores them as given.
   - `call_method` refuses `system_console.execute_code`, `user.generate_keys` and the Frappe Cloud app installer (`frappe.integrations.frappe_providers.*`) unless the site's `allow_methods` lists them.
 - With `allow_doctypes` set, `call_method` may call only the methods in `allow_methods`, since a method can reach any DocType. `run_report` is checked through the report's `ref_doctype`. `search` with a `doctype` is checked like any read of that DocType; a global `search` names none, so its hits are filtered to the DocTypes the rules allow; the tool then answers `{results, hidden_by_policy}`, where `hidden_by_policy` counts the dropped hits. `get_doc_context` is checked against the document's DocType; the parts it reads from other DocTypes (Version, Comment, Communication, File, ToDo, DocShare, Tag Link, the linked DocTypes, and the timeline entries by their source) are emptied or dropped when the rules do not allow reading that DocType, and `hidden_by_policy` names them: `{sections, linked_doctypes, timeline_entries}`. A timeline log needs Comment and the DocType it reports on: an assignment log ToDo (it names the assignee), a share log DocShare, an attachment log File. `aggregate` is checked like any read of its `doctype`. With `allow_doctypes` or `deny_doctypes` set (config or flag), a query may not reach another table: in `list_docs`, `count_docs`, `aggregate` and the query arguments of `call_method` (`filters`, `or_filters`, `fields`, `order_by`, …), a filter field must be a plain fieldname and a field or `order_by` column may not contain `.` or a backtick (`link_field.field`, `child_table.field` and ``` `tabX`.`f` ``` join another DocType), and the DocType of a four-element filter `[doctype, field, op, value]` is checked like `doctype`.
 - An `allow_` list that is present but empty is an error, so it never reads as "none" while meaning "no limit". The same goes for a policy flag given with no value.
@@ -681,13 +704,14 @@ sites:
 - A refused call sends nothing to the site and returns an error starting with `policy:` that names the setting to change.
 - A misspelt key under `mcp:` is an error, so a policy is never silently ignored.
 
-**Confirmation.** Before `delete_doc`, `bulk_delete`, `cancel_doc`, `rename_doc` with `merge`, `apply_workflow` (an action may submit or cancel) and the `call_method` equivalents, ffc asks the user through the MCP client (elicitation). The client shows what will be deleted, cancelled or merged, and nothing is sent to the site unless the user ticks Confirm. The `call_method` equivalents are:
+**Confirmation.** Before `delete_doc`, `bulk_delete`, `cancel_doc`, `rename_doc` with `merge`, `apply_workflow` (an action may submit or cancel), `share_doc` (it widens who can open the document), `assign_to` (Frappe shares the document read-only with an assignee who cannot read it) and the `call_method` equivalents, ffc asks the user through the MCP client (elicitation). The client shows what will be deleted, cancelled or merged, and nothing is sent to the site unless the user ticks Confirm. The `call_method` equivalents are:
 - `frappe.client.delete`, `frappe.client.cancel` and `frappe.desk.reportview.delete_items`;
 - `frappe.desk.form.save.cancel` and `discard`, `savedocs` with action Cancel, and `cancel_all_linked_docs`;
 - `submit_cancel_or_update_docs` with action cancel;
 - `run_doc_method` with cancel, discard or rename;
 - the `frappe.model.workflow` apply methods;
-- `rename_doc` or `update_document_title` with `merge`. A "no" returns `cancelled by the user; nothing was changed`.
+- `rename_doc` or `update_document_title` with `merge`;
+- `frappe.share.add`, `frappe.share.set_permission` with a true `value` (Frappe's default), and `frappe.desk.form.assign_to.add` / `add_multiple`, which may give users access to a document. A "no" returns `cancelled by the user; nothing was changed`.
 
 - `confirm: if-supported` (the default) asks when the client supports elicitation and goes ahead without asking when it does not.
 - `confirm: always` refuses the call when the client cannot ask, and names the `ffc` command to run in a terminal instead.
@@ -720,7 +744,7 @@ Prompts (guidance only; they call nothing): `inspect-doctype` (doctype), `safe-b
 
 **Progress and structured results.** `bulk_create`, `bulk_update` and `bulk_delete` send `notifications/progress` after each item when the call carries a progress token; cancelling the call stops starting new items. Progress is best effort: a notification can be dropped when the client reads slowly, or arrive after the result. `count_docs` (`{count, doctype}`), `whoami` (the same object as its text) and `list_sites` (`{sites}`; its text stays the bare list) declare an output schema and return `structuredContent`; their text is unchanged. Every tool has a title.
 
-Available MCP tools (28): `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `get_doc_context` (versions, comments, attachments, assignments, links; `ffc doc-info` without `--onload`, at most 50 comments, emails and workflow log entries, 100 attachments, assignments, shares and tags, 50 changes per version and 100 timeline entries, the rest counted in `omitted`), `list_docs`, `count_docs`, `aggregate`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc` (`if_unmodified: <modified>` fails with TimestampMismatchError if the document was saved since it was read), `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
+Available MCP tools (35): `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `get_doc_context` (versions, comments, attachments, assignments, links; `ffc doc-info` without `--onload`, at most 50 comments, emails and workflow log entries, 100 attachments, assignments, shares and tags, 50 changes per version and 100 timeline entries, the rest counted in `omitted`), `list_docs`, `count_docs`, `aggregate`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc` (`if_unmodified: <modified>` fails with TimestampMismatchError if the document was saved since it was read), `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`, and, in the `collab` and `admin` tool sets, `add_comment`, `assign_to`, `remove_assignment`, `add_tag`, `remove_tag`, `share_doc`, `unshare_doc`.
 
 Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`), except rows: `list_docs` then returns the rows that fit as `{"data": [...], "truncated": true, "next_start": N, "hint": "..."}` (call again with `start: N` for the rest; a list that fits is still a plain array), and `run_report` drops rows from the end and adds `truncated`, `total_rows` and a `hint` saying how many were dropped. Tools whose result can be large tell the client the cap (`_meta` `anthropic/maxResultSizeChars`), so Claude Code does not cut the JSON. `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
@@ -763,6 +787,7 @@ foxmayn_frappe_cli/
 │   │   ├── bulk_create.go, bulk_update.go, bulk_delete.go
 │   │   ├── submit_doc.go, cancel_doc.go, discard_doc.go, amend_doc.go (amend-doc, copy-doc),
 │   │   │   rename_doc.go, restore_doc.go, workflow.go   # document lifecycle
+│   │   ├── collab.go, collab_cmds.go   # comment, assign/unassign, tag/untag, share/unshare
 │   │   ├── update.go         # update (self-update)
 │   │   ├── update_check.go   # background update check + PersistentPreRunE
 │   │   ├── mcp.go            # mcp subcommand (stdio/HTTP/detach, --read-only, policy flags)
@@ -771,8 +796,9 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_confirm.go    # confirmation through MCP elicitation
 │   │   ├── mcp_sites.go      # multi-site MCP (--sites, --all-sites, list_sites)
 │   │   ├── mcp_args.go       # MCP argument parsing and result limits
-│   │   ├── mcp_tools.go      # MCP tool definitions (28 with mcp_lifecycle_tools.go, mcp_identity_tools.go, mcp_doc_context.go, mcp_aggregate.go)
+│   │   ├── mcp_tools.go      # MCP tool definitions (35 with mcp_lifecycle_tools.go, mcp_identity_tools.go, mcp_doc_context.go, mcp_aggregate.go, mcp_collab_tools.go)
 │   │   ├── mcp_lifecycle_tools.go  # submit/cancel/amend/copy/rename/workflow tools
+│   │   ├── mcp_collab_tools.go     # comment/assign/tag (collab) and share (admin) tools
 │   │   ├── mcp_completion.go # completion/complete for resource templates and prompts (cache only)
 │   │   ├── mcp_daemon.go     # detached server, status/stop, state file
 │   │   └── mcp_detach_unix.go / mcp_detach_windows.go  # platform process handling
@@ -781,6 +807,7 @@ foxmayn_frappe_cli/
 │   │   ├── client.go         # Frappe REST API client (Bearer, token and session auth)
 │   │   ├── raw.go            # Raw requests (ffc api): SitePath, streamed bodies
 │   │   ├── lifecycle.go      # Submit, cancel, amend, copy, rename, restore, workflow
+│   │   ├── collab.go         # Comments, assignments, tags, shares
 │   │   ├── server.go         # Versions, logged user, roles, permission checks
 │   │   ├── oauth.go          # ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser
 │   │   └── session.go        # Username/password login

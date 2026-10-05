@@ -111,7 +111,7 @@ func TestMCPToolSurface(t *testing.T) {
 		switch {
 		case !ok:
 			t.Errorf("tool %s has no entry in toolSurface (tool set and title)", name)
-		case info.toolset != toolsetCore && info.toolset != toolsetLifecycle:
+		case !contains(knownToolsets, info.toolset, false):
 			t.Errorf("tool %s: unknown tool set %q", name, info.toolset)
 		case strings.TrimSpace(info.title) == "":
 			t.Errorf("tool %s has no title", name)
@@ -181,11 +181,22 @@ func TestMCPToolsets(t *testing.T) {
 	if raw, _ := mcpTRPC(t, s, "resources/templates/list", nil); strings.Contains(string(raw), "ffc://") {
 		t.Errorf("templates without get_doc/get_schema: %s", raw)
 	}
-	if n := len(mcpTToolNames(t, mcpTToolsets(t, []string{"core", "lifecycle"}))); n != len(toolSurface) {
+	// The default is core and lifecycle: collab and admin must be asked for.
+	if got := mcpTToolNames(t, mcpTToolsets(t, nil)); !reflect.DeepEqual(got, mcpTToolNames(t, mcpTToolsets(t, []string{"core", "lifecycle"}))) {
+		t.Errorf("default = %v", got)
+	}
+	if n := len(mcpTToolNames(t, mcpTToolsets(t, []string{"core", "lifecycle"}))); n != len(core)+len(lifecycle)-1 {
 		t.Errorf("core,lifecycle = %d tools", n)
 	}
-	if n := len(mcpTToolNames(t, mcpTToolsets(t, nil))); n != len(toolSurface) {
-		t.Errorf("default = %d tools", n)
+	collab := []string{"add_comment", "add_tag", "assign_to", "list_sites", "remove_assignment", "remove_tag"}
+	if got := mcpTToolNames(t, mcpTToolsets(t, []string{"collab"})); !reflect.DeepEqual(got, collab) {
+		t.Errorf("collab = %v", got)
+	}
+	if got := mcpTToolNames(t, mcpTToolsets(t, []string{"admin"})); !reflect.DeepEqual(got, []string{"list_sites", "share_doc", "unshare_doc"}) {
+		t.Errorf("admin = %v", got)
+	}
+	if n := len(mcpTToolNames(t, mcpTToolsets(t, knownToolsets))); n != len(toolSurface) {
+		t.Errorf("every set = %d tools, want %d", n, len(toolSurface))
 	}
 
 	// The flag: an unknown or missing name is a usage error.

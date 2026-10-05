@@ -38,7 +38,8 @@ type mcpEnv struct {
 	client func(ctx context.Context, site *config.SiteConfig) (*client.FrappeClient, error)
 	flags  config.MCPPolicy
 	audit  *auditLog // nil: no audit log
-	// toolsets are the tool sets `ffc mcp --toolsets` exposes; nil is all.
+	// toolsets are the tool sets `ffc mcp --toolsets` exposes; nil means
+	// defaultToolsets (core and lifecycle).
 	toolsets []string
 }
 
@@ -106,6 +107,9 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 		return fail(auditError, err)
 	}
 	if err := policy.checkReport(ctx, c, scope); err != nil {
+		return fail(auditDenied, err)
+	}
+	if err := checkCommentAuthor(ctx, c, policy, req, scope); err != nil {
 		return fail(auditDenied, err)
 	}
 	out, err := call(withProgress(withSite(withPolicy(ctx, policy), site), req), c)

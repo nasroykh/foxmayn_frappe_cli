@@ -34,14 +34,15 @@ func newMCPFake(t *testing.T, readOnly bool) (*server.MCPServer, *frappetest.Sit
 	return s, site
 }
 
-// mcpTRegister registers the tools on s against c, with site's policy and
-// an audit log when audit is set.
+// mcpTRegister registers the tools of every tool set on s against c, with
+// site's policy and an audit log when audit is set.
 func mcpTRegister(s *server.MCPServer, c *client.FrappeClient, site *config.SiteConfig, audit *auditLog) *mcpEnv {
 	env := &mcpEnv{
-		sites:  []string{site.Name},
-		site:   func(context.Context, string) (*config.SiteConfig, error) { return site, nil },
-		client: func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
-		audit:  audit,
+		sites:    []string{site.Name},
+		site:     func(context.Context, string) (*config.SiteConfig, error) { return site, nil },
+		client:   func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
+		audit:    audit,
+		toolsets: knownToolsets,
 	}
 	registerTools(s, env, []mcpPolicy{newMCPPolicy(site, env.flags)})
 	return env
@@ -814,7 +815,8 @@ func mcpTToolNames(t *testing.T, s *server.MCPServer) []string {
 func TestMCPFakeToolSets(t *testing.T) {
 	read := []string{"aggregate", "check_permission", "count_docs", "get_doc", "get_doc_context", "get_schema", "get_transitions", "list_docs", "list_doctypes", "list_reports", "list_sites", "ping", "run_report", "search", "whoami"}
 	write := []string{"amend_doc", "apply_workflow", "bulk_create", "bulk_delete", "bulk_update", "call_method", "cancel_doc",
-		"copy_doc", "create_doc", "delete_doc", "rename_doc", "submit_doc", "update_doc"}
+		"copy_doc", "create_doc", "delete_doc", "rename_doc", "submit_doc", "update_doc",
+		"add_comment", "assign_to", "remove_assignment", "add_tag", "remove_tag", "share_doc", "unshare_doc"}
 	all := append(append([]string(nil), read...), write...)
 	sort.Strings(all)
 
@@ -833,7 +835,7 @@ func TestMCPFakeToolSets(t *testing.T) {
 	}
 
 	s, _ = newMCPFake(t, false)
-	if got := mcpTToolNames(t, s); !reflect.DeepEqual(got, all) || len(got) != 28 {
+	if got := mcpTToolNames(t, s); !reflect.DeepEqual(got, all) || len(got) != 35 {
 		t.Errorf("full tools = %v, want %v", got, all)
 	}
 }
