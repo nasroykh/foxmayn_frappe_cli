@@ -86,6 +86,19 @@ func credentialID(cfg *config.SiteConfig) string {
 	return kind + "-" + hex.EncodeToString(sum[:8])
 }
 
+// dropSiteCache deletes the cache of the site named name, for every
+// credential: the site was removed, renamed, re-added or pointed at another
+// server. A failure is ignored; the URL and credential binding already keep
+// a stale entry from being used.
+func dropSiteCache(name string) {
+	if name == "" {
+		return
+	}
+	if root, err := siteCacheRoot(&config.SiteConfig{Name: name}); err == nil {
+		_ = os.RemoveAll(root)
+	}
+}
+
 // cacheDirName turns a site name into one safe path element.
 func cacheDirName(name string) string {
 	var b strings.Builder

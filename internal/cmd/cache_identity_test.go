@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +85,58 @@ func TestCacheCommandsEnvOnlySite(t *testing.T) {
 	r = cmdTOK(t, runFFC(t, "", "", "cache", "clear"))
 	if !strings.Contains(r.Stdout, "of http://u:xxxxx@") || !strings.Contains(r.Stdout, "Removed 2 ") {
 		t.Errorf("clear: %q", r.Stdout)
+	}
+}
+
+// TestSiteCommandsDropTheCache: site remove, rename, edit and add (over an
+// existing name) delete the site's cache, for every login; other sites keep
+// theirs.
+func TestSiteCommandsDropTheCache(t *testing.T) {
+	cacheTEnv(t)
+	s := complTSite(t)
+	cfgPath := fakeConfig(t, s, "apikey")
+	fill := func(name string) string {
+		t.Helper()
+		for _, cfg := range []*config.SiteConfig{
+			{Name: name, URL: s.URL, APIKey: "k1", APISecret: "s"},
+			{Name: name, URL: s.URL, Username: "u", Password: "p"},
+		} {
+			if err := writeListCache(cfg, "DocType", []map[string]interface{}{{"name": "ToDo"}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		root, _ := siteCacheRoot(&config.SiteConfig{Name: name})
+		return root
+	}
+	gone := func(what, root string) {
+		t.Helper()
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Errorf("%s left %s (%v)", what, root, err)
+		}
+	}
+
+	otherRoot := fill("other")
+	root := fill("t")
+	cmdTOK(t, runFFC(t, cfgPath, "", "site", "edit", "t", "--url", s.URL+"/"))
+	gone("site edit", root)
+
+	root, stale := fill("t"), fill("renamed")
+	cmdTOK(t, runFFC(t, cfgPath, "", "site", "rename", "t", "renamed"))
+	gone("site rename (old name)", root)
+	gone("site rename (an earlier site's cache under the new name)", stale)
+
+	root = fill("renamed")
+	cmdTOK(t, runFFC(t, cfgPath, "", "site", "remove", "renamed", "--yes"))
+	gone("site remove", root)
+
+	root = fill("again")
+	if err := addSiteToConfig(cfgPath, "again", config.SiteConfig{URL: s.URL, APIKey: "k2", APISecret: "s2"}); err != nil {
+		t.Fatal(err)
+	}
+	gone("site add", root)
+
+	if _, err := os.Stat(otherRoot); err != nil {
+		t.Errorf("another site's cache was removed: %v", err)
 	}
 }
 
