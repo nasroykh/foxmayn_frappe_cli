@@ -67,6 +67,28 @@ func newMCPEnv() (*mcpEnv, func(), error) {
 	return env, closeFn, nil
 }
 
+// cleanMCPFlags trims the policy flag values and refuses one given with no
+// value: "--allow-doctypes=" reads as "none" but would mean "no limit".
+func cleanMCPFlags(cmd *cobra.Command) error {
+	for name, list := range map[string]*[]string{
+		"allow-tools": &mcpFlags.AllowTools, "allow-doctypes": &mcpFlags.AllowDoctypes,
+		"deny-doctypes": &mcpFlags.DenyDoctypes, "allow-methods": &mcpFlags.AllowMethods,
+		"deny-methods": &mcpFlags.DenyMethods,
+	} {
+		var out []string
+		for _, v := range *list {
+			if v = strings.TrimSpace(v); v != "" {
+				out = append(out, v)
+			}
+		}
+		if cmd.Flags().Changed(name) && len(out) == 0 {
+			return usageErrorf("--%s needs at least one value", name)
+		}
+		*list = out
+	}
+	return nil
+}
+
 // startMCP builds the environment and the server with the tools the site's
 // policy allows. It checks the credentials once up front, so a
 // misconfiguration fails at start rather than on the first tool call.
@@ -124,6 +146,9 @@ All tools use the same authentication and site config as other ffc commands.
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {
+	if err := cleanMCPFlags(cmd); err != nil {
+		return err
+	}
 	if mcpDetach {
 		port := mcpPort
 		if port == 0 {

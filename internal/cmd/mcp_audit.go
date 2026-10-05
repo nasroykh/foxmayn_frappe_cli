@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 )
 
@@ -72,12 +71,17 @@ func (l *auditLog) write(rec auditRecord, args map[string]interface{}) {
 		return
 	}
 	rec.Args = auditArgs(args)
-	rec.Error = hideSecretValues(rec.Error, args)
-	if r := []rune(rec.Error); len(r) > auditMaxError {
-		rec.Error = string(r[:auditMaxError]) + "…"
-	}
+	// Every string a caller controls is sanitised and cut, so the log can be
+	// read with cat without spoofed lines (bidi, C1 controls) or huge lines.
+	rec.Error = clip(hideSecretValues(rec.Error, args), auditMaxError)
+	rec.Client, rec.Method = clip(rec.Client, 100), clip(rec.Method, 200)
 	if len(rec.Names) > auditMaxNames {
 		rec.NamesTotal, rec.Names = len(rec.Names), rec.Names[:auditMaxNames]
+	}
+	for _, list := range [][]string{rec.Names, rec.Doctypes} {
+		for i := range list {
+			list[i] = clip(list[i], 140)
+		}
 	}
 	line, err := json.Marshal(rec)
 	if err == nil && len(line) > auditLineBytes {
@@ -95,10 +99,13 @@ func (l *auditLog) write(rec auditRecord, args map[string]interface{}) {
 func (l *auditLog) append(line []byte) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if fi, err := os.Stat(l.path); err == nil && fi.Size()+int64(len(line)) > auditMaxBytes {
-		if err := l.rotate(); err != nil {
-			return err
-		}
+	fi, err := os.Lstat(l.path)
+	switch {
+	case err == nil && !fi.Mode().IsRegular():
+		// A symlink or device planted at the path would redirect the log.
+		return fmt.Errorf("%s is not a regular file", l.path)
+	case err == nil && fi.Size()+int64(len(line)) > auditMaxBytes:
+		l.rotate()
 	}
 	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
 		return err
@@ -109,6 +116,7 @@ func (l *auditLog) append(line []byte) error {
 	if err != nil {
 		return err
 	}
+	_ = f.Chmod(0o600) // a file created by hand may be wider
 	_, werr := f.Write(line)
 	if err := f.Close(); werr == nil {
 		werr = err
@@ -116,18 +124,33 @@ func (l *auditLog) append(line []byte) error {
 	return werr
 }
 
-// rotate moves a full log to .1 under the config lock, so two servers do
-// not both rotate (the second would move the fresh file over the history).
-func (l *auditLog) rotate() error {
-	unlock, err := config.Lock(l.path)
+// rotate moves a full log to .1. Only the server that creates the rotation
+// marker rotates (two rotations would move the fresh file over the
+// history); the others keep appending rather than wait, and a marker left
+// by a crashed server expires after a minute.
+func (l *auditLog) rotate() {
+	marker := l.path + ".rotating"
+	if fi, err := os.Stat(marker); err == nil && time.Since(fi.ModTime()) > time.Minute {
+		_ = os.Remove(marker)
+	}
+	f, err := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		return err
+		return
 	}
-	defer unlock()
-	if fi, err := os.Stat(l.path); err != nil || fi.Size() <= auditMaxBytes/2 {
-		return nil // another server rotated it while we waited
+	f.Close()
+	defer os.Remove(marker)
+	if fi, err := os.Stat(l.path); err == nil && fi.Size() > auditMaxBytes/2 {
+		_ = os.Rename(l.path, l.path+".1")
 	}
-	return os.Rename(l.path, l.path+".1")
+}
+
+// clip sanitises s and cuts it to max runes.
+func clip(s string, max int) string {
+	s = text.Sanitize(s)
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
 }
 
 // auditArgs is the logged form of a tool's arguments: secrets redacted,
@@ -144,11 +167,42 @@ func auditArgs(args map[string]interface{}) interface{} {
 		}
 	}
 	if v, ok := red["filters"]; ok {
+		v = redactFilters(v)
+		red["filters"] = v
 		if b, _ := json.Marshal(v); len(b) > auditMaxValue {
 			red["filters"] = string(b[:auditMaxValue]) + "…"
 		}
 	}
 	return red
+}
+
+// redactFilters hides the value of a filter on a secret field. In the list
+// form ([["api_key","=","x"]] or [["User","api_key","=","x"]]) the field
+// name is a value, which key-based redaction cannot see.
+func redactFilters(v interface{}) interface{} {
+	if s, ok := v.(string); ok {
+		var inner interface{}
+		if json.Unmarshal([]byte(s), &inner) != nil {
+			return v
+		}
+		v = inner
+	}
+	list, ok := v.([]interface{})
+	if !ok {
+		return v
+	}
+	for _, f := range list {
+		cond, ok := f.([]interface{})
+		if !ok || len(cond) < 3 {
+			continue
+		}
+		for _, field := range cond[:len(cond)-2] {
+			if s, ok := field.(string); ok && client.SecretKey(s) {
+				cond[len(cond)-1] = "***"
+			}
+		}
+	}
+	return list
 }
 
 // shape describes a document or argument object without its values.
@@ -206,5 +260,5 @@ func hideSecretValues(msg string, args map[string]interface{}) string {
 		}
 	}
 	walk(map[string]interface{}(args))
-	return text.Sanitize(msg)
+	return msg
 }

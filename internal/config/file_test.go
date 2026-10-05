@@ -359,3 +359,22 @@ sites:
 		}
 	})
 }
+
+func TestMCPPolicyRefusesAmbiguousForms(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty allow list": "      allow_doctypes: []\n",
+		"null allow list":  "      allow_tools:\n",
+		"misspelt mcp key": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			site := "    mcp:\n" + body
+			if body == "" {
+				site = "    MCP:\n      read_only: true\n"
+			}
+			p := writeTemp(t, "default_site: dev\nsites:\n  dev:\n    url: https://a.example\n"+site)
+			if _, err := Load("", p); err == nil {
+				t.Fatal("loaded")
+			}
+		})
+	}
+}

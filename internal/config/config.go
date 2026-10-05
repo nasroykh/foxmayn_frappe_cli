@@ -64,17 +64,36 @@ var mcpPolicyKeys = map[string]bool{
 	"allow_methods": true, "deny_methods": true,
 }
 
-// UnmarshalYAML decodes a policy, refusing unknown keys.
+// UnmarshalYAML decodes a policy, refusing unknown keys and empty allow
+// lists: "allow_doctypes: []" reads as "none" but would mean "no limit".
 func (p *MCPPolicy) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.MappingNode {
 		for i := 0; i+1 < len(node.Content); i += 2 {
-			if k := node.Content[i].Value; !mcpPolicyKeys[k] {
-				return fmt.Errorf("line %d: unknown mcp policy key %q", node.Content[i].Line, k)
+			k, v := node.Content[i], node.Content[i+1]
+			if !mcpPolicyKeys[k.Value] {
+				return fmt.Errorf("line %d: unknown mcp policy key %q", k.Line, k.Value)
+			}
+			if strings.HasPrefix(k.Value, "allow_") && ((v.Kind == yaml.SequenceNode && len(v.Content) == 0) || v.Tag == "!!null") {
+				return fmt.Errorf("line %d: mcp.%s is empty; list at least one entry, or remove the key for no limit", k.Line, k.Value)
 			}
 		}
 	}
 	type plain MCPPolicy
 	return node.Decode((*plain)(p))
+}
+
+// UnmarshalYAML decodes a site entry. A key that only differs from "mcp" in
+// case is an error, because the policy it holds would silently not apply.
+func (s *SiteConfig) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if k := node.Content[i]; k.Value != "mcp" && strings.EqualFold(k.Value, "mcp") {
+				return fmt.Errorf("line %d: the MCP policy key is %q, not %q", k.Line, "mcp", k.Value)
+			}
+		}
+	}
+	type plain SiteConfig
+	return node.Decode((*plain)(s))
 }
 
 // IsOAuth reports whether this site uses OAuth Bearer tokens for authentication.

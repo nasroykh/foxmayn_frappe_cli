@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 )
 
 // toolAction is what a tool does, as far as the MCP policy is concerned.
@@ -39,10 +41,21 @@ var toolActions = map[string]toolAction{
 // code. MCP may read them, but writes are refused unless the site's config
 // lists the DocType in mcp.allow_doctypes (D4).
 var sensitiveDoctypes = []string{
-	"User", "Role", "Has Role", "Role Profile", "Module Profile",
-	"DocType", "DocPerm", "Custom DocPerm", "User Permission",
-	"System Settings", "OAuth Client", "Social Login Key", "LDAP Settings", "Email Account",
-	"Server Script", "Client Script", "Report", "Webhook", "Notification", "Scheduled Job Type",
+	// Users, roles and permissions.
+	"User", "Role", "Has Role", "Role Profile", "Module Profile", "User Type", "User Group",
+	"DocType", "DocPerm", "Custom DocPerm", "User Permission", "DocShare",
+	"Custom Field", "Property Setter", "Customize Form",
+	// Settings and credentials.
+	"System Settings", "OAuth Client", "OAuth Provider Settings", "OAuth Bearer Token",
+	"OAuth Authorization Code", "Connected App", "Token Cache", "Social Login Key",
+	"LDAP Settings", "Email Account",
+	// Code, templates and automation that run or render on the server or
+	// in browsers.
+	"Server Script", "Client Script", "Report", "Print Format", "Website Script",
+	"Web Page", "Web Form", "Custom HTML Block", "Webhook", "Notification",
+	"Auto Email Report", "Assignment Rule", "Energy Point Rule", "Scheduled Job Type",
+	// Bulk paths into any DocType, and file visibility.
+	"Data Import", "File",
 }
 
 // deniedMethods run code on the server, change installed apps or rotate a
@@ -77,7 +90,7 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 	if dt := str("doctype"); dt != "" {
 		sc.Doctypes = append(sc.Doctypes, dt)
 	}
-	if n := str("name"); n != "" {
+	if n, ok := docName(args["name"]); ok {
 		sc.Names = append(sc.Names, n)
 	}
 	switch tool {
@@ -87,7 +100,7 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 		var rows []map[string]interface{}
 		if _, err := jsonArg(req, "data", &rows); err == nil {
 			for _, r := range rows {
-				if n, ok := r["name"].(string); ok {
+				if n, ok := docName(r["name"]); ok {
 					sc.Names = append(sc.Names, n)
 				}
 			}
@@ -96,38 +109,76 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 		sc.Report = str("report_name")
 	case "call_method":
 		sc.Method = str("method")
-		var a interface{}
-		if ok, err := jsonArg(req, "args", &a); ok && err == nil {
-			sc.Doctypes = append(sc.Doctypes, methodDoctypes(a)...)
+		sc.Doctypes = append(sc.Doctypes, methodDoctypes(args["args"])...)
+	}
+	for i, dt := range sc.Doctypes {
+		if text.Sanitize(dt) != dt {
+			return sc, fmt.Errorf("policy: DocType name %q contains control or invisible characters", dt)
 		}
+		sc.Doctypes[i] = strings.TrimSpace(dt)
 	}
 	return sc, nil
 }
 
-// methodDoctypes finds the DocTypes a frappe.client-style call names: a
-// "doctype" argument, a "doc" or "docs" with a doctype. It is best effort:
-// a custom method can touch any DocType without naming it.
+// doctypeKeys are the argument names Frappe methods use for a DocType.
+var doctypeKeys = map[string]bool{
+	"doctype": true, "dt": true, "ref_doctype": true, "reference_doctype": true,
+	"parenttype": true, "document_type": true,
+}
+
+// methodDoctypes finds every DocType a method's arguments name, at any
+// depth, including inside JSON passed as a string (frappe.client.insert
+// and savedocs take the document as a JSON string). It is best effort: a
+// custom method can touch any DocType without naming it.
 func methodDoctypes(args interface{}) []string {
-	m, ok := args.(map[string]interface{})
-	if !ok {
-		return nil
-	}
 	var out []string
-	add := func(v interface{}) {
-		if d, ok := v.(map[string]interface{}); ok {
-			if dt, ok := d["doctype"].(string); ok && dt != "" {
-				out = append(out, dt)
+	var walk func(v interface{}, depth int)
+	walk = func(v interface{}, depth int) {
+		if depth > 32 {
+			return
+		}
+		switch val := v.(type) {
+		case map[string]interface{}:
+			for k, x := range val {
+				if s, ok := x.(string); ok && doctypeKeys[k] && s != "" {
+					out = append(out, s)
+				}
+				walk(x, depth+1)
+			}
+		case []interface{}:
+			for _, x := range val {
+				walk(x, depth+1)
+			}
+		case string:
+			if t := strings.TrimSpace(val); strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+				var inner interface{}
+				if json.Unmarshal([]byte(t), &inner) == nil {
+					walk(inner, depth+1)
+				}
 			}
 		}
 	}
-	add(m)
-	add(m["doc"])
-	if docs, ok := m["docs"].([]interface{}); ok {
-		for _, d := range docs {
-			add(d)
-		}
-	}
+	walk(args, 0)
 	return out
+}
+
+// docMethods change or read documents of the DocType their arguments name.
+// A call to one whose DocType ffc cannot find is refused: it might write a
+// sensitive or denied DocType.
+var docMethods = []string{
+	"frappe.client.*", "frappe.desk.form.save.*", "frappe.handler.run_doc_method",
+	"frappe.model.workflow.*", "frappe.desk.form.utils.*", "frappe.desk.reportview.*",
+}
+
+// canonicalMethod is the method Frappe runs for name: it trims spaces and
+// slashes and, like frappe.handler, resolves an undotted name in
+// frappe.handler (run_doc_method is frappe.handler.run_doc_method).
+func canonicalMethod(name string) string {
+	m := strings.Trim(strings.TrimSpace(name), "/")
+	if !strings.Contains(m, ".") {
+		m = "frappe.handler." + m
+	}
+	return m
 }
 
 // mcpPolicy is the policy for one site: the site's config, which may
@@ -166,7 +217,11 @@ func (p mcpPolicy) toolAllowed(tool string) error {
 	if len(p.flag.AllowTools) > 0 && !contains(p.flag.AllowTools, tool, false) {
 		return fmt.Errorf("policy: tool %q is not in %s", tool, p.flagKey("allow_tools"))
 	}
-	if p.readOnly() && toolActions[tool] != actRead {
+	action, known := toolActions[tool]
+	if !known {
+		return fmt.Errorf("policy: tool %q has no policy scope", tool)
+	}
+	if p.readOnly() && action != actRead {
 		return fmt.Errorf("policy: %s writes and MCP is read-only for this site (%s or --read-only)", tool, p.key("read_only"))
 	}
 	return nil
@@ -183,7 +238,11 @@ func (p mcpPolicy) check(tool string, sc toolScope) error {
 		}
 	}
 	if sc.Action == actMethod {
-		return p.methodAllowed(sc.Method)
+		m := canonicalMethod(sc.Method)
+		if matchMethod(docMethods, m) && len(sc.Doctypes) == 0 {
+			return fmt.Errorf("policy: %s works on documents but its arguments name no DocType, so the DocType rules cannot be checked; pass doctype", sc.Method)
+		}
+		return p.methodAllowed(m)
 	}
 	return nil
 }
@@ -216,9 +275,13 @@ func (p mcpPolicy) methodAllowed(method string) error {
 		return fmt.Errorf("policy: method %q is not in %s", method, p.key("allow_methods"))
 	case len(p.flag.AllowMethods) > 0 && !matchMethod(p.flag.AllowMethods, method):
 		return fmt.Errorf("policy: method %q is not in %s", method, p.flagKey("allow_methods"))
-	case len(p.cfg.AllowMethods) == 0 && len(p.flag.AllowMethods) == 0 &&
-		(len(p.cfg.AllowDoctypes) > 0 || len(p.flag.AllowDoctypes) > 0):
+	// A method can reach any DocType, so allow_doctypes needs a method
+	// allowlist from the same source or a stricter one: a flag list must not
+	// stand in for the config's.
+	case len(p.cfg.AllowDoctypes) > 0 && len(p.cfg.AllowMethods) == 0:
 		return fmt.Errorf("policy: call_method could reach any DocType, so with allow_doctypes set it may call only the methods in %s", p.key("allow_methods"))
+	case len(p.flag.AllowDoctypes) > 0 && len(p.cfg.AllowMethods) == 0 && len(p.flag.AllowMethods) == 0:
+		return fmt.Errorf("policy: call_method could reach any DocType, so with --allow-doctypes it may call only the methods in --allow-methods or %s", p.key("allow_methods"))
 	}
 	return nil
 }
@@ -254,7 +317,7 @@ func contains(list []string, s string, fold bool) bool {
 // matches by prefix.
 func matchMethod(list []string, method string) bool {
 	for _, x := range list {
-		if p, ok := strings.CutSuffix(x, "*"); ok && strings.HasPrefix(method, p) || x == method {
+		if p, ok := strings.CutSuffix(x, "*"); (ok && strings.HasPrefix(method, p)) || x == method {
 			return true
 		}
 	}

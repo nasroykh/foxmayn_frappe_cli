@@ -116,6 +116,25 @@ func TestMCPPolicyRules(t *testing.T) {
 			method("frappe.client.get_count", map[string]interface{}{"doctype": "ToDo"}), "with allow_doctypes set it may call only the methods in sites.prod.mcp.allow_methods"},
 		{"allow_methods", &config.MCPPolicy{AllowDoctypes: []string{"ToDo"}, AllowMethods: []string{"frappe.client.get_count"}}, config.MCPPolicy{},
 			"call_method", method("frappe.client.get_count", map[string]interface{}{"doctype": "ToDo"}), ""},
+		// Review findings: a document as a JSON string, method aliases, flags.
+		{"a doc passed as a JSON string", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.client.insert", map[string]interface{}{"doc": `{"doctype":"Server Script","script":"x"}`}), `DocType "Server Script" is sensitive`},
+		{"args passed as a JSON string", nil, config.MCPPolicy{}, "call_method",
+			map[string]interface{}{"method": "frappe.client.insert", "args": `{"doc":"{\"doctype\":\"User\"}"}`}, `DocType "User" is sensitive`},
+		{"a document method naming no DocType", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.client.insert", map[string]interface{}{"doc": "not json"}), "name no DocType"},
+		{"run_doc_method resolves to frappe.handler", &config.MCPPolicy{DenyDoctypes: []string{"Note"}}, config.MCPPolicy{}, "call_method",
+			method("run_doc_method", map[string]interface{}{"dt": "Note", "dn": "x", "method": "y"}), `DocType "Note" is denied`},
+		{"a flag allowlist cannot stand in for the config's", &config.MCPPolicy{AllowDoctypes: []string{"ToDo"}}, config.MCPPolicy{AllowMethods: []string{"*"}},
+			"call_method", method("frappe.client.get_count", map[string]interface{}{"doctype": "ToDo"}), "sites.prod.mcp.allow_methods"},
+		{"--allow-doctypes needs a method allowlist", nil, config.MCPPolicy{AllowDoctypes: []string{"ToDo"}},
+			"call_method", method("frappe.client.get_count", map[string]interface{}{"doctype": "ToDo"}), "--allow-methods"},
+		{"--allow-doctypes with --allow-methods", nil, config.MCPPolicy{AllowDoctypes: []string{"ToDo"}, AllowMethods: []string{"frappe.client.get_count"}},
+			"call_method", method("frappe.client.get_count", map[string]interface{}{"doctype": "ToDo"}), ""},
+		{"DocType names are trimmed", &config.MCPPolicy{DenyDoctypes: []string{"ToDo"}}, config.MCPPolicy{}, "get_doc",
+			map[string]interface{}{"doctype": "ToDo ", "name": "TD-1"}, `DocType "ToDo" is denied`},
+		{"invisible characters in a DocType", nil, config.MCPPolicy{}, "get_doc",
+			map[string]interface{}{"doctype": "Us\u200ber", "name": "x"}, "invisible characters"},
 		{"deny_methods", &config.MCPPolicy{DenyMethods: []string{"frappe.client.*"}}, config.MCPPolicy{}, "call_method",
 			method("frappe.client.get_count", map[string]interface{}{"doctype": "ToDo"}), "denied by sites.prod.mcp.deny_methods"},
 	}
@@ -189,12 +208,14 @@ func TestMCPAudit(t *testing.T) {
 	callTool(t, s, "call_method", map[string]interface{}{"method": "ffc.test.echo", "args": map[string]interface{}{"api_secret": "s3cret-value", "token": "tok-value"}})
 	callTool(t, s, "bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": names})
 	callTool(t, s, "list_docs", map[string]interface{}{"doctype": "ToDo", "filters": map[string]interface{}{"password": "pw-in-filter"}})
+	callTool(t, s, "list_docs", map[string]interface{}{"doctype": "ToDo", "filters": []interface{}{[]interface{}{"api_key", "=", "key-in-list-filter"}}})
+	callTool(t, s, "get_doc", map[string]interface{}{"doctype": "ToDo", "name": 42})
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"hunter2-pw", "s3cret-value", "tok-value", "pw-in-filter", "secret plan", frappetest.APISecret} {
+	for _, secret := range []string{"hunter2-pw", "s3cret-value", "tok-value", "pw-in-filter", "key-in-list-filter", "secret plan", frappetest.APISecret} {
 		if strings.Contains(string(raw), secret) {
 			t.Errorf("audit log contains %q:\n%s", secret, raw)
 		}
@@ -214,6 +235,7 @@ func TestMCPAudit(t *testing.T) {
 	want := []struct{ tool, status string }{
 		{"create_doc", auditOK}, {"update_doc", auditDenied}, {"get_doc", auditInvalid},
 		{"call_method", auditError}, {"bulk_delete", auditOK}, {"list_docs", auditError}, // the fake refuses the field
+		{"list_docs", auditError}, {"get_doc", auditError},
 	}
 	if len(recs) != len(want) {
 		t.Fatalf("%d lines:\n%s", len(recs), raw)
@@ -235,6 +257,33 @@ func TestMCPAudit(t *testing.T) {
 	}
 	if b := recs[4]; len(b.Names) != auditMaxNames || b.NamesTotal != 25 {
 		t.Errorf("bulk_delete names = %d of %d", len(b.Names), b.NamesTotal)
+	}
+	if n := recs[7].Names; len(n) != 1 || n[0] != "42" {
+		t.Errorf("numeric name = %v", n)
+	}
+}
+
+func TestMCPAuditRefusesSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "elsewhere")
+	path := filepath.Join(dir, auditFileName)
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	(&auditLog{path: path}).write(auditRecord{Tool: "ping", Status: auditOK}, nil)
+	if _, err := os.Stat(target); err == nil {
+		t.Error("the audit log followed a symlink")
+	}
+}
+
+func TestMCPFlagsNeedValues(t *testing.T) {
+	s := cmdTSite(t)
+	r := runFFC(t, fakeConfig(t, s, "apikey"), "", "mcp", "--allow-doctypes=")
+	if r.Code != exitUsage || !strings.Contains(r.Stderr, "--allow-doctypes needs at least one value") {
+		t.Errorf("exit %d: %s", r.Code, r.Stderr)
 	}
 }
 

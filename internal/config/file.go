@@ -364,11 +364,6 @@ const (
 	lockStale = 3 * MaxLockHold
 )
 
-// Lock takes the same exclusive, cross-process lock on path that Edit takes
-// on the config file, for other files under the config directory (the MCP
-// audit log). The returned func releases it.
-func Lock(path string) (func(), error) { return lockFile(path) }
-
 // lockFile takes an exclusive, cross-process lock on path by creating
 // path+".lock" with O_EXCL. A lock older than lockStale is assumed to belong
 // to a crashed process and is broken. The returned func releases the lock.
