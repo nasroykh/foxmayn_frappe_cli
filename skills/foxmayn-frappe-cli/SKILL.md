@@ -221,12 +221,14 @@ ffc count-docs -d "Sales Invoice" --filters '{"status":"Unpaid"}' --json
 
 ### Bulk Operations
 
-`bulk-create`, `bulk-update`, `bulk-delete` take a JSON array inline (`--data` / `--names`) or from a file (`--file`, `-` reads stdin). The whole input is validated before anything is sent. Each item is reported as created/updated/deleted, `error`, `interrupted` (cut off by Ctrl+C — the server may or may not have applied it, check before re-running) or `skipped` (not started because of `--fail-fast` or an abort). The command exits non-zero unless every item succeeded.
+`bulk-create`, `bulk-update`, `bulk-delete` take a JSON array inline (`--data` / `--names`) or from a file (`--file`, `-` reads stdin). The whole input is validated before anything is sent. Each item is reported as created/updated/deleted, `error`, `interrupted` (cut off by Ctrl+C — the server may or may not have applied it, check before re-running) or `skipped` (not started because of `--fail-fast` or an abort). The command exits non-zero unless every item succeeded. `bulk-delete --filters` and `bulk-update --filters ... --set ...` list the matching names first (one list call), show up to 10 of them and ask for confirmation (`--yes` without a terminal); run them with `--dry-run` first. Empty filters (`{}`, `[]`) are refused because they match every document; an empty `@file` or `@-` is an error for every JSON flag.
 
 ```bash
 ffc bulk-create -d "ToDo" --data '[{"description":"a"},{"description":"b"}]' --json
 ffc bulk-update -d "ToDo" --file updates.json --concurrency 4 --json   # each item needs a "name"
 ffc bulk-delete -d "ToDo" --names "TD-001,TD-002" --yes --json
+ffc bulk-delete -d "ToDo" --filters '{"status":"Cancelled"}' --dry-run       # preview what matches
+ffc bulk-update -d "ToDo" --filters '{"status":"Open"}' --set '{"status":"Closed"}' --yes
 ffc bulk-delete -d "Note" --file names.json --yes --json               # use --file for names containing commas
 ```
 

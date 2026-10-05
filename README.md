@@ -346,6 +346,9 @@ Input is a JSON array, inline with `--data` / `--names` or from a file with `--f
 ffc bulk-create -d "ToDo" --data '[{"description":"a"},{"description":"b"}]'
 ffc bulk-update -d "ToDo" --file updates.json --concurrency 4   # each item needs a "name"
 ffc bulk-delete -d "ToDo" --names "TD-001,TD-002" --yes
+# Select by filters: the matching names are listed, shown, and asked about (--yes in scripts)
+ffc bulk-delete -d "ToDo" --filters '{"status":"Cancelled"}' --dry-run
+ffc bulk-update -d "ToDo" --filters '{"status":"Open"}' --set '{"status":"Closed"}' --yes
 ffc bulk-delete -d "Note" --file names.json --fail-fast          # use --file for names containing commas
 ```
 
