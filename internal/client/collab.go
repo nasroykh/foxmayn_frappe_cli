@@ -38,6 +38,20 @@ func (c *FrappeClient) docMethod(ctx context.Context, method, doctype, name, acc
 	return result["message"], nil
 }
 
+// docRead is docMethod for a method that only reads: it is sent as a GET,
+// so a dry run still runs it and holds back only the write that follows.
+func (c *FrappeClient) docRead(ctx context.Context, method, doctype, name string, args map[string]interface{}) (interface{}, error) {
+	qp, err := QueryArgs(args)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]interface{}
+	if err := c.do(ctx, http.MethodGet, "/api/method/"+url.PathEscape(method), nil, qp, docHints(doctype, name, "read"), &result); err != nil {
+		return nil, err
+	}
+	return result["message"], nil
+}
+
 // AddComment adds a comment to a document's timeline. Frappe requires read
 // permission on the document and sanitises content as HTML (nh3): scripts,
 // forms and unknown attributes are removed, a bare "<" becomes "&lt;".
@@ -199,7 +213,7 @@ func (c *FrappeClient) Share(ctx context.Context, doctype, name string, o ShareO
 // Shares lists a document's DocShare rows (frappe.share.get_users). Frappe
 // returns none to a user who cannot read the document.
 func (c *FrappeClient) Shares(ctx context.Context, doctype, name string) ([]map[string]interface{}, error) {
-	res, err := c.docMethod(ctx, shareGetUsersMethod, doctype, name, "read", map[string]interface{}{"doctype": doctype, "name": name})
+	res, err := c.docRead(ctx, shareGetUsersMethod, doctype, name, map[string]interface{}{"doctype": doctype, "name": name})
 	if err != nil {
 		return nil, err
 	}

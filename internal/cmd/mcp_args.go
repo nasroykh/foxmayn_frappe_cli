@@ -38,7 +38,8 @@ type mcpEnv struct {
 	client func(ctx context.Context, site *config.SiteConfig) (*client.FrappeClient, error)
 	flags  config.MCPPolicy
 	audit  *auditLog // nil: no audit log
-	// toolsets are the tool sets `ffc mcp --toolsets` exposes; nil is all.
+	// toolsets are the tool sets `ffc mcp --toolsets` exposes; nil means
+	// defaultToolsets (core and lifecycle).
 	toolsets []string
 }
 

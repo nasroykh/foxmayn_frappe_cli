@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -214,6 +215,34 @@ func TestCollabDryRun(t *testing.T) {
 	}
 	// The reads still run: a missing document fails the dry run.
 	lcTCode(t, cmdTRun(t, s, "assign", "-d", "Note", "-n", "nope", "--to", "jane@example.com", "--dry-run"), exitNotFound)
+
+	// The removals read the current state (get_users is a GET) and hold
+	// back only the write.
+	cmdTOK(t, cmdTRun(t, s, "assign", "-d", "Note", "-n", "N1", "--to", "jane@example.com"))
+	cmdTOK(t, cmdTRun(t, s, "tag", "-d", "Note", "-n", "N1", "vip"))
+	cmdTOK(t, cmdTRun(t, s, "share", "-d", "Note", "-n", "N1", "--user", "jane@example.com", "--yes"))
+	for _, c := range []struct {
+		args   []string
+		method string
+	}{
+		{[]string{"unassign", "-d", "Note", "-n", "N1", "--to", "jane@example.com"}, "frappe.desk.form.assign_to.remove"},
+		{[]string{"untag", "-d", "Note", "-n", "N1", "vip"}, "frappe.desk.doctype.tag.tag.remove_tag"},
+		{[]string{"unshare", "-d", "Note", "-n", "N1", "--user", "jane@example.com"}, "frappe.share.set_permission"},
+	} {
+		reqs := dryTPlan(t, cmdTRun(t, s, append(c.args, "--dry-run", "--json")...))
+		if len(reqs) != 1 || reqs[0]["method"] != "POST" || !strings.HasSuffix(fmt.Sprint(reqs[0]["url"]), "/api/method/"+c.method) {
+			t.Errorf("%s: plan %v", c.args[0], reqs)
+		}
+	}
+	if s.Count("DocShare") != 1 || s.Count("ToDo") != 1 {
+		t.Errorf("a dry run removed something: %d DocShare, %d ToDo", s.Count("DocShare"), s.Count("ToDo"))
+	}
+	if tags, _ := s.Doc("Note", "N1"); tags["_user_tags"] != "vip" {
+		t.Errorf("a dry run untagged: %v", tags["_user_tags"])
+	}
+	if n := len(s.RequestsTo("GET", "/api/method/frappe.share.get_users")); n != 1 {
+		t.Errorf("get_users sent as GET %d times, want 1", n)
+	}
 }
 
 func TestMCPCollabTools(t *testing.T) {
