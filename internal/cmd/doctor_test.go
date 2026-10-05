@@ -447,6 +447,7 @@ func TestDoctorServer(t *testing.T) {
 		cfg := cfgFor(s)
 		site := &config.SiteConfig{Name: "t", URL: s.URL}
 		path, _ := serverCachePath(site)
+		_ = os.Remove(path) // the cache directory is shared: another test (or -count) may have filled it
 		doctorTRun(t, cfg)
 		doctorTRun(t, cfg)
 		if versionCalls(s) != 2 {

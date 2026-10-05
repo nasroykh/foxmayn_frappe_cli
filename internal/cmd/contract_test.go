@@ -91,6 +91,7 @@ func TestContract(t *testing.T) {
 	t.Run("cache and completion", func(t *testing.T) { contractCache(t, sc) })
 	t.Run("api passthrough", func(t *testing.T) { contractAPI(t, c, sc) })
 	t.Run("search and global search", func(t *testing.T) { contractSearch(t, c, sc) })
+	t.Run("aggregates by version", func(t *testing.T) { contractAggregate(t, c, sc) })
 	t.Run("errors match the fake", func(t *testing.T) { contractErrors(t, c, sc.URL) })
 	t.Run("password session", func(t *testing.T) { contractSession(t, sc) })
 	t.Run("identity and permissions", func(t *testing.T) { contractIdentity(t, c, sc) })

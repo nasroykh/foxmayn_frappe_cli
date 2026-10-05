@@ -172,6 +172,9 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 	if has("count_docs") {
 		line("count_docs answers how many without fetching rows.")
 	}
+	if has("aggregate") {
+		line("aggregate computes counts, sums, averages, min and max per group on the server: use it for totals instead of fetching rows with list_docs.")
+	}
 	if w := which("create_doc", "update_doc", "bulk_create", "bulk_update"); w != "" && has("get_schema") {
 		line("Call get_schema before %s: it gives fieldnames, required fields, Link targets (options), Select options and child tables (a list of row objects).", w)
 	}

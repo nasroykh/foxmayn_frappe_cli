@@ -29,6 +29,7 @@ var toolActions = map[string]toolAction{
 	"get_schema": actRead, "list_doctypes": actRead, "list_reports": actRead,
 	"run_report": actRead, "get_transitions": actRead, "search": actRead,
 	"whoami": actRead, "check_permission": actRead, "get_doc_context": actRead,
+	"aggregate": actRead,
 
 	"create_doc": actWrite, "update_doc": actWrite, "delete_doc": actWrite,
 	"bulk_create": actWrite, "bulk_update": actWrite, "bulk_delete": actWrite,
@@ -72,6 +73,7 @@ var toolSurface = map[string]struct {
 	"call_method":      {toolsetCore, "Call server method", true},
 	"whoami":           {toolsetCore, "Show signed-in user", false},
 	"check_permission": {toolsetCore, "Check permission", false},
+	"aggregate":        {toolsetCore, "Aggregate documents", true},
 
 	"submit_doc":      {toolsetLifecycle, "Submit document", false},
 	"cancel_doc":      {toolsetLifecycle, "Cancel document", false},
@@ -120,6 +122,8 @@ type toolScope struct {
 	Method   string
 	Report   string // run_report: checked through the report's ref_doctype
 	Confirm  bool   // destroys or merges documents: ask the user first
+	// Field references of filters, fields and order_by (queryScope).
+	FilterFields, SelectFields []string
 }
 
 // scopeOf reads what a tool call touches from its arguments. The tool's own
@@ -161,6 +165,9 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 		sc.Method = str("method")
 		sc.Doctypes = append(sc.Doctypes, methodDoctypes(args["args"])...)
 	}
+	q := queryScope(req)
+	sc.Doctypes = append(sc.Doctypes, q.doctypes...)
+	sc.FilterFields, sc.SelectFields = q.filterFields, q.selectFields
 	for i, dt := range sc.Doctypes {
 		if text.Sanitize(dt) != dt {
 			return sc, fmt.Errorf("policy: DocType name %q contains control or invisible characters", dt)
@@ -304,6 +311,9 @@ func (p mcpPolicy) check(tool string, sc toolScope) error {
 		if err := p.doctypeAllowed(dt, sc.Action != actRead); err != nil {
 			return err
 		}
+	}
+	if err := p.checkQueryFields(sc); err != nil {
+		return err
 	}
 	if sc.Action == actMethod {
 		if err := checkMethodName(sc.Method); err != nil {
