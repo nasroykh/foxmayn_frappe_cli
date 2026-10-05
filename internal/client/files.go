@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
@@ -279,7 +280,26 @@ func (c *FrappeClient) URL() string { return c.baseURL }
 // size can be streamed to a file. Unlike Raw it follows the GET retry
 // policy: a 429/502/503/504 (with a Retry-After of at most 10 s) or a
 // connection error is retried, a timeout never.
+//
+// The client's timeout bounds the whole download, every attempt, the waits
+// between them and reading the body, not each attempt: closing the body
+// releases it. A retry whose wait would not fit in what is left is not made;
+// the last answer is returned instead.
 func (c *FrappeClient) Download(ctx context.Context, path string, query url.Values) (*RawResponse, error) {
+	cancel := context.CancelFunc(func() {})
+	if d := c.raw.GetClient().Timeout; d > 0 {
+		ctx, cancel = context.WithTimeout(ctx, d)
+	}
+	resp, err := c.download(ctx, path, query)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+func (c *FrappeClient) download(ctx context.Context, path string, query url.Values) (*RawResponse, error) {
 	req := RawRequest{Method: http.MethodGet, Path: path, Query: query}
 	wait := c.r.RetryWaitTime
 	for attempt := 0; ; attempt++ {
@@ -299,10 +319,18 @@ func (c *FrappeClient) Download(ctx context.Context, path string, query url.Valu
 		default:
 			reason = fmt.Sprintf("HTTP %d", resp.Status)
 			delay = retryAfterDelay(resp.Header)
-			_ = resp.Body.Close()
 		}
 		if delay == 0 {
 			delay = min(wait<<attempt, c.r.RetryMaxWaitTime)
+		}
+		if dl, ok := ctx.Deadline(); ok && time.Until(dl) <= delay {
+			if err != nil {
+				return nil, err
+			}
+			return resp, nil
+		}
+		if resp != nil {
+			_ = resp.Body.Close()
 		}
 		if Debug != DebugOff {
 			debugWrite(fmt.Sprintf("debug: retrying GET %s after %s (attempt %d)", redactURL(c.baseURL+path), reason, attempt+2))
@@ -315,6 +343,18 @@ func (c *FrappeClient) Download(ctx context.Context, path string, query url.Valu
 		case <-t.C:
 		}
 	}
+}
+
+// cancelOnClose releases a download's deadline when its body is closed.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnClose) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
 }
 
 // PrintOptions select how a document is printed.

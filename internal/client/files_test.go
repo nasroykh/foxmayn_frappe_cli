@@ -272,6 +272,50 @@ func TestDownloadRetries(t *testing.T) {
 	}
 }
 
+// The client timeout bounds the whole download, not each attempt.
+func TestDownloadTimeoutBoundsAllAttempts(t *testing.T) {
+	// A Retry-After that does not fit in what is left: the 503 is returned
+	// at once instead of a wait the deadline would cut.
+	var n atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n.Add(1)
+		w.Header().Set("Retry-After", "2")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	c := newKeyClient(t, srv.URL)
+	c.raw.SetTimeout(time.Second)
+	start := time.Now()
+	resp, err := c.Download(context.Background(), "/files/x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.Status != http.StatusServiceUnavailable || n.Load() != 1 || time.Since(start) > 900*time.Millisecond {
+		t.Errorf("status %d after %d requests in %s", resp.Status, n.Load(), time.Since(start))
+	}
+
+	// Slow 503s: each attempt fits in the timeout, all of them do not.
+	var m atomic.Int32
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		m.Add(1)
+		time.Sleep(150 * time.Millisecond)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer slow.Close()
+	c = newKeyClient(t, slow.URL)
+	c.r.SetRetryCount(20)
+	c.raw.SetTimeout(400 * time.Millisecond)
+	start = time.Now()
+	resp, err = c.Download(context.Background(), "/files/x", nil)
+	if err == nil {
+		_ = resp.Body.Close()
+	}
+	if el := time.Since(start); el > 700*time.Millisecond || m.Load() > 3 {
+		t.Errorf("took %s and %d requests with a 400ms timeout", el, m.Load())
+	}
+}
+
 func TestDownloadAuth(t *testing.T) {
 	site := frappetest.New(t)
 	site.Add("ToDo", map[string]interface{}{"name": "TD-1"})
