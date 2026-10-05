@@ -417,20 +417,53 @@ func runHTTPServer(ctx context.Context, port int) error {
 	return nil
 }
 
+// mcpStatusKind is what the state file and the health probe say about the
+// detached MCP server.
+type mcpStatusKind int
+
+const (
+	mcpNotRunning   mcpStatusKind = iota // no state file
+	mcpRunning                           // the health endpoint confirms the recorded instance
+	mcpUnresponsive                      // the PID is alive but the endpoint does not answer
+	mcpStale                             // the state file names a dead process
+)
+
+// mcpDaemonStatus reads the state file and probes the server. It changes
+// nothing; the caller decides whether to clean up a stale state file.
+func mcpDaemonStatus() (*mcpState, mcpStatusKind, error) {
+	state, err := readMCPState()
+	if err != nil {
+		return nil, mcpNotRunning, err
+	}
+	switch {
+	case state == nil:
+		return nil, mcpNotRunning, nil
+	case healthyMCP(state):
+		return state, mcpRunning, nil
+	case isProcessRunning(state.PID):
+		return state, mcpUnresponsive, nil
+	}
+	return state, mcpStale, nil
+}
+
+func healthyMCP(state *mcpState) bool {
+	inst, ok := mcpHealth(state.Port, mcpProbeTimeout)
+	return ok && inst == state.Instance
+}
+
 // mcpStatusCmd reports whether the detached MCP server is running.
 var mcpStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show status of the detached MCP server",
 	RunE: func(_ *cobra.Command, _ []string) error {
-		state, err := readMCPState()
+		state, kind, err := mcpDaemonStatus()
 		if err != nil {
 			return err
 		}
-		if state == nil {
+		switch kind {
+		case mcpNotRunning:
 			fmt.Println("MCP server: not running (no state file)")
-			return nil
-		}
-		if inst, ok := mcpHealth(state.Port, mcpProbeTimeout); ok && inst == state.Instance {
+		case mcpRunning:
 			fmt.Printf("MCP server: running\n")
 			fmt.Printf("  PID:     %d\n", state.PID)
 			fmt.Printf("  URL:     http://127.0.0.1:%d/mcp\n", state.Port)
@@ -442,9 +475,9 @@ var mcpStatusCmd = &cobra.Command{
 			}
 			fmt.Printf("  Started: %s\n", state.StartedAt.Local().Format("2006-01-02 15:04:05"))
 			fmt.Printf("  Log:     %s\n", state.LogPath)
-		} else if isProcessRunning(state.PID) {
+		case mcpUnresponsive:
 			fmt.Printf("MCP server: PID %d is alive but not responding on port %d (starting up or wedged)\n", state.PID, state.Port)
-		} else {
+		case mcpStale:
 			fmt.Printf("MCP server: stopped (stale state file, PID %d no longer alive)\n", state.PID)
 			removeMCPState()
 		}

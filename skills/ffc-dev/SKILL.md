@@ -38,7 +38,11 @@ internal/cmd/init.go          → init subcommand (--oauth / --apikey / --passwo
 internal/cmd/oauth_flow.go    → OAuth PKCE: callbackServer (127.0.0.1, single-use), collectOAuthSite
 internal/cmd/site.go          → site list / add / remove / use
 internal/cmd/config_cmd.go    → config TUI, config get, config set; escQuitKeyMap, resolveCfgPath
-internal/cmd/ping.go          → ping subcommand
+internal/cmd/ping.go          → ping subcommand (also names the user)
+internal/cmd/whoami.go        → whoami subcommand, buildWhoami (shared with the MCP tool), authMethod
+internal/cmd/can.go           → can subcommand, checkPermission (shared with the MCP tool), parsePerm, deniedError (exit 5)
+internal/cmd/doctor.go        → doctor subcommand: one method per check on `doctor`, doctorCheck {check,status,message,hint}
+internal/cmd/server_cache.go  → per-site server.json cache in os.UserCacheDir() (serverInfo, cacheDirName; the dir comes from the `userCacheDir` var)
 internal/cmd/get_doc.go       → get-doc subcommand
 internal/cmd/list_docs.go     → list-docs subcommand + parseFields()
 internal/cmd/create_doc.go    → create-doc subcommand
@@ -65,7 +69,8 @@ internal/cmd/mcp_audit.go         → MCP audit log mcp-audit.jsonl (0600, rotat
 internal/cmd/mcp_sites.go         → multi-site MCP: mcpSites, siteFor, list_sites, addSiteParam
 internal/cmd/mcp_confirm.go       → confirmation through MCP elicitation: needsConfirm, mcpPolicy.confirm, HMAC request state
 internal/cmd/mcp_args.go          → mcpEnv, toolHandler (parse → policy → confirm → client → call → audit), marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
-internal/cmd/mcp_tools.go         → 24 MCP tools + handlers; registerTools(); compactReportResult
+internal/cmd/mcp_tools.go         → MCP tools + handlers (26 with the lifecycle and identity files); registerTools(); compactReportResult
+internal/cmd/mcp_identity_tools.go → whoami + check_permission read tools
 internal/cmd/mcp_lifecycle_tools.go → submit/cancel/amend/copy/rename/apply_workflow + get_transitions (docTool, docHandler)
 internal/cmd/mcp_daemon.go        → startDetached(), runHTTPServer(), mcpStatusCmd, mcpStopCmd, state + lock files
 internal/cmd/mcp_detach_unix.go   → setSysProcAttr (Setsid=true), terminateProcess, isProcessRunning — build tag: !windows
@@ -76,6 +81,7 @@ internal/client/oauth.go          → ExchangeOAuthCode, RefreshOAuthToken, GetO
 internal/client/session.go        → LoginPassword (POST /api/method/login, sid cookie, 2FA detection)
 internal/client/debug.go          → --debug trace (debugTransport under resty), DebugLevel; redaction helpers shared with dry runs
 internal/client/dryrun.go         → WithDryRun(ctx, scope), DryRunError; send() holds back writes (scope all: every request)
+internal/client/server.go         → ServerVersions/ServerInfo (FrappeMajor), LoggedUser, UserRoles (Has Role via get_list), HasPermission, DocPermissions, DocTypePermission/EvalDocTypePermission
 internal/client/lifecycle.go      → SubmitDoc/CancelDoc/AmendDoc/DuplicateDoc (GetDoc + clean; no-copy fields from getdoctype),
                                     RenameDoc, RestoreDeleted (returns new_name), DiscardDoc (v16), workflow methods
 internal/config/config.go         → Config/SiteConfig, Read, Load, env overrides, default paths
@@ -162,7 +168,9 @@ func init() {
 ### Key patterns to follow
 
 - **Global flags** `siteName`, `configPath`, `jsonOutput`, `quiet` (and `client.Timeout` for `--timeout`) are package-level vars set in `root.go` — use them directly, don't redeclare.
-- **Never build a client with `client.New` directly** in a command — use `callSite` / `newClient` so `loadSite` runs and an expired OAuth token is refreshed. (`ping` is the one exception: it calls `loadSite` + `client.New` itself to time the whole round-trip.)
+- **Never build a client with `client.New` directly** in a command — use `callSite` / `newClient` so `loadSite` runs and an expired OAuth token is refreshed. (`ping` is the one exception: it calls `loadSite` + `client.New` itself to time the whole round-trip.) A command that also needs the site config (to key a cache, name the auth method) uses `callSiteCfg` / `newClientCfg`.
+- **Site facts are cached, not refetched.** Installed apps and versions go through `serverInfo(ctx, c, cfg, refresh)` (24 h, `<user cache dir>/ffc/<name>-<hash>/server.json`, 0700/0600, atomic, keyed by URL too). A command with a `--refresh` flag passes it (doctor has none: it reads live and never touches the cache). Version-dependent behaviour uses `serverInfo(...).FrappeMajor()`. Never build a cache path from a raw site name: use `cacheDirName`. Tests repoint the `userCacheDir` seam (TestMain, `cacheTEnv`); setting XDG_CACHE_HOME would not work on macOS or Windows.
+- **A new `doctor` check** is a method on `doctor` that calls `d.add(id, checkPass|checkWarn|checkFail, message, hint)`. Check ids are part of the JSON contract: never rename one. Messages must not contain secrets (config values in parse errors are stripped; URLs go through `redactedURL`). A check must not change state (no OAuth refresh, no cache write, no cleanup). The probe is one request: `net.tls` reads `resp.RawResponse.TLS`, so a proxy is honoured. Tests use the seams `doctorNow` and `doctorTLSRoots`.
 - **`Args: cobra.NoArgs`** on data commands.
 - **Flag variable prefixes**: Each command uses a unique 2-letter prefix for its flag vars to avoid collisions within the `cmd` package. Check existing files before choosing one.
 - **RunE, not Run**: Return errors — cobra handles printing them to stderr and setting exit code 1. Any abort, declined confirmation (`errAborted`) or partial bulk failure (`bulkReport.err()`) must also be a non-zero exit.
@@ -379,7 +387,7 @@ Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`
 - Wrap errors with context: `fmt.Errorf("loading config: %w", err)` — preserves the error chain.
 - Never log and return. Return the error; let the caller (cobra's `RunE`) decide.
 - HTTP errors: pass a `hints` map (`readHints` / `docHints`) to `c.do()`; it supplies specific messages for 401, 403, 404 and falls back to the Frappe exception/message for anything else >= 400.
-- Exit codes: aborts, declined confirmations and partial bulk failures are non-zero (`errAborted`, `bulkReport.err()`). Only the config TUI's explicit "Cancel" exits 0.
+- Exit codes: a permission check that says no is `deniedError` (5); a failed `doctor` check is `codeError{exitGeneric}` (1). Aborts, declined confirmations and partial bulk failures are non-zero (`errAborted`, `bulkReport.err()`). Only the config TUI's explicit "Cancel" exits 0.
 
 ## get-schema Compact Output
 

@@ -19,7 +19,16 @@ func TestMain(m *testing.M) {
 	for _, k := range []string{"FFC_SITE", "FFC_CONFIG", "FFC_TIMEOUT"} {
 		_ = os.Unsetenv(k)
 	}
-	os.Exit(m.Run())
+	// The site version cache lives in the user cache directory: keep the
+	// tests out of the developer's.
+	cache, err := os.MkdirTemp("", "ffc-test-cache")
+	if err != nil {
+		panic(err)
+	}
+	userCacheDir = func() (string, error) { return cache, nil }
+	code := m.Run()
+	_ = os.RemoveAll(cache)
+	os.Exit(code)
 }
 
 // cliResult is what one ffc invocation wrote and returned.

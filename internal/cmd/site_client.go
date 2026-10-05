@@ -90,9 +90,19 @@ func refreshOAuth(ctx context.Context, cfg *config.SiteConfig) (*config.SiteConf
 
 // newClient loads the selected site and returns a client for it.
 func newClient(ctx context.Context) (*client.FrappeClient, error) {
+	c, _, err := newClientCfg(ctx)
+	return c, err
+}
+
+// newClientCfg is newClient that also returns the site's config.
+func newClientCfg(ctx context.Context) (*client.FrappeClient, *config.SiteConfig, error) {
 	cfg, err := loadSite(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return client.New(ctx, cfg)
+	c, err := client.New(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, cfg, nil
 }

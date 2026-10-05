@@ -68,6 +68,7 @@ func registerAllTools(s *server.MCPServer, env *mcpEnv) {
 	registerBulkUpdate(s, env)
 	registerBulkDelete(s, env)
 	registerLifecycleTools(s, env)
+	registerIdentityTools(s, env)
 }
 
 // jsonParam declares a parameter that takes a JSON value. It has no fixed

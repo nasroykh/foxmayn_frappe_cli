@@ -22,8 +22,9 @@ import (
 // is safe for concurrent use: the only mutable state (a session id) is guarded
 // by mu and attached per request, never by mutating the shared resty client.
 type FrappeClient struct {
-	r   *resty.Client
-	raw *resty.Client // r without retries, for Raw: a streamed body cannot be retried
+	baseURL string // the site URL, without a trailing slash
+	r       *resty.Client
+	raw     *resty.Client // r without retries, for Raw: a streamed body cannot be retried
 
 	// Username/password sites only. loginMu serialises re-logins so that
 	// concurrent requests rejected by one expired session log in once.
@@ -66,7 +67,7 @@ func New(ctx context.Context, cfg *config.SiteConfig) (*FrappeClient, error) {
 		AddRetryCondition(retryableGET).
 		AddRetryHook(debugRetry).
 		SetHeader("Accept", "application/json")
-	c := &FrappeClient{r: r}
+	c := &FrappeClient{r: r, baseURL: strings.TrimRight(cfg.URL, "/")}
 
 	// OAuth Bearer token takes priority; fall back to Frappe token auth, then
 	// to a fresh username/password session login.

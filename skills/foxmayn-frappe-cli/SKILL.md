@@ -91,7 +91,7 @@ export FFC_API_SECRET="your_secret"
 
 **MANDATORY for AI/LLM usage:** Always append `--json` (or `-j`) to every ffc command that supports it. The default table output is formatted for human reading and is not reliably parseable. JSON output is structured, complete, and easy to process.
 
-Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `delete-doc`, `count-docs`, `bulk-create`, `bulk-update`, `bulk-delete`, the lifecycle and `workflow` commands, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `search`, `ping`, `site list`. (`call-method` always outputs JSON regardless. MCP tools always return JSON by design.)
+Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `delete-doc`, `count-docs`, `bulk-create`, `bulk-update`, `bulk-delete`, the lifecycle and `workflow` commands, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `search`, `ping`, `whoami`, `can`, `doctor`, `site list`. (`call-method` always outputs JSON regardless. MCP tools always return JSON by design.)
 
 ```bash
 # Always do this:
@@ -397,7 +397,7 @@ ffc call-method --method "frappe.client.get_count" --args '{"doctype":"ToDo","fi
 
 #### `ffc mcp` — Start an MCP server for AI agents
 
-Exposes Frappe API operations as 24 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
+Exposes Frappe API operations as 26 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
 
 **Three modes:**
 
@@ -441,6 +441,8 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | --------------- | ---------------------- |
 | `list_sites`    | `ffc site list` (served sites only) |
 | `ping`          | `ffc ping`             |
+| `whoami`        | `ffc whoami`           |
+| `check_permission` | `ffc can`           |
 | `get_doc`       | `ffc get-doc`          |
 | `list_docs`     | `ffc list-docs`        |
 | `create_doc`    | `ffc create-doc`       |
@@ -464,7 +466,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `get_transitions` | `ffc workflow transitions` |
 | `apply_workflow`  | `ffc workflow apply`       |
 
-With `--read-only`, only `list_sites`, `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search` and `get_transitions` are registered.
+With `--read-only`, only `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search` and `get_transitions` are registered.
 
 MCP tools always return JSON — no `--json` flag needed.
 
@@ -490,14 +492,45 @@ MCP tools always return JSON — no `--json` flag needed.
 
 ---
 
-### Connectivity
+### Connectivity, Identity and Health
+
+#### `ffc whoami` — Who am I, and what runs here
+
+```bash
+ffc whoami --json                 # {"user","full_name","roles","roles_source","site","url","auth","server":{"frappe","major","apps","cached"},"notes"}
+ffc whoami --refresh --jq .server.major
+```
+
+Roles come from the user's Has Role rows (a non-admin cannot read the roles table of their own User document); `roles_source` is `unavailable` with a `notes` entry when the site refuses. As Guest (credentials not accepted) it prints the result and exits 3, like `ffc ping`, which also exits 3 for rejected credentials. The app versions are cached 24 hours per site; `--refresh` rereads them. Use `server.major` to pick v15 or v16 behaviour (`discard-doc` needs v16).
+
+#### `ffc can` — Check a permission before acting
+
+```bash
+ffc can -d "Sales Invoice" --perm create          # DocType level: role rules only (basis "doctype")
+ffc can -d ToDo -n TD-0001 --perm write --json    # one document: the site decides (basis "document")
+ffc can -d ToDo -n TD-0001 --all --json           # every right on that document
+ffc can -d Customer --perm delete && ffc delete-doc -d Customer -n CUST-1 --yes
+```
+
+Exit 0 when allowed, **5** when denied (the result JSON is still on stdout), 4 when the DocType or document does not exist, 2 for a bad `--perm`. Without `-n` the DocType's role rows are applied to the user's roles (if_owner rows narrow a right to own documents and never create, select is implied by read, submit/cancel/amend need a submittable DocType, import an importable one, a child table is refused with exit 2); user permissions, sharing, controller rules and `disable_document_sharing` are not considered. The automatic role Desk User counts only for a known System User; `note` says when it would have changed the answer. With `-n` any lower-case custom permission type is accepted. `owner_only: true` means the right holds only on the user's own documents (read/select stay allowed, others are denied). Administrator is allowed everything. The MCP tool `check_permission` takes `doctype`, `name`, `perm_type`, `all` and returns the same object (a denial is `allowed: false`, not an error).
+
+#### `ffc doctor` — Diagnose the setup
+
+```bash
+ffc doctor            # human report, hint under every warning or failure
+ffc doctor --json     # [{"check","status","message","hint"}], status is pass, warn or fail
+```
+
+Checks config file (0600) and directory (0700), parse, stale lock, TLS and plain-http warning, reachability, clock skew against the server's `Date` header, login, OAuth token expiry, installed apps, `/api/v2`, the MCP daemon and the update check. Exit **1** when any check fails; warnings exit 0. It changes nothing (an expired OAuth token is reported, not renewed; versions are read live; no cache is touched), and flags a site URL that redirects. Run it first when a command fails for no clear reason.
 
 #### `ffc ping` — Check connectivity
 
 ```bash
 ffc ping --json
-ffc ping --site production --json
+ffc ping --site production --json     # {"response","url","latency","user"}
 ```
+
+`frappe.ping` works without credentials, so ping also names the user the credentials belong to; rejected credentials exit 3.
 
 ---
 

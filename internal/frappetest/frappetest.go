@@ -83,6 +83,15 @@ type Site struct {
 	logins       int
 	logouts      int
 	clock        time.Time
+
+	// identity.go
+	apps     map[string]App
+	userName string
+	roles    []string
+	denied   map[string]map[string]bool
+	docPerms map[string][]map[string]interface{}
+	metaFlag map[string]map[string]interface{}
+	noV2     bool
 }
 
 // New starts a fake site, closed when the test ends.
@@ -102,6 +111,7 @@ func New(t testing.TB) *Site {
 	}
 	s.registerLifecycle()
 	s.registerSearch()
+	s.registerIdentity()
 	// Every Frappe site has these; ffc reads them before some actions.
 	s.AddDocType("Workflow", "workflow_name", "document_type", "is_active", "workflow_state_field")
 	s.AddDocType("Deleted Document", "deleted_doctype", "deleted_name", "restored", "data")
@@ -314,6 +324,16 @@ func (s *Site) serve(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/method/frappe.ping":
 		writeJSON(w, http.StatusOK, map[string]string{"message": "pong"})
 		return
+	case path == "/api/v2/method/ping":
+		s.mu.Lock()
+		off := s.noV2
+		s.mu.Unlock()
+		if off {
+			writeError(w, NotFound("Page not found"))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"data": "pong"})
+		return
 	}
 
 	user := s.authenticate(r)
@@ -403,7 +423,7 @@ func (s *Site) method(w http.ResponseWriter, r *http.Request, name string, body 
 	case fn != nil:
 		result, err = fn(r, args)
 	case name == "frappe.auth.get_logged_user":
-		result = user
+		result = s.loggedUser(user)
 	case name == "frappe.client.get_count":
 		result, err = s.getCount(args)
 	case name == "frappe.desk.query_report.run":

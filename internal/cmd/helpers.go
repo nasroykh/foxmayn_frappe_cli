@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/huh/spinner"
 	"github.com/mattn/go-isatty"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -177,15 +178,23 @@ func confirm(prompt string) error {
 
 // callSite builds a client for the selected site and runs fn under a spinner.
 func callSite[T any](cmd *cobra.Command, title string, fn func(ctx context.Context, c *client.FrappeClient) (T, error)) (T, error) {
+	return callSiteCfg(cmd, title, func(ctx context.Context, c *client.FrappeClient, _ *config.SiteConfig) (T, error) {
+		return fn(ctx, c)
+	})
+}
+
+// callSiteCfg is callSite for a command that also needs the site's config
+// (its name, URL and auth method), e.g. to key a cache.
+func callSiteCfg[T any](cmd *cobra.Command, title string, fn func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (T, error)) (T, error) {
 	var zero T
-	c, err := newClient(cmd.Context())
+	c, cfg, err := newClientCfg(cmd.Context())
 	if err != nil {
 		return zero, err
 	}
 	defer c.CloseQuietly()
 	var out T
 	var apiErr error
-	spinErr := runSpinner(title, func() { out, apiErr = fn(cmd.Context(), c) })
+	spinErr := runSpinner(title, func() { out, apiErr = fn(cmd.Context(), c, cfg) })
 	if apiErr != nil {
 		return zero, apiErr
 	}

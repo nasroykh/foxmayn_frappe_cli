@@ -28,6 +28,7 @@ var toolActions = map[string]toolAction{
 	"list_sites": actRead, "ping": actRead, "get_doc": actRead, "list_docs": actRead, "count_docs": actRead,
 	"get_schema": actRead, "list_doctypes": actRead, "list_reports": actRead,
 	"run_report": actRead, "get_transitions": actRead, "search": actRead,
+	"whoami": actRead, "check_permission": actRead,
 
 	"create_doc": actWrite, "update_doc": actWrite, "delete_doc": actWrite,
 	"bulk_create": actWrite, "bulk_update": actWrite, "bulk_delete": actWrite,
@@ -106,6 +107,10 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 				}
 			}
 		}
+	case "whoami":
+		// It reads the User document and the user's Has Role rows, so the
+		// DocType rules for User apply.
+		sc.Doctypes = append(sc.Doctypes, "User")
 	case "run_report":
 		sc.Report = str("report_name")
 	case "call_method":
@@ -333,6 +338,20 @@ type policyCtxKey struct{}
 // for tools whose result spans DocTypes the request does not name.
 func withPolicy(ctx context.Context, p mcpPolicy) context.Context {
 	return context.WithValue(ctx, policyCtxKey{}, p)
+}
+
+type siteCtxKey struct{}
+
+// withSite hands the site config a call runs against to the call itself, for
+// tools that report on the site (whoami).
+func withSite(ctx context.Context, site *config.SiteConfig) context.Context {
+	return context.WithValue(ctx, siteCtxKey{}, site)
+}
+
+// siteFrom returns the site withSite stored, and false without one.
+func siteFrom(ctx context.Context) (*config.SiteConfig, bool) {
+	s, ok := ctx.Value(siteCtxKey{}).(*config.SiteConfig)
+	return s, ok && s != nil
 }
 
 // policyFrom returns the policy withPolicy stored, and false without one. A

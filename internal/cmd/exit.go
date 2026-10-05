@@ -50,6 +50,11 @@ type codeError struct {
 
 func (e *codeError) Error() string { return e.msg }
 
+// deniedError is a permission check the site answered "no" to (ffc can).
+type deniedError struct{ msg string }
+
+func (e *deniedError) Error() string { return e.msg }
+
 // partialError is a bulk run in which some items did not succeed.
 type partialError struct{ msg string }
 
@@ -61,6 +66,7 @@ func classify(err error) (int, string) {
 		usage   *usageError
 		partial *partialError
 		coded   *codeError
+		denied  *deniedError
 		auth    *client.AuthError
 		api     *client.APIError
 		tr      *client.TransportError
@@ -77,6 +83,8 @@ func classify(err error) (int, string) {
 		return exitPartial, "partial"
 	case errors.As(err, &coded):
 		return coded.code, "error"
+	case errors.As(err, &denied):
+		return exitPermission, "permission"
 	case errors.As(err, &auth):
 		return exitAuth, "auth"
 	case errors.As(err, &api):
