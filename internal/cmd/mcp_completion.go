@@ -78,6 +78,10 @@ func (m *mcpCompleter) complete(ctx context.Context, tools []string, arg mcp.Com
 	}
 	switch arg.Name {
 	case "site":
+		// env.sites holds resolved config names (mcpSites); "" is only a site
+		// defined by FFC_* variables alone, which has no name: siteFor
+		// accepts it only as an empty or absent site, so there is nothing
+		// to offer.
 		var sites []string
 		for _, name := range m.env.sites {
 			if _, _, ok := m.policy(ctx, name, tools); ok && name != "" {

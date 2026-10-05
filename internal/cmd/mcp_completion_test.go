@@ -101,6 +101,31 @@ func TestMCPCompletionWithoutRulesOrCache(t *testing.T) {
 	}
 }
 
+// TestMCPCompletionEnvOnlySite: a server for a site defined by FFC_*
+// variables alone serves the site "" (it has no name). Any non-empty site a
+// call names is refused, so {site} offers nothing, and {doctype} reads that
+// site's cache without a site argument.
+func TestMCPCompletionEnvOnlySite(t *testing.T) {
+	cacheTEnv(t)
+	sc := &config.SiteConfig{URL: "http://erp.example", APIKey: "k", APISecret: "s"}
+	env := &mcpEnv{
+		sites: []string{""},
+		site:  func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
+	}
+	s := server.NewMCPServer("t", "0")
+	registerTools(s, env, []mcpPolicy{newMCPPolicy(sc, config.MCPPolicy{})})
+	_ = writeListCache(sc, "DocType", []map[string]interface{}{{"name": "ToDo"}})
+
+	mcpTValues(t, mcpTComplete(t, s, "ref/resource", schemaTemplate, "site", "", nil))
+	mcpTValues(t, mcpTComplete(t, s, "ref/resource", schemaTemplate, "doctype", "", nil), "ToDo")
+	// What a completed name would meet: siteFor refuses any named site.
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site": "erp.example"}
+	if _, err := env.siteFor(req); err == nil {
+		t.Error("an env-only server accepted a site name")
+	}
+}
+
 // TestMCPCompletionMultiSite: {site} offers the served sites whose policy
 // allows the tools, and {doctype} reads the named site's cache.
 func TestMCPCompletionMultiSite(t *testing.T) {
