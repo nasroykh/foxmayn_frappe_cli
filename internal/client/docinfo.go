@@ -31,7 +31,11 @@ var ErrNoTimeline = errors.New("this Frappe release has no activity timeline (fr
 func (c *FrappeClient) formCall(ctx context.Context, method string, args map[string]string, doctype, name string) (map[string]interface{}, error) {
 	var out map[string]interface{}
 	err := c.do(ctx, http.MethodGet, "/api/method/"+url.PathEscape(method), nil, args, docHints(doctype, name, "read"), &out)
-	return out, err
+	if err != nil {
+		// v15 answers an unknown DocType with a 500 ImportError, v16 with 404.
+		return nil, c.missingDocType(ctx, doctype, err)
+	}
+	return out, nil
 }
 
 // DocInfo returns a document's docinfo (frappe.desk.form.load.get_docinfo):
@@ -102,7 +106,7 @@ func (c *FrappeClient) FormLoad(ctx context.Context, doctype, name string) (doc,
 	err = c.do(ctx, http.MethodPost, "/api/method/"+url.PathEscape(getdocMethod), map[string]interface{}{"doctype": doctype, "name": name},
 		nil, docHints(doctype, name, "read"), &out)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, c.missingDocType(ctx, doctype, err)
 	}
 	// A missing document is not an error there: getdoc answers
 	// {"message": []} with no docs.

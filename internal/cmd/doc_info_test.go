@@ -198,6 +198,20 @@ func TestCmdDocInfoErrors(t *testing.T) {
 	if r = cmdTRun(t, s, "doc-info", "-n", "x"); r.Code != 2 {
 		t.Errorf("no --doctype exit = %d, want 2", r.Code)
 	}
+
+	// v15 answers get_docinfo and getdoc on an unknown DocType with a 500
+	// ImportError; ffc probes the DocType's list and reports not found.
+	importErr := func(_ *http.Request, _ map[string]interface{}) (interface{}, error) {
+		return nil, &frappetest.Error{Status: http.StatusInternalServerError, ExcType: "ImportError", Message: "No module named 'frappe.core.doctype.no_such_dt'"}
+	}
+	s.HandleMethod("frappe.desk.form.load.get_docinfo", importErr)
+	s.HandleMethod("frappe.desk.form.load.getdoc", importErr)
+	for _, extra := range [][]string{nil, {"--onload"}} {
+		r = cmdTRun(t, s, append([]string{"doc-info", "-d", "No Such DT", "-n", "x"}, extra...)...)
+		if r.Code != 4 || !strings.Contains(r.Stderr, "not found on this site") {
+			t.Errorf("v15 missing DocType %v: exit %d: %s", extra, r.Code, r.Stderr)
+		}
+	}
 }
 
 func TestCmdDocInfoTimeline(t *testing.T) {

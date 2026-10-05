@@ -562,7 +562,10 @@ func contractErrors(t *testing.T, real *client.FrappeClient, realURL string) {
 			if realErr == nil || fakeErr == nil {
 				t.Fatalf("real = %v, fake = %v; want both to fail", realErr, fakeErr)
 			}
-			if rs, fs := httpStatus(realErr), httpStatus(fakeErr); rs != fs {
+			// v15 answers get_docinfo on an unknown DocType with a 500
+			// ImportError, v16 (and the fake) with a 404; ffc maps both
+			// to not found, so only the exit code is compared.
+			if rs, fs := httpStatus(realErr), httpStatus(fakeErr); rs != fs && name != "docinfo missing doctype" {
 				t.Errorf("status: real %s (%v), fake %s (%v)", rs, realErr, fs, fakeErr)
 			}
 			if rc, _ := classify(realErr); rc != func() int { c, _ := classify(fakeErr); return c }() {
