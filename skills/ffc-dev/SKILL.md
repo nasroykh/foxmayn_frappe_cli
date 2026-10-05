@@ -334,7 +334,7 @@ The `mcp` command is structurally different from all other ffc commands — it's
 - Handlers are built with `toolHandler(getClient, parse)`: `parse` validates arguments first (a bad call never costs a login or request) and returns a `toolCall`; every error becomes a tool error with a nil Go error. A non-nil Go error from a handler is a protocol-level crash — reserve it for truly unexpected failures.
 - Never print secrets to stderr (it is `mcp.log` in detached mode).
 - Limits: results over 512 KiB are refused (list_docs and run_report rows are cut instead); `run_report` defaults to 500 rows; bulk tools take at most 200 items (`maxMCPBulkItems`).
-- Bulk tools call `notifyProgress(ctx, done, total)` after each item; it sends `notifications/progress` only when the request had a progress token (`withProgress` in `env.run`).
+- Bulk tools call `notifyProgress(ctx, done, total)` after each item; it sends `notifications/progress` only when the request had a progress token (`withProgress` in `env.run`). It is best effort: mcp-go queues it without blocking, drops it when the session channel is full, and may write it after the response.
 
 ### Adding a new MCP tool
 
@@ -374,9 +374,9 @@ Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`
 ### Resources, prompts, instructions (`mcp_surface.go`)
 
 `registerTools` ends with `registerSurface`, so all three follow the tools that survived the policy and `--toolsets`:
-- **Resources** (`ffc://sites`, `ffc://{site}/schema/{doctype}`, `ffc://{site}/doc/{doctype}/{name}`) are served by `resourceReader`, which builds a `CallToolRequest` and calls the registered tool's handler with `withVia(ctx, "resource")`. Never give a resource its own path to the site: going through the tool handler is what applies `siteFor`, `scopeOf`, the policy, the audit line (`"via":"resource"`) and the size cap. A template is registered only when its tool is. URI segments are percent-decoded by `splitFFCURI`; the URI template already rejects extra segments and bad escapes ("resource not found").
-- **Prompts** (`mcpPrompts`) are static guidance and make no site calls; each is offered only when the tools in its `needs` are registered. With several sites they take a required `site`, checked with `siteFor`.
-- **Instructions** (`mcpInstructions`) are set after registration with `server.WithInstructions(text)(s)`, and mention only registered tools, the served sites and which are read-only. Keep them 15-25 lines (`TestMCPInstructions`).
+- **Resources** (`ffc://sites`, `ffc://{site}/schema/{doctype}`, `ffc://{site}/doc/{doctype}/{name}`) are served by `resourceReader`, which builds a `CallToolRequest` and calls the registered tool's handler with `withVia(ctx, "resource")`. Never give a resource its own path to the site: going through the tool handler is what applies `siteFor`, `scopeOf`, the policy, the audit line (`"via":"resource"`) and the size cap. A template is registered only when its tool is. URI segments are percent-decoded by `splitFFCURI`; the URI template already rejects extra segments and bad escapes ("resource not found"). mcp-go v1.1.1 answers every resource handler error with -32603; keep the tool's message and wrap a class with `classedError` (not found, invalid params) for hooks.
+- **Prompts** (`mcpPrompts`) are static guidance and make no site calls; each is offered only when the tools in its `needs` are registered, and a step naming any other tool goes through `when(has(tool), …)`. Put argument values in with `promptJSON` and give every argument a `maxLen` (over it is refused, never cut). With several sites they take a required `site`, checked with `siteFor`.
+- **Instructions** (`mcpInstructions`) are set after registration with `server.WithInstructions(text)(s)`, and mention only registered tools (gate every line that names one on `has`) and resources (the list `registerResources` returns), the served sites and which are read-only. Keep them 15-25 lines (`TestMCPInstructions`).
 
 ### Daemon/detach pattern (`mcp_daemon.go`)
 

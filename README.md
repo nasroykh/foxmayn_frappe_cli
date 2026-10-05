@@ -563,7 +563,7 @@ ffc mcp --read-only --site prod
 
 **Tool sets** — expose only part of the tools:
 ```bash
-ffc mcp --toolsets core        # documents, schema, reports, search, bulk, call_method
+ffc mcp --toolsets core        # documents, schema, reports, search, bulk, call_method, whoami, check_permission
 ffc mcp --toolsets lifecycle   # submit_doc, cancel_doc, amend_doc, copy_doc, rename_doc, apply_workflow, get_transitions
 ```
 The default is both. `list_sites` is always there. Like `--allow-tools`, it only narrows what the policy allows; an unknown set name is a usage error.
@@ -625,11 +625,11 @@ Resources (read-only, JSON):
 - `ffc://{site}/schema/{doctype}`: the compact schema (as `get_schema`).
 - `ffc://{site}/doc/{doctype}/{name}`: a document (as `get_doc`). Percent-encode each segment: `ffc://prod/doc/Sales%20Invoice/SINV%2F0001`.
 
-A resource read runs through the same tool handler: the site must be served, the site's policy applies (a denied DocType is refused, `read_only` does not matter for reads), it is audited, and the 512 KiB cap applies. A template is offered only when its tool is.
+A resource read runs through the same tool handler: the site must be served, the site's policy applies (a denied DocType is refused, `read_only` does not matter for reads), it is audited, and the 512 KiB cap applies. A template is offered only when its tool is. A failed read is a JSON-RPC error whose message is the tool's (a refusal starts with `policy:`); mcp-go v1.1.1 gives every such error the code -32603, so read the message, not the code. A URI that does not fit a template (an extra segment, a bad `%` escape) is answered as resource not found.
 
-Prompts (guidance only; they call nothing): `inspect-doctype` (doctype), `safe-bulk-import` (doctype, optional source), `audit-doc-changes` (doctype, name) and `explain-report` (report_name). Each lists which tools to call in which order and what to check. With several sites they take a required `site`. A prompt whose tools are not exposed is not offered.
+Prompts (guidance only; they call nothing): `inspect-doctype` (doctype), `safe-bulk-import` (doctype, optional source), `audit-doc-changes` (doctype, name) and `explain-report` (report_name). Each lists which tools to call in which order and what to check, leaving out steps whose tools this server does not expose. With several sites they take a required `site`. A prompt whose essential tools are not exposed is not offered. Arguments are quoted as JSON in the text, and one longer than its limit (140 characters, 500 for `source`) is refused, never cut.
 
-**Progress and structured results.** `bulk_create`, `bulk_update` and `bulk_delete` send `notifications/progress` after each item when the call carries a progress token; cancelling the call stops starting new items. `count_docs` (`{count, doctype}`) and `list_sites` (`{sites}`) declare an output schema and return `structuredContent`; their text is unchanged. Every tool has a title.
+**Progress and structured results.** `bulk_create`, `bulk_update` and `bulk_delete` send `notifications/progress` after each item when the call carries a progress token; cancelling the call stops starting new items. Progress is best effort: a notification can be dropped when the client reads slowly, or arrive after the result. `count_docs` (`{count, doctype}`), `whoami` (the same object as its text) and `list_sites` (`{sites}`; its text stays the bare list) declare an output schema and return `structuredContent`; their text is unchanged. Every tool has a title.
 
 Available MCP tools (26): `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
 
