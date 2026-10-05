@@ -116,7 +116,7 @@ func checkFileName(name string) error {
 		return usageErrorf("invalid file name %q", name)
 	case strings.ContainsAny(name, `/\`):
 		return usageErrorf("invalid file name %q: no path separators", name)
-	case text.Sanitize(name) != name:
+	case text.Sanitize(name) != name || strings.ContainsAny(name, "\n\t"):
 		return usageErrorf("invalid file name %q: control or invisible characters", name)
 	}
 	return nil

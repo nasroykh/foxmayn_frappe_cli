@@ -94,23 +94,17 @@ Examples:
 }
 
 // pdfFileName is the default file for a document's PDF, named like
-// Frappe's own (spaces and slashes become dashes).
+// Frappe's own (spaces, path separators and characters Windows refuses
+// become dashes). Control and invisible characters (bidi overrides that
+// could disguise the extension) are dropped; a name with nothing left is
+// document.pdf.
 func pdfFileName(name string) string {
-	n := strings.NewReplacer(" ", "-", "/", "-", `\`, "-").Replace(text0(name))
-	if n == "" || n == "." || n == ".." {
+	n := strings.NewReplacer(" ", "-", "/", "-", `\`, "-", ":", "-", "*", "-", "?", "-",
+		`"`, "-", "<", "-", ">", "-", "|", "-", "\n", "-", "\t", "-").Replace(text.Sanitize(name))
+	if checkFileName(n) != nil {
 		n = "document"
 	}
 	return n + ".pdf"
-}
-
-// text0 drops control characters from a name used as a file name.
-func text0(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, s)
 }
 
 // checkPDF refuses a 2xx response that is not a PDF: by its Content-Type,

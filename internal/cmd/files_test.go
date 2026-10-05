@@ -314,3 +314,28 @@ func TestPDFCommand(t *testing.T) {
 		t.Errorf("503 retry: exit %d %s, %d requests, %q", r.Code, r.Stderr, n.Load(), got)
 	}
 }
+
+func TestPDFFileName(t *testing.T) {
+	for in, want := range map[string]string{
+		"SINV-0001":               "SINV-0001.pdf",
+		"A B/C\\D":                "A-B-C-D.pdf",
+		"x:y*z?\"<>|":             "x-y-z-----.pdf",
+		"evil\u202egpj.exe":       "evilgpj.exe.pdf",
+		"line\nbreak\ttab\x1b[2J": "line-break-tab[2J.pdf",
+		"..":                      "document.pdf",
+		"\u200b":                  "document.pdf",
+		"":                        "document.pdf",
+	} {
+		if got := pdfFileName(in); got != want {
+			t.Errorf("pdfFileName(%q) = %q, want %q", in, got, want)
+		}
+		if err := checkFileName(pdfFileName(in)); err != nil {
+			t.Errorf("pdfFileName(%q) fails checkFileName: %v", in, err)
+		}
+	}
+	for _, bad := range []string{"a\nb", "a\tb", "a\u202eb", "a/b", ".."} {
+		if checkFileName(bad) == nil {
+			t.Errorf("checkFileName(%q) accepted", bad)
+		}
+	}
+}
