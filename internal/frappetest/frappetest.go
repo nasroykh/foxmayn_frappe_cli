@@ -56,12 +56,20 @@ type Request struct {
 // an *Error is written with its status and Frappe error shape.
 type MethodFunc func(r *http.Request, args map[string]interface{}) (interface{}, error)
 
+// Response is a MethodFunc result sent as the whole response body, for
+// methods that set frappe.response keys instead of returning "message".
+type Response map[string]interface{}
+
 // Site is a fake Frappe site. Create it with New.
 type Site struct {
 	URL string
 
 	mu        sync.Mutex
 	doctypes  map[string]map[string]map[string]interface{} // doctype → name → doc
+	fields    map[string]map[string]bool                   // fields declared with AddDocType
+	meta      map[string][]metaField                       // getdoctype fields, see DocField
+	tables    map[string]map[string]string                 // parent → table field → child DocType
+	onSubmit  map[string]map[string]bool                   // allow-on-submit fields
 	reports   map[string]map[string]interface{}
 	methods   map[string]MethodFunc
 	overrides map[string]http.Handler
@@ -78,24 +86,40 @@ func New(t testing.TB) *Site {
 	t.Helper()
 	s := &Site{
 		doctypes:  map[string]map[string]map[string]interface{}{},
+		fields:    map[string]map[string]bool{},
+		meta:      map[string][]metaField{},
+		tables:    map[string]map[string]string{},
+		onSubmit:  map[string]map[string]bool{},
 		reports:   map[string]map[string]interface{}{},
 		methods:   map[string]MethodFunc{},
 		overrides: map[string]http.Handler{},
 		sessions:  map[string]bool{},
 		clock:     time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC),
 	}
+	s.registerLifecycle()
+	// Every Frappe site has these; ffc reads them before some actions.
+	s.AddDocType("Workflow", "workflow_name", "document_type", "is_active", "workflow_state_field")
+	s.AddDocType("Deleted Document", "deleted_doctype", "deleted_name", "restored", "data")
+	s.AddDocType("Workflow Action", "status", "reference_doctype", "reference_name", "workflow_state")
 	srv := httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(srv.Close)
 	s.URL = srv.URL
 	return s
 }
 
-// AddDocType registers an empty DocType.
-func (s *Site) AddDocType(doctype string) {
+// AddDocType registers an empty DocType. fields declares fields that lists
+// may filter on or select while no document has them yet.
+func (s *Site) AddDocType(doctype string, fields ...string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.doctypes[doctype] == nil {
 		s.doctypes[doctype] = map[string]map[string]interface{}{}
+	}
+	for _, f := range fields {
+		if s.fields[doctype] == nil {
+			s.fields[doctype] = map[string]bool{}
+		}
+		s.fields[doctype][f] = true
 	}
 }
 
@@ -110,7 +134,9 @@ func (s *Site) Add(doctype string, docs ...map[string]interface{}) {
 		if name == "" {
 			panic("frappetest.Add: document without a name")
 		}
-		s.doctypes[doctype][name] = s.stamp(doctype, copyDoc(d), true)
+		doc := copyDoc(d)
+		s.stampRows(doctype, doc)
+		s.doctypes[doctype][name] = s.stamp(doctype, doc, true)
 	}
 }
 
@@ -373,6 +399,10 @@ func (s *Site) method(w http.ResponseWriter, r *http.Request, name string, body 
 		writeError(w, &Error{http.StatusInternalServerError, "Exception", err.Error()})
 		return
 	}
+	if body, ok := result.(Response); ok {
+		writeJSON(w, http.StatusOK, map[string]interface{}(body))
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"message": result})
 }
 
@@ -492,6 +522,9 @@ func (s *Site) create(w http.ResponseWriter, doctype string, body []byte, user s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	name, _ := d["name"].(string)
+	if from, _ := d["amended_from"].(string); from != "" && name == "" {
+		name = s.amendmentName(doctype, from)
+	}
 	if name == "" {
 		s.seq++
 		name = fmt.Sprintf("%s-%04d", strings.ReplaceAll(doctype, " ", "-"), s.seq)
@@ -502,6 +535,7 @@ func (s *Site) create(w http.ResponseWriter, doctype string, body []byte, user s
 	}
 	d["name"] = name
 	d["owner"] = user
+	s.stampRows(doctype, d)
 	doc := s.stamp(doctype, d, true)
 	s.doctypes[doctype][name] = doc
 	writeJSON(w, http.StatusOK, map[string]interface{}{"data": copyDoc(doc)})
@@ -520,12 +554,21 @@ func (s *Site) update(w http.ResponseWriter, doctype, name string, body []byte, 
 		writeError(w, NotFound(fmt.Sprintf("%s %s not found", doctype, name)))
 		return
 	}
+	if fmt.Sprint(doc["docstatus"]) != "0" {
+		for k := range patch {
+			if k != "name" && !s.onSubmit[doctype][k] {
+				writeError(w, &Error{http.StatusExpectationFailed, "UpdateAfterSubmitError", fmt.Sprintf("Not allowed to change %s after submission", k)})
+				return
+			}
+		}
+	}
 	for k, v := range patch {
 		if k != "name" {
 			doc[k] = v
 		}
 	}
 	doc["modified_by"] = user
+	s.stampRows(doctype, doc)
 	s.stamp(doctype, doc, false)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"data": copyDoc(doc)})
 }
@@ -613,14 +656,17 @@ func (s *Site) list(w http.ResponseWriter, r *http.Request, doctype string) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"data": out})
 }
 
-// knownField reports whether any document of the DocType has the field (the
-// fake has no schema).
+// knownField reports whether the field was declared or any document of the
+// DocType has it (the fake has no schema).
 func (s *Site) knownField(doctype, field string) bool {
 	if standardFields[field] {
 		return true
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.fields[doctype][field] {
+		return true
+	}
 	for _, d := range s.doctypes[doctype] {
 		if _, ok := d[field]; ok {
 			return true
