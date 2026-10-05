@@ -496,10 +496,32 @@ func TestUpdateDocDiffAndIfUnmodified(t *testing.T) {
 	if d, _ := s.Doc("ToDo", "TD-1"); d["status"] != "Open" {
 		t.Errorf("stale update applied: %v", d)
 	}
-	// The timestamp is not a field change.
-	if strings.Contains(r.Stderr, "  modified:") {
-		t.Errorf("diff shows modified: %s", r.Stderr)
+	// No diff for an update that was not made.
+	if strings.Contains(r.Stderr, "Changes to") {
+		t.Errorf("diff printed for a failed update: %s", r.Stderr)
 	}
+}
+
+// --diff sends the modified it read, so the diff shown cannot be stale.
+func TestUpdateDocDiffPinsModified(t *testing.T) {
+	s := cmdTSite(t)
+	cmdTOK(t, cmdTRun(t, s, "update-doc", "-d", "ToDo", "-n", "TD-1", "--data", `{"status":"Closed"}`, "--diff"))
+	puts := s.RequestsTo(http.MethodPut, "/api/resource/ToDo/TD-1")
+	if len(puts) != 1 || !strings.Contains(puts[0].Body, `"modified"`) {
+		t.Errorf("PUT = %+v", puts)
+	}
+	// Someone saves between the read and the update.
+	s.Handle("GET /api/resource/ToDo/TD-2", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"name":"TD-2","status":"Closed","modified":"2000-01-01 00:00:00.000000"}}`))
+	}))
+	r := cmdTRun(t, s, "update-doc", "-d", "ToDo", "-n", "TD-2", "--data", `{"status":"Open"}`, "--diff")
+	lcTCode(t, r, exitValidation, "ToDo TD-2 was changed on the server since it was read for --diff")
+	if strings.Contains(r.Stderr, "Changes to") {
+		t.Errorf("diff printed: %s", r.Stderr)
+	}
+	// Without --diff nothing is pinned.
+	cmdTOK(t, cmdTRun(t, s, "update-doc", "-d", "ToDo", "-n", "TD-2", "--data", `{"status":"Open"}`))
 }
 
 func TestMCPUpdateDocIfUnmodified(t *testing.T) {

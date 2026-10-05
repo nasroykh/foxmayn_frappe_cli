@@ -36,9 +36,11 @@ change. A "name" key in --data is ignored: the document is chosen by --name
 For Single DocTypes (e.g. "System Settings", "HR Settings"), --name can be
 omitted — the DocType name is used as the document name automatically.
 
---diff reads the document first and prints, on stderr, each field the update
-changes with its current and new value; the update is still sent (add
---dry-run to only look). --if-unmodified sends the document's "modified"
+--diff reads the document first and, once the update is saved, prints on
+stderr each field it changed with its old and new value (add --dry-run to
+only look). The update then carries the "modified" it read, so if anyone
+saves the document in between nothing is saved (exit 6) and the diff is
+never stale. --if-unmodified sends the document's "modified"
 timestamp as you read it (get-doc --keys modified): if anyone saved the
 document since, Frappe refuses the update and nothing is saved (exit 6).
 To edit a document interactively, see 'ffc edit-doc'.
@@ -73,6 +75,7 @@ Examples:
 		}
 
 		var changes map[string]interface{}
+		pinned := false // modified set from the document read for --diff
 		doc, err := callSite(cmd, fmt.Sprintf("Updating %s %s…", udDoctype, name), func(ctx context.Context, c *client.FrappeClient) (map[string]interface{}, error) {
 			if udDiff || client.IsDryRun(ctx) {
 				// Show what the update would change, from the current document.
@@ -81,6 +84,11 @@ Examples:
 					return nil, err
 				}
 				changes = fieldChanges(current, shown)
+				// The diff shown must be the change made: send the modified
+				// it was computed from, so a save in between fails.
+				if _, set := data["modified"]; udDiff && !set {
+					data["modified"], pinned = current["modified"], true
+				}
 			}
 			d, err := c.UpdateDoc(ctx, udDoctype, name, data)
 			var plan *client.DryRunError
@@ -89,15 +97,18 @@ Examples:
 			}
 			return d, err
 		})
-		if udDiff && changes != nil && !dryRunOn(cmd) {
-			printFieldChanges(udDoctype, name, changes)
-		}
 		if err != nil {
 			since := "the modified timestamp given"
-			if udIfUnmodified != "" {
+			switch {
+			case udIfUnmodified != "":
 				since = fmt.Sprintf("--if-unmodified %q", udIfUnmodified)
+			case pinned:
+				since = "it was read for --diff"
 			}
 			return conflictError(err, udDoctype, name, since)
+		}
+		if udDiff {
+			printFieldChanges(udDoctype, name, changes)
 		}
 
 		if machineOutput() {
@@ -136,7 +147,7 @@ func init() {
 	updateDocCmd.Flags().StringVarP(&udName, "name", "n", "", "Name of the document. Defaults to DocType name for Single DocTypes.")
 	updateDocCmd.Flags().StringVar(&udData, "data", "", `JSON object of fields to update, e.g. '{"status":"Closed"}' (required)`)
 	updateDocCmd.Flags().StringVar(&udKeys, "keys", "", "Comma-separated keys to include in JSON output, e.g. name,status")
-	updateDocCmd.Flags().BoolVar(&udDiff, "diff", false, "Print the changed fields (current → new) on stderr")
+	updateDocCmd.Flags().BoolVar(&udDiff, "diff", false, "Print the changed fields (old → new) on stderr; fails (exit 6) if the document changes in between")
 	updateDocCmd.Flags().StringVar(&udIfUnmodified, "if-unmodified", "", `Fail (exit 6) if the document's "modified" is no longer this value`)
 
 	_ = updateDocCmd.MarkFlagRequired("doctype")
