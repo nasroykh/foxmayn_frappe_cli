@@ -501,7 +501,7 @@ ffc whoami --json                 # {"user","full_name","roles","roles_source","
 ffc whoami --refresh --jq .server.major
 ```
 
-Roles come from the user's Has Role rows (a non-admin cannot read the roles table of their own User document); `roles_source` is `unavailable` with a `notes` entry when the site refuses. The app versions are cached 24 hours per site; `--refresh` rereads them. Use `server.major` to pick v15 or v16 behaviour (`discard-doc` needs v16).
+Roles come from the user's Has Role rows (a non-admin cannot read the roles table of their own User document); `roles_source` is `unavailable` with a `notes` entry when the site refuses. As Guest (credentials not accepted) it prints the result and exits 3, like `ffc ping`, which also exits 3 for rejected credentials. The app versions are cached 24 hours per site; `--refresh` rereads them. Use `server.major` to pick v15 or v16 behaviour (`discard-doc` needs v16).
 
 #### `ffc can` — Check a permission before acting
 
@@ -512,7 +512,7 @@ ffc can -d ToDo -n TD-0001 --all --json           # every right on that document
 ffc can -d Customer --perm delete && ffc delete-doc -d Customer -n CUST-1 --yes
 ```
 
-Exit 0 when allowed, **5** when denied (the result JSON is still on stdout), 4 when the DocType or document does not exist, 2 for a bad `--perm`. Without `-n` user permissions, sharing and controller rules are not considered. Administrator is allowed everything. The MCP tool `check_permission` takes `doctype`, `name`, `perm_type`, `all` and returns the same object (a denial is `allowed: false`, not an error).
+Exit 0 when allowed, **5** when denied (the result JSON is still on stdout), 4 when the DocType or document does not exist, 2 for a bad `--perm`. Without `-n` the DocType's role rows are applied to the user's roles (if_owner rows narrow a right to own documents and never create, select is implied by read, submit/cancel/amend need a submittable DocType, import an importable one, a child table is refused with exit 2); user permissions, sharing, controller rules and `disable_document_sharing` are not considered. The automatic role Desk User counts only for a known System User; `note` says when it would have changed the answer. With `-n` any lower-case custom permission type is accepted. `owner_only: true` means the right holds only on the user's own documents (read/select stay allowed, others are denied). Administrator is allowed everything. The MCP tool `check_permission` takes `doctype`, `name`, `perm_type`, `all` and returns the same object (a denial is `allowed: false`, not an error).
 
 #### `ffc doctor` — Diagnose the setup
 
@@ -521,7 +521,7 @@ ffc doctor            # human report, hint under every warning or failure
 ffc doctor --json     # [{"check","status","message","hint"}], status is pass, warn or fail
 ```
 
-Checks config file (0600) and directory (0700), parse, stale lock, TLS and plain-http warning, reachability, clock skew against the server's `Date` header, login, OAuth token expiry, installed apps, `/api/v2`, the MCP daemon and the update check. Exit **1** when any check fails; warnings exit 0. Run it first when a command fails for no clear reason.
+Checks config file (0600) and directory (0700), parse, stale lock, TLS and plain-http warning, reachability, clock skew against the server's `Date` header, login, OAuth token expiry, installed apps, `/api/v2`, the MCP daemon and the update check. Exit **1** when any check fails; warnings exit 0. It changes nothing (an expired OAuth token is reported, not renewed; versions are read live; no cache is touched), and flags a site URL that redirects. Run it first when a command fails for no clear reason.
 
 #### `ffc ping` — Check connectivity
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -122,15 +123,15 @@ func TestDocPermissionsControllerRefusal(t *testing.T) {
 }
 
 func TestEvalDocTypePermission(t *testing.T) {
-	rows := []map[string]interface{}{
+	meta := &DocTypeMeta{Name: "X", IsSubmittable: true, AllowImport: true, Permissions: []map[string]interface{}{
 		{"role": "Sales User", "permlevel": 0, "read": 1, "write": 1, "create": 1},
 		{"role": "Sales Manager", "permlevel": 0, "read": 1, "delete": 1},
 		{"role": "Sales User", "permlevel": 1, "delete": 1},                             // field level: grants nothing
 		{"role": "Accounts User", "permlevel": 0, "read": 1, "write": 1, "if_owner": 1}, // own documents only
 		{"role": "All", "permlevel": 0, "select": 1},
 		{"role": "Desk User", "permlevel": 0, "print": 1},
-	}
-	roles := []string{"Sales User", "Accounts User"}
+	}}
+	roles := []string{"Sales User", "Accounts User", "All", "Guest"}
 	for _, c := range []struct {
 		perm            string
 		allowed, ownerO bool
@@ -139,17 +140,75 @@ func TestEvalDocTypePermission(t *testing.T) {
 		{"create", true, false},
 		{"delete", false, false}, // Sales Manager is not held; the permlevel 1 row does not count
 		{"select", true, false},  // automatic role All
-		{"print", true, false},   // automatic role Desk User
+		{"print", false, false},  // Desk User is not among the roles
 		{"submit", false, false},
 	} {
-		got := EvalDocTypePermission(rows, roles, c.perm)
+		got := EvalDocTypePermission(meta, roles, c.perm)
 		if got.Allowed != c.allowed || got.OwnerOnly != c.ownerO {
 			t.Errorf("%s: %+v, want allowed=%v ownerOnly=%v", c.perm, got, c.allowed, c.ownerO)
 		}
 	}
-	only := EvalDocTypePermission(rows, []string{"Accounts User"}, "write")
-	if only.Allowed || !only.OwnerOnly {
-		t.Errorf("an if_owner row alone must give OwnerOnly: %+v", only)
+	if got := EvalDocTypePermission(meta, append(roles, "Desk User"), "print"); !got.Allowed {
+		t.Errorf("print with Desk User: %+v", got)
+	}
+}
+
+// if_owner follows permissions.py get_role_permissions: it narrows a right
+// only when no other applicable row grants it, and never create.
+func TestEvalDocTypePermissionIfOwner(t *testing.T) {
+	ownerOnly := &DocTypeMeta{Name: "X", IsSubmittable: true, Permissions: []map[string]interface{}{
+		{"role": "Clerk", "permlevel": 0, "select": 1, "read": 1, "write": 1, "create": 1, "delete": 1, "submit": 1, "if_owner": 1},
+	}}
+	mixed := &DocTypeMeta{Name: "X", IsSubmittable: true, Permissions: []map[string]interface{}{
+		{"role": "Clerk", "permlevel": 0, "read": 1, "write": 1, "create": 1, "if_owner": 1},
+		{"role": "Clerk", "permlevel": 0, "read": 1},                              // plain read beside the owner row
+		{"role": "Other", "permlevel": 0, "write": 1, "delete": 1, "if_owner": 0}, // not held
+	}}
+	for _, c := range []struct {
+		name    string
+		meta    *DocTypeMeta
+		perm    string
+		allowed bool
+		owner   bool
+	}{
+		{"create is never owner-only", ownerOnly, "create", true, false},
+		{"read stays allowed, narrowed", ownerOnly, "read", true, true},
+		{"select stays allowed, narrowed", ownerOnly, "select", true, true},
+		{"write is owner-only", ownerOnly, "write", false, true},
+		{"delete is owner-only", ownerOnly, "delete", false, true},
+		{"submit is owner-only", ownerOnly, "submit", false, true},
+		{"a right nobody grants is plain denied", ownerOnly, "share", false, false},
+		{"a plain row beside if_owner wins", mixed, "read", true, false},
+		{"owner row alone narrows write", mixed, "write", false, true},
+		{"create beside if_owner rows", mixed, "create", true, false},
+		{"select is implied by read", mixed, "select", true, false},
+	} {
+		got := EvalDocTypePermission(c.meta, []string{"Clerk"}, c.perm)
+		if got.Allowed != c.allowed || got.OwnerOnly != c.owner {
+			t.Errorf("%s: %+v, want allowed=%v ownerOnly=%v", c.name, got, c.allowed, c.owner)
+		}
+	}
+}
+
+func TestEvalDocTypePermissionMetaFlags(t *testing.T) {
+	rows := []map[string]interface{}{
+		{"role": "Clerk", "permlevel": 0, "submit": 1, "cancel": 1, "amend": 1, "import": 1, "read": 1},
+	}
+	roles := []string{"Clerk"}
+	plain := &DocTypeMeta{Name: "X", Permissions: rows}
+	for _, p := range []string{"submit", "cancel", "amend", "import"} {
+		if got := EvalDocTypePermission(plain, roles, p); got.Allowed {
+			t.Errorf("%s allowed on a DocType that is neither submittable nor importable", p)
+		}
+	}
+	full := &DocTypeMeta{Name: "X", IsSubmittable: true, AllowImport: true, Permissions: rows}
+	for _, p := range []string{"submit", "cancel", "amend", "import", "read"} {
+		if got := EvalDocTypePermission(full, roles, p); !got.Allowed {
+			t.Errorf("%s denied on a submittable, importable DocType", p)
+		}
+	}
+	if got := EvalDocTypePermission(plain, roles, "read"); !got.Allowed {
+		t.Error("read must not depend on the flags")
 	}
 }
 
@@ -174,5 +233,55 @@ func TestDocTypePermissionThroughTheSite(t *testing.T) {
 	}
 	if got := len(s.Requests()) - n; got != 1 {
 		t.Errorf("Administrator took %d requests, want 1", got)
+	}
+}
+
+// Desk User counts only for a user known to be a System User. When the user
+// type cannot be read the role is left out and the note says what it would
+// have changed.
+func TestDocTypePermissionDeskUser(t *testing.T) {
+	s := frappetest.New(t)
+	s.AddDocType("Customer")
+	s.AddDocType("User")
+	s.DocPerm("Customer", map[string]interface{}{"role": "Desk User", "permlevel": 0, "read": 1})
+	s.SetUser("jane@example.com", "Sales User")
+	c := serverTClient(t, s)
+	ctx := context.Background()
+
+	// Unreadable user type: not counted, and the note says why.
+	p, err := c.DocTypePermission(ctx, "Customer", "read")
+	if err != nil || p.Allowed {
+		t.Fatalf("unknown user type: %+v, %v", p, err)
+	}
+	if !strings.Contains(p.Note, "Desk User") || !strings.Contains(p.Note, "allowed") {
+		t.Errorf("note = %q", p.Note)
+	}
+	// No note when Desk User would change nothing.
+	if p, err := c.DocTypePermission(ctx, "Customer", "delete"); err != nil || p.Note != "" {
+		t.Errorf("delete: %+v, %v", p, err)
+	}
+
+	// A System User gets the role.
+	s.Add("User", map[string]interface{}{"name": "jane@example.com", "user_type": "System User"})
+	if p, err := c.DocTypePermission(ctx, "Customer", "read"); err != nil || !p.Allowed || p.Note != "" {
+		t.Errorf("System User: %+v, %v", p, err)
+	}
+	// A Website User does not.
+	s.Add("User", map[string]interface{}{"name": "jane@example.com", "user_type": "Website User"})
+	if p, err := c.DocTypePermission(ctx, "Customer", "read"); err != nil || p.Allowed || p.Note != "" {
+		t.Errorf("Website User: %+v, %v", p, err)
+	}
+}
+
+func TestDocTypePermissionChildTable(t *testing.T) {
+	s := frappetest.New(t)
+	s.AddDocType("Invoice Item")
+	s.DocTypeFlags("Invoice Item", map[string]interface{}{"istable": 1})
+	s.SetUser("jane@example.com", "Sales User")
+	c := serverTClient(t, s)
+	_, err := c.DocTypePermission(context.Background(), "Invoice Item", "read")
+	var ct *ChildTableError
+	if !errors.As(err, &ct) || ct.DocType != "Invoice Item" || !strings.Contains(err.Error(), "parent") {
+		t.Errorf("err = %v, want a ChildTableError naming the parent", err)
 	}
 }

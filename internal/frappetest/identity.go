@@ -25,6 +25,7 @@ func (s *Site) registerIdentity() {
 	}
 	s.denied = map[string]map[string]bool{}
 	s.docPerms = map[string][]map[string]interface{}{}
+	s.metaFlag = map[string]map[string]interface{}{}
 	s.methods["frappe.utils.change_log.get_versions"] = s.getVersions
 	s.methods["frappe.client.has_permission"] = s.hasPermission
 	s.methods["frappe.client.get_doc_permissions"] = s.getDocPermissions
@@ -66,6 +67,19 @@ func (s *Site) DocPerm(doctype string, row map[string]interface{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.docPerms[doctype] = append(s.docPerms[doctype], row)
+}
+
+// DocTypeFlags sets meta flags getdoctype reports for a DocType: istable,
+// is_submittable, allow_import (a new DocType has none of them).
+func (s *Site) DocTypeFlags(doctype string, flags map[string]interface{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.metaFlag[doctype] == nil {
+		s.metaFlag[doctype] = map[string]interface{}{}
+	}
+	for k, v := range flags {
+		s.metaFlag[doctype][k] = v
+	}
 }
 
 // DisableV2 makes /api/v2 answer 404, like a site without the v2 API.

@@ -67,7 +67,7 @@ func buildWhoami(ctx context.Context, c *client.FrappeClient, cfg *config.SiteCo
 		}
 		return nil, err
 	}
-	res := &whoamiResult{User: user, Roles: []string{}, RolesSource: "unavailable", Site: cfg.Name, URL: cfg.URL, Auth: authMethod(cfg)}
+	res := &whoamiResult{User: user, Roles: []string{}, RolesSource: "unavailable", Site: cfg.Name, URL: redactedURL(cfg.URL), Auth: authMethod(cfg)}
 	if user == "Guest" {
 		res.Notes = append(res.Notes, "the site sees these credentials as Guest: they are not authenticated")
 		return res, nil
@@ -155,6 +155,11 @@ roles, and the installed apps with their versions (Frappe, ERPNext, ...).
 The roles are read from the user's Has Role rows: a user who is not a System
 Manager can read their own User document but not its roles table. If the
 site refuses that too, the roles are reported as unavailable, with a note.
+The automatic roles (All, Guest, Desk User) are not Has Role rows and are not
+listed.
+
+When the site sees the credentials as Guest (not authenticated) the result is
+printed and the command exits 3, like ping.
 
 The versions are cached for 24 hours per site under the user cache directory
 (ffc/<site>/server.json); --refresh reads them again.
@@ -172,7 +177,7 @@ Examples:
 		if err != nil {
 			return err
 		}
-		return render(res, nil, func() error {
+		if err := render(res, nil, func() error {
 			view := res.table()
 			var keys []string
 			for _, k := range []string{"user", "full_name", "roles", "auth", "site", "url", "frappe", "apps", "notes"} {
@@ -182,7 +187,15 @@ Examples:
 			}
 			output.PrintDocTable(view, keys)
 			return nil
-		})
+		}); err != nil {
+			return err
+		}
+		// Like ping: the site answered, but these credentials are not
+		// accepted. The result above says so; the exit code does too.
+		if res.User == "Guest" {
+			return &client.AuthError{Message: "the site sees these credentials as Guest: check your credentials or run 'ffc init' to reconfigure"}
+		}
+		return nil
 	},
 }
 

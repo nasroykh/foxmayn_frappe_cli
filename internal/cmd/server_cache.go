@@ -22,6 +22,11 @@ import (
 // a request for it each time.
 const serverCacheTTL = 24 * time.Hour
 
+// userCacheDir is where the cache lives. A variable so tests can point it at
+// a temporary directory on every platform (os.UserCacheDir reads XDG_CACHE_HOME
+// on Linux only).
+var userCacheDir = os.UserCacheDir
+
 // serverCacheDir returns ffc's cache directory for a site:
 // <user cache dir>/ffc/<site>, where <site> is the site's name made safe for
 // a path plus a short hash of the exact name. A name may hold "/", "..", a
@@ -29,7 +34,7 @@ const serverCacheTTL = 24 * time.Hour
 // such characters ("a/b", "a_b") must not share a directory. A site that has
 // no name (it comes from FFC_* variables alone) is keyed by its URL.
 func serverCacheDir(cfg *config.SiteConfig) (string, error) {
-	base, err := os.UserCacheDir()
+	base, err := userCacheDir()
 	if err != nil {
 		return "", err
 	}
@@ -152,17 +157,4 @@ func serverInfo(ctx context.Context, c *client.FrappeClient, cfg *config.SiteCon
 	}
 	writeServerCache(cfg, info)
 	return info, false, nil
-}
-
-// SiteFrappeMajor returns the major version of the site's Frappe (15, 16), 0
-// when it cannot be told. It is the helper for behaviour that differs between
-// versions; a failure to find out is not an error to the caller, which then
-// treats the version as unknown. It is exported so that staticcheck does not
-// count it as unused until a command needs it.
-func SiteFrappeMajor(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) int {
-	info, _, err := serverInfo(ctx, c, cfg, false)
-	if err != nil {
-		return 0
-	}
-	return info.FrappeMajor()
 }

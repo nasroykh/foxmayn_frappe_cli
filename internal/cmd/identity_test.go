@@ -106,7 +106,12 @@ func TestWhoamiGuestAndErrors(t *testing.T) {
 	cacheTEnv(t)
 	s := frappetest.New(t)
 	s.SetUser("Guest")
-	out := cmdTObj(t, cmdTOK(t, cmdTRun(t, s, "--json", "whoami")))
+	// Guest: the result is printed, then the command fails like ping (exit 3).
+	r := cmdTRun(t, s, "--json", "whoami")
+	if r.Code != exitAuth {
+		t.Errorf("Guest exits %d, want %d (stderr %s)", r.Code, exitAuth, r.Stderr)
+	}
+	out := cmdTObj(t, r)
 	if out["user"] != "Guest" || out["notes"] == nil {
 		t.Errorf("Guest: %v", out)
 	}
@@ -283,6 +288,28 @@ func TestMCPWhoami(t *testing.T) {
 	}
 }
 
+// A policy that denies User blocks whoami before anything is sent to the site.
+func TestMCPWhoamiDeniedByPolicy(t *testing.T) {
+	cacheTEnv(t)
+	site := frappetest.New(t)
+	cfg := &config.SiteConfig{Name: "test", URL: site.URL, APIKey: frappetest.APIKey, APISecret: frappetest.APISecret,
+		MCP: &config.MCPPolicy{DenyDoctypes: []string{"User"}}}
+	c, err := client.New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := server.NewMCPServer("test", "0")
+	mcpTRegister(s, c, cfg, nil)
+	n := len(site.Requests())
+	mcpTErr(t, s, "whoami", nil, `DocType "User" is denied`)
+	if got := len(site.Requests()) - n; got != 0 {
+		t.Errorf("%d requests reached the site", got)
+	}
+	// check_permission on another DocType is not affected.
+	site.Add("ToDo", map[string]interface{}{"name": "TD-1"})
+	mcpTOK(t, s, "check_permission", map[string]interface{}{"doctype": "ToDo", "name": "TD-1"})
+}
+
 func TestMCPCheckPermission(t *testing.T) {
 	s, site := newMCPFake(t, true)
 	site.Add("ToDo", map[string]interface{}{"name": "TD-1"})
@@ -330,7 +357,7 @@ func TestMCPCheckPermissionScope(t *testing.T) {
 	}
 	req.Params.Name = "whoami"
 	req.Params.Arguments = map[string]interface{}{}
-	if sc, err := scopeOf(req); err != nil || sc.Action != actRead {
-		t.Errorf("whoami scope = %+v, %v", sc, err)
+	if sc, err := scopeOf(req); err != nil || sc.Action != actRead || len(sc.Doctypes) != 1 || sc.Doctypes[0] != "User" {
+		t.Errorf("whoami scope = %+v, %v (it reads User)", sc, err)
 	}
 }

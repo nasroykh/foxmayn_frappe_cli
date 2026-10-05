@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
@@ -24,31 +27,47 @@ type permResult struct {
 	// a document.
 	Basis string `json:"basis"`
 	// OwnerOnly: the role rules allow it only on documents the user created.
-	OwnerOnly   bool           `json:"owner_only,omitempty"`
+	OwnerOnly bool `json:"owner_only,omitempty"`
+	// Note says what a DocType-level answer assumed or could not know (a
+	// role that was not counted).
+	Note        string         `json:"note,omitempty"`
 	Permissions map[string]int `json:"permissions,omitempty"` // with --all, for a document
 }
 
+// permIdent matches the name of a permission type a site can define (v16
+// Permission Type): a lower-case identifier.
+var permIdent = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
 // parsePerm returns the lower-cased permission type; ok is false when it is
-// not one Frappe checks.
-func parsePerm(perm string) (string, bool) {
+// not one Frappe checks. With custom (a check of one document, which the site
+// judges itself) any lower-case identifier is accepted, since a site can add
+// permission types; without it only the types Frappe ships are, because the
+// role rows ffc evaluates are read by those names.
+func parsePerm(perm string, custom bool) (string, bool) {
 	p := strings.ToLower(strings.TrimSpace(perm))
 	for _, t := range client.PermTypes {
 		if t == p {
 			return p, true
 		}
 	}
+	if custom && permIdent.MatchString(p) {
+		return p, true
+	}
 	return "", false
 }
 
-func permTypeHelp(perm string) string {
-	return fmt.Sprintf("%q is not a permission type (one of %s)", perm, strings.Join(client.PermTypes, ", "))
+func permTypeHelp(perm string, custom bool) string {
+	if custom {
+		return fmt.Sprintf("%q is not a permission type (one of %s, or a custom type: a lower-case identifier)", perm, strings.Join(client.PermTypes, ", "))
+	}
+	return fmt.Sprintf("%q is not a permission type for a DocType check (one of %s; custom types need --name)", perm, strings.Join(client.PermTypes, ", "))
 }
 
 // validPerm is parsePerm with a usage error for --perm.
-func validPerm(perm string) (string, error) {
-	p, ok := parsePerm(perm)
+func validPerm(perm string, custom bool) (string, error) {
+	p, ok := parsePerm(perm, custom)
 	if !ok {
-		return "", usageErrorf("--perm: %s", permTypeHelp(perm))
+		return "", usageErrorf("--perm: %s", permTypeHelp(perm, custom))
 	}
 	return p, nil
 }
@@ -60,10 +79,14 @@ func checkPermission(ctx context.Context, c *client.FrappeClient, doctype, name,
 	res := &permResult{DocType: doctype, Name: name, Perm: perm}
 	if name == "" {
 		dp, err := c.DocTypePermission(ctx, doctype, perm)
+		var child *client.ChildTableError
+		if errors.As(err, &child) {
+			return nil, usageErrorf("%v", err)
+		}
 		if err != nil {
 			return nil, err
 		}
-		res.Allowed, res.OwnerOnly, res.Basis = dp.Allowed, dp.OwnerOnly, "doctype"
+		res.Allowed, res.OwnerOnly, res.Note, res.Basis = dp.Allowed, dp.OwnerOnly, dp.Note, "doctype"
 		return res, nil
 	}
 	allowed, err := c.HasPermission(ctx, doctype, name, perm)
@@ -102,12 +125,29 @@ on one document, without changing anything.
 With --name the site judges that document (frappe.client.has_permission): user
 permissions, sharing and controller rules count, as when the action is
 really attempted. --all also lists every permission the user holds on it
-(frappe.client.get_doc_permissions, the role rules only).
+(frappe.client.get_doc_permissions, the role rules only; every key the site
+returns is printed, custom permission types included). With --name, --perm
+may be any lower-case permission type the site defines.
 
 Without --name the site has no way to judge a DocType alone, so ffc applies
-the DocType's permission rows to the user's roles. That answers "may I create
-a Sales Invoice at all", but not user permissions, sharing or controller
-rules; "basis" in the result says which kind of answer it is.
+the DocType's permission rows to the user's roles, as Frappe's role
+permission system does: if_owner rows narrow a right to the user's own
+documents only when no other row grants it (never create), select is implied
+by read, submit/cancel/amend need a submittable DocType and import an
+importable one. That answers "may I create a Sales Invoice at all". It does
+not evaluate sharing, user permissions or controller rules, and it does not
+check the System Settings option disable_document_sharing. "basis" in the
+result says which kind of answer it is. A child table is refused: check its
+parent DocType.
+
+An owner-only right shows as "owner_only": for read and select the answer is
+allowed (the user lists documents, narrowed to their own), for the other
+rights it is denied because it holds only per document.
+
+The automatic role Desk User is counted only when the User document shows a
+System User. Users who cannot read user_type (permission level 1, so everyone
+but a user manager) are evaluated without it, and "note" says so when a Desk
+User row would have changed the answer.
 
 The user Administrator is allowed everything, whether or not the document exists.
 
@@ -125,7 +165,7 @@ Examples:
 `,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		perm, err := validPerm(canPerm)
+		perm, err := validPerm(canPerm, canName != "")
 		if err != nil {
 			return err
 		}
@@ -142,8 +182,13 @@ Examples:
 			if err := printResult(res); err != nil {
 				return err
 			}
-		} else if res.Allowed {
-			output.PrintSuccess(fmt.Sprintf("allowed: %s on %s", res.Perm, res.subject()))
+		} else {
+			if res.Allowed {
+				output.PrintSuccess(fmt.Sprintf("allowed: %s on %s", res.Perm, res.subject()))
+			}
+			if res.Note != "" {
+				output.PrintWarning("note: " + res.Note)
+			}
 			if canAll {
 				printPermissions(res.Permissions)
 			}
@@ -159,6 +204,8 @@ Examples:
 	},
 }
 
+// printPermissions prints every right the site returned: the types Frappe
+// ships first, then the others (custom types) sorted.
 func printPermissions(perms map[string]int) {
 	row := map[string]interface{}{}
 	var keys []string
@@ -168,6 +215,17 @@ func printPermissions(perms map[string]int) {
 			keys = append(keys, p)
 		}
 	}
+	var extra []string
+	for p := range perms {
+		if _, ok := row[p]; !ok {
+			extra = append(extra, p)
+		}
+	}
+	sort.Strings(extra)
+	for _, p := range extra {
+		row[p] = perms[p] == 1
+	}
+	keys = append(keys, extra...)
 	if len(keys) > 0 {
 		output.PrintDocTable(row, keys)
 	}
@@ -176,7 +234,7 @@ func printPermissions(perms map[string]int) {
 func init() {
 	canCmd.Flags().StringVarP(&canDoctype, "doctype", "d", "", "Frappe DocType (required)")
 	canCmd.Flags().StringVarP(&canName, "name", "n", "", "Name of one document; without it the DocType's role rules are evaluated")
-	canCmd.Flags().StringVar(&canPerm, "perm", "read", "Permission type: select, read, write, create, delete, submit, cancel, amend, print, email, report, import, export, share")
+	canCmd.Flags().StringVar(&canPerm, "perm", "read", "Permission type: select, read, write, create, delete, submit, cancel, amend, print, email, report, import, export, share (with --name, any type the site defines)")
 	canCmd.Flags().BoolVar(&canAll, "all", false, "With --name: also list every permission the user holds on the document")
 	_ = canCmd.MarkFlagRequired("doctype")
 	rootCmd.AddCommand(canCmd)

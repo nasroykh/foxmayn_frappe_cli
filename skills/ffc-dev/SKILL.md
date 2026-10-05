@@ -42,7 +42,7 @@ internal/cmd/ping.go          → ping subcommand (also names the user)
 internal/cmd/whoami.go        → whoami subcommand, buildWhoami (shared with the MCP tool), authMethod
 internal/cmd/can.go           → can subcommand, checkPermission (shared with the MCP tool), parsePerm, deniedError (exit 5)
 internal/cmd/doctor.go        → doctor subcommand: one method per check on `doctor`, doctorCheck {check,status,message,hint}
-internal/cmd/server_cache.go  → per-site server.json cache in os.UserCacheDir() (serverInfo, cacheDirName, SiteFrappeMajor)
+internal/cmd/server_cache.go  → per-site server.json cache in os.UserCacheDir() (serverInfo, cacheDirName; the dir comes from the `userCacheDir` var)
 internal/cmd/get_doc.go       → get-doc subcommand
 internal/cmd/list_docs.go     → list-docs subcommand + parseFields()
 internal/cmd/create_doc.go    → create-doc subcommand
@@ -169,8 +169,8 @@ func init() {
 
 - **Global flags** `siteName`, `configPath`, `jsonOutput`, `quiet` (and `client.Timeout` for `--timeout`) are package-level vars set in `root.go` — use them directly, don't redeclare.
 - **Never build a client with `client.New` directly** in a command — use `callSite` / `newClient` so `loadSite` runs and an expired OAuth token is refreshed. (`ping` is the one exception: it calls `loadSite` + `client.New` itself to time the whole round-trip.) A command that also needs the site config (to key a cache, name the auth method) uses `callSiteCfg` / `newClientCfg`.
-- **Site facts are cached, not refetched.** Installed apps and versions go through `serverInfo(ctx, c, cfg, refresh)` (24 h, `<user cache dir>/ffc/<name>-<hash>/server.json`, 0700/0600, atomic, keyed by URL too). A command with a `--refresh` flag passes it; `SiteFrappeMajor` is the helper for version-dependent behaviour. Never build a cache path from a raw site name: use `cacheDirName`.
-- **A new `doctor` check** is a method on `doctor` that calls `d.add(id, checkPass|checkWarn|checkFail, message, hint)`. Check ids are part of the JSON contract: never rename one. Messages must not contain secrets (config values in parse errors are stripped; URLs go through `redactedURL`). Tests use the seams `doctorNow` and `doctorTLSRoots`.
+- **Site facts are cached, not refetched.** Installed apps and versions go through `serverInfo(ctx, c, cfg, refresh)` (24 h, `<user cache dir>/ffc/<name>-<hash>/server.json`, 0700/0600, atomic, keyed by URL too). A command with a `--refresh` flag passes it (doctor has none: it reads live and never touches the cache). Version-dependent behaviour uses `serverInfo(...).FrappeMajor()`. Never build a cache path from a raw site name: use `cacheDirName`. Tests repoint the `userCacheDir` seam (TestMain, `cacheTEnv`); setting XDG_CACHE_HOME would not work on macOS or Windows.
+- **A new `doctor` check** is a method on `doctor` that calls `d.add(id, checkPass|checkWarn|checkFail, message, hint)`. Check ids are part of the JSON contract: never rename one. Messages must not contain secrets (config values in parse errors are stripped; URLs go through `redactedURL`). A check must not change state (no OAuth refresh, no cache write, no cleanup). The probe is one request: `net.tls` reads `resp.RawResponse.TLS`, so a proxy is honoured. Tests use the seams `doctorNow` and `doctorTLSRoots`.
 - **`Args: cobra.NoArgs`** on data commands.
 - **Flag variable prefixes**: Each command uses a unique 2-letter prefix for its flag vars to avoid collisions within the `cmd` package. Check existing files before choosing one.
 - **RunE, not Run**: Return errors — cobra handles printing them to stderr and setting exit code 1. Any abort, declined confirmation (`errAborted`) or partial bulk failure (`bulkReport.err()`) must also be a non-zero exit.

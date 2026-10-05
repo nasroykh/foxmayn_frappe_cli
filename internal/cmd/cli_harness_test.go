@@ -25,7 +25,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	_ = os.Setenv("XDG_CACHE_HOME", cache)
+	userCacheDir = func() (string, error) { return cache, nil }
 	code := m.Run()
 	_ = os.RemoveAll(cache)
 	os.Exit(code)

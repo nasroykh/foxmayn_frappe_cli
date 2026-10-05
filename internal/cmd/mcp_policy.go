@@ -107,6 +107,10 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 				}
 			}
 		}
+	case "whoami":
+		// It reads the User document and the user's Has Role rows, so the
+		// DocType rules for User apply.
+		sc.Doctypes = append(sc.Doctypes, "User")
 	case "run_report":
 		sc.Report = str("report_name")
 	case "call_method":

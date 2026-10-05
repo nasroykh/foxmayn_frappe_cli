@@ -24,6 +24,15 @@ func teardownContractUser(c *client.FrappeClient) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30e9)
 	defer cancel()
 	_ = c.DeleteDoc(ctx, "User", contractUser)
+	// Creating a user also creates a Contact, which deleting the user leaves
+	// behind (and which global search would then find).
+	if rows, err := c.GetList(ctx, "Contact", client.ListOptions{Filters: `{"email_id":"` + contractUser + `"}`, Limit: -1}); err == nil {
+		for _, r := range rows {
+			if name, ok := r["name"].(string); ok {
+				_ = c.DeleteDoc(ctx, "Contact", name)
+			}
+		}
+	}
 }
 
 // contractIdentity pins what T2.4 relies on: the get_versions shape, the
@@ -171,6 +180,69 @@ func contractIdentityUser(t *testing.T, c *client.FrappeClient, sc *config.SiteC
 	// Administrator is allowed everything, a missing document included.
 	if ok, err := c.HasPermission(ctx, contractDT, "ffc-contract-missing", "write"); err != nil || !ok {
 		t.Errorf("Administrator on a missing document = %v, %v", ok, err)
+	}
+
+	contractIfOwner(t, c, uc)
+
+	// A child table is the parent's business.
+	var child *client.ChildTableError
+	if _, err := uc.DocTypePermission(ctx, contractChild, "read"); !errors.As(err, &child) {
+		t.Errorf("DocTypePermission on a child table: %v, want a ChildTableError", err)
+	}
+	// A DocType that is not submittable cannot grant submit, whatever its rows say.
+	if p, err := uc.DocTypePermission(ctx, "Note", "submit"); err != nil || p.Allowed {
+		t.Errorf("Note submit = %+v, %v", p, err)
+	}
+}
+
+// contractIfOwner pins the if_owner semantics EvalDocTypePermission mirrors,
+// on the stock Note DocType: role Desk User has a plain read row and one
+// if_owner row for create, write, delete, share. The role-level answer and
+// the site's own answer for a real document must agree: create is never
+// owner-only, write and delete hold only on the user's own notes, read and
+// select hold for everyone's.
+func contractIfOwner(t *testing.T, admin, uc *client.FrappeClient) {
+	ctx := contractCtx(t)
+	for _, c := range []struct {
+		perm           string
+		allowed, owner bool
+	}{
+		{"read", true, false},
+		{"select", true, false},
+		{"create", true, false},
+		{"write", false, true},
+		{"delete", false, true},
+	} {
+		p, err := uc.DocTypePermission(ctx, "Note", c.perm)
+		if err != nil || p.Allowed != c.allowed || p.OwnerOnly != c.owner {
+			t.Errorf("Note %s = %+v, %v; want allowed=%v owner_only=%v", c.perm, p, err, c.allowed, c.owner)
+		}
+	}
+
+	others, err := admin.CreateDoc(ctx, "Note", map[string]interface{}{"title": "ffc contract others", "public": 1})
+	if err != nil {
+		t.Fatalf("creating a note as Administrator: %v", err)
+	}
+	t.Cleanup(func() { _ = admin.DeleteDoc(ctx, "Note", others["name"].(string)) })
+	mine, err := uc.CreateDoc(ctx, "Note", map[string]interface{}{"title": "ffc contract mine"})
+	if err != nil {
+		t.Fatalf("creating a note as the fixture user (create is allowed): %v", err)
+	}
+	t.Cleanup(func() { _ = admin.DeleteDoc(ctx, "Note", mine["name"].(string)) })
+
+	for doc, want := range map[string]map[string]int{
+		others["name"].(string): {"read": 1, "write": 0, "delete": 0},
+		mine["name"].(string):   {"read": 1, "write": 1, "delete": 1},
+	} {
+		perms, err := uc.DocPermissions(ctx, "Note", doc)
+		if err != nil {
+			t.Fatalf("DocPermissions(%s): %v", doc, err)
+		}
+		for ptype, v := range want {
+			if perms[ptype] != v {
+				t.Errorf("Note %s: %s = %d, want %d (%v)", doc, ptype, perms[ptype], v, perms)
+			}
+		}
 	}
 }
 

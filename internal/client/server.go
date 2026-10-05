@@ -153,8 +153,9 @@ func (c *FrappeClient) UserRoles(ctx context.Context, user string) ([]string, er
 	return roles, nil
 }
 
-// PermTypes are the permission types Frappe checks for a document. Custom
-// rights a site adds are not listed.
+// PermTypes are the permission types Frappe ships. A site can add custom
+// ones (v16, Permission Type); those are only checked per document, where the
+// site itself judges them.
 var PermTypes = []string{"select", "read", "write", "create", "delete", "submit", "cancel", "amend",
 	"print", "email", "report", "import", "export", "share"}
 
@@ -213,11 +214,35 @@ func (c *FrappeClient) DocPermissions(ctx context.Context, doctype, name string)
 // DocTypePermission is a role-level answer to "may I do this to any
 // document of this DocType".
 type DocTypePermission struct {
+	// Allowed: the role rows grant it. For select and read it stays true when
+	// OwnerOnly is set: the user may list documents, narrowed to their own.
 	Allowed bool
-	// OwnerOnly is set when the rights come only from rows limited to the
-	// documents the user created.
+	// OwnerOnly is set when every row that grants the right is limited to
+	// the documents the user created (if_owner). For anything but select and
+	// read that means Allowed is false: the right holds only per document.
 	OwnerOnly bool
 	Roles     []string // the roles evaluated
+	// Note says what the answer assumed or could not know. It is set when a
+	// role ffc could not confirm would change the result.
+	Note string
+}
+
+// DocTypeMeta is the part of a DocType's meta the role evaluation needs.
+type DocTypeMeta struct {
+	Name          string
+	IsTable       bool // a child table: its rights are the parent's
+	IsSubmittable bool
+	AllowImport   bool
+	Permissions   []map[string]interface{} // the DocPerm rows, custom ones included
+}
+
+// ChildTableError is returned when a role-level check names a child table:
+// Frappe delegates those to the parent DocType (has_child_permission), and
+// the parent is not known from the child's meta.
+type ChildTableError struct{ DocType string }
+
+func (e *ChildTableError) Error() string {
+	return fmt.Sprintf("%s is a child table: its permissions are those of its parent DocType, so check the parent instead", e.DocType)
 }
 
 func truthy(v interface{}) bool {
@@ -238,13 +263,58 @@ func truthy(v interface{}) bool {
 	return false
 }
 
+const (
+	roleDeskUser = "Desk User"
+	roleAll      = "All"
+	roleGuest    = "Guest"
+)
+
+// docTypeMeta reads the meta of a DocType through frappe.desk.form.load.getdoctype.
+func (c *FrappeClient) docTypeMeta(ctx context.Context, doctype string) (*DocTypeMeta, error) {
+	env, err := c.CallMethodFull(ctx, "frappe.desk.form.load.getdoctype", map[string]interface{}{"doctype": doctype}, true)
+	if err != nil {
+		return nil, err
+	}
+	var docs []struct {
+		Name          string                   `json:"name"`
+		IsTable       interface{}              `json:"istable"`
+		IsSubmittable interface{}              `json:"is_submittable"`
+		AllowImport   interface{}              `json:"allow_import"`
+		Permissions   []map[string]interface{} `json:"permissions"`
+	}
+	if err := convert(env["docs"], &docs); err != nil || len(docs) == 0 {
+		return nil, fmt.Errorf("unexpected response from getdoctype: no meta for %s", doctype)
+	}
+	d := docs[0]
+	return &DocTypeMeta{Name: doctype, IsTable: truthy(d.IsTable), IsSubmittable: truthy(d.IsSubmittable),
+		AllowImport: truthy(d.AllowImport), Permissions: d.Permissions}, nil
+}
+
+// isSystemUser reports what the User document says about user_type. known is
+// false when the field cannot be read: it has permission level 1, so only a
+// user who manages users sees it.
+func (c *FrappeClient) isSystemUser(ctx context.Context, user string) (system, known bool) {
+	doc, err := c.GetDoc(ctx, "User", user)
+	if err != nil {
+		return false, false
+	}
+	t, ok := doc["user_type"].(string)
+	if !ok || t == "" {
+		return false, false
+	}
+	return t == "System User", true
+}
+
 // DocTypePermission evaluates the DocType's permission rows for the user's
 // roles. This is what Frappe's role permission system grants before user
 // permissions, sharing and controller rules narrow it, and the only
 // question a site can answer without a document: has_permission needs one.
-// The user Administrator may do everything. The automatic roles All and Guest
-// count, and so does Desk User: ffc cannot read user_type (permission level 1)
-// and a desk or API user is normally a System User.
+//
+// The user Administrator may do everything. The automatic roles All and
+// Guest count. Desk User counts only when the User document shows a System
+// User; when user_type cannot be read (permission level 1) it is left out,
+// and Note says so if a Desk User row would have changed the answer. A child
+// table is refused with a ChildTableError.
 func (c *FrappeClient) DocTypePermission(ctx context.Context, doctype, ptype string) (*DocTypePermission, error) {
 	user, err := c.LoggedUser(ctx)
 	if err != nil {
@@ -253,47 +323,116 @@ func (c *FrappeClient) DocTypePermission(ctx context.Context, doctype, ptype str
 	if user == "Administrator" {
 		return &DocTypePermission{Allowed: true}, nil
 	}
-	roles, err := c.UserRoles(ctx, user)
+	var roles []string
+	deskUnknown := false
+	if user == "Guest" {
+		roles = []string{roleGuest}
+	} else {
+		have, err := c.UserRoles(ctx, user)
+		if err != nil {
+			return nil, err
+		}
+		roles = append(have, roleAll, roleGuest)
+		switch system, known := c.isSystemUser(ctx, user); {
+		case known && system:
+			roles = append(roles, roleDeskUser)
+		case !known:
+			deskUnknown = true
+		}
+	}
+	meta, err := c.docTypeMeta(ctx, doctype)
 	if err != nil {
 		return nil, err
 	}
-	env, err := c.CallMethodFull(ctx, "frappe.desk.form.load.getdoctype", map[string]interface{}{"doctype": doctype}, true)
-	if err != nil {
-		return nil, err
+	if meta.IsTable {
+		return nil, &ChildTableError{DocType: doctype}
 	}
-	var docs []struct {
-		Name        string                   `json:"name"`
-		Permissions []map[string]interface{} `json:"permissions"`
+	out := EvalDocTypePermission(meta, roles, ptype)
+	if deskUnknown {
+		with := EvalDocTypePermission(meta, append(append([]string(nil), roles...), roleDeskUser), ptype)
+		if with.Allowed != out.Allowed || with.OwnerOnly != out.OwnerOnly {
+			out.Note = fmt.Sprintf("the role %s was not counted: ffc cannot read the user type of %s, and Frappe gives %s to System Users. If %s is one, the answer is %s",
+				roleDeskUser, user, roleDeskUser, user, verdict(with))
+		}
 	}
-	if err := convert(env["docs"], &docs); err != nil || len(docs) == 0 {
-		return nil, fmt.Errorf("unexpected response from getdoctype: no meta for %s", doctype)
-	}
-	return EvalDocTypePermission(docs[0].Permissions, roles, ptype), nil
+	return out, nil
 }
 
-// EvalDocTypePermission applies DocPerm rows (permission level 0) to a set of
-// roles. See DocTypePermission.
-func EvalDocTypePermission(rows []map[string]interface{}, roles []string, ptype string) *DocTypePermission {
-	have := map[string]bool{"All": true, "Guest": true, "Desk User": true}
+func verdict(p *DocTypePermission) string {
+	switch {
+	case p.Allowed && p.OwnerOnly:
+		return "allowed, for documents the user owns"
+	case p.Allowed:
+		return "allowed"
+	case p.OwnerOnly:
+		return "denied except on documents the user owns"
+	}
+	return "denied"
+}
+
+// EvalDocTypePermission applies the DocPerm rows of meta (permission level 0)
+// to a set of roles, as frappe.permissions.get_role_permissions does
+// (permissions.py:318-345, has_permission:148-165 and 213).
+//
+//   - A right is granted when any applicable row grants it.
+//   - An if_owner row restricts a right to the user's own documents only when
+//     no applicable row without if_owner grants it, and never create. The
+//     DocType-level answer then keeps select and read (the user can still
+//     list, narrowed by owner) and denies the rest, with OwnerOnly set.
+//   - select is implied by read.
+//   - submit needs a submittable DocType, import an importable one; cancel
+//     and amend follow submit (ffc's reading: neither can happen on a
+//     document that cannot be submitted).
+func EvalDocTypePermission(meta *DocTypeMeta, roles []string, ptype string) *DocTypePermission {
+	out := &DocTypePermission{Roles: roles}
+	switch ptype {
+	case "submit", "cancel", "amend":
+		if !meta.IsSubmittable {
+			return out
+		}
+	case "import":
+		if !meta.AllowImport {
+			return out
+		}
+	}
+	have := map[string]bool{}
 	for _, r := range roles {
 		have[r] = true
 	}
-	out := &DocTypePermission{Roles: roles}
-	owner := false
-	for _, row := range rows {
-		role, _ := row["role"].(string)
-		if !have[role] || !truthy(row[ptype]) {
-			continue
+	var applicable []map[string]interface{}
+	for _, row := range meta.Permissions {
+		if role, _ := row["role"].(string); have[role] && !truthy(row["permlevel"]) {
+			applicable = append(applicable, row)
 		}
-		if lvl := row["permlevel"]; lvl != nil && truthy(lvl) {
-			continue // field-level rows do not grant document rights
-		}
-		if truthy(row["if_owner"]) {
-			owner = true
-			continue
-		}
-		out.Allowed = true
 	}
-	out.OwnerOnly = !out.Allowed && owner
+	allowed, ownerOnly := roleRight(applicable, ptype)
+	if !allowed && ptype == "select" {
+		allowed, ownerOnly = roleRight(applicable, "read")
+	}
+	out.Allowed, out.OwnerOnly = allowed, ownerOnly
 	return out
+}
+
+// roleRight returns whether the applicable rows grant ptype at DocType level
+// and whether that grant is owner-only.
+func roleRight(applicable []map[string]interface{}, ptype string) (allowed, ownerOnly bool) {
+	granted, ifOwner, plain := false, false, false
+	for _, row := range applicable {
+		if truthy(row["if_owner"]) {
+			ifOwner = true
+		}
+		if truthy(row[ptype]) {
+			granted = true
+			if !truthy(row["if_owner"]) {
+				plain = true
+			}
+		}
+	}
+	if !granted {
+		return false, false
+	}
+	if ifOwner && !plain && ptype != "create" {
+		return ptype == "select" || ptype == "read", true
+	}
+	return true, false
 }

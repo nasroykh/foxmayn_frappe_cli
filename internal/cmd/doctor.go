@@ -174,26 +174,47 @@ func (d *doctor) checkLock(path string) {
 
 // ─── network ─────────────────────────────────────────────────────────────────
 
+// pingPath is the unauthenticated method the reachability probe calls.
+const pingPath = "/api/method/frappe.ping"
+
 // checkNetwork probes the URL without credentials: it must answer, speak
-// TLS properly and agree on the time. It reports false when the site cannot
-// be reached, so the checks that need it are skipped.
+// TLS properly, not redirect, and agree on the time. It reports false when
+// the site cannot be reached or redirects, so the checks that need it are
+// skipped.
+//
+// One GET does it all: the certificate is read from that response, so a
+// proxy from the environment is honoured (a separate dial would bypass it),
+// and a redirect shows in the final URL.
 func (d *doctor) checkNetwork(ctx context.Context, cfg *config.SiteConfig) bool {
 	u, err := url.Parse(cfg.URL)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		d.add("net.reachable", checkFail, fmt.Sprintf("%q is not an http(s) URL", redactedURL(cfg.URL)), "fix the url of the site in the config ('ffc site edit')")
 		return false
 	}
-	d.checkTLS(ctx, u)
-
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
+	rc := client.NewHTTPClient(probeTimeout)
+	if doctorTLSRoots != nil {
+		rc.SetTLSClientConfig(&tls.Config{RootCAs: doctorTLSRoots, MinVersion: tls.VersionTLS12})
+	}
 	start := doctorNow()
-	resp, err := client.NewHTTPClient(probeTimeout).R().SetContext(ctx).
-		SetHeader("Accept", "application/json").
-		Get(strings.TrimRight(cfg.URL, "/") + "/api/method/frappe.ping")
+	resp, err := rc.R().SetContext(ctx).SetHeader("Accept", "application/json").
+		Get(strings.TrimRight(cfg.URL, "/") + pingPath)
 	elapsed := doctorNow().Sub(start)
+
+	var state *tls.ConnectionState
+	if resp != nil && resp.RawResponse != nil {
+		state = resp.RawResponse.TLS
+	}
+	d.checkTLS(u, state, err)
 	if err != nil {
 		d.add("net.reachable", checkFail, "no answer from "+redactedURL(cfg.URL)+": "+errText(err), "check the URL, your network and any proxy or VPN; 'ffc site edit' fixes the URL")
+		return false
+	}
+	if final := resp.RawResponse.Request.URL; !sameEndpoint(final, resp.Request.RawRequest.URL) {
+		site := strings.TrimSuffix(final.String(), pingPath)
+		d.add("net.reachable", checkFail, fmt.Sprintf("%s redirected to %s: reads follow the redirect, but writes (create, update, delete) fail with \"site redirected\"", redactedURL(cfg.URL), final.Redacted()),
+			"set the site URL to "+redactedURL(strings.TrimRight(site, "/"))+" ('ffc site edit'), then run doctor again")
 		return false
 	}
 	var body struct {
@@ -221,7 +242,25 @@ func errText(err error) string {
 	return err.Error()
 }
 
-func (d *doctor) checkTLS(ctx context.Context, u *url.URL) {
+// isTLSError reports whether err comes from certificate verification or the
+// TLS handshake rather than from reaching the host.
+func isTLSError(err error) bool {
+	var cv *tls.CertificateVerificationError
+	var ua x509.UnknownAuthorityError
+	var he x509.HostnameError
+	var ci x509.CertificateInvalidError
+	var rh tls.RecordHeaderError
+	if errors.As(err, &cv) || errors.As(err, &ua) || errors.As(err, &he) || errors.As(err, &ci) || errors.As(err, &rh) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "x509:") || strings.Contains(msg, "tls:")
+}
+
+// checkTLS judges the connection the probe used: state is the TLS state of
+// its response (nil for plain http or a failed request), err the request's
+// error.
+func (d *doctor) checkTLS(u *url.URL, state *tls.ConnectionState, err error) {
 	if u.Scheme == "http" {
 		if isLoopback(u.Hostname()) {
 			d.add("net.tls", checkPass, "plain http on a loopback address", "")
@@ -230,40 +269,34 @@ func (d *doctor) checkTLS(ctx context.Context, u *url.URL) {
 		}
 		return
 	}
-	port := u.Port()
-	if port == "" {
-		port = "443"
-	}
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	dialer := tls.Dialer{
-		NetDialer: &net.Dialer{},
-		Config:    &tls.Config{ServerName: u.Hostname(), RootCAs: doctorTLSRoots, MinVersion: tls.VersionTLS12},
-	}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(u.Hostname(), port))
-	if err != nil {
-		var ne net.Error
-		var op *net.OpError
-		if errors.As(err, &op) && op.Op == "dial" || (errors.As(err, &ne) && ne.Timeout()) {
-			d.add("net.tls", checkFail, "cannot open a connection to "+net.JoinHostPort(u.Hostname(), port)+": "+errText(err), "see net.reachable")
-			return
-		}
+	switch {
+	case err != nil && isTLSError(err):
 		d.add("net.tls", checkFail, "TLS check failed: "+errText(err), "install a valid certificate for "+u.Hostname()+" (ffc has no option to skip verification)")
 		return
-	}
-	defer conn.Close()
-	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
-	if len(certs) == 0 {
+	case err != nil:
+		port := u.Port()
+		if port == "" {
+			port = "443"
+		}
+		d.add("net.tls", checkFail, "cannot open a connection to "+net.JoinHostPort(u.Hostname(), port)+": "+errText(err), "see net.reachable")
+		return
+	case state == nil || len(state.PeerCertificates) == 0:
 		d.add("net.tls", checkFail, "the server sent no certificate", "")
 		return
 	}
-	left := certs[0].NotAfter.Sub(doctorNow())
-	days := int(left.Hours() / 24)
+	cert := state.PeerCertificates[0]
+	days := int(cert.NotAfter.Sub(doctorNow()).Hours() / 24)
 	if days < certWarnDays {
-		d.add("net.tls", checkWarn, fmt.Sprintf("the certificate is valid but ends %s (in %d days)", certs[0].NotAfter.Format("2006-01-02"), days), "renew the certificate")
+		d.add("net.tls", checkWarn, fmt.Sprintf("the certificate is valid but ends %s (in %d days)", cert.NotAfter.Format("2006-01-02"), days), "renew the certificate")
 		return
 	}
-	d.add("net.tls", checkPass, fmt.Sprintf("certificate valid until %s (%d days)", certs[0].NotAfter.Format("2006-01-02"), days), "")
+	d.add("net.tls", checkPass, fmt.Sprintf("certificate valid until %s (%d days)", cert.NotAfter.Format("2006-01-02"), days), "")
+}
+
+// sameEndpoint reports whether two URLs name the same scheme, host and path:
+// what a redirect would change.
+func sameEndpoint(a, b *url.URL) bool {
+	return a.Scheme == b.Scheme && strings.EqualFold(a.Host, b.Host) && a.Path == b.Path
 }
 
 func isLoopback(host string) bool {
@@ -322,11 +355,19 @@ func authHint(err error) string {
 }
 
 // checkAuthAndServer logs in and reads what the site reports about itself.
-func (d *doctor) checkAuthAndServer(ctx context.Context, cfg *config.SiteConfig, refresh bool) {
-	fresh := refreshSite(ctx, cfg) // like every command: an expired OAuth token is renewed first
-	d.checkOAuth(cfg, fresh)
+// It changes nothing: an expired OAuth token is reported, not renewed (the
+// next command renews it), and the versions are read live, never through the
+// cache. The client is built with client.New, not newClient, for the same
+// reason: newClient refreshes the token under the config lock. A password
+// site signs in to prove the login works and signs out again.
+func (d *doctor) checkAuthAndServer(ctx context.Context, cfg *config.SiteConfig) {
+	d.checkOAuth(cfg)
+	if cfg.IsOAuth() && cfg.IsTokenExpired() {
+		d.add("auth.valid", checkWarn, "not checked: the access token has expired and doctor does not renew it", "run any ffc command that talks to the site: it renews the token; then run doctor again")
+		return
+	}
 
-	c, err := client.New(ctx, fresh)
+	c, err := client.New(ctx, cfg)
 	if err != nil {
 		d.add("auth.valid", checkFail, "cannot sign in: "+err.Error(), authHint(err))
 		return
@@ -341,26 +382,24 @@ func (d *doctor) checkAuthAndServer(ctx context.Context, cfg *config.SiteConfig,
 		d.add("auth.valid", checkFail, "the site sees the credentials as Guest: they are not authenticated", authHint(&client.AuthError{}))
 		return
 	}
-	d.add("auth.valid", checkPass, fmt.Sprintf("authenticated as %s (%s)", user, authMethod(fresh)), "")
+	d.add("auth.valid", checkPass, fmt.Sprintf("authenticated as %s (%s)", user, authMethod(cfg)), "")
 
-	info, cached, err := serverInfo(ctx, c, fresh, refresh)
+	info, err := c.ServerVersions(ctx)
 	if err != nil {
 		d.add("server.versions", checkWarn, "cannot read the site's app versions: "+err.Error(), "")
+		info = nil
 	} else {
-		d.checkVersions(info, cached)
+		d.checkVersions(info)
 	}
 	d.checkV2(ctx, c, info)
 }
 
-func (d *doctor) checkVersions(info *client.ServerInfo, cached bool) {
+func (d *doctor) checkVersions(info *client.ServerInfo) {
 	var parts []string
 	for _, n := range info.AppNames() {
 		parts = append(parts, n+" "+info.Apps[n].Version)
 	}
 	msg := strings.Join(parts, ", ")
-	if cached {
-		msg += fmt.Sprintf(" (cached %s ago; --refresh reads them again)", doctorNow().Sub(info.FetchedAt).Round(time.Minute))
-	}
 	if major := info.FrappeMajor(); major > 0 && major < 15 {
 		d.add("server.versions", checkWarn, msg, fmt.Sprintf("ffc is tested against Frappe v15 and v16; v%d may not work", major))
 		return
@@ -386,57 +425,62 @@ func (d *doctor) checkV2(ctx context.Context, c *client.FrappeClient, info *clie
 	}
 }
 
-// checkOAuth reports on an OAuth site's token. orig is the config as stored,
-// fresh the one after the renewal refreshSite may have made.
-func (d *doctor) checkOAuth(orig, fresh *config.SiteConfig) {
-	if !orig.IsOAuth() {
+// checkOAuth reports on an OAuth site's token as stored. It renews nothing.
+func (d *doctor) checkOAuth(cfg *config.SiteConfig) {
+	if !cfg.IsOAuth() {
 		return
 	}
 	now := doctorNow()
 	switch {
-	case orig.TokenExpiry == 0:
+	case cfg.TokenExpiry == 0:
 		d.add("auth.oauth_token", checkPass, "the access token has no recorded expiry", "")
-	case !orig.IsTokenExpired():
-		left := time.Unix(orig.TokenExpiry, 0).Sub(now).Round(time.Second)
-		if orig.RefreshToken == "" && left < time.Hour {
+	case !cfg.IsTokenExpired():
+		left := time.Unix(cfg.TokenExpiry, 0).Sub(now).Round(time.Second)
+		if cfg.RefreshToken == "" && left < time.Hour {
 			d.add("auth.oauth_token", checkWarn, fmt.Sprintf("the access token expires in %s and there is no refresh token", left), "sign in again with 'ffc site add --oauth' before it does")
 		} else {
 			d.add("auth.oauth_token", checkPass, fmt.Sprintf("the access token expires in %s", left), "")
 		}
-	case fresh.TokenExpiry != orig.TokenExpiry || fresh.AccessToken != orig.AccessToken:
-		d.add("auth.oauth_token", checkPass, fmt.Sprintf("the access token had expired; it was renewed and now expires in %s", time.Unix(fresh.TokenExpiry, 0).Sub(now).Round(time.Second)), "")
-	case orig.RefreshToken == "":
+	case cfg.RefreshToken == "":
 		d.add("auth.oauth_token", checkFail, "the access token has expired and there is no refresh token", "sign in again with 'ffc site add --oauth'")
 	default:
-		d.add("auth.oauth_token", checkFail, "the access token has expired and could not be renewed", "sign in again with 'ffc site add --oauth'")
+		d.add("auth.oauth_token", checkWarn, "the access token has expired; the next command refreshes it", "if that fails, sign in again with 'ffc site add --oauth'")
 	}
 }
 
 // ─── local state ─────────────────────────────────────────────────────────────
 
 func (d *doctor) checkMCP() {
+	// The state file holds the bearer token, so its mode matters whether or
+	// not the server it describes is still alive. Read before the status
+	// call, which may drop a stale file.
+	path := mcpStatePath()
+	var mode fs.FileMode
+	haveFile := false
+	if runtime.GOOS != "windows" {
+		if st, err := os.Stat(path); err == nil && st.Mode().IsRegular() {
+			mode, haveFile = st.Mode().Perm(), true
+		}
+	}
+	d.checkMCPDaemon()
+	if haveFile && mode&0o077 != 0 {
+		d.add("mcp.state_file", checkFail, fmt.Sprintf("%s is readable by other users (mode %04o) and holds the server's bearer token", path, mode), "chmod 600 "+path)
+	}
+}
+
+func (d *doctor) checkMCPDaemon() {
 	state, kind, err := mcpDaemonStatus()
 	switch {
 	case err != nil:
 		d.add("mcp.daemon", checkWarn, "cannot read the MCP server state: "+err.Error(), "remove "+mcpStatePath()+" if no 'ffc mcp --detach' is meant to be running")
-		return
 	case kind == mcpNotRunning:
 		d.add("mcp.daemon", checkPass, "no detached MCP server", "")
-		return
 	case kind == mcpRunning:
 		d.add("mcp.daemon", checkPass, fmt.Sprintf("running: PID %d on port %d for site %s", state.PID, state.Port, state.Site), "")
 	case kind == mcpUnresponsive:
 		d.add("mcp.daemon", checkWarn, fmt.Sprintf("PID %d is alive but does not answer on port %d (starting up, wedged, or a reused PID)", state.PID, state.Port), "ffc mcp stop --force")
-		return
 	default:
 		d.add("mcp.daemon", checkWarn, fmt.Sprintf("stale state file: PID %d is gone", state.PID), "ffc mcp status removes it")
-		return
-	}
-	// The state file holds the bearer token.
-	if runtime.GOOS != "windows" {
-		if st, err := os.Stat(mcpStatePath()); err == nil && st.Mode().Perm()&0o077 != 0 {
-			d.add("mcp.state_file", checkFail, fmt.Sprintf("%s is readable by other users (mode %04o) and holds the server's bearer token", mcpStatePath(), st.Mode().Perm()), "chmod 600 "+mcpStatePath())
-		}
 	}
 }
 
@@ -464,13 +508,11 @@ func (d *doctor) checkUpdate() {
 
 // ─── command ─────────────────────────────────────────────────────────────────
 
-var doctorRefresh bool
-
-func runDoctor(ctx context.Context, refresh bool) []doctorCheck {
+func runDoctor(ctx context.Context) []doctorCheck {
 	d := &doctor{}
 	if cfg := d.checkConfig(); cfg != nil {
 		if d.checkNetwork(ctx, cfg) {
-			d.checkAuthAndServer(ctx, cfg, refresh)
+			d.checkAuthAndServer(ctx, cfg)
 		}
 	}
 	d.checkMCP()
@@ -487,29 +529,37 @@ with a hint to fix it:
   config.file / config.dir   the config file is 0600 and its directory 0700
   config.parse               the file parses and the site resolves
   config.lock                no stale lock left by a crashed ffc
-  net.reachable              the URL answers like a Frappe site
+  net.reachable              the URL answers like a Frappe site, without redirecting
   net.tls                    the certificate verifies (plain http is a warning)
   net.clock                  the local clock agrees with the server's (Date header)
   auth.valid                 the credentials log in (the user is named)
-  auth.oauth_token           an OAuth token's expiry (renewed when expired)
-  server.versions            the installed apps and their versions (cached 24 h)
+  auth.oauth_token           an OAuth token's expiry (reported, not renewed)
+  server.versions            the installed apps and their versions (read live)
   server.api_v2              whether /api/v2 exists
   mcp.daemon                 the detached MCP server's health
+  mcp.state_file             its state file (it holds a token) is not readable by others
   update.check               whether a newer ffc was seen
 
 A failed check ends the run with exit code 1; warnings do not. The checks that
-need the site are skipped when it cannot be reached. Secrets are never
-printed. With --json the output is an array of {check, status, message, hint}.
+need the site are skipped when it cannot be reached or redirects. Secrets are
+never printed. With --json the output is an array of {check, status, message,
+hint}.
+
+doctor changes nothing: it does not renew an expired OAuth token (it reports
+that the next command will), it neither reads nor writes the server version
+cache (the versions are always read live; use 'ffc whoami --refresh' to
+refresh the cache), and a password site signs in and out again. The network
+probe is one GET of /api/method/frappe.ping through your proxy settings; the
+certificate is read from that response.
 
 Examples:
   ffc doctor
   ffc doctor --site prod --json
-  ffc doctor --refresh
 `,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var checks []doctorCheck
-		if err := runSpinner("Checking…", func() { checks = runDoctor(cmd.Context(), doctorRefresh) }); err != nil {
+		if err := runSpinner("Checking…", func() { checks = runDoctor(cmd.Context()) }); err != nil {
 			return err
 		}
 		if checks == nil {
@@ -537,6 +587,5 @@ Examples:
 }
 
 func init() {
-	doctorCmd.Flags().BoolVar(&doctorRefresh, "refresh", false, "Read the site's app versions again instead of using the cache")
 	rootCmd.AddCommand(doctorCmd)
 }

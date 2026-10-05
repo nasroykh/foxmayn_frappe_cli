@@ -20,8 +20,9 @@ import (
 func cacheTEnv(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", dir)
-	t.Setenv("HOME", dir)
+	old := userCacheDir
+	userCacheDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { userCacheDir = old })
 	return dir
 }
 
@@ -113,12 +114,6 @@ func TestServerCacheWriteAndPermissions(t *testing.T) {
 	}
 	if n := versionCalls(s); n != 1 {
 		t.Errorf("get_versions called %d times, want 1", n)
-	}
-	if SiteFrappeMajor(context.Background(), c, cfg) != 16 {
-		t.Error("SiteFrappeMajor != 16")
-	}
-	if n := versionCalls(s); n != 1 {
-		t.Errorf("SiteFrappeMajor must use the cache: %d calls", n)
 	}
 }
 

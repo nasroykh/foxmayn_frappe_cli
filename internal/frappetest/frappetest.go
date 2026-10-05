@@ -90,6 +90,7 @@ type Site struct {
 	roles    []string
 	denied   map[string]map[string]bool
 	docPerms map[string][]map[string]interface{}
+	metaFlag map[string]map[string]interface{}
 	noV2     bool
 }
 

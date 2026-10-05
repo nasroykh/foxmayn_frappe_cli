@@ -3,6 +3,7 @@ package cmd
 import (
 	"crypto/x509"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 )
@@ -380,11 +383,22 @@ func TestDoctorOAuthToken(t *testing.T) {
 		t.Errorf("%v (exit %d)", c, r.Code)
 	}
 
-	// Expired with a refresh token the site refuses to honour.
-	checks, _ = doctorTRun(t, site(fmt.Sprintf("    refresh_token: r\n    oauth_client_id: x\n    token_expiry: %d\n", time.Now().Add(-time.Hour).Unix())))
-	c = doctorTWant(t, checks, "auth.oauth_token", "fail")
-	if !strings.Contains(c["message"].(string), "could not be renewed") {
+	// Expired with a refresh token: doctor does not renew it. It says the next
+	// command will, and sends nothing that changes state.
+	n := len(s.Requests())
+	checks, r = doctorTRun(t, site(fmt.Sprintf("    refresh_token: r\n    oauth_client_id: x\n    token_expiry: %d\n", time.Now().Add(-time.Hour).Unix())))
+	c = doctorTWant(t, checks, "auth.oauth_token", "warn")
+	if !strings.Contains(c["message"].(string), "the next command refreshes it") {
 		t.Errorf("%v", c)
+	}
+	doctorTWant(t, checks, "auth.valid", "warn")
+	if r.Code != 0 {
+		t.Errorf("an expired token with a refresh token is a warning: exit %d", r.Code)
+	}
+	for _, req := range s.Requests()[n:] {
+		if req.Method != http.MethodGet || strings.Contains(req.Path, "oauth") {
+			t.Errorf("doctor sent %s %s: it must not renew the token", req.Method, req.Path)
+		}
 	}
 	if strings.Contains(fmt.Sprint(c), frappetest.Token) {
 		t.Error("the token was printed")
@@ -428,45 +442,70 @@ func TestDoctorServer(t *testing.T) {
 			t.Errorf("exit %d", r.Code)
 		}
 	})
-	t.Run("cache and refresh", func(t *testing.T) {
+	t.Run("live, never through the cache", func(t *testing.T) {
 		s := frappetest.New(t)
 		cfg := cfgFor(s)
+		site := &config.SiteConfig{Name: "t", URL: s.URL}
+		path, _ := serverCachePath(site)
 		doctorTRun(t, cfg)
+		doctorTRun(t, cfg)
+		if versionCalls(s) != 2 {
+			t.Errorf("every run reads the versions: %d calls", versionCalls(s))
+		}
+		if _, err := os.Stat(path); err == nil {
+			t.Error("doctor wrote the version cache")
+		}
+		// A cache another command wrote is neither used nor touched.
+		old := &client.ServerInfo{URL: s.URL, FetchedAt: time.Now().UTC(), Apps: map[string]client.AppVersion{"frappe": {Version: "1.2.3"}}}
+		writeServerCache(site, old)
+		before, _ := os.ReadFile(path)
 		checks, _ := doctorTRun(t, cfg)
-		if msg := checks["server.versions"]["message"].(string); !strings.Contains(msg, "cached") {
-			t.Errorf("the second run must use the cache: %s", msg)
+		if msg := checks["server.versions"]["message"].(string); !strings.Contains(msg, "16.36.1") || strings.Contains(msg, "1.2.3") {
+			t.Errorf("server.versions used the cache: %s", msg)
 		}
-		if versionCalls(s) != 1 {
-			t.Errorf("%d calls", versionCalls(s))
+		if after, _ := os.ReadFile(path); string(after) != string(before) {
+			t.Error("doctor rewrote the version cache")
 		}
-		checks, _ = doctorTRun(t, cfg, "--refresh")
-		if msg := checks["server.versions"]["message"].(string); strings.Contains(msg, "cached") || versionCalls(s) != 2 {
-			t.Errorf("--refresh must read again: %s (%d calls)", msg, versionCalls(s))
+		if r := runFFC(t, cfg, "", "doctor", "--refresh"); r.Code != exitUsage {
+			t.Errorf("doctor has no --refresh: exit %d", r.Code)
 		}
 	})
 }
 
-func TestDoctorTLS(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+// tlsTSite is an https site that answers frappe.ping.
+func tlsTSite(t *testing.T) (*httptest.Server, *config.SiteConfig) {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":"pong"}`))
+	}))
 	t.Cleanup(srv.Close)
-	u, _ := url.Parse(srv.URL)
+	return srv, &config.SiteConfig{URL: srv.URL}
+}
+
+func TestDoctorTLS(t *testing.T) {
+	srv, cfg := tlsTSite(t)
 	ctx := t.Context()
+	t.Cleanup(func() { doctorTLSRoots = nil; doctorNow = time.Now })
 
 	// The test certificate is signed by nobody the system trusts.
 	d := &doctor{}
-	d.checkTLS(ctx, u)
-	if d.checks[0].Status != checkFail || !strings.Contains(d.checks[0].Message, "TLS check failed") || !strings.Contains(d.checks[0].Hint, "no option to skip") {
-		t.Errorf("untrusted: %+v", d.checks[0])
+	if d.checkNetwork(ctx, cfg) {
+		t.Error("an untrusted certificate must make the site unreachable")
+	}
+	if d.checks[0].Check != "net.tls" || d.checks[0].Status != checkFail || !strings.Contains(d.checks[0].Message, "TLS check failed") || !strings.Contains(d.checks[0].Hint, "no option to skip") {
+		t.Errorf("untrusted: %+v", d.checks)
 	}
 
-	// Trusted, and far from expiry.
+	// Trusted, and far from expiry: the certificate comes from the probe's own response.
 	pool := x509.NewCertPool()
 	pool.AddCert(srv.Certificate())
 	doctorTLSRoots = pool
-	t.Cleanup(func() { doctorTLSRoots = nil; doctorNow = time.Now })
 	d = &doctor{}
-	d.checkTLS(ctx, u)
-	if d.checks[0].Status != checkPass || !strings.Contains(d.checks[0].Message, "certificate valid until") {
+	if !d.checkNetwork(ctx, cfg) {
+		t.Fatalf("trusted: %+v", d.checks)
+	}
+	if d.checks[0].Check != "net.tls" || d.checks[0].Status != checkPass || !strings.Contains(d.checks[0].Message, "certificate valid until") {
 		t.Errorf("trusted: %+v", d.checks[0])
 	}
 
@@ -474,7 +513,7 @@ func TestDoctorTLS(t *testing.T) {
 	end := srv.Certificate().NotAfter
 	doctorNow = func() time.Time { return end.Add(-3 * 24 * time.Hour) }
 	d = &doctor{}
-	d.checkTLS(ctx, u)
+	d.checkNetwork(ctx, cfg)
 	if d.checks[0].Status != checkWarn || !strings.Contains(d.checks[0].Message, "in 3 days") {
 		t.Errorf("expiring: %+v", d.checks[0])
 	}
@@ -482,9 +521,62 @@ func TestDoctorTLS(t *testing.T) {
 	// Nothing listens.
 	srv.Close()
 	d = &doctor{}
-	d.checkTLS(ctx, u)
+	d.checkNetwork(ctx, cfg)
 	if d.checks[0].Status != checkFail || !strings.Contains(d.checks[0].Message, "cannot open a connection") {
 		t.Errorf("closed: %+v", d.checks[0])
+	}
+}
+
+// The probe's one request carries the certificate: the server sees exactly one.
+func TestDoctorTLSUsesOneConnection(t *testing.T) {
+	var conns int
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"message":"pong"}`))
+	}))
+	srv.Config.ConnState = func(_ net.Conn, st http.ConnState) {
+		if st == http.StateNew {
+			conns++
+		}
+	}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	doctorTLSRoots = pool
+	t.Cleanup(func() { doctorTLSRoots = nil })
+	d := &doctor{}
+	if !d.checkNetwork(t.Context(), &config.SiteConfig{URL: srv.URL}) {
+		t.Fatalf("%+v", d.checks)
+	}
+	if conns != 1 {
+		t.Errorf("the probe opened %d connections, want 1 (no separate TLS dial)", conns)
+	}
+}
+
+// A site that redirects fails the check: reads follow the redirect, writes
+// fail with "site redirected".
+func TestDoctorRedirect(t *testing.T) {
+	doctorTHome(t)
+	s := frappetest.New(t)
+	moved := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":"pong"}`))
+	}))
+	t.Cleanup(moved.Close)
+	s.Handle("GET /api/method/frappe.ping", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, moved.URL+"/api/method/frappe.ping", http.StatusMovedPermanently)
+	}))
+	cfg := doctorTConfig(t, fmt.Sprintf("default_site: t\nsites:\n  t:\n    url: %q\n    api_key: k\n    api_secret: s\n", s.URL))
+	checks, r := doctorTRun(t, cfg)
+	c := doctorTWant(t, checks, "net.reachable", "fail")
+	if !strings.Contains(c["message"].(string), "site redirected") || !strings.Contains(c["hint"].(string), moved.URL) {
+		t.Errorf("net.reachable: %v", c)
+	}
+	if strings.Contains(c["hint"].(string), "frappe.ping") {
+		t.Errorf("the hint must name the site, not the probe path: %v", c["hint"])
+	}
+	if _, ran := checks["auth.valid"]; ran || r.Code != 1 {
+		t.Errorf("auth ran: %v, exit %d", ran, r.Code)
 	}
 }
 
@@ -500,7 +592,7 @@ func TestDoctorPlainHTTP(t *testing.T) {
 	} {
 		u, _ := url.Parse(host)
 		d := &doctor{}
-		d.checkTLS(t.Context(), u)
+		d.checkTLS(u, nil, nil)
 		if d.checks[0].Status != want {
 			t.Errorf("%s: %+v, want %s", host, d.checks[0], want)
 		}
@@ -592,6 +684,56 @@ func TestDoctorMCPStateFileMode(t *testing.T) {
 	d.checkMCP()
 	if len(d.checks) != 2 || d.checks[1].Check != "mcp.state_file" || d.checks[1].Status != checkFail {
 		t.Fatalf("a world-readable token file must fail: %+v", d.checks)
+	}
+}
+
+// The token file's mode is checked whenever the file exists, not only for a
+// server that is running: a stale or wedged one still holds the token.
+func TestDoctorMCPStateFileModeWithoutServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits")
+	}
+	home := doctorTHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "ffc"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A live process that does not answer, and a state file open to everyone.
+	if err := writeMCPState(mcpState{PID: os.Getpid(), Port: 1, Site: "t", Instance: "x", Token: "TOPSECRETTOKEN"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(mcpStatePath(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := &doctor{}
+	d.checkMCP()
+	if len(d.checks) != 2 || d.checks[0].Status != checkWarn || d.checks[1].Check != "mcp.state_file" || d.checks[1].Status != checkFail {
+		t.Fatalf("unresponsive server: %+v", d.checks)
+	}
+	// The same for a damaged file.
+	if err := os.WriteFile(mcpStatePath(), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(mcpStatePath(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d = &doctor{}
+	d.checkMCP()
+	if len(d.checks) != 2 || d.checks[1].Check != "mcp.state_file" || d.checks[1].Status != checkFail {
+		t.Fatalf("damaged file: %+v", d.checks)
+	}
+	// A private file raises nothing.
+	if err := os.Chmod(mcpStatePath(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d = &doctor{}
+	d.checkMCP()
+	if len(d.checks) != 1 {
+		t.Errorf("0600: %+v", d.checks)
+	}
+	for _, c := range d.checks {
+		if strings.Contains(fmt.Sprint(c), "TOPSECRETTOKEN") {
+			t.Error("the bearer token was printed")
+		}
 	}
 }
 

@@ -57,12 +57,12 @@ Examples:
 		if machineOutput() {
 			return printResult(map[string]interface{}{
 				"response": resp,
-				"url":      cfg.URL,
+				"url":      redactedURL(cfg.URL),
 				"latency":  elapsed.String(),
 				"user":     user,
 			})
 		}
-		output.PrintSuccess(fmt.Sprintf("pong — %s as %s (%s)", cfg.URL, user, elapsed.Round(time.Millisecond)))
+		output.PrintSuccess(fmt.Sprintf("pong — %s as %s (%s)", redactedURL(cfg.URL), user, elapsed.Round(time.Millisecond)))
 		return nil
 	},
 }
