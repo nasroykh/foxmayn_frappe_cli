@@ -97,7 +97,7 @@ func New(ctx context.Context, cfg *config.SiteConfig) (*FrappeClient, error) {
 		SetRetryAfter(retryAfter).
 		AddRetryCondition(retryableGET).
 		AddRetryHook(debugRetry).
-		SetPreRequestHook(setBodyLength).
+		SetPreRequestHook(setStreamedBody).
 		SetHeader("Accept", "application/json")
 	c := &FrappeClient{r: r, baseURL: strings.TrimRight(cfg.URL, "/"), loginSem: make(chan struct{}, 1)}
 

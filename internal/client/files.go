@@ -133,7 +133,8 @@ func fileHints(doctype, name string) map[int]string {
 // the content then, so it is sent intact.
 //
 // The body is streamed (multipartBody), never copied into memory: resty
-// would buffer a multipart form twice.
+// would buffer a multipart form twice, and reads any other io.Reader body
+// whole to make it replayable, so it sees only http.NoBody (streamedBody).
 func (c *FrappeClient) UploadFile(ctx context.Context, u FileUpload) (map[string]interface{}, error) {
 	form := map[string]string{
 		"doctype":    u.Doctype,
@@ -152,8 +153,8 @@ func (c *FrappeClient) UploadFile(ctx context.Context, u FileUpload) (map[string
 	src, n := u.source()
 	resp, err := c.send(ctx, c.r, http.MethodPost, "/api/method/upload_file", func(r *resty.Request) {
 		body, length, ct := multipartBody(form, "file", u.Filename, contentType(u.Filename), src, n)
-		r.SetBody(body).SetHeader("Content-Type", ct).
-			SetContext(context.WithValue(r.Context(), bodyLengthKey{}, length))
+		r.SetBody(http.NoBody).SetHeader("Content-Type", ct).
+			SetContext(context.WithValue(r.Context(), streamedBodyKey{}, streamedBody{body, length}))
 	})
 	if err != nil {
 		var plan *DryRunError
@@ -180,7 +181,7 @@ func (c *FrappeClient) UploadFile(ctx context.Context, u FileUpload) (map[string
 // multipartBody is a multipart form with fields and one file part whose
 // content is read from src only as the body is sent: a fresh reader over
 // the same content each call. It returns the body, its exact length (see
-// setBodyLength) and the Content-Type with the boundary.
+// streamedBody) and the Content-Type with the boundary.
 func multipartBody(fields map[string]string, field, filename, ct string, src io.ReaderAt, n int64) (io.Reader, int64, string) {
 	var head bytes.Buffer
 	w := multipart.NewWriter(&head)
@@ -203,16 +204,30 @@ func multipartBody(fields map[string]string, field, filename, ct string, src io.
 	return body, int64(head.Len()) + n + int64(len(tail)), w.FormDataContentType()
 }
 
-// bodyLengthKey carries a streamed request body's length to setBodyLength.
-type bodyLengthKey struct{}
+// streamedBody is a request body read only as it is sent, and its exact
+// length. resty must not see it: unless the http.Request can rewind its body
+// (GetBody, which net/http sets only for in-memory readers), resty reads the
+// whole body into memory before sending (getBodyCopy). The request carries
+// http.NoBody, which rewinds, and this under streamedBodyKey in its context.
+type streamedBody struct {
+	r io.Reader
+	n int64
+}
 
-// setBodyLength is the resty pre-request hook that gives a streamed body
-// (multipartBody) its Content-Length. Without it Go sends the body chunked,
+type streamedBodyKey struct{}
+
+// setStreamedBody is the resty pre-request hook, which runs after resty has
+// built the http.Request: it puts a streamed body (multipartBody) in place
+// with its Content-Length. Without the length Go sends the body chunked,
 // which not every server or proxy accepts, and the site could not refuse an
-// oversized file (413) before reading it.
-func setBodyLength(_ *resty.Client, req *http.Request) error {
-	if n, ok := req.Context().Value(bodyLengthKey{}).(int64); ok {
-		req.ContentLength = n
+// oversized file (413) before reading it. GetBody stays unset: the body is
+// read once, and a write is never retried (send rebuilds it after a
+// re-login).
+func setStreamedBody(_ *resty.Client, req *http.Request) error {
+	if b, ok := req.Context().Value(streamedBodyKey{}).(streamedBody); ok {
+		req.Body = io.NopCloser(b.r)
+		req.ContentLength = b.n
+		req.GetBody = nil
 	}
 	return nil
 }

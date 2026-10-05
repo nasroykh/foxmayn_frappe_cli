@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -182,6 +183,63 @@ func TestUploadFileStreamed(t *testing.T) {
 	}
 	if _, err := c.AttachFile(context.Background(), u); err == nil {
 		t.Error("AttachFile accepted File")
+	}
+}
+
+// gatedReaderAt serves data, but a read past gate waits until open is
+// closed: the upload must reach the site before the file is read in full.
+type gatedReaderAt struct {
+	data []byte
+	gate int64
+	open chan struct{}
+}
+
+func (g *gatedReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if off+int64(len(p)) > g.gate {
+		<-g.open
+	}
+	return bytes.NewReader(g.data).ReadAt(p, off)
+}
+
+// TestUploadFileNotBuffered checks that the file is sent as it is read:
+// resty reads an io.Reader body whole before sending unless it cannot see it.
+func TestUploadFileNotBuffered(t *testing.T) {
+	content := bytes.Repeat([]byte("x"), 8<<20)
+	src := &gatedReaderAt{data: content, gate: 1 << 20, open: make(chan struct{})}
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(src.open) }) })
+	var n int64
+	// Not frappetest: the fake site reads a request body whole before routing.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/resource/ToDo/TD-1", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"data":{"name":"TD-1"}}`)
+	})
+	mux.HandleFunc("POST /api/method/upload_file", func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(src.open) }) // the request reached the site
+		n, _ = io.Copy(io.Discard, r.Body)
+		_, _ = io.WriteString(w, `{"message":{"name":"F-1","file_url":"/private/files/big.bin"}}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c, err := New(context.Background(), &config.SiteConfig{URL: srv.URL, APIKey: "k", APISecret: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.UploadFile(context.Background(), FileUpload{Filename: "big.bin", File: src, Size: int64(len(content)), Doctype: "ToDo", Docname: "TD-1"})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the upload was read past 1 MiB before the request reached the site: the body is buffered")
+	}
+	if n <= int64(len(content)) {
+		t.Errorf("site read %d bytes, want the form around %d bytes of content", n, len(content))
 	}
 }
 
