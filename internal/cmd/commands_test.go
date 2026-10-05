@@ -757,7 +757,7 @@ func TestCmdBulkInputValidation(t *testing.T) {
 	cmdTFail(t, cmdTRun(t, s, "bulk-create", "-d", "ToDo", "--data", "[{}]", "--file", "x"), "none of the others", "if any flags")
 	cmdTFail(t, cmdTRun(t, s, "bulk-create", "-d", "ToDo", "--file", filepath.Join(t.TempDir(), "absent.json")), "reading file")
 	cmdTFail(t, cmdTRun(t, s, "bulk-update", "-d", "ToDo", "--data", `[{"status":"x"}]`), "name")
-	cmdTFail(t, cmdTRun(t, s, "bulk-delete", "-d", "ToDo"), "--names or --file")
+	cmdTFail(t, cmdTRun(t, s, "bulk-delete", "-d", "ToDo"), "provide --names, --file or --filters")
 	if n := len(s.Requests()); n != 0 {
 		t.Fatalf("validation failures still sent %d requests", n)
 	}
