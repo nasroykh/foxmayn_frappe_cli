@@ -59,6 +59,21 @@ func postToken(ctx context.Context, siteURL, what string, form map[string]string
 		return nil, requestError(err)
 	}
 	if resp.StatusCode() >= 400 {
+		// Frappe's get_token answers with oauthlib's error shape
+		// ({"error": "invalid_grant", "error_description": …}), not a
+		// Frappe exception.
+		var oe struct {
+			Error       string `json:"error"`
+			Description string `json:"error_description"`
+		}
+		if json.Unmarshal(resp.Body(), &oe) == nil && oe.Error != "" {
+			msg := oe.Error
+			if oe.Description != "" {
+				msg += ": " + oe.Description
+			}
+			return nil, fmt.Errorf("%s failed: %w", what, &APIError{Status: resp.StatusCode(),
+				Message: fmt.Sprintf("%s (HTTP %d)", snippet([]byte(msg)), resp.StatusCode())})
+		}
 		return nil, fmt.Errorf("%s failed: %w", what, apiError(resp, nil))
 	}
 

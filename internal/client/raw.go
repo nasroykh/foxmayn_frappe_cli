@@ -77,8 +77,12 @@ var fixedHeaders = []string{"Authorization", "Cookie", "Host", "X-Frappe-Site-Na
 
 // Raw sends req with the site's credentials and returns the response without
 // decoding it or checking its status, so any endpoint (desk methods, file
-// downloads) can be used. The body is streamed: the 128 MiB cap of the other
-// methods does not apply, and the request is not retried.
+// downloads) can be used. The response body is streamed: the 128 MiB cap of
+// the other methods does not apply, and the request is not retried on a 429
+// or 5xx. It is repeated once only after a session re-login or an OAuth
+// token refresh (see send): the site refused it before it ran, and the
+// request body is a byte slice, so it is sent again intact. A streamed
+// request body (an io.Reader) could not be replayed; keep Body a []byte.
 func (c *FrappeClient) Raw(ctx context.Context, req RawRequest) (*RawResponse, error) {
 	if err := CheckHeaders(req.Header); err != nil {
 		return nil, err

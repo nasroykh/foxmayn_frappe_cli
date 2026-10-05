@@ -41,7 +41,7 @@ func refreshSite(ctx context.Context, cfg *config.SiteConfig) *config.SiteConfig
 		fmt.Fprintf(os.Stderr, "warning: the OAuth token for site %q has expired and there is no refresh token; run 'ffc site add --oauth' again\n", cfg.Name)
 		return cfg
 	}
-	refreshed, err := refreshOAuth(ctx, cfg)
+	refreshed, err := refreshOAuth(ctx, cfg, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: refreshing the OAuth token for site %q failed: %v\n", cfg.Name, err)
 		return cfg
@@ -49,11 +49,15 @@ func refreshSite(ctx context.Context, cfg *config.SiteConfig) *config.SiteConfig
 	return refreshed
 }
 
-// refreshOAuth refreshes cfg's access token and persists it. The read, the
-// refresh and the write all happen under the config lock: if another ffc
-// process (e.g. a detached MCP server) refreshed while we waited, its fresh
-// token is reused instead of spending the refresh token a second time.
-func refreshOAuth(ctx context.Context, cfg *config.SiteConfig) (*config.SiteConfig, error) {
+// refreshOAuth refreshes cfg's access token and persists it, rotated refresh
+// token included. The read, the refresh and the write all happen under the
+// config lock: if another ffc process (e.g. a detached MCP server) refreshed
+// while we waited, its fresh token is reused instead of spending the refresh
+// token a second time. rejected is a token the site refused (a 401 during a
+// run, see tokenRefresher): the stored token is reused only when it differs
+// from it, even if it has not expired on paper. "" (refreshSite) reuses any
+// unexpired stored token.
+func refreshOAuth(ctx context.Context, cfg *config.SiteConfig, rejected string) (*config.SiteConfig, error) {
 	path, err := resolveCfgPath()
 	if err != nil {
 		return nil, err
@@ -68,9 +72,12 @@ func refreshOAuth(ctx context.Context, cfg *config.SiteConfig) (*config.SiteConf
 		if !ok {
 			return fmt.Errorf("site %q not found in %s", cfg.Name, path)
 		}
-		if cur.AccessToken != "" && !cur.IsTokenExpired() {
+		if cur.AccessToken != "" && cur.AccessToken != rejected && !cur.IsTokenExpired() {
 			out.AccessToken, out.RefreshToken, out.TokenExpiry = cur.AccessToken, cur.RefreshToken, cur.TokenExpiry
 			return config.ErrUnchanged
+		}
+		if cur.RefreshToken == "" {
+			return fmt.Errorf("no refresh token is stored for site %q", cfg.Name)
 		}
 		tokens, err := client.RefreshOAuthToken(ctx, cur.URL, cur.OAuthClientID, cur.OAuthClientSecret, cur.RefreshToken)
 		if err != nil {
@@ -88,6 +95,36 @@ func refreshOAuth(ctx context.Context, cfg *config.SiteConfig) (*config.SiteConf
 	return &out, nil
 }
 
+// tokenRefresher returns the refresher an OAuth client of site cfg uses when
+// the site rejects its access token in the middle of a run (an access token
+// lives about an hour; a bulk run, --all or --paginate can outlast it). It
+// is refreshOAuth with the rejected token, so concurrent ffc processes still
+// refresh once. nil when cfg is not an OAuth site of the config file (FFC_*
+// environment credentials have nothing to refresh or persist).
+func tokenRefresher(cfg *config.SiteConfig) client.TokenRefresher {
+	if cfg.Name == "" || !cfg.IsOAuth() {
+		return nil
+	}
+	return func(ctx context.Context, rejected string) (string, error) {
+		out, err := refreshOAuth(ctx, cfg, rejected)
+		if err != nil {
+			return "", err
+		}
+		return out.AccessToken, nil
+	}
+}
+
+// newSiteClient builds the client for a loaded site; an OAuth client
+// refreshes its token on a 401 (tokenRefresher).
+func newSiteClient(ctx context.Context, cfg *config.SiteConfig) (*client.FrappeClient, error) {
+	c, err := client.New(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	c.SetTokenRefresher(tokenRefresher(cfg))
+	return c, nil
+}
+
 // newClient loads the selected site and returns a client for it.
 func newClient(ctx context.Context) (*client.FrappeClient, error) {
 	c, _, err := newClientCfg(ctx)
@@ -100,7 +137,7 @@ func newClientCfg(ctx context.Context) (*client.FrappeClient, *config.SiteConfig
 	if err != nil {
 		return nil, nil, err
 	}
-	c, err := client.New(ctx, cfg)
+	c, err := newSiteClient(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}

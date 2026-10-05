@@ -103,7 +103,7 @@ sites:
     token_expiry: 1234567890
 ```
 
-OAuth access tokens are refreshed automatically when they expire, before any command that talks to the site — you don't need to re-run `ffc init`.
+OAuth access tokens are refreshed automatically when they expire, before any command that talks to the site — you don't need to re-run `ffc init`. A long run (a bulk command, `list-docs --all`, `api --paginate`, `workflow bulk-apply`, the MCP server) that outlives the token (about an hour) refreshes it when the site rejects it with a 401 and repeats that request once; concurrent workers and other ffc processes share one refresh, and the new tokens are saved to the config. If the refresh fails, the command fails with the 401 and a hint to run `ffc site add --oauth` again.
 
 **Site Management (`ffc site`)**
 

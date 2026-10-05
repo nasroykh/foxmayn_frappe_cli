@@ -2,8 +2,9 @@
 //
 // It serves /api/resource (list, get, create, update, delete), the
 // /api/method endpoints ffc uses (login, logout, get_logged_user, ping,
-// get_count, query_report.run, search_link, global search) and any method
-// registered with HandleMethod.
+// get_count, query_report.run, search_link, global search, the OAuth token
+// endpoint's refresh grant) and any method registered with HandleMethod.
+// OAuth access tokens can be made to expire (ExpireToken, ExpireTokenAfter).
 // Errors use the shapes a real Frappe v15/v16 site returns (exc_type,
 // _server_messages, exception), captured from a live site.
 //
@@ -92,6 +93,8 @@ type Site struct {
 	docPerms map[string][]map[string]interface{}
 	metaFlag map[string]map[string]interface{}
 	noV2     bool
+
+	oauth oauthState // oauth.go
 }
 
 // New starts a fake site, closed when the test ends.
@@ -107,6 +110,7 @@ func New(t testing.TB) *Site {
 		methods:   map[string]MethodFunc{},
 		overrides: map[string]http.Handler{},
 		sessions:  map[string]bool{},
+		oauth:     newOAuthState(),
 		clock:     time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC),
 	}
 	s.registerLifecycle()
@@ -321,6 +325,9 @@ func (s *Site) serve(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/method/login":
 		s.login(w, r, body)
 		return
+	case path == tokenEndpoint:
+		s.token(w, r, body)
+		return
 	case path == "/api/method/frappe.ping":
 		writeJSON(w, http.StatusOK, map[string]string{"message": "pong"})
 		return
@@ -366,8 +373,11 @@ func (s *Site) authenticate(r *http.Request) string {
 	switch auth := r.Header.Get("Authorization"); {
 	case auth == "token "+APIKey+":"+APISecret:
 		return Username
-	case auth == "Bearer "+Token:
-		return Username
+	case strings.HasPrefix(auth, "Bearer "):
+		if s.useBearer(strings.TrimPrefix(auth, "Bearer ")) {
+			return Username
+		}
+		return ""
 	}
 	if c, err := r.Cookie("sid"); err == nil {
 		s.mu.Lock()
