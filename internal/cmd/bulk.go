@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 
 	"github.com/spf13/cobra"
 )
@@ -245,14 +247,28 @@ func (f *bulkFlags) register(cmd *cobra.Command) {
 // run builds the site client once and executes op over n items under one
 // spinner.
 func (f *bulkFlags) run(cmd *cobra.Command, title string, n int, done string, op func(ctx context.Context, c *client.FrappeClient, i int) (string, error)) (bulkReport, error) {
-	if f.concurrency < 1 || f.concurrency > maxBulkWorkers {
-		return bulkReport{}, usageErrorf("--concurrency must be between 1 and %d", maxBulkWorkers)
+	if err := f.check(); err != nil {
+		return bulkReport{}, err
 	}
 	c, err := newClient(cmd.Context())
 	if err != nil {
 		return bulkReport{}, err
 	}
 	defer c.CloseQuietly()
+	return f.runOn(cmd, c, title, n, done, op)
+}
+
+// check validates the flags before any request.
+func (f *bulkFlags) check() error {
+	if f.concurrency < 1 || f.concurrency > maxBulkWorkers {
+		return usageErrorf("--concurrency must be between 1 and %d", maxBulkWorkers)
+	}
+	return nil
+}
+
+// runOn is run with a client the caller built (and closes), for commands
+// that read the site before the bulk run, such as --filters.
+func (f *bulkFlags) runOn(cmd *cobra.Command, c *client.FrappeClient, title string, n int, done string, op func(ctx context.Context, c *client.FrappeClient, i int) (string, error)) (bulkReport, error) {
 	if client.IsDryRun(cmd.Context()) {
 		return bulkReport{}, planAll(cmd.Context(), c, n, op)
 	}
@@ -281,4 +297,46 @@ func planAll(ctx context.Context, c *client.FrappeClient, n int, op func(ctx con
 		all.Requests = append(all.Requests, plan.Requests...)
 	}
 	return all
+}
+
+// filterNames returns the names of every doctype document matching filters
+// (one unpaged list call for the names only), for --filters on bulk
+// commands. The run then works on this list, so documents that start or
+// stop matching during the run are not affected.
+func filterNames(cmd *cobra.Command, c *client.FrappeClient, doctype, filters string) ([]string, error) {
+	var rows []map[string]interface{}
+	var listErr error
+	spinErr := runSpinner(fmt.Sprintf("Finding matching %s documents…", doctype), func() {
+		rows, listErr = c.GetList(cmd.Context(), doctype, client.ListOptions{
+			Fields: []string{"name"}, Filters: filters, Limit: -1, OrderBy: "name asc",
+		})
+	})
+	if listErr != nil {
+		return nil, listErr
+	}
+	if spinErr != nil {
+		return nil, spinErr
+	}
+	names := make([]string, 0, len(rows))
+	for _, r := range rows {
+		n, ok := docName(r["name"])
+		if !ok {
+			return nil, fmt.Errorf("the list returned a row without a name: %v", r)
+		}
+		names = append(names, n)
+	}
+	return names, nil
+}
+
+// namePreview lists up to 10 names, then how many more there are.
+func namePreview(names []string) string {
+	preview := names
+	if len(preview) > 10 {
+		preview = append(append([]string{}, names[:10]...), fmt.Sprintf("… and %d more", len(names)-10))
+	}
+	quoted := make([]string, len(preview))
+	for i, n := range preview {
+		quoted[i] = text.Sanitize(n)
+	}
+	return strings.Join(quoted, ", ")
 }
