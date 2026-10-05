@@ -493,11 +493,29 @@ ffc call-method --method "frappe.client.get_count" --args '{"doctype":"ToDo","fi
 
 ---
 
+### Files and PDF
+
+```bash
+ffc upload contract.pdf -d Customer -n "ACME Corp" --json          # private by default
+ffc upload logo.png -d Item -n ITEM-001 --field image --public     # also sets Item.image
+cat notes.txt | ffc upload - --filename notes.txt -d ToDo -n TD-0001
+ffc attachments -d Customer -n "ACME Corp" --json                  # [{name, file_name, file_url, is_private, file_size, ...}]
+ffc download /private/files/contract.pdf -o contract.pdf           # --force to replace; -o - for stdout
+ffc pdf -d "Sales Invoice" -n SINV-0001 --format "Standard" --no-letterhead -o inv.pdf
+```
+
+- `upload FILE` (`-` = stdin, needs `--filename`): private unless `--public`; the document must exist; a file over the site's Max File Size is refused before sending (exit 6); `--folder` (default `Home/Attachments`); `--field` also sets that Attach field; `--dry-run` shows name and size, never content. Never retried.
+- `download FILE_URL`: only `/files/…`, `/private/files/…` or a full URL of the configured site itself; any other host is refused (exit 2). Saved atomically; an existing file needs `--force`. A missing private file and a forbidden one are both 403 (exit 5).
+- `attachments -d DT -n NAME`: the File documents attached to it (`--limit`, default 100; `--all`).
+- `pdf -d DT -n NAME`: `--format`, `--letterhead` or `--no-letterhead`, `--lang`, `-o` (default `<name>.pdf`, `-` for stdout). Only an `application/pdf` body starting with `%PDF-` is saved. A 503 (v16 concurrency limit, Retry-After 10) is retried twice; 500 OSError means the site's wkhtmltopdf failed.
+
+---
+
 ### MCP Server (AI Agent Integration)
 
 #### `ffc mcp` — Start an MCP server for AI agents
 
-Exposes Frappe API operations as 35 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
+Exposes Frappe API operations as 38 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
 
 **Three modes:**
 
@@ -530,7 +548,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `--allow-tools`, `--allow-doctypes`, `--deny-doctypes`, `--allow-methods`, `--deny-methods` | — | Narrow the site's MCP policy (never widen it) |
 | `--sites`, `--all-sites` | — | Serve several sites; every tool call then needs `site` (see `list_sites`) |
 | `--confirm` | — | `always` or `if-supported`: tighten when destructive calls ask the user |
-| `--toolsets` | — | `core`, `lifecycle`, `collab` (comments, assignments, tags), `admin` (share) — default `core,lifecycle`; `list_sites` is always there |
+| `--toolsets` | — | `core`, `lifecycle`, `collab` (comments, assignments, tags), `admin` (share), `files` (attachments, print HTML) — default `core,lifecycle`; `list_sites` is always there |
 
 **Policy and audit.** A site's config entry may hold an `mcp:` block with `read_only`, `allow_tools`, `allow_doctypes`, `deny_doctypes`, `allow_methods`, `deny_methods` and `confirm`. A misspelt key is an error. MCP may read but never write the sensitive DocTypes (User, Role, DocType, DocPerm, System Settings, Server Script, …) unless the site's `allow_doctypes` lists them. `call_method` refuses `execute_code`, `generate_keys` and the Frappe Cloud app installer unless `allow_methods` lists them. With `allow_doctypes` set, `call_method` needs `allow_methods`. With `allow_doctypes` or `deny_doctypes` set, query arguments may not reach another table: filter fields must be plain fieldnames, `fields` and `order_by` may not contain `.` or a backtick (no `link.field`, `items.item_code`, `` `tabX`.`f` ``), and the DocType of a `[doctype, field, op, value]` filter is checked too. A refused call returns an error starting with `policy:` that names the setting, and sends nothing. Every tool call is logged to `~/.config/ffc/mcp-audit.jsonl` with secrets redacted and document data reduced to its keys.
 
@@ -577,8 +595,13 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `remove_tag`      | `ffc untag` (collab)       |
 | `share_doc`       | `ffc share` (admin; confirmed; needs DocShare in `allow_doctypes`) |
 | `unshare_doc`     | `ffc unshare` (admin; needs DocShare in `allow_doctypes`) |
+| `list_attachments` | `ffc attachments` (tool set `files`) |
+| `attach_file`     | `ffc upload` (tool set `files`; base64 or text `data`, at most 5 MiB) |
+| `get_print_html`  | — (tool set `files`; `{html, style}` or `{text}` with `text_only`) |
 
-With `--read-only`, only `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `aggregate`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_doc_context` and `get_transitions` are registered.
+With `--read-only`, only `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `aggregate`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_doc_context` and `get_transitions` are registered (plus `list_attachments` and `get_print_html` with the `files` tool set).
+
+The `files` tool set is off unless `--toolsets` names it. `attach_file` writes a `File`, a sensitive DocType: it is refused unless the site's config `allow_doctypes` lists `File` (and the target DocTypes, since it is an allowlist). No tool returns file bytes or PDFs: use `ffc download` / `ffc pdf`. `get_print_html` runs the DocType's `before_print` hook (app code), even on a read-only server; over 512 KiB it drops the style, then cuts the HTML (`truncated: true`).
 
 MCP tools always return JSON — no `--json` flag needed.
 

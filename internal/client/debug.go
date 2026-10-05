@@ -255,6 +255,9 @@ func writeBody(b *strings.Builder, id int64, dir string, head []byte, total int,
 	}
 	var s string
 	switch {
+	case strings.HasPrefix(contentType, "multipart/"):
+		// An upload: the file is the user's data, never traced.
+		s = fmt.Sprintf("(binary, multipart upload, %s)", size(int64(total)))
 	case !utf8.Valid(shown) && !utf8.Valid(shown[:max(0, len(shown)-utf8.UTFMax)]):
 		s = fmt.Sprintf("(binary, %s)", size(int64(total)))
 	case strings.Contains(contentType, "x-www-form-urlencoded"):

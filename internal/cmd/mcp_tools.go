@@ -77,6 +77,7 @@ func registerAllTools(s *server.MCPServer, env *mcpEnv) {
 	registerLifecycleTools(s, env)
 	registerIdentityTools(s, env)
 	registerCollabTools(s, env)
+	registerFileTools(s, env)
 }
 
 // jsonParam declares a parameter that takes a JSON value. It has no fixed

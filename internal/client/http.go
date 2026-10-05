@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"html"
@@ -55,16 +57,42 @@ func NewHTTPClient(timeout time.Duration) *resty.Client {
 // redirected POST/PUT/DELETE into a body-less GET, so a site configured as
 // http:// behind an https redirect used to report deletes and updates as
 // successful while the server only ever saw GETs.
+//
+// A followed redirect never leaves https for http, and a request that
+// carries credentials (Authorization or Cookie) is never redirected to
+// another host: Go copies those headers to a subdomain of the original host
+// (example.com to files.example.com), so a token would reach a server the
+// config never named.
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	orig := via[0]
 	if orig.Method != http.MethodGet && orig.Method != http.MethodHead {
-		return fmt.Errorf("site redirected %s %s to %s: update the site URL in your config (e.g. use https://)",
-			orig.Method, orig.URL.Redacted(), req.URL.Redacted())
+		return &RedirectError{fmt.Sprintf("site redirected %s %s to %s: update the site URL in your config (e.g. use https://)",
+			orig.Method, orig.URL.Redacted(), req.URL.Redacted())}
 	}
 	if len(via) >= 10 {
-		return errors.New("stopped after 10 redirects")
+		return &RedirectError{"stopped after 10 redirects"}
+	}
+	if prev := via[len(via)-1]; strings.EqualFold(prev.URL.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
+		return &RedirectError{fmt.Sprintf("refused redirect from %s to %s: it leaves https",
+			prev.URL.Redacted(), req.URL.Redacted())}
+	}
+	if (orig.Header.Get("Authorization") != "" || orig.Header.Get("Cookie") != "") && !sameHostname(orig.URL, req.URL) {
+		return &RedirectError{fmt.Sprintf("refused redirect from %s to %s: credentials are only sent to the site's host; update the site URL in your config",
+			orig.URL.Redacted(), req.URL.Redacted())}
 	}
 	return nil
+}
+
+// RedirectError is a redirect checkRedirect refused. It is never retried.
+type RedirectError struct{ msg string }
+
+func (e *RedirectError) Error() string { return e.msg }
+
+// sameHostname compares host names (case and a trailing dot ignored), not
+// ports: an http:// site redirected to https:// on the same host is fine.
+func sameHostname(a, b *url.URL) bool {
+	h := func(u *url.URL) string { return strings.ToLower(strings.TrimSuffix(u.Hostname(), ".")) }
+	return h(a) != "" && h(a) == h(b)
 }
 
 // retryableGET reports whether a failed request is worth repeating: only
@@ -77,18 +105,50 @@ func retryableGET(resp *resty.Response, err error) bool {
 		return false
 	}
 	if err != nil {
-		var ne net.Error
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
-			(errors.As(err, &ne) && ne.Timeout()) {
-			return false
-		}
-		return true
+		return retryableTransport(err)
 	}
-	switch resp.StatusCode() {
+	return retryableStatus(resp.StatusCode(), resp.Header())
+}
+
+// retryableTransport reports whether a GET that got no response is worth
+// repeating: not after a timeout or a cancel, and not when the next attempt
+// is bound to fail the same way (a refused redirect, a certificate that does
+// not verify, a TLS handshake with a server that does not speak TLS or that
+// refuses it with an alert, such as one that requires a client certificate).
+func retryableTransport(err error) bool {
+	var (
+		ne   net.Error
+		re   *RedirectError
+		cv   *tls.CertificateVerificationError
+		ua   x509.UnknownAuthorityError
+		he   x509.HostnameError
+		ci   x509.CertificateInvalidError
+		rh   tls.RecordHeaderError
+		alrt tls.AlertError
+		op   *net.OpError
+	)
+	switch {
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled),
+		errors.As(err, &ne) && ne.Timeout(),
+		errors.As(err, &re), errors.As(err, &cv), errors.As(err, &ua), errors.As(err, &he),
+		errors.As(err, &ci), errors.As(err, &rh), errors.As(err, &alrt),
+		// An alert the server sent: tls.AlertError wraps it only over QUIC.
+		errors.As(err, &op) && op.Op == "remote error":
+		return false
+	}
+	return true
+}
+
+// retryableStatus reports whether a GET answered with code is worth
+// repeating: rate limits and gateway errors, including the 503 Frappe v16
+// sends when a concurrency-limited method (download_pdf) found no free slot
+// within 10 s (Retry-After: 10).
+func retryableStatus(code int, h http.Header) bool {
+	switch code {
 	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		// A server that asks for a longer pause than we are willing to wait
 		// gets its error reported instead of a retry it has refused.
-		return retryAfterDelay(resp) <= maxRetryAfter
+		return retryAfterDelay(h) <= maxRetryAfter
 	}
 	return false
 }
@@ -100,8 +160,8 @@ const maxRetryAfter = 10 * time.Second
 // retryAfterDelay parses a Retry-After header (seconds or an HTTP date). It
 // returns 0 when the header is absent or invalid, which leaves the default
 // backoff in place.
-func retryAfterDelay(resp *resty.Response) time.Duration {
-	v := strings.TrimSpace(resp.Header().Get("Retry-After"))
+func retryAfterDelay(h http.Header) time.Duration {
+	v := strings.TrimSpace(h.Get("Retry-After"))
 	if v == "" {
 		return 0
 	}
@@ -127,7 +187,7 @@ func retryAfterDelay(resp *resty.Response) time.Duration {
 // retryAfter is the resty RetryAfter callback: it honours the server's
 // Retry-After (retryableGET already refused waits over maxRetryAfter).
 func retryAfter(_ *resty.Client, resp *resty.Response) (time.Duration, error) {
-	return retryAfterDelay(resp), nil
+	return retryAfterDelay(resp.Header()), nil
 }
 
 func requestError(err error) error {

@@ -40,6 +40,8 @@ var toolActions = map[string]toolAction{
 	"add_tag": actWrite, "remove_tag": actWrite, "share_doc": actWrite, "unshare_doc": actWrite,
 
 	"call_method": actMethod,
+
+	"list_attachments": actRead, "get_print_html": actRead, "attach_file": actWrite,
 }
 
 // Tool sets (`ffc mcp --toolsets`). Without the flag only defaultToolsets
@@ -49,10 +51,11 @@ const (
 	toolsetLifecycle = "lifecycle"
 	toolsetCollab    = "collab" // comments, assignments, tags
 	toolsetAdmin     = "admin"  // sharing
+	toolsetFiles     = "files"  // attachments, print HTML
 )
 
 var (
-	knownToolsets   = []string{toolsetCore, toolsetLifecycle, toolsetCollab, toolsetAdmin}
+	knownToolsets   = []string{toolsetCore, toolsetLifecycle, toolsetCollab, toolsetAdmin, toolsetFiles}
 	defaultToolsets = []string{toolsetCore, toolsetLifecycle}
 )
 
@@ -102,6 +105,10 @@ var toolSurface = map[string]struct {
 
 	"share_doc":   {toolsetAdmin, "Share document", false},
 	"unshare_doc": {toolsetAdmin, "Remove document share", false},
+
+	"list_attachments": {toolsetFiles, "List attachments", true},
+	"attach_file":      {toolsetFiles, "Attach file", false},
+	"get_print_html":   {toolsetFiles, "Get print HTML", true},
 }
 
 // sensitiveDoctypes control users, permissions, credentials or server-side
@@ -179,6 +186,10 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 		// It reads the User document and the user's Has Role rows, so the
 		// DocType rules for User apply.
 		sc.Doctypes = append(sc.Doctypes, "User")
+	case "list_attachments", "attach_file":
+		// They read or create File documents: File's own rules apply too
+		// (writing File is sensitive).
+		sc.Doctypes = append(sc.Doctypes, "File")
 	case "run_report":
 		sc.Report = str("report_name")
 	case "call_method":

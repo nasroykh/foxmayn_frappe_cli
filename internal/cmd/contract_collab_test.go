@@ -33,7 +33,7 @@ func teardownContractCollab(c *client.FrappeClient) {
 		}
 	}
 	_ = c.DeleteDoc(ctx, "Tag", contractTag)
-	if rows, err := c.GetList(ctx, "Notification Log", client.ListOptions{Filters: `{"for_user":"` + contractUser + `"}`, Limit: -1}); err == nil {
+	if rows, err := c.GetList(ctx, "Notification Log", client.ListOptions{Filters: `[["for_user","like","` + contractUserLike + `"]]`, Limit: -1}); err == nil {
 		for _, r := range rows {
 			if name, ok := r["name"].(string); ok {
 				_ = c.DeleteDoc(ctx, "Notification Log", name)

@@ -31,7 +31,7 @@ func cleanToolsets(cmd *cobra.Command) error {
 	for _, v := range mcpToolsets {
 		switch v = strings.TrimSpace(v); v {
 		case "":
-		case toolsetCore, toolsetLifecycle, toolsetCollab, toolsetAdmin:
+		case toolsetCore, toolsetLifecycle, toolsetCollab, toolsetAdmin, toolsetFiles:
 			if !contains(out, v, false) {
 				out = append(out, v)
 			}
@@ -144,11 +144,15 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 			ro = append(ro, p.site)
 		}
 	}
+	hooks := ""
+	if has("get_print_html") {
+		hooks = " get_print_html still runs the DocType's before_print hook (app code), which may have side effects."
+	}
 	switch {
 	case len(ro) > 0 && len(ro) == len(policies):
-		line("Read-only: only read tools are available; nothing can be created, changed or deleted.")
+		line("Read-only: only read tools are available; nothing can be created, changed or deleted.%s", hooks)
 	case len(ro) > 0:
-		line("Read-only sites (write tools refuse them): %s.", strings.Join(ro, ", "))
+		line("Read-only sites (write tools refuse them): %s.%s", strings.Join(ro, ", "), hooks)
 	}
 	if has("whoami") {
 		line("whoami names the user ffc signs in as, its roles and the site's Frappe version.")
@@ -201,6 +205,9 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 		if has("assign_to") {
 			line("When someone should act on a document, assign_to it rather than share_doc it.")
 		}
+	}
+	if w := which("list_attachments", "attach_file", "get_print_html"); w != "" {
+		line("Files: %s. No tool returns file contents or PDFs: the user downloads them with the CLI (ffc download, ffc pdf).", w)
 	}
 	line(`An error starting with "policy:" means this server's configuration refuses the call and nothing was sent; "cancelled by the user" means the user declined. Do not retry either another way.`)
 	if len(resources) > 0 {

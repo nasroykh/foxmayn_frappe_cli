@@ -5,8 +5,10 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -14,19 +16,38 @@ import (
 )
 
 const (
-	contractUser     = "ffc-contract-user@example.com"
+	// contractUserLike matches every fixture user, those left by an
+	// interrupted run included.
+	contractUserLike = "ffc-contract-user%@example.com"
 	contractUserPwd  = "Zx9!qwErty-ffc-2026"
 	contractUserRole = "Desk User"
 )
 
-// teardownContractUser removes the fixture user. It is idempotent.
-func teardownContractUser(c *client.FrappeClient) {
+// contractUser is the fixture user of the latest contractNonAdmin call. Each
+// call creates a user under a new address: deleting a user and creating one
+// with the same address straight after left the new user unable to read its
+// own User document on some runs (403 on v15 and v16), and the deletion
+// itself can fail with a deadlock while the old user's background jobs run.
+var contractUser = "ffc-contract-user@example.com"
+
+// teardownContractUsers removes the fixture users matching like, and the
+// Contacts their creation added. It is idempotent.
+func teardownContractUsers(t *testing.T, c *client.FrappeClient, like string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30e9)
 	defer cancel()
-	_ = c.DeleteDoc(ctx, "User", contractUser)
+	filters := `[["name","like","` + like + `"]]`
+	if rows, err := c.GetList(ctx, "User", client.ListOptions{Filters: filters, Limit: -1}); err == nil {
+		for _, r := range rows {
+			if name, ok := r["name"].(string); ok {
+				if err := c.DeleteDoc(ctx, "User", name); err != nil {
+					t.Logf("teardown: delete User %s: %v", name, err)
+				}
+			}
+		}
+	}
 	// Creating a user also creates a Contact, which deleting the user leaves
 	// behind (and which global search would then find).
-	if rows, err := c.GetList(ctx, "Contact", client.ListOptions{Filters: `{"email_id":"` + contractUser + `"}`, Limit: -1}); err == nil {
+	if rows, err := c.GetList(ctx, "Contact", client.ListOptions{Filters: `[["email_id","like","` + like + `"]]`, Limit: -1}); err == nil {
 		for _, r := range rows {
 			if name, ok := r["name"].(string); ok {
 				_ = c.DeleteDoc(ctx, "Contact", name)
@@ -101,14 +122,16 @@ func contractIdentity(t *testing.T, c *client.FrappeClient, sc *config.SiteConfi
 func contractNonAdmin(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) *client.FrappeClient {
 	t.Helper()
 	ctx := contractCtx(t)
-	teardownContractUser(c)
+	teardownContractUsers(t, c, contractUserLike)
+	contractUser = fmt.Sprintf("ffc-contract-user-%d@example.com", time.Now().UnixNano())
 	if _, err := c.CreateDoc(ctx, "User", map[string]interface{}{
 		"email": contractUser, "first_name": "FFC Contract", "send_welcome_email": 0,
 		"new_password": contractUserPwd, "roles": []interface{}{map[string]interface{}{"role": contractUserRole}},
 	}); err != nil {
 		t.Fatalf("creating the fixture user: %v", err)
 	}
-	t.Cleanup(func() { teardownContractUser(c) })
+	user := contractUser
+	t.Cleanup(func() { teardownContractUsers(t, c, user) })
 	uc, err := client.New(ctx, &config.SiteConfig{URL: sc.URL, Username: contractUser, Password: contractUserPwd})
 	if err != nil {
 		t.Fatalf("login as the fixture user: %v", err)

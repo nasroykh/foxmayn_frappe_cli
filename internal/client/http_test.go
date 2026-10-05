@@ -2,13 +2,21 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -67,6 +75,196 @@ func TestRedirectPolicy(t *testing.T) {
 			t.Fatalf("rows=%v hits=%d", rows, targetHits.Load())
 		}
 	})
+}
+
+func TestRedirectGuards(t *testing.T) {
+	get := func(raw string, h http.Header) *http.Request {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h == nil {
+			h = http.Header{}
+		}
+		return &http.Request{Method: http.MethodGet, URL: u, Header: h}
+	}
+	token := http.Header{"Authorization": {"token k:s"}}
+	cookie := http.Header{"Cookie": {"sid=x"}}
+	for _, c := range []struct {
+		name     string
+		from, to string
+		h        http.Header
+		refused  string
+	}{
+		{"https to http", "https://erp.example.com/a", "http://erp.example.com/a", nil, "leaves https"},
+		{"https to http with token", "https://erp.example.com/a", "http://erp.example.com/a", token, "leaves https"},
+		{"subdomain with token", "https://example.com/a", "https://files.example.com/a", token, "credentials"},
+		{"other host with cookie", "https://erp.example.com/a", "https://cdn.example.net/a", cookie, "credentials"},
+		{"same host https", "https://erp.example.com/a", "https://ERP.example.com./b", token, ""},
+		{"http upgraded to https", "http://erp.example.com/a", "https://erp.example.com/a", token, ""},
+		{"other host without credentials", "https://github.com/a", "https://objects.githubusercontent.com/a", nil, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkRedirect(get(c.to, nil), []*http.Request{get(c.from, c.h)})
+			if c.refused == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			var re *RedirectError
+			if !errors.As(err, &re) || !strings.Contains(err.Error(), c.refused) {
+				t.Fatalf("err = %v, want a RedirectError with %q", err, c.refused)
+			}
+		})
+	}
+	// A downgrade later in the chain is caught at its hop.
+	chain := []*http.Request{get("http://erp.example.com/a", nil), get("https://erp.example.com/a", nil)}
+	if err := checkRedirect(get("http://erp.example.com/b", nil), chain); err == nil {
+		t.Fatal("https to http on the second hop was followed")
+	}
+}
+
+func TestRedirectOverTheWire(t *testing.T) {
+	var plainHits atomic.Int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		plainHits.Add(1)
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer plain.Close()
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/down":
+			http.Redirect(w, r, plain.URL+"/x", http.StatusFound)
+		case "/moved":
+			http.Redirect(w, r, "/here", http.StatusFound)
+		default:
+			_, _ = w.Write([]byte(`{"data":[{"name":"x"}]}`))
+		}
+	}))
+	defer tlsSrv.Close()
+	pool := x509.NewCertPool()
+	pool.AddCert(tlsSrv.Certificate())
+	c := newKeyClient(t, tlsSrv.URL)
+	c.r.SetTLSClientConfig(&tls.Config{RootCAs: pool})
+	ctx := context.Background()
+
+	t.Run("same host https followed", func(t *testing.T) {
+		resp, err := c.r.R().SetContext(ctx).Get("/moved")
+		if err != nil || resp.StatusCode() != 200 || resp.RawResponse.Request.URL.Path != "/here" {
+			t.Fatalf("err=%v resp=%v", err, resp)
+		}
+	})
+	t.Run("https to http refused", func(t *testing.T) {
+		_, err := c.r.R().SetContext(ctx).Get("/down")
+		var re *RedirectError
+		if !errors.As(err, &re) {
+			t.Fatalf("err = %v, want RedirectError", err)
+		}
+		if n := plainHits.Load(); n != 0 {
+			t.Fatalf("http target received %d requests", n)
+		}
+	})
+	t.Run("credentials not sent to another host", func(t *testing.T) {
+		var hits atomic.Int32
+		other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hits.Add(1)
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		}))
+		defer other.Close()
+		// 127.0.0.1 and localhost are different host names.
+		otherURL := strings.Replace(other.URL, "127.0.0.1", "localhost", 1)
+		redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, otherURL+r.URL.Path, http.StatusFound)
+		}))
+		defer redir.Close()
+		_, err := newKeyClient(t, redir.URL).GetList(ctx, "ToDo", ListOptions{})
+		if err == nil || !strings.Contains(err.Error(), "credentials") || hits.Load() != 0 {
+			t.Fatalf("err=%v hits=%d", err, hits.Load())
+		}
+		// Without credentials (update checks, downloads from GitHub) the
+		// redirect is followed.
+		if resp, err := NewHTTPClient(5 * time.Second).R().Get(redir.URL + "/x"); err != nil || resp.StatusCode() != 200 || hits.Load() != 1 {
+			t.Fatalf("anonymous redirect: err=%v hits=%d", err, hits.Load())
+		}
+	})
+}
+
+// A certificate that does not verify and a refused redirect fail the same
+// way on every attempt: neither the resty path nor Download retries them.
+func TestNoRetryOnTLSOrRedirectErrors(t *testing.T) {
+	ctx := context.Background()
+	var conns atomic.Int32
+	tlsSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	tlsSrv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	tlsSrv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	tlsSrv.StartTLS()
+	defer tlsSrv.Close()
+
+	var hits atomic.Int32
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, strings.Replace(tlsSrv.URL, "127.0.0.1", "localhost", 1)+r.URL.Path, http.StatusFound)
+	}))
+	defer redir.Close()
+
+	for _, c := range []struct {
+		name  string
+		url   string
+		count *atomic.Int32
+	}{
+		{"untrusted certificate", tlsSrv.URL, &conns},
+		{"refused redirect", redir.URL, &hits},
+	} {
+		cl := newKeyClient(t, c.url)
+		c.count.Store(0)
+		if _, err := cl.GetList(ctx, "ToDo", ListOptions{}); err == nil {
+			t.Fatalf("%s: GetList succeeded", c.name)
+		}
+		if n := c.count.Load(); n != 1 {
+			t.Errorf("%s: GetList made %d attempts, want 1", c.name, n)
+		}
+		c.count.Store(0)
+		if resp, err := cl.Download(ctx, "/files/x", nil); err == nil {
+			_ = resp.Body.Close()
+			t.Fatalf("%s: Download succeeded", c.name)
+		}
+		if n := c.count.Load(); n != 1 {
+			t.Errorf("%s: Download made %d attempts, want 1", c.name, n)
+		}
+	}
+	if retryableTransport(fmt.Errorf("wrapped: %w", &url.Error{Op: "Get", URL: "x", Err: x509.UnknownAuthorityError{}})) {
+		t.Error("x509 error is retryable")
+	}
+	if !retryableTransport(&url.Error{Op: "Get", URL: "x", Err: syscall.ECONNRESET}) {
+		t.Error("connection reset is not retryable")
+	}
+
+	// A server that requires a client certificate refuses the handshake with
+	// an alert, which arrives as a net.OpError "remote error", not as
+	// tls.AlertError.
+	mtls := httptest.NewUnstartedServer(http.NotFoundHandler())
+	mtls.Config.ErrorLog = log.New(io.Discard, "", 0)
+	mtls.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert, MaxVersion: tls.VersionTLS12}
+	mtls.StartTLS()
+	defer mtls.Close()
+	conn, err := tls.Dial("tcp", mtls.Listener.Addr().String(), &tls.Config{InsecureSkipVerify: true, MaxVersion: tls.VersionTLS12})
+	if err == nil {
+		err = conn.Handshake()
+		_ = conn.Close()
+	}
+	if err == nil {
+		t.Fatal("handshake without a client certificate succeeded")
+	}
+	if retryableTransport(&url.Error{Op: "Get", URL: "x", Err: err}) {
+		t.Errorf("TLS alert %v (%T) is retryable", err, err)
+	}
 }
 
 func TestCallMethodGETArgEncoding(t *testing.T) {

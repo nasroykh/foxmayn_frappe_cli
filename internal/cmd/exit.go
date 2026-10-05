@@ -109,6 +109,7 @@ func classifyAPI(e *client.APIError) (int, string) {
 		return exitNetwork, "server"
 	case e.Status == http.StatusBadRequest, e.Status == http.StatusConflict,
 		e.Status == http.StatusExpectationFailed, e.Status == http.StatusUnprocessableEntity,
+		e.Status == http.StatusRequestEntityTooLarge,
 		e.ExcType == "TimestampMismatchError":
 		return exitValidation, "validation"
 	}
