@@ -245,8 +245,9 @@ type editTable struct {
 	child  string
 	fields map[string]client.FormField // editable row fields
 	order  []string
-	fixed  bool // submitted, and the table is not "allow on submit": rows cannot be added or removed
+	fixed  bool // submitted, and the table is not "allow on submit": rows cannot be added, removed or moved
 	rows   map[string]map[string]interface{}
+	names  []string // row names, in order
 }
 
 // editForm is the editable part of a document.
@@ -342,6 +343,7 @@ func newEditForm(doctype, name string, doc map[string]interface{}, metas map[str
 		for _, r := range rowsOf(doc[fd.Fieldname]) {
 			if n, ok := docName(r["name"]); ok {
 				t.rows[n] = r
+				t.names = append(t.names, n)
 			}
 		}
 		f.tables[fd.Fieldname] = t
@@ -528,15 +530,18 @@ func (f *editForm) parseTable(field string, t *editTable, n *yaml.Node) ([]editR
 	if n.Kind == yaml.AliasNode {
 		n = n.Alias
 	}
-	if n.ShortTag() == "!!null" {
-		return []editRow{}, nil
-	}
-	if n.Kind != yaml.SequenceNode {
+	var items []*yaml.Node
+	switch {
+	case n.ShortTag() == "!!null": // no rows
+	case n.Kind == yaml.SequenceNode:
+		items = n.Content
+	default:
 		return nil, fmt.Errorf("line %d: %s: expected a list of rows", n.Line, field)
 	}
 	rows := []editRow{}
+	var lines []int
 	seen := map[string]bool{}
-	for _, rn := range n.Content {
+	for _, rn := range items {
 		if rn.Kind != yaml.MappingNode {
 			return nil, fmt.Errorf("line %d: %s: expected a row of \"field: value\" lines", rn.Line, field)
 		}
@@ -577,11 +582,55 @@ func (f *editForm) parseTable(field string, t *editTable, n *yaml.Node) ([]editR
 			return nil, fmt.Errorf("line %d: rows cannot be added to %s after submit", rn.Line, field)
 		}
 		rows = append(rows, row)
+		lines = append(lines, rn.Line)
 	}
-	if t.fixed && len(seen) != len(t.rows) {
-		return nil, fmt.Errorf("line %d: rows cannot be removed from %s after submit", n.Line, field)
+	if t.fixed {
+		if len(seen) != len(t.rows) {
+			return nil, fmt.Errorf("line %d: rows cannot be removed from %s after submit", n.Line, field)
+		}
+		for i, r := range rows {
+			if r.name != t.names[i] {
+				return nil, fmt.Errorf("line %d: rows of %s cannot be moved after submit", lines[i], field)
+			}
+		}
 	}
-	return rows, nil
+	return rows, f.checkReplaced(field, t, rows, lines, seen)
+}
+
+// checkReplaced refuses a new row that is a removed row with its "name"
+// line deleted: saved, it would replace the row and lose its columns that
+// are not in the file. A removed row and a different new row are a real
+// edit, shown in the diff.
+func (f *editForm) checkReplaced(field string, t *editTable, rows []editRow, lines []int, kept map[string]bool) error {
+	if f.base == nil { // the generated file itself
+		return nil
+	}
+	before := map[string]map[string]interface{}{}
+	for _, r := range f.base.tables[field] {
+		before[r.name] = r.values
+	}
+	for i, r := range rows {
+		if r.name != "" {
+			continue
+		}
+		for _, name := range t.names {
+			if kept[name] {
+				continue
+			}
+			same := true
+			for _, k := range t.order {
+				if !sameValue(before[name][k], r.values[k]) {
+					same = false
+					break
+				}
+			}
+			if same {
+				return fmt.Errorf("line %d: this row is row %q of %s without its \"name\" line; saved like this it would replace the row and lose its columns not shown here. Put back \"name: %s\" to keep the row, or change it to add a new one",
+					lines[i], name, field, name)
+			}
+		}
+	}
+	return nil
 }
 
 // editNodeValue converts a YAML value for a field of fieldtype: text fields
@@ -962,6 +1011,9 @@ func (f *editForm) printDiff(d *editDiff) {
 		}
 		if td.reordered {
 			fmt.Fprintln(w, "    rows reordered")
+		}
+		if len(td.removed) > 0 && len(td.added) > 0 {
+			output.PrintWarning("    a new row has only the values shown; nothing is carried over from a removed row")
 		}
 	}
 }

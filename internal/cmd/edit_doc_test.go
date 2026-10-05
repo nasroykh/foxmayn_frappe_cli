@@ -51,7 +51,7 @@ func edTSite(t *testing.T) *frappetest.Site {
 			"customer_name": "Customer One", "api_password": "*****", "lft": json.Number("1"), "naming": "SO-",
 			"items": []interface{}{row("r1", "A", "1.0", "10.0"), row("r2", "B", "2.0", "20.0")}},
 		map[string]interface{}{"name": "SO-2", "customer": "C2", "docstatus": json.Number("1"), "po_no": "PO-2",
-			"items": []interface{}{row("r3", "C", "1.0", "5.0")}},
+			"items": []interface{}{row("r3", "C", "1.0", "5.0"), row("r4", "E", "1.0", "4.0")}},
 		map[string]interface{}{"name": "SO-3", "customer": "C3", "docstatus": json.Number("2")},
 	)
 	return s
@@ -284,7 +284,7 @@ func TestEditDocChildRows(t *testing.T) {
 		return f + "  - item_code: D\n    qty: 1\n"
 	})
 	r := cmdTOK(t, cmdTRun(t, s, "edit-doc", "-d", "Sales Order", "-n", "SO-1", "--yes"))
-	for _, want := range []string{"items (the whole table is saved)", "~ row r1: qty: 1.0 → 5;", `+ new row: item_code: "D", qty: 1`, "- REMOVED row r2"} {
+	for _, want := range []string{"items (the whole table is saved)", "~ row r1: qty: 1.0 → 5;", `+ new row: item_code: "D", qty: 1`, "- REMOVED row r2", "nothing is carried over from a removed row"} {
 		if !strings.Contains(r.Stderr, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, r.Stderr)
 		}
@@ -314,10 +314,11 @@ func TestEditDocRowErrors(t *testing.T) {
 		edit func(string) string
 		want string
 	}{
-		"unknown row":    {replace("name: r1", "name: r9"), `items has no row "r9"`},
-		"duplicate row":  {replace("name: r2", "name: r1"), `row "r1" of items appears twice`},
-		"read-only cell": {replace("item_code: A", "item_code: A\n    amount: 1"), `"amount" is not an editable field of items rows`},
-		"not a list":     {func(f string) string { return f[:strings.Index(f, "items:")] + "items: 3\n" }, "items: expected a list of rows"},
+		"unknown row":       {replace("name: r1", "name: r9"), `items has no row "r9"`},
+		"duplicate row":     {replace("name: r2", "name: r1"), `row "r1" of items appears twice`},
+		"read-only cell":    {replace("item_code: A", "item_code: A\n    amount: 1"), `"amount" is not an editable field of items rows`},
+		"not a list":        {func(f string) string { return f[:strings.Index(f, "items:")] + "items: 3\n" }, "items: expected a list of rows"},
+		"name line deleted": {replace("  - name: r2\n    item_code", "  - item_code"), `this row is row "r2" of items without its "name" line`},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -345,7 +346,7 @@ func TestEditDocSubmitted(t *testing.T) {
 	}
 	d, _ := s.Doc("Sales Order", "SO-2")
 	rows := rowsOf(d["items"])
-	if d["po_no"] != "PO-22" || len(rows) != 1 || fmt.Sprint(rows[0]["rate"]) != "6.5" || rows[0]["item_code"] != "C" {
+	if d["po_no"] != "PO-22" || len(rows) != 2 || fmt.Sprint(rows[0]["rate"]) != "6.5" || rows[0]["item_code"] != "C" {
 		t.Errorf("stored = %v", d)
 	}
 
@@ -355,6 +356,27 @@ func TestEditDocSubmitted(t *testing.T) {
 	lcTCode(t, cmdTRun(t, s, "edit-doc", "-d", "Sales Order", "-n", "SO-2", "--yes"), exitUsage)
 	if f := edTFile(t, seen, 1); !strings.Contains(f, "rows cannot be added to items after submit") {
 		t.Errorf("reopened file:\n%s", f)
+	}
+	for name, c := range map[string]struct {
+		edit func(string) string
+		want string
+	}{
+		"null":    {func(f string) string { return f[:strings.Index(f, "items:")] + "items: null\n" }, "rows cannot be removed from items after submit"},
+		"emptied": {func(f string) string { return f[:strings.Index(f, "items:")] + "items: []\n" }, "rows cannot be removed from items after submit"},
+		"moved": {func(f string) string {
+			i := strings.Index(f, "  - name: r3")
+			j := strings.Index(f, "  - name: r4")
+			return f[:i] + f[j:] + f[i:j]
+		}, "rows of items cannot be moved after submit"},
+	} {
+		seen = edTEditor(t, c.edit, same)
+		lcTCode(t, cmdTRun(t, s, "edit-doc", "-d", "Sales Order", "-n", "SO-2", "--yes"), exitUsage)
+		if f := edTFile(t, seen, 1); !strings.Contains(f, c.want) {
+			t.Errorf("%s: reopened file:\n%s", name, f)
+		}
+	}
+	if n := len(edTPuts(s, "SO-2")); n != 0 {
+		t.Errorf("%d PUTs", n)
 	}
 
 	// A cancelled document is not edited.
