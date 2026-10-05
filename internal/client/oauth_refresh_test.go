@@ -3,12 +3,14 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
@@ -233,5 +235,146 @@ func TestOAuthDryRunHasNoToken(t *testing.T) {
 	}
 	if len(s.Requests()) != 0 || calls.Load() != 0 {
 		t.Errorf("dry run sent %d requests", len(s.Requests()))
+	}
+}
+
+// A refreshed token the site refuses as well (a disabled user, narrowed
+// scopes: Frappe still refreshes) is not refreshed again on every request.
+func TestOAuthRefreshedTokenRefused(t *testing.T) {
+	s := frappetest.New(t)
+	c, _ := New(context.Background(), &config.SiteConfig{URL: s.URL, AccessToken: frappetest.Token})
+	var calls atomic.Int32
+	c.SetTokenRefresher(func(ctx context.Context, _ string) (string, error) {
+		calls.Add(1)
+		tok, err := RefreshOAuthToken(ctx, s.URL, frappetest.OAuthClientID, "", frappetest.RefreshToken)
+		if err != nil {
+			return "", err
+		}
+		s.ExpireToken(tok.AccessToken)
+		return tok.AccessToken, nil
+	})
+	s.ExpireToken(frappetest.Token)
+	for i := 0; i < 3; i++ {
+		_, err := c.GetList(context.Background(), "ToDo", ListOptions{})
+		var e *APIError
+		if !errors.As(err, &e) || e.Status != http.StatusUnauthorized || !strings.Contains(e.Message, "refused the refreshed access token too") {
+			t.Fatalf("request %d: %v", i, err)
+		}
+	}
+	if calls.Load() != 1 || s.Refreshes() != 1 {
+		t.Errorf("refresher calls %d, refreshes %d; want 1, 1", calls.Load(), s.Refreshes())
+	}
+}
+
+// Only definitive refresh failures are remembered: a transient one (a 5xx,
+// a busy lock) is tried again by the next request.
+func TestOAuthRefreshFailureMemory(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		err       error
+		wantCalls int32
+	}{
+		{"invalid_grant", &APIError{Status: http.StatusBadRequest, Message: "invalid_grant (HTTP 400)"}, 1},
+		{"invalid_client", fmt.Errorf("token refresh failed: %w", &APIError{Status: http.StatusUnauthorized, Message: "invalid_client"}), 1},
+		{"no refresh token", fmt.Errorf("site %q: %w", "t", ErrNoRefreshToken), 1},
+		{"server error", fmt.Errorf("token refresh failed: %w", &APIError{Status: http.StatusBadGateway, Message: "bad gateway"}), 2},
+		{"lock busy", errors.New("config is locked by another process"), 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := frappetest.New(t)
+			c, _ := New(context.Background(), &config.SiteConfig{URL: s.URL, AccessToken: frappetest.Token})
+			var calls atomic.Int32
+			c.SetTokenRefresher(func(context.Context, string) (string, error) {
+				calls.Add(1)
+				return "", tc.err
+			})
+			s.ExpireToken(frappetest.Token)
+			for i := 0; i < 2; i++ {
+				if _, err := c.GetList(context.Background(), "ToDo", ListOptions{}); err == nil || !strings.Contains(err.Error(), "refreshing it failed") {
+					t.Fatalf("request %d: %v", i, err)
+				}
+			}
+			if calls.Load() != tc.wantCalls {
+				t.Errorf("refresher calls %d, want %d", calls.Load(), tc.wantCalls)
+			}
+		})
+	}
+	// A transient failure followed by a working refresh recovers.
+	s := frappetest.New(t)
+	s.AddDocType("ToDo")
+	c, _ := New(context.Background(), &config.SiteConfig{URL: s.URL, AccessToken: frappetest.Token})
+	var calls atomic.Int32
+	c.SetTokenRefresher(func(ctx context.Context, _ string) (string, error) {
+		if calls.Add(1) == 1 {
+			return "", &APIError{Status: http.StatusServiceUnavailable, Message: "down"}
+		}
+		tok, err := RefreshOAuthToken(ctx, s.URL, frappetest.OAuthClientID, "", frappetest.RefreshToken)
+		if err != nil {
+			return "", err
+		}
+		return tok.AccessToken, nil
+	})
+	s.ExpireToken(frappetest.Token)
+	if _, err := c.GetList(context.Background(), "ToDo", ListOptions{}); err == nil {
+		t.Fatal("first request: want the 401")
+	}
+	if _, err := c.GetList(context.Background(), "ToDo", ListOptions{}); err != nil {
+		t.Fatalf("after recovery: %v", err)
+	}
+}
+
+// A write that got a 401 raised by the method itself is not repeated, even
+// when another request refreshed the token meanwhile; a read is.
+func TestOAuthWriteNotReplayedAfterOtherRefresh(t *testing.T) {
+	s := frappetest.New(t)
+	c, calls := newOAuthClient(t, s)
+	other := frappetest.Token + "-other"
+	s.ExpireTokenAfter(other, -1) // a valid token "another request" got
+	var runs atomic.Int32
+	s.HandleMethod("app.check_pin", func(*http.Request, map[string]interface{}) (interface{}, error) {
+		if runs.Add(1) == 1 {
+			// Another request refreshes while this one runs.
+			c.mu.Lock()
+			c.token = other
+			c.mu.Unlock()
+		}
+		return nil, &frappetest.Error{Status: http.StatusUnauthorized, ExcType: "AuthenticationError", Message: "Incorrect PIN"}
+	})
+	_, err := c.CallMethod(context.Background(), "app.check_pin", map[string]interface{}{"pin": "1"}, false)
+	var e *APIError
+	if !errors.As(err, &e) || e.Status != http.StatusUnauthorized {
+		t.Fatalf("POST: %v", err)
+	}
+	if runs.Load() != 1 || calls.Load() != 0 {
+		t.Fatalf("POST: method runs %d, refresher calls %d; want 1, 0", runs.Load(), calls.Load())
+	}
+
+	runs.Store(0)
+	c.mu.Lock()
+	c.token = frappetest.Token
+	c.mu.Unlock()
+	_, _ = c.CallMethod(context.Background(), "app.check_pin", map[string]interface{}{"pin": "1"}, true)
+	if runs.Load() != 2 {
+		t.Errorf("GET: method runs %d, want 2 (a read is repeated with the newer token)", runs.Load())
+	}
+}
+
+// A request waiting for another's refresh stops when its context ends.
+func TestOAuthRefreshWaitHonoursContext(t *testing.T) {
+	s := frappetest.New(t)
+	c, calls := newOAuthClient(t, s)
+	s.ExpireToken(frappetest.Token)
+	c.loginSem <- struct{}{} // a refresh in progress elsewhere
+	defer c.unlockLogin()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := c.GetList(ctx, "ToDo", ListOptions{})
+	var te *TransportError
+	if !errors.As(err, &te) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v", err)
+	}
+	if time.Since(start) > 2*time.Second || calls.Load() != 0 {
+		t.Errorf("waited %v, refresher calls %d", time.Since(start), calls.Load())
 	}
 }

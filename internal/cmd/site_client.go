@@ -77,7 +77,7 @@ func refreshOAuth(ctx context.Context, cfg *config.SiteConfig, rejected string) 
 			return config.ErrUnchanged
 		}
 		if cur.RefreshToken == "" {
-			return fmt.Errorf("no refresh token is stored for site %q", cfg.Name)
+			return fmt.Errorf("site %q: %w", cfg.Name, client.ErrNoRefreshToken)
 		}
 		tokens, err := client.RefreshOAuthToken(ctx, cur.URL, cur.OAuthClientID, cur.OAuthClientSecret, cur.RefreshToken)
 		if err != nil {
