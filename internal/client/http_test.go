@@ -5,7 +5,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -184,6 +188,63 @@ func TestRedirectOverTheWire(t *testing.T) {
 			t.Fatalf("anonymous redirect: err=%v hits=%d", err, hits.Load())
 		}
 	})
+}
+
+// A certificate that does not verify and a refused redirect fail the same
+// way on every attempt: neither the resty path nor Download retries them.
+func TestNoRetryOnTLSOrRedirectErrors(t *testing.T) {
+	ctx := context.Background()
+	var conns atomic.Int32
+	tlsSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	tlsSrv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	tlsSrv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	tlsSrv.StartTLS()
+	defer tlsSrv.Close()
+
+	var hits atomic.Int32
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, strings.Replace(tlsSrv.URL, "127.0.0.1", "localhost", 1)+r.URL.Path, http.StatusFound)
+	}))
+	defer redir.Close()
+
+	for _, c := range []struct {
+		name  string
+		url   string
+		count *atomic.Int32
+	}{
+		{"untrusted certificate", tlsSrv.URL, &conns},
+		{"refused redirect", redir.URL, &hits},
+	} {
+		cl := newKeyClient(t, c.url)
+		c.count.Store(0)
+		if _, err := cl.GetList(ctx, "ToDo", ListOptions{}); err == nil {
+			t.Fatalf("%s: GetList succeeded", c.name)
+		}
+		if n := c.count.Load(); n != 1 {
+			t.Errorf("%s: GetList made %d attempts, want 1", c.name, n)
+		}
+		c.count.Store(0)
+		if resp, err := cl.Download(ctx, "/files/x", nil); err == nil {
+			_ = resp.Body.Close()
+			t.Fatalf("%s: Download succeeded", c.name)
+		}
+		if n := c.count.Load(); n != 1 {
+			t.Errorf("%s: Download made %d attempts, want 1", c.name, n)
+		}
+	}
+	if retryableTransport(fmt.Errorf("wrapped: %w", &url.Error{Op: "Get", URL: "x", Err: x509.UnknownAuthorityError{}})) {
+		t.Error("x509 error is retryable")
+	}
+	if !retryableTransport(&url.Error{Op: "Get", URL: "x", Err: syscall.ECONNRESET}) {
+		t.Error("connection reset is not retryable")
+	}
 }
 
 func TestCallMethodGETArgEncoding(t *testing.T) {
