@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +63,9 @@ func TestBulkDeleteFilters(t *testing.T) {
 	}{
 		{"with names", []string{"--filters", `{"status":"Open"}`, "--names", "TD-1"}, "none of the others can be"},
 		{"bad filters", []string{"--filters", `"Open"`}, "--filters"},
+		{"empty object", []string{"--filters", `{}`}, "empty filters match every document"},
+		{"empty array", []string{"--filters", ` [ ] `}, "empty filters match every document"},
+		{"empty stdin", []string{"--filters", "@-"}, "--filters: @- is empty"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := cmdTSite(t)
@@ -85,11 +90,11 @@ func TestBulkUpdateFilters(t *testing.T) {
 		}
 		for _, name := range []string{"TD-1", "TD-3"} {
 			doc, _ := s.Doc("ToDo", name)
-			if doc["status"] != "Closed" {
+			if doc["status"] != "Closed" || fmt.Sprint(doc["priority"]) != "9" {
 				t.Errorf("%s = %v", name, doc)
 			}
 		}
-		if doc, _ := s.Doc("ToDo", "TD-2"); doc["priority"] == float64(9) {
+		if doc, _ := s.Doc("ToDo", "TD-2"); doc["status"] != "Closed" || fmt.Sprint(doc["priority"]) != "2" {
 			t.Errorf("TD-2 changed: %v", doc)
 		}
 	})
@@ -109,9 +114,10 @@ func TestBulkUpdateFilters(t *testing.T) {
 		want string
 	}{
 		{"filters without set", []string{"--filters", `{"status":"Open"}`}, "--filters and --set go together"},
+		{"empty filters", []string{"--filters", `[]`, "--set", `{"status":"Closed"}`, "--yes"}, "empty filters match every document"},
 		{"set without filters", []string{"--set", `{"status":"Closed"}`}, "--filters and --set go together"},
-		{"set name", []string{"--filters", `{}`, "--set", `{"name":"x"}`}, "--set cannot change name"},
-		{"empty set", []string{"--filters", `{}`, "--set", `{}`}, "at least one field"},
+		{"set name", []string{"--filters", `{"status":"Open"}`, "--set", `{"name":"x"}`}, "--set cannot change name"},
+		{"empty set", []string{"--filters", `{"status":"Open"}`, "--set", `{}`}, "at least one field"},
 		{"yes alone", []string{"--data", `[{"name":"TD-1","status":"Closed"}]`, "--yes"}, "--yes applies to --filters only"},
 		{"with data", []string{"--filters", `{}`, "--set", `{"a":1}`, "--data", `[]`}, "none of the others can be"},
 	} {
@@ -122,5 +128,30 @@ func TestBulkUpdateFilters(t *testing.T) {
 				t.Errorf("exit %d: %s", r.Code, r.Stderr)
 			}
 		})
+	}
+}
+
+// More matches than Frappe's default page length (20) are all handled, and
+// a filter that matches nothing gives an empty results array in JSON.
+func TestBulkFiltersAllPages(t *testing.T) {
+	s := cmdTSite(t)
+	for i := 0; i < 45; i++ {
+		s.Add("Note", map[string]interface{}{"name": fmt.Sprintf("N-%02d", i), "state": "new"})
+	}
+	cfg := fakeConfig(t, s, "apikey")
+	r := runFFC(t, cfg, "", "bulk-update", "-d", "Note", "--filters", `{"state":"new"}`, "--set", `{"state":"old"}`, "--yes", "--json")
+	if r.Code != 0 {
+		t.Fatalf("exit %d: %s", r.Code, r.Stderr)
+	}
+	r = runFFC(t, cfg, "", "bulk-delete", "-d", "Note", "--filters", `{"state":"old"}`, "--yes", "--json")
+	var rep struct {
+		Deleted int `json:"deleted"`
+	}
+	if err := json.Unmarshal([]byte(r.Stdout), &rep); err != nil || r.Code != 0 || rep.Deleted != 45 {
+		t.Fatalf("exit %d, %d deleted (%v): %s", r.Code, rep.Deleted, err, r.Stderr)
+	}
+	r = runFFC(t, cfg, "", "bulk-delete", "-d", "Note", "--filters", `{"state":"old"}`, "--json")
+	if r.Code != 0 || !strings.Contains(r.Stdout, `"results": []`) {
+		t.Errorf("no-match JSON: exit %d: %s", r.Code, r.Stdout)
 	}
 }

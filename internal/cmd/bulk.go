@@ -299,6 +299,29 @@ func planAll(ctx context.Context, c *client.FrappeClient, n int, op func(ctx con
 	return all
 }
 
+// bulkFilters reads --filters for a bulk command. Filters that select
+// nothing ({} or []) match every document, so they are refused: a bulk write
+// to a whole DocType must be asked for with a filter that says so.
+func bulkFilters(raw string) (string, error) {
+	filters, err := filtersFlag(raw)
+	if err != nil {
+		return "", err
+	}
+	var v interface{}
+	_ = json.Unmarshal([]byte(filters), &v)
+	switch f := v.(type) {
+	case map[string]interface{}:
+		if len(f) > 0 {
+			return filters, nil
+		}
+	case []interface{}:
+		if len(f) > 0 {
+			return filters, nil
+		}
+	}
+	return "", usageErrorf(`--filters: empty filters match every document; to act on all of them, say so with '[["name","is","set"]]'`)
+}
+
 // filterNames returns the names of every doctype document matching filters
 // (one unpaged list call for the names only), for --filters on bulk
 // commands. The run then works on this list, so documents that start or

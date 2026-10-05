@@ -77,7 +77,7 @@ Examples:
 // bulkDeleteFiltered deletes the documents matching --filters, with one
 // client for the list and the deletes.
 func bulkDeleteFiltered(cmd *cobra.Command) error {
-	filters, err := filtersFlag(bdFilters)
+	filters, err := bulkFilters(bdFilters)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,10 @@ func bulkDeleteFiltered(cmd *cobra.Command) error {
 	}
 	if len(names) == 0 {
 		fmt.Fprintf(os.Stderr, "No %s documents match the filters; nothing to delete.\n", bdDoctype)
-		return printBulkReport(bulkReport{Done: "deleted"}, bdDoctype)
+		if !machineOutput() {
+			return nil
+		}
+		return printBulkReport(bulkReport{Done: "deleted", Results: []bulkResult{}}, bdDoctype)
 	}
 	if err := confirmDelete(cmd, names); err != nil {
 		return err

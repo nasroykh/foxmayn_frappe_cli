@@ -86,7 +86,7 @@ func bulkUpdateFiltered(cmd *cobra.Command) error {
 	if buFilters == "" || buSet == "" {
 		return usageErrorf("--filters and --set go together")
 	}
-	filters, err := filtersFlag(buFilters)
+	filters, err := bulkFilters(buFilters)
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,10 @@ func bulkUpdateFiltered(cmd *cobra.Command) error {
 	}
 	if len(names) == 0 {
 		fmt.Fprintf(os.Stderr, "No %s documents match the filters; nothing to update.\n", buDoctype)
-		return printBulkReport(bulkReport{Done: "updated"}, buDoctype)
+		if !machineOutput() {
+			return nil
+		}
+		return printBulkReport(bulkReport{Done: "updated", Results: []bulkResult{}}, buDoctype)
 	}
 	if !buYes && !dryRunOn(cmd) {
 		fields := make([]string, 0, len(patch))

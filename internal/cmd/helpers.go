@@ -51,6 +51,12 @@ func jsonFlag(flag, raw string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", flag, err)
 	}
+	// An empty file or stdin (a pipe whose producer printed nothing) is an
+	// error, not "flag not given": --filters @- would otherwise select every
+	// document.
+	if strings.TrimSpace(string(b)) == "" {
+		return "", usageErrorf("%s: %s is empty", flag, raw)
+	}
 	return string(b), nil
 }
 
