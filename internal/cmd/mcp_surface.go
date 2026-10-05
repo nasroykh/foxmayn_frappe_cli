@@ -161,6 +161,9 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 	if has("search") {
 		line("To turn a title or partial text into a name, call search with doctype first, then use the value it returns.")
 	}
+	if has("get_doc_context") {
+		line("get_doc_context answers who changed a document and when, its comments, attachments and assignments, and what links to it, in one call.")
+	}
 	line("Dates are YYYY-MM-DD and datetimes YYYY-MM-DD HH:MM:SS; Check fields are 0 or 1.")
 	line(`Filters: an object {"status":"Open","docstatus":1} means equality, all conditions ANDed; a list [["grand_total",">",1000],["posting_date","between",["2026-01-01","2026-03-31"]]] takes operators =, !=, >, <, >=, <=, like (with %%), not like, in, not in, between, is ("set" or "not set"). Use fieldnames, not labels.`)
 	if has("list_docs") {
@@ -509,6 +512,7 @@ var mcpPrompts = []mcpPrompt{
 				tracked = ` (get_schema keys ["track_changes"])`
 			}
 			return fmt.Sprintf("Find out who changed the Frappe document %[1]s %[2]s and how, with the ffc tools. Read only: change nothing.\n\n", dt, name) + steps(
+				when(has("get_doc_context"), fmt.Sprintf(`get_doc_context doctype=%[1]s name=%[2]s timeline=true: the last 10 versions (field, from, to), comments, the workflow log and the timeline in one call. When it shows fewer than 10 versions you have them all; skip the Version step below.`, dt, name)),
 				fmt.Sprintf(`get_doc doctype=%[1]s name=%[2]s fields ["name","owner","creation","modified","modified_by","docstatus","amended_from"]: who created it and who changed it last.`, dt, name)+
 					when(has("search"), fmt.Sprintf(" If the name is not found, resolve it with search doctype=%[1]s.", dt)),
 				fmt.Sprintf(`list_docs doctype "Version", filters {"ref_doctype":%[1]s,"docname":%[2]s}, fields ["name","owner","creation","data"], order_by "creation asc", limit 100. Each data is a JSON string: changed is a list of [field, old, new]; added, removed and row_changed describe child-table rows. Frappe keeps Versions only when the DocType has Track Changes on%[3]s; with none, say that the history is not recorded.`, dt, name, tracked),

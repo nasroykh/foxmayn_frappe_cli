@@ -111,7 +111,8 @@ func (s *Site) getdoctype(_ *http.Request, args map[string]interface{}) (interfa
 	for _, dt := range dts {
 		fields := []interface{}{}
 		for _, f := range s.meta[dt] {
-			fields = append(fields, map[string]interface{}{"fieldname": f.name, "fieldtype": f.fieldtype, "no_copy": f.noCopy})
+			fields = append(fields, map[string]interface{}{"fieldname": f.name, "fieldtype": f.fieldtype, "no_copy": f.noCopy,
+				"options": f.options, "permlevel": f.permlevel})
 		}
 		perms := []interface{}{}
 		for _, row := range s.docPerms[dt] {
@@ -131,6 +132,8 @@ func (s *Site) getdoctype(_ *http.Request, args map[string]interface{}) (interfa
 type metaField struct {
 	name, fieldtype string
 	noCopy          int
+	options         string // the child DocType of a Table field
+	permlevel       int
 }
 
 func (s *Site) addField(doctype string, f metaField) {
@@ -147,7 +150,20 @@ func (s *Site) addField(doctype string, f metaField) {
 func (s *Site) DocField(doctype, fieldname, fieldtype string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.addField(doctype, metaField{fieldname, fieldtype, 0})
+	s.addField(doctype, metaField{name: fieldname, fieldtype: fieldtype})
+}
+
+// Permlevel sets the permission level of a declared field.
+func (s *Site) Permlevel(doctype, fieldname string, level int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, f := range s.meta[doctype] {
+		if f.name == fieldname {
+			s.meta[doctype][i].permlevel = level
+			return
+		}
+	}
+	panic("frappetest: Permlevel on undeclared field " + doctype + "." + fieldname)
 }
 
 // NoCopy declares fields of a DocType marked "no copy".
@@ -155,7 +171,7 @@ func (s *Site) NoCopy(doctype string, fields ...string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, f := range fields {
-		s.addField(doctype, metaField{f, "Data", 1})
+		s.addField(doctype, metaField{name: f, fieldtype: "Data", noCopy: 1})
 	}
 }
 
@@ -169,7 +185,7 @@ func (s *Site) ChildTable(parent, field, child string) {
 		s.tables[parent] = map[string]string{}
 	}
 	s.tables[parent][field] = child
-	s.addField(parent, metaField{field, "Table", 0})
+	s.addField(parent, metaField{name: field, fieldtype: "Table", options: child})
 }
 
 // AllowOnSubmit declares fields that a submitted document may still change.

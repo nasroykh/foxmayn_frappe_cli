@@ -194,6 +194,25 @@ func PrintCheck(status, check, message, hint string) {
 	}
 }
 
+// PrintTitle writes a bold heading to stdout.
+func PrintTitle(title string) {
+	lipgloss.Println(lipgloss.NewStyle().Foreground(purple).Bold(true).Render(text.Sanitize(title)))
+}
+
+// PrintSection writes a section of a report to stdout: its title with the
+// number of lines, then each line indented, or "none" when there are none.
+func PrintSection(title string, lines []string) {
+	head := lipgloss.NewStyle().Foreground(purple).Render(text.Sanitize(title))
+	if len(lines) == 0 {
+		lipgloss.Println(head + "  " + lipgloss.NewStyle().Foreground(gray).Render("none"))
+		return
+	}
+	lipgloss.Println(head)
+	for _, l := range lines {
+		lipgloss.Println("  " + text.Sanitize(l))
+	}
+}
+
 // PrintWarning writes a styled warning to stderr.
 func PrintWarning(msg string) {
 	lipgloss.Fprintln(os.Stderr, warnStyle.Render(text.Sanitize(msg)))

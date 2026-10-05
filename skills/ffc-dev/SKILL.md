@@ -58,6 +58,7 @@ internal/cmd/list_doctypes.go → list-doctypes subcommand
 internal/cmd/list_reports.go  → list-reports subcommand
 internal/cmd/run_report.go    → run-report subcommand, limitReportRows
 internal/cmd/search.go        → search subcommand (search_link with -d, global search without), runSearch/validateSearch shared with the MCP tool
+internal/cmd/doc_info.go      → doc-info subcommand: fetchDocContext (get_docinfo, or getdoc with --onload; get_open_count, get_activity_timeline), compactDocContext (JSON contract shared with get_doc_context)
 internal/cmd/call_method.go   → call-method subcommand
 internal/cmd/bulk.go          → runBulk worker pool, bulkReport, parseObjects/parseNames/splitUpdates, bulkFlags
 internal/cmd/bulk_{create,update,delete}.go → bulk commands (--concurrency 1-10, --fail-fast)
@@ -74,7 +75,8 @@ internal/cmd/mcp_audit.go         → MCP audit log mcp-audit.jsonl (0600, rotat
 internal/cmd/mcp_sites.go         → multi-site MCP: mcpSites, siteFor, list_sites, addSiteParam
 internal/cmd/mcp_confirm.go       → confirmation through MCP elicitation: needsConfirm, mcpPolicy.confirm, HMAC request state
 internal/cmd/mcp_args.go          → mcpEnv, toolHandler (parse → policy → confirm → client → call → audit), marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
-internal/cmd/mcp_tools.go         → MCP tools + handlers (26 with the lifecycle and identity files); registerTools(); compactReportResult
+internal/cmd/mcp_tools.go         → MCP tools + handlers (27 with the lifecycle, identity and doc-context files); registerTools(); compactReportResult
+internal/cmd/mcp_doc_context.go   → get_doc_context: parseDocContext, mcpPolicy.filterDocContext (parts from other DocTypes, hidden_by_policy), trimDocContext
 internal/cmd/mcp_identity_tools.go → whoami + check_permission read tools
 internal/cmd/mcp_lifecycle_tools.go → submit/cancel/amend/copy/rename/apply_workflow + get_transitions (docTool, docHandler)
 internal/cmd/mcp_daemon.go        → startDetached(), runHTTPServer(), mcpStatusCmd, mcpStopCmd, state + lock files
@@ -87,6 +89,7 @@ internal/client/session.go        → LoginPassword (POST /api/method/login, sid
 internal/client/debug.go          → --debug trace (debugTransport under resty), DebugLevel; redaction helpers shared with dry runs
 internal/client/dryrun.go         → WithDryRun(ctx, scope), DryRunError; send() holds back writes (scope all: every request)
 internal/client/server.go         → ServerVersions/ServerInfo (FrappeMajor), LoggedUser, UserRoles (Has Role via get_list), HasPermission, DocPermissions, DocTypePermission/EvalDocTypePermission
+internal/client/fieldaccess.go    → ReadableFields/FieldAccess: fields the user may read (getdoctype permlevels + roles); doc-info filters version changes with it
 internal/client/lifecycle.go      → SubmitDoc/CancelDoc/AmendDoc/DuplicateDoc (GetDoc + clean; no-copy fields from getdoctype),
                                     RenameDoc, RestoreDeleted (returns new_name), DiscardDoc (v16), workflow methods
 internal/config/config.go         → Config/SiteConfig, Read, Load, env overrides, default paths
@@ -224,7 +227,7 @@ Every method takes a `ctx` (Ctrl+C cancels the in-flight request). `do()` turns 
 - **Auth**: `client.New(ctx, cfg)` (fallible) picks it: `Authorization: Bearer <token>` for OAuth (`cfg.AccessToken`), `Authorization: token key:secret` for API key, `Cookie: sid=...` for username/password (live login inside `New`, relogin on 401/403 for long-lived clients).
 - **Response envelope**: v14+ wraps results in `"data"`, older versions use `"message"`. Both are handled for list endpoints.
 - **Error responses**: Frappe returns nested JSON with Python tracebacks. `frappeErrorResponse.userMessage()` extracts the human-readable message from `_server_messages` or `exception`.
-- **Whitelisted methods**: Frappe also exposes `api/method/<dotted.path>` for server-side functions. These return results in `"message"`.
+- **Whitelisted methods**: Frappe also exposes `api/method/<dotted.path>` for server-side functions. These return results in `"message"`, except desk methods that set `frappe.response` keys: `getdoctype`/`getdoc` answer in `docs` (+ `docinfo`), `get_docinfo` in `docinfo` (read them with `do` into a map, or return `frappetest.Response` from the fake). A method missing on an older Frappe is a translated 417 that names it (`missingMethod` in client/docinfo.go).
 
 ## Output Formatting
 
@@ -373,7 +376,7 @@ func registerMyTool(s *server.MCPServer, env *mcpEnv) {
 }
 ```
 
-Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`, add the tool to `toolActions` in `mcp_policy.go` (`actRead`, `actWrite` or `actMethod`; it must match the read-only annotation) and to `toolSurface` next to it (tool set `core` or `lifecycle`, a title, and `big` when its result can approach 512 KiB). `TestMCPPolicyCoversEveryTool` and `TestMCPToolSurface` fail until both are filled in. If the instructions (`mcpInstructions`) or a prompt should mention the tool, add it there, guarded by whether the tool is registered. `registerTools` drops what the site's policy does not allow (`read_only`, `allow_tools`), and `toolHandler` checks the policy on every call before any request. If the tool names DocTypes or documents in arguments other than `doctype`/`name`, teach `scopeOf` about them.
+Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`, add the tool to `toolActions` in `mcp_policy.go` (`actRead`, `actWrite` or `actMethod`; it must match the read-only annotation) and to `toolSurface` next to it (tool set `core` or `lifecycle`, a title, and `big` when its result can approach 512 KiB). `TestMCPPolicyCoversEveryTool` and `TestMCPToolSurface` fail until both are filled in. If the instructions (`mcpInstructions`) or a prompt should mention the tool, add it there, guarded by whether the tool is registered. `registerTools` drops what the site's policy does not allow (`read_only`, `allow_tools`), and `toolHandler` checks the policy on every call before any request. If the tool names DocTypes or documents in arguments other than `doctype`/`name`, teach `scopeOf` about them. If its result spans DocTypes the request does not name (global search hits, get_doc_context's linked DocTypes and its Version/Comment/File/... sections), filter them inside the toolCall with `policyFrom(ctx)` and fail when it returns false (the zero policy allows everything); report what was dropped as `hidden_by_policy`.
 
 **Argument extraction** (`mcp_args.go`): never use `req.GetString` for JSON-valued params — it returns `""` for a native object and silently drops filters. Use `jsonArg` / `rawJSONArg` / `objectArg` (accept native JSON or a JSON-encoded string), `stringsArg` (array or CSV), and `intArg` (validated integers). `req.RequireString("key")` and `req.GetString("key", "default")` are fine for plain strings.
 
