@@ -273,6 +273,20 @@ func TestDownloadRefusesOtherHosts(t *testing.T) {
 	}
 }
 
+// TestDownloadDashName checks that a file named "-" is not written to
+// stdout: "-" means stdout only when the user passes it to -o.
+func TestDownloadDashName(t *testing.T) {
+	site := cmdTSite(t)
+	cfg := fakeConfig(t, site, "apikey")
+	r := runFFC(t, cfg, "", "download", "/files/-")
+	if r.Code != exitUsage || r.Stdout != "" || !strings.Contains(r.Stderr, "--output-file") {
+		t.Errorf("exit %d, stdout %q, stderr %s", r.Code, r.Stdout, r.Stderr)
+	}
+	if n := len(site.Requests()); n != 0 {
+		t.Errorf("%d requests sent", n)
+	}
+}
+
 func TestAttachmentsCommand(t *testing.T) {
 	site := cmdTSite(t)
 	cfg := fakeConfig(t, site, "apikey")

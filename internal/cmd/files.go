@@ -254,6 +254,9 @@ func defaultFileName(p string) (string, error) {
 	if err == nil {
 		err = checkFileName(base)
 	}
+	if err == nil && base == "-" {
+		err = errors.New(`"-" means stdout`) // only when the user asks for it
+	}
 	if err != nil {
 		return "", usageErrorf("cannot name the file after %q: pass --output-file", p)
 	}
