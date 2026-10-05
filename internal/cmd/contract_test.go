@@ -315,13 +315,16 @@ func contractSearch(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig)
 	}
 
 	// search_link finds by name; without a title field a row is
-	// {value, description, label} and the label repeats the name.
+	// {value, description}, and v16 adds a label repeating the name.
 	rows, err := c.SearchLink(ctx, contractDT, names[0], 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0]["value"] != names[0] || rows[0]["label"] != names[0] {
+	if len(rows) != 1 || rows[0]["value"] != names[0] {
 		t.Fatalf("search_link by name = %v, want one row for %s", rows, names[0])
+	}
+	if l, ok := rows[0]["label"]; ok && l != names[0] {
+		t.Errorf("label = %#v, want the name %s", l, names[0])
 	}
 	if _, ok := rows[0]["description"].(string); !ok {
 		t.Errorf("description = %#v, want a string", rows[0]["description"])
