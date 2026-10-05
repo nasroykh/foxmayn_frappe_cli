@@ -67,8 +67,9 @@ type Site struct {
 	mu        sync.Mutex
 	doctypes  map[string]map[string]map[string]interface{} // doctype → name → doc
 	fields    map[string]map[string]bool                   // fields declared with AddDocType
-	noCopy    map[string]map[string]bool                   // "no copy" fields, see NoCopy
-	children  map[string][]string                          // parent → child DocTypes
+	meta      map[string][]metaField                       // getdoctype fields, see DocField
+	tables    map[string]map[string]string                 // parent → table field → child DocType
+	onSubmit  map[string]map[string]bool                   // allow-on-submit fields
 	reports   map[string]map[string]interface{}
 	methods   map[string]MethodFunc
 	overrides map[string]http.Handler
@@ -86,8 +87,9 @@ func New(t testing.TB) *Site {
 	s := &Site{
 		doctypes:  map[string]map[string]map[string]interface{}{},
 		fields:    map[string]map[string]bool{},
-		noCopy:    map[string]map[string]bool{},
-		children:  map[string][]string{},
+		meta:      map[string][]metaField{},
+		tables:    map[string]map[string]string{},
+		onSubmit:  map[string]map[string]bool{},
 		reports:   map[string]map[string]interface{}{},
 		methods:   map[string]MethodFunc{},
 		overrides: map[string]http.Handler{},
@@ -132,7 +134,9 @@ func (s *Site) Add(doctype string, docs ...map[string]interface{}) {
 		if name == "" {
 			panic("frappetest.Add: document without a name")
 		}
-		s.doctypes[doctype][name] = s.stamp(doctype, copyDoc(d), true)
+		doc := copyDoc(d)
+		s.stampRows(doctype, doc)
+		s.doctypes[doctype][name] = s.stamp(doctype, doc, true)
 	}
 }
 
@@ -531,6 +535,7 @@ func (s *Site) create(w http.ResponseWriter, doctype string, body []byte, user s
 	}
 	d["name"] = name
 	d["owner"] = user
+	s.stampRows(doctype, d)
 	doc := s.stamp(doctype, d, true)
 	s.doctypes[doctype][name] = doc
 	writeJSON(w, http.StatusOK, map[string]interface{}{"data": copyDoc(doc)})
@@ -550,8 +555,12 @@ func (s *Site) update(w http.ResponseWriter, doctype, name string, body []byte, 
 		return
 	}
 	if fmt.Sprint(doc["docstatus"]) != "0" {
-		writeError(w, &Error{http.StatusExpectationFailed, "UpdateAfterSubmitError", fmt.Sprintf("Cannot edit %s %s: it is submitted or cancelled", doctype, name)})
-		return
+		for k := range patch {
+			if k != "name" && !s.onSubmit[doctype][k] {
+				writeError(w, &Error{http.StatusExpectationFailed, "UpdateAfterSubmitError", fmt.Sprintf("Not allowed to change %s after submission", k)})
+				return
+			}
+		}
 	}
 	for k, v := range patch {
 		if k != "name" {
@@ -559,6 +568,7 @@ func (s *Site) update(w http.ResponseWriter, doctype, name string, body []byte, 
 		}
 	}
 	doc["modified_by"] = user
+	s.stampRows(doctype, doc)
 	s.stamp(doctype, doc, false)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"data": copyDoc(doc)})
 }

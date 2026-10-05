@@ -606,7 +606,11 @@ func contractWorkflow(t *testing.T, c *client.FrappeClient, sc *config.SiteConfi
 	if err != nil {
 		t.Fatalf("Workflow: %v", err)
 	}
-	t.Cleanup(func() { teardownWorkflow(context.Background(), t, c) })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		teardownWorkflow(ctx, t, c)
+	})
 
 	cfg := contractConfig(t, sc)
 	name := createContractDoc(t, c, map[string]interface{}{"title": "workflow"})
@@ -649,6 +653,9 @@ func teardownWorkflow(ctx context.Context, t *testing.T, c *client.FrappeClient)
 			t.Logf("teardown: delete Workflow: %v", err)
 		}
 	}
+	// The states and the action are matched by name only (they have no field
+	// to mark them), so the names carry the fixture prefix; Frappe refuses
+	// the delete while any Workflow or document still links to them.
 	for _, st := range []string{contractWF + " Draft", contractWF + " Done"} {
 		_ = c.DeleteDoc(ctx, "Workflow State", st)
 	}

@@ -94,8 +94,8 @@ func (s *Site) submittedLinkedDocs(_ *http.Request, _ map[string]interface{}) (i
 }
 
 // getdoctype answers frappe.desk.form.load.getdoctype like Frappe, with the
-// metas in "docs" (the DocType's, then its child tables'), each listing only
-// the fields declared with NoCopy.
+// metas in "docs" (the DocType's, then its child tables'), each listing the
+// fields declared with DocField, NoCopy and ChildTable.
 func (s *Site) getdoctype(_ *http.Request, args map[string]interface{}) (interface{}, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -103,34 +103,94 @@ func (s *Site) getdoctype(_ *http.Request, args map[string]interface{}) (interfa
 	if _, ok := s.doctypes[doctype]; !ok {
 		return nil, NotFound(fmt.Sprintf("DocType %s not found", doctype))
 	}
+	dts := []string{doctype}
+	for _, child := range s.tables[doctype] {
+		dts = append(dts, child)
+	}
 	var docs []interface{}
-	for _, dt := range append([]string{doctype}, s.children[doctype]...) {
-		var fields []interface{}
-		for f := range s.noCopy[dt] {
-			fields = append(fields, map[string]interface{}{"fieldname": f, "no_copy": 1})
+	for _, dt := range dts {
+		fields := []interface{}{}
+		for _, f := range s.meta[dt] {
+			fields = append(fields, map[string]interface{}{"fieldname": f.name, "fieldtype": f.fieldtype, "no_copy": f.noCopy})
 		}
 		docs = append(docs, map[string]interface{}{"name": dt, "fields": fields})
 	}
 	return Response{"docs": docs}, nil
 }
 
-// NoCopy marks fields of a DocType "no copy".
+// metaField is a field of the fake meta.
+type metaField struct {
+	name, fieldtype string
+	noCopy          int
+}
+
+func (s *Site) addField(doctype string, f metaField) {
+	for i, old := range s.meta[doctype] {
+		if old.name == f.name {
+			s.meta[doctype][i] = f
+			return
+		}
+	}
+	s.meta[doctype] = append(s.meta[doctype], f)
+}
+
+// DocField declares a field of a DocType's meta with its fieldtype.
+func (s *Site) DocField(doctype, fieldname, fieldtype string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.addField(doctype, metaField{fieldname, fieldtype, 0})
+}
+
+// NoCopy declares fields of a DocType marked "no copy".
 func (s *Site) NoCopy(doctype string, fields ...string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.noCopy[doctype] == nil {
-		s.noCopy[doctype] = map[string]bool{}
-	}
 	for _, f := range fields {
-		s.noCopy[doctype][f] = true
+		s.addField(doctype, metaField{f, "Data", 1})
 	}
 }
 
-// ChildTable records that child is a table DocType of parent.
-func (s *Site) ChildTable(parent, child string) {
+// ChildTable declares the table field of parent whose rows are child
+// documents: created rows get their identity (doctype, name, parent,
+// parentfield, parenttype, idx) like on a real site.
+func (s *Site) ChildTable(parent, field, child string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.children[parent] = append(s.children[parent], child)
+	if s.tables[parent] == nil {
+		s.tables[parent] = map[string]string{}
+	}
+	s.tables[parent][field] = child
+	s.addField(parent, metaField{field, "Table", 0})
+}
+
+// AllowOnSubmit declares fields that a submitted document may still change.
+func (s *Site) AllowOnSubmit(doctype string, fields ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.onSubmit[doctype] == nil {
+		s.onSubmit[doctype] = map[string]bool{}
+	}
+	for _, f := range fields {
+		s.onSubmit[doctype][f] = true
+	}
+}
+
+// stampRows gives the rows of declared child tables their identity; the
+// caller holds s.mu.
+func (s *Site) stampRows(doctype string, d map[string]interface{}) {
+	for field, child := range s.tables[doctype] {
+		rows, _ := d[field].([]interface{})
+		for i, r := range rows {
+			row, ok := r.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			s.seq++
+			row["name"] = fmt.Sprintf("row-%04d", s.seq)
+			row["doctype"], row["parent"], row["parentfield"], row["parenttype"] = child, d["name"], field, doctype
+			row["idx"] = json.Number(fmt.Sprint(i + 1))
+		}
+	}
 }
 
 // amendmentName is the name Frappe gives an amendment of orig: orig-1, or

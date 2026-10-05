@@ -96,7 +96,12 @@ Examples:
 		if machineOutput() {
 			return printResult(selectKeys(doc, wfKeys))
 		}
-		output.PrintSuccess(fmt.Sprintf("Applied %s to %s %s: now %v", wfAction, wfDoctype, wfName, doc["workflow_state"]))
+		msg := fmt.Sprintf("Applied %s to %s %s", wfAction, wfDoctype, wfName)
+		// workflow_state is the default state field; a Workflow may use another.
+		if state, ok := doc["workflow_state"].(string); ok && state != "" {
+			msg += ": now " + state
+		}
+		output.PrintSuccess(msg)
 		return nil
 	},
 }

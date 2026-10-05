@@ -15,15 +15,17 @@ import (
 func lcTSite(t *testing.T) *frappetest.Site {
 	t.Helper()
 	s := frappetest.New(t)
-	items := []interface{}{map[string]interface{}{"name": "row1", "item_code": "A", "qty": json.Number("2"), "parent": "SO-3", "doctype": "Sales Order Item"}}
+	s.ChildTable("Sales Order", "items", "Sales Order Item")
+	s.NoCopy("Sales Order", "po_no")
+	s.NoCopy("Sales Order Item", "qty")
+	s.DocField("Sales Order", "api_password", "Password")
+	items := []interface{}{map[string]interface{}{"item_code": "A", "qty": json.Number("2")}}
 	s.Add("Sales Order",
 		map[string]interface{}{"name": "SO-1", "customer": "C1"},
 		map[string]interface{}{"name": "SO-2", "customer": "C2", "docstatus": json.Number("1"), "po_no": "PO-2", "items": items},
-		map[string]interface{}{"name": "SO-3", "customer": "C3", "docstatus": json.Number("2"), "po_no": "PO-3", "items": items},
+		map[string]interface{}{"name": "SO-3", "customer": "C3", "docstatus": json.Number("2"), "po_no": "PO-3", "items": items,
+			"api_password": "*****", "lft": json.Number("4"), "rgt": json.Number("5")},
 	)
-	s.ChildTable("Sales Order", "Sales Order Item")
-	s.NoCopy("Sales Order", "po_no")
-	s.NoCopy("Sales Order Item", "qty")
 	return s
 }
 
@@ -81,6 +83,13 @@ func TestSubmitWorkflowUnreadable(t *testing.T) {
 	s := lcTSite(t)
 	s.Handle("GET /api/resource/Workflow", frappetest.ErrorHandler(frappetest.Permission("No permission for Workflow")))
 	cmdTOK(t, cmdTRun(t, s, "submit-doc", "-d", "Sales Order", "-n", "SO-1"))
+}
+
+func TestUpdateAfterSubmit(t *testing.T) {
+	s := lcTSite(t)
+	s.AllowOnSubmit("Sales Order", "delivery_note")
+	cmdTOK(t, cmdTRun(t, s, "update-doc", "-d", "Sales Order", "-n", "SO-2", "--data", `{"delivery_note":"x"}`))
+	lcTCode(t, cmdTRun(t, s, "update-doc", "-d", "Sales Order", "-n", "SO-2", "--data", `{"customer":"x"}`), exitValidation, "after submission")
 }
 
 func TestCancelDoc(t *testing.T) {
@@ -142,7 +151,9 @@ func TestAmendDoc(t *testing.T) {
 	if body["po_no"] != "PO-3" {
 		t.Errorf("po_no = %v, want PO-3", body["po_no"])
 	}
-	for _, k := range []string{"name", "creation", "modified", "owner", "docstatus"} {
+	// Masked passwords and tree positions are never copied; the DocType
+	// has no amendment_date field, so none is sent.
+	for _, k := range []string{"name", "creation", "modified", "owner", "docstatus", "api_password", "lft", "rgt", "amendment_date"} {
 		if _, ok := body[k]; ok {
 			t.Errorf("amendment body keeps %q", k)
 		}
@@ -156,6 +167,20 @@ func TestAmendDoc(t *testing.T) {
 	}
 	// SO-3 already has its amendment.
 	lcTCode(t, cmdTRun(t, s, "amend-doc", "-d", "Sales Order", "-n", "SO-3"), exitValidation, "already exists")
+}
+
+func TestAmendDocDate(t *testing.T) {
+	s := lcTSite(t)
+	s.DocField("Sales Order", "amendment_date", "Date")
+	r := cmdTOK(t, cmdTRun(t, s, "amend-doc", "-d", "Sales Order", "-n", "SO-3", "--json"))
+	if d, _ := cmdTJSON(t, r).(map[string]interface{})["amendment_date"].(string); len(d) != 10 {
+		t.Errorf("amendment_date = %q, want today", d)
+	}
+	cmdTOK(t, cmdTRun(t, s, "cancel-doc", "-d", "Sales Order", "-n", "SO-2", "--yes"))
+	r = cmdTOK(t, cmdTRun(t, s, "amend-doc", "-d", "Sales Order", "-n", "SO-2", "--data", `{"amendment_date":"2026-01-31"}`, "--json"))
+	if d := cmdTJSON(t, r).(map[string]interface{})["amendment_date"]; d != "2026-01-31" {
+		t.Errorf("amendment_date = %v, want the override", d)
+	}
 }
 
 func TestAmendDocNotCancelled(t *testing.T) {
@@ -181,6 +206,19 @@ func TestCopyDoc(t *testing.T) {
 	rows, _ := got["items"].([]interface{})
 	if len(rows) != 1 || rows[0].(map[string]interface{})["item_code"] != "A" || rows[0].(map[string]interface{})["qty"] != nil {
 		t.Errorf("copy items = %v", got["items"])
+	}
+	if row, _ := rows[0].(map[string]interface{}); row["parent"] != got["name"] {
+		t.Errorf("copied row parent = %v, want %v", row["parent"], got["name"])
+	}
+	for _, k := range []string{"api_password", "lft", "rgt"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("copy keeps %s", k)
+		}
+	}
+	// A copy of the copy: rows created by the site copy the same way.
+	r = cmdTOK(t, cmdTRun(t, s, "copy-doc", "-d", "Sales Order", "-n", fmt.Sprint(got["name"]), "--json"))
+	if rows, _ := cmdTJSON(t, r).(map[string]interface{})["items"].([]interface{}); len(rows) != 1 {
+		t.Errorf("second copy items = %v", rows)
 	}
 	lcTCode(t, cmdTRun(t, s, "copy-doc", "-d", "Sales Order", "-n", "nope"), exitNotFound)
 }
@@ -243,11 +281,16 @@ func TestDiscardDoc(t *testing.T) {
 	if ds := lcTDocstatus(t, s, "Sales Order", "SO-1"); ds != "2" {
 		t.Errorf("docstatus = %s, want 2", ds)
 	}
-	// Frappe v15 has no discard method.
+	// Frappe v15 has no discard method; the message is translated, the
+	// method name in it is not.
 	s.HandleMethod("frappe.desk.form.save.discard", func(*http.Request, map[string]interface{}) (interface{}, error) {
-		return nil, frappetest.Validation("Failed to get method for command frappe.desk.form.save.discard with No module named 'x'")
+		return nil, frappetest.Validation("Échec de la méthode pour la commande frappe.desk.form.save.discard avec No module named 'x'")
 	})
-	cmdTFail(t, cmdTRun(t, s, "discard-doc", "-d", "Sales Order", "-n", "SO-2", "--yes"), "Frappe v16")
+	r := cmdTRun(t, s, "discard-doc", "-d", "Sales Order", "-n", "SO-2", "--yes", "--json")
+	lcTCode(t, r, exitValidation, "Frappe v16")
+	if !strings.Contains(r.Stderr, `"exc_type":"ValidationError"`) {
+		t.Errorf("--json error lacks the site's error: %s", r.Stderr)
+	}
 }
 
 func lcTWorkflowSite(t *testing.T) *frappetest.Site {
