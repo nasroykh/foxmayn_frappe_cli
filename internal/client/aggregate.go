@@ -140,8 +140,12 @@ func (q AggregateQuery) validate(doctype string) error {
 // bare "name" or "status" would then be ambiguous. group_by and order_by
 // are qualified only when the filters can join another table: v15 checks
 // them against ORDER_GROUP_PATTERN (db_query.py ~1542), which refuses any
-// character outside [a-z0-9-_ ,`'".()], so a qualified name of a DocType
-// with an accent in its name would be "Illegal SQL Query".
+// character outside [a-z0-9-_ ,`'".()] after lower-casing, so a qualified
+// name of a DocType with any other character would be "Illegal SQL Query".
+// Frappe has accepted only ASCII letters, digits, spaces, "_" and "-" in
+// new DocType names since v15 (doctype.py START_WITH_LETTERS_PATTERN), so
+// this concerns DocTypes named before that; the bare fieldname is also
+// what Frappe's own get_group_by_count sends.
 func (q AggregateQuery) fields(doctype string, syntax AggregateSyntax) (fields []interface{}, groupBy, orderBy string) {
 	qual := func(f string) string { return f }
 	clause := qual

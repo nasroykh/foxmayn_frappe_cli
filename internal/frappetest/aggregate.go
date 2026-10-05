@@ -42,6 +42,48 @@ func (s *Site) Postgres() {
 	s.postgres = true
 }
 
+// HighPermlevel puts fields of doctype above the permission level the
+// caller may read, for grouped and aggregate list queries: v16 refuses
+// them with a PermissionError; v15's reportview.validate_fields silently
+// drops them from fields (reportview.py:131-133), and its group_by check
+// refuses them (db_query.py:1578).
+func (s *Site) HighPermlevel(doctype string, fields ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.highPerms == nil {
+		s.highPerms = map[string]map[string]bool{}
+	}
+	if s.highPerms[doctype] == nil {
+		s.highPerms[doctype] = map[string]bool{}
+	}
+	for _, f := range fields {
+		s.highPerms[doctype][f] = true
+	}
+}
+
+func (s *Site) highPerm(doctype, field string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.highPerms[doctype][field]
+}
+
+// v15 checks group_by and order_by text (db_query.py:71, 1535-1561): any
+// character outside this set, after lower-casing, is "Illegal SQL Query",
+// and so are the operator words, outside `tab...` table names.
+var (
+	v15OrderGroupRE = regexp.MustCompile("[^a-z0-9\\-_ ,`'\".()]")
+	v15TableRE      = regexp.MustCompile("`tab[^`]*`")
+	v15OperatorRE   = regexp.MustCompile(`\b(if|regexp|rlike|like)\b`)
+)
+
+func v15CheckOrderGroup(clause string) *Error {
+	lower := strings.ToLower(clause)
+	if v15OrderGroupRE.MatchString(lower) || v15OperatorRE.MatchString(v15TableRE.ReplaceAllString(lower, " doc ")) {
+		return Validation("Illegal SQL Query")
+	}
+	return nil
+}
+
 // isAggregate reports whether fields hold an aggregate in either syntax.
 func isAggregate(fields []interface{}) bool {
 	for _, f := range fields {
@@ -89,6 +131,14 @@ func fieldPermission(doctype, f string) *Error {
 // aggregateList answers a list request with group_by or aggregate fields.
 func (s *Site) aggregateList(w http.ResponseWriter, q url.Values, doctype string, raw []interface{}) {
 	v16 := s.major() >= 16
+	if !v16 {
+		for _, clause := range []string{q.Get("order_by"), q.Get("group_by")} {
+			if err := v15CheckOrderGroup(clause); err != nil {
+				writeError(w, err)
+				return
+			}
+		}
+	}
 	var cols []aggCol
 	for _, x := range raw {
 		switch v := x.(type) {
@@ -122,6 +172,9 @@ func (s *Site) aggregateList(w http.ResponseWriter, q url.Values, doctype string
 					writeError(w, DataError("Field not permitted in query: "+f))
 					return
 				}
+				if s.highPerm(doctype, f) {
+					continue // validate_fields drops it without a word
+				}
 				cols = append(cols, aggCol{strings.ToUpper(m[1]), f, m[3]})
 				continue
 			}
@@ -129,6 +182,13 @@ func (s *Site) aggregateList(w http.ResponseWriter, q url.Values, doctype string
 			if !ok || !s.knownField(doctype, f) {
 				writeError(w, DataError("Field not permitted in query: "+v))
 				return
+			}
+			if s.highPerm(doctype, f) {
+				if v16 {
+					writeError(w, fieldPermission(doctype, f))
+					return
+				}
+				continue
 			}
 			cols = append(cols, aggCol{field: f, alias: f})
 		default:
@@ -142,8 +202,12 @@ func (s *Site) aggregateList(w http.ResponseWriter, q url.Values, doctype string
 			continue
 		}
 		f, ok := unqualify(doctype, g)
-		if !ok || !s.knownField(doctype, f) {
+		if !ok || !s.knownField(doctype, f) || (v16 && s.highPerm(doctype, f)) {
 			writeError(w, fieldPermission(doctype, f))
+			return
+		}
+		if s.highPerm(doctype, f) {
+			writeError(w, Permission("Not permitted to sort or group by <strong>"+f+"</strong>"))
 			return
 		}
 		groupBy = append(groupBy, f)
@@ -208,7 +272,7 @@ func (s *Site) aggregateList(w http.ResponseWriter, q url.Values, doctype string
 		f, _ := unqualify(doctype, w[0])
 		terms = append(terms, strings.Join(append([]string{f}, w[1:]...), " "))
 	}
-	if len(terms) == 0 {
+	if len(terms) == 0 && len(cols) > 0 {
 		terms = []string{cols[0].alias + " asc"} // a stable order for tests
 	}
 	s.mu.Lock()
@@ -252,7 +316,7 @@ func (s *Site) dictAgg(doctype string, d map[string]interface{}) (aggCol, *Error
 		if c.fn != "COUNT" {
 			return c, Validation("'*' is only allowed in COUNT SQL function(s)")
 		}
-	case !s.knownField(doctype, c.field):
+	case !s.knownField(doctype, c.field) || s.highPerm(doctype, c.field):
 		return c, fieldPermission(doctype, c.field)
 	}
 	if c.alias == "" {

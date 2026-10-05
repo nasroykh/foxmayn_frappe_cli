@@ -228,6 +228,73 @@ func TestCmdAggregateLimit(t *testing.T) {
 	}
 }
 
+// The fake checks group_by and order_by as v15 does: ORDER_GROUP_PATTERN
+// and the operator words.
+func TestFakeAggregateV15OrderGroup(t *testing.T) {
+	s := aggTSite(t, "15.121.3")
+	for _, tc := range []struct{ groupBy, orderBy, want string }{
+		{"status", "status asc", ""},
+		{"`tabToDo`.`status`", "`tabToDo`.`status` desc", ""},
+		{"like", "", "Illegal SQL Query"},
+		{"status", "if(status, 1, 2)", "Illegal SQL Query"},
+		{"`tabTâche`.`status`", "", "Illegal SQL Query"},
+		{"status", "status;", "Illegal SQL Query"},
+	} {
+		args := []string{"--json", "api", "/api/resource/ToDo", "-f", `fields=["status","count(name) as n"]`, "-f", "group_by=" + tc.groupBy}
+		if tc.orderBy != "" {
+			args = append(args, "-f", "order_by="+tc.orderBy)
+		}
+		r := cmdTRun(t, s, args...)
+		var api *client.APIError
+		switch {
+		case tc.want == "" && r.Err != nil:
+			t.Errorf("%s / %s: %v", tc.groupBy, tc.orderBy, r.Err)
+		case tc.want != "" && (!errors.As(r.Err, &api) || api.Status != 417 || !strings.Contains(api.Message, tc.want)):
+			t.Errorf("%s / %s: %v", tc.groupBy, tc.orderBy, r.Err)
+		}
+	}
+}
+
+// On v15 ffc leaves group_by and order_by unqualified unless a filter can
+// join another table, so a DocType whose name is not plain ASCII (one
+// named before Frappe restricted DocType names) groups.
+func TestCmdAggregateV15NonASCIIDocType(t *testing.T) {
+	s := frappetest.New(t)
+	s.SetApps(map[string]frappetest.App{"frappe": {Title: "Frappe Framework", Version: "15.121.3"}})
+	s.AddDocType("Tâche", "status")
+	s.Add("Tâche", map[string]interface{}{"name": "T-1", "status": "Open"}, map[string]interface{}{"name": "T-2", "status": "Open"})
+	r := cmdTOK(t, cmdTRun(t, s, "--json", "aggregate", "-d", "Tâche", "--group-by", "status"))
+	if rows := cmdTRows(t, r); len(rows) != 1 || rows[0]["count"] != float64(2) {
+		t.Errorf("rows %v", rows)
+	}
+	// A filter through a link joins: qualified, and v15 refuses the name.
+	r = cmdTRun(t, s, "--json", "aggregate", "-d", "Tâche", "--group-by", "status", "--filters", `{"owner.enabled":1}`)
+	if r.Code != exitValidation || !strings.Contains(r.Stderr, "Illegal SQL Query") {
+		t.Errorf("exit %d, %s", r.Code, r.Stderr)
+	}
+}
+
+// A field above the caller's permission level: v16 refuses it, v15 drops
+// the aggregate silently (ffc notices) and refuses to group by it.
+func TestCmdAggregatePermlevel(t *testing.T) {
+	for _, v := range []string{"16.36.1", "15.121.3"} {
+		s := aggTSite(t, v)
+		s.HighPermlevel("ToDo", "hours")
+		r := cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "status", "--sum", "hours", "--count")
+		if r.Code != exitPermission || !strings.Contains(r.Stderr, "hours") {
+			t.Errorf("v%s sum: exit %d, %s", v, r.Code, r.Stderr)
+		}
+		if strings.HasPrefix(v, "15") {
+			cmdTHas(t, r.Stderr, "left SUM(ToDo.hours) out of the result")
+		}
+		r = cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "hours")
+		if r.Code != exitPermission {
+			t.Errorf("v%s group: exit %d, %s", v, r.Code, r.Stderr)
+		}
+		cmdTOK(t, cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "status"))
+	}
+}
+
 // pgTSite has 30 owners with 1 to 7 ToDos each: by name, the groups are
 // far from count order.
 func pgTSite(t *testing.T, postgres bool) (*frappetest.Site, []string) {

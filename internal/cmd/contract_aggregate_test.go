@@ -3,11 +3,14 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -114,6 +117,117 @@ func contractAggregate(t *testing.T, c *client.FrappeClient, sc *config.SiteConf
 	r = runFFC(t, cfg, "", "count-docs", "-d", contractDT, "--group-by", "no_such_field")
 	if r.Code != exitValidation {
 		t.Errorf("count-docs --group-by no_such_field: exit %d (%v)", r.Code, r.Err)
+	}
+
+	t.Run("permission level", func(t *testing.T) { contractAggregatePermlevel(t, c, sc) })
+}
+
+// contractPermDT has a field at permission level 1. (A DocType name
+// v15's ORDER_GROUP_PATTERN would refuse once qualified cannot be created:
+// DocType names are ASCII letters, digits, spaces, "_" and "-".)
+const contractPermDT = "FFC Contract Perm"
+
+// contractAggregatePermlevel pins what the fake models with HighPermlevel:
+// a list query naming a field above the caller's permission level is a
+// PermissionError on v16, while v15 drops it from fields without a word
+// (reportview.validate_fields) and refuses it in group_by; ffc aggregate
+// exits 5 on both.
+func contractAggregatePermlevel(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
+	ctx := contractCtx(t)
+	info, err := c.ServerVersions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	major := info.FrappeMajor()
+	teardown := func() {
+		tctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		d, err := c.GetDoc(tctx, "DocType", contractPermDT)
+		if err != nil {
+			return
+		}
+		if d["description"] != contractMarker {
+			t.Fatalf("DocType %q exists but was not created by these tests; refusing to delete it", contractPermDT)
+		}
+		if rows, err := c.GetList(tctx, contractPermDT, client.ListOptions{Limit: -1}); err == nil {
+			for _, r := range rows {
+				_ = c.DeleteDoc(tctx, contractPermDT, fmt.Sprint(r["name"]))
+			}
+		}
+		if err := c.DeleteDoc(tctx, "DocType", contractPermDT); err != nil {
+			t.Logf("teardown: delete DocType %s: %v", contractPermDT, err)
+		}
+	}
+	teardown()
+	t.Cleanup(teardown)
+	if _, err := c.CreateDoc(ctx, "DocType", map[string]interface{}{
+		"name": contractPermDT, "module": "Custom", "custom": 1, "autoname": "hash", "description": contractMarker,
+		"fields": []interface{}{
+			map[string]interface{}{"fieldname": "grp", "label": "Group", "fieldtype": "Data"},
+			map[string]interface{}{"fieldname": "secret", "label": "Secret", "fieldtype": "Int", "permlevel": 1},
+		},
+		"permissions": []interface{}{
+			map[string]interface{}{"role": "System Manager", "permlevel": 0, "read": 1, "write": 1, "create": 1, "delete": 1},
+			map[string]interface{}{"role": "System Manager", "permlevel": 1, "read": 1, "write": 1},
+			map[string]interface{}{"role": contractUserRole, "permlevel": 0, "read": 1},
+		},
+	}); err != nil {
+		t.Fatalf("creating %s: %v", contractPermDT, err)
+	}
+	for i, g := range []string{"a", "a", "b"} {
+		if _, err := c.CreateDoc(ctx, contractPermDT, map[string]interface{}{"grp": g, "secret": i + 1}); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	}
+
+	cfg := contractConfig(t, sc)
+	r := runFFC(t, cfg, "", "--json", "aggregate", "-d", contractPermDT, "--group-by", "grp", "--sum", "secret", "--order-by", "grp asc")
+	if r.Err != nil || !strings.Contains(r.Stdout, `"grp": "a"`) || !strings.Contains(r.Stdout, `"sum_secret": 3`) {
+		t.Errorf("v%d aggregate on %s: %v\n%s%s", major, contractPermDT, r.Err, r.Stdout, r.Stderr)
+	}
+
+	uc := contractNonAdmin(t, c, sc)
+	syntax, _ := client.SyntaxFor(major)
+	q := client.AggregateQuery{GroupBy: []string{"grp"}, Aggregates: []client.AggregateField{{Func: client.AggCount, Alias: "count"}}, OrderBy: []client.OrderTerm{{Column: "grp"}}}
+	if rows, err := uc.Aggregate(ctx, contractPermDT, q, syntax); err != nil || len(rows) != 2 {
+		t.Errorf("v%d count at permlevel 0: %v, %v", major, rows, err)
+	}
+
+	// The raw site: v16 refuses, v15 answers without the column.
+	fields := `["grp",{"SUM":"secret","as":"s"}]`
+	if syntax == client.SyntaxString {
+		fields = `["grp","sum(secret) as s"]`
+	}
+	res, err := uc.CallMethod(ctx, "frappe.client.get_list", map[string]interface{}{
+		"doctype": contractPermDT, "fields": fields, "group_by": "grp", "order_by": "grp asc",
+	}, true)
+	var api *client.APIError
+	switch {
+	case major >= 16:
+		if !errors.As(err, &api) || api.Status != http.StatusForbidden || api.ExcType != "PermissionError" {
+			t.Errorf("v%d SUM of a permlevel 1 field: %v, %v; want 403 PermissionError", major, res, err)
+		}
+	case err != nil:
+		t.Errorf("v%d SUM of a permlevel 1 field: %v; want it silently dropped", major, err)
+	default:
+		rows, _ := res.([]interface{})
+		for _, row := range rows {
+			if m, _ := row.(map[string]interface{}); m == nil || m["s"] != nil {
+				t.Errorf("v%d SUM of a permlevel 1 field: %v; want rows without s", major, res)
+			}
+		}
+		t.Logf("v%d drops the permlevel 1 aggregate: %v", major, res)
+	}
+
+	uc2 := contractConfig(t, &config.SiteConfig{URL: sc.URL, Username: contractUser, Password: contractUserPwd})
+	for _, args := range [][]string{
+		{"--group-by", "grp", "--sum", "secret"},
+		{"--group-by", "secret"},
+	} {
+		r := runFFC(t, uc2, "", append([]string{"--json", "aggregate", "-d", contractPermDT}, args...)...)
+		if r.Code != exitPermission {
+			t.Errorf("v%d ffc aggregate %v as the user: exit %d, %s", major, args, r.Code, r.Stderr)
+		}
 	}
 }
 
