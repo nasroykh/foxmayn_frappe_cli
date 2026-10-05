@@ -490,7 +490,7 @@ make install  # → $GOPATH/bin + config setup
 
 Version is injected at build time via ldflags into `internal/version` (Version, Commit, Date).
 
-**Editor and optimistic-concurrency tests.** `edit-doc` tests replace `runEditor` (a func that rewrites the temp file) and `editInputDisabled` (see `edTEditor` in edit_doc_test.go). The fake enforces Frappe's `check_if_latest`: a PUT whose `modified` differs from the stored one is a 417 `TimestampMismatchError`. It also checks updates of submitted documents by value (`AllowOnSubmit`, row counts of tables that are not), keeps the names of rows sent with one, and `FieldProp(doctype, field, prop, value)` sets meta properties (`read_only`, `hidden`, `is_virtual`, `fetch_from`, `set_only_once`) returned by getdoctype.
+**Editor and optimistic-concurrency tests.** `edit-doc` tests replace `runEditor` (a func that rewrites the temp file) and `editInputDisabled` (see `edTEditor` in edit_doc_test.go). The fake enforces Frappe's `check_if_latest`: a PUT whose `modified` differs from the stored one is a 417 `TimestampMismatchError`. It also checks updates of submitted documents by value (`AllowOnSubmit`, row counts of tables that are not), keeps the names of rows sent with one, and `FieldProp(doctype, field, prop, value)` sets meta properties (`read_only`, `hidden`, `is_virtual`, `fetch_from`, `set_only_once`) returned by getdoctype. For a non-admin user with permission rows (`SetUser`, `DocPerm`, `Permlevel`) it drops changes to fields at levels the roles do not write and to masked fields, like Frappe (`keepNoWriteAccess`).
 
 ## Self-Update Mechanism
 

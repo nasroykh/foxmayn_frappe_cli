@@ -191,14 +191,14 @@ ffc update-doc -d "System Settings" --data '{"default_currency":"USD"}' --json
 | `--name`    | `-n`  | No       | Document name (ID). Defaults to DocType name for Single DocTypes.  |
 | `--data`    | —     | Yes      | JSON object of fields to update (a `name` key is dropped with a warning) |
 | `--keys`    | —     | No       | Comma-separated keys to keep in JSON output                        |
-| `--diff`    | —     | No       | Also print each changed field (current → new) on stderr; the update is still sent |
+| `--diff`    | —     | No       | After saving, print each changed field (old → new) on stderr; the update carries the `modified` it read (exit 6 if the document changed in between) |
 | `--if-unmodified` | — | No     | The `modified` value you read: if the document was saved since, nothing is saved (exit 6, TimestampMismatchError) |
 
 **Avoid lost updates:** read `modified` with the document (`get-doc --keys modified`) and pass it to `--if-unmodified` (MCP: `update_doc` `if_unmodified`). On exit 6 "changed on the server", read the document again and redo the change.
 
 #### `ffc edit-doc` — Edit a document in $EDITOR (humans only)
 
-Opens the editable fields as YAML in `$VISUAL`/`$EDITOR`, shows the diff, asks, then saves only the changed fields with the `modified` it opened (a concurrent save → exit 6). Child rows are keyed by row `name`; a changed table is sent whole. It needs a terminal and refuses `--no-input`, so **agents should use `update-doc` instead**. There is no MCP tool for it.
+Opens the editable fields as YAML in `$VISUAL`/`$EDITOR`, shows the diff, asks, then saves only the changed fields with the `modified` it opened (a concurrent save → exit 6). Child rows are keyed by row `name`; a changed table is sent whole. Fields your roles may not write (permission level, v16 mask) are not shown, and a value the site did not keep is warned about. With `--json` a cancelled edit prints `{"cancelled":true,"reason":...}`. It needs a terminal and refuses `--no-input`, so **agents should use `update-doc` instead**. There is no MCP tool for it.
 
 #### `ffc delete-doc` — Delete a document
 
