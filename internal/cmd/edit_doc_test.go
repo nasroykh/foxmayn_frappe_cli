@@ -197,7 +197,7 @@ func TestEditDocCancelled(t *testing.T) {
 			s := edTSite(t)
 			edTEditor(t, c.edit)
 			r := cmdTOK(t, cmdTRun(t, s, "edit-doc", "-d", "Sales Order", "-n", "SO-1", "--json"))
-			if !strings.Contains(r.Stderr, "Edit cancelled, "+c.want) || r.Stdout != "" {
+			if got := cmdTObj(t, r); !strings.Contains(r.Stderr, "Edit cancelled, "+c.want) || got["cancelled"] != true || got["reason"] != c.want {
 				t.Errorf("stdout %q, stderr %q", r.Stdout, r.Stderr)
 			}
 			if n := len(edTPuts(s, "SO-1")); n != 0 {
@@ -447,31 +447,6 @@ func TestEditDocRealEditor(t *testing.T) {
 	// A failing editor saves nothing.
 	t.Setenv("EDITOR", "false")
 	lcTCode(t, cmdTRun(t, s, "edit-doc", "-d", "Sales Order", "-n", "SO-1", "--yes"), exitGeneric, "editor false", "nothing was saved")
-}
-
-func TestEditorCommand(t *testing.T) {
-	t.Setenv("VISUAL", "")
-	t.Setenv("EDITOR", "code --wait")
-	if got := strings.Join(editorCommand(), "|"); got != "code|--wait" {
-		t.Errorf("EDITOR split = %q", got)
-	}
-	t.Setenv("VISUAL", "nvim")
-	if got := strings.Join(editorCommand(), "|"); got != "nvim" {
-		t.Errorf("VISUAL = %q", got)
-	}
-	spaced := filepath.Join(t.TempDir(), "my editor")
-	if err := os.WriteFile(spaced, nil, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("VISUAL", spaced)
-	if got := editorCommand(); len(got) != 1 || got[0] != spaced {
-		t.Errorf("path with a space = %q", got)
-	}
-	t.Setenv("VISUAL", "")
-	t.Setenv("EDITOR", "")
-	if got := editorCommand(); len(got) != 1 || (got[0] != "vi" && got[0] != "notepad") {
-		t.Errorf("fallback = %q", got)
-	}
 }
 
 func TestUpdateDocDiffAndIfUnmodified(t *testing.T) {

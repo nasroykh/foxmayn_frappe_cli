@@ -124,6 +124,9 @@ func runEditDoc(cmd *cobra.Command, _ []string) error {
 	}
 	if why != "" {
 		fmt.Fprintf(os.Stderr, "Edit cancelled, %s.\n", why)
+		if machineOutput() {
+			return printResult(map[string]interface{}{"cancelled": true, "reason": why})
+		}
 		return nil
 	}
 	form.printDiff(d)
@@ -802,7 +805,10 @@ func blankYAML(b []byte) bool {
 
 // editorRun opens path in the user's editor, attached to the terminal.
 func editorRun(path string) error {
-	argv := editorCommand()
+	argv, err := editorCommand()
+	if err != nil {
+		return err
+	}
 	c := exec.Command(argv[0], append(argv[1:], path)...)
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
@@ -817,23 +823,89 @@ func editorRun(path string) error {
 	return nil
 }
 
-// editorCommand is $VISUAL, else $EDITOR (split on spaces, unless the whole
-// value is a file: a path with spaces), else vi or notepad.
-func editorCommand() []string {
+// editorCommand is $VISUAL, else $EDITOR, else vi or notepad. A value that
+// names a file is the editor itself (a path with spaces); otherwise it is
+// split into words like a shell would, without running one: quotes group
+// ('/opt/my editor/ed' --wait), and outside Windows a backslash escapes.
+func editorCommand() ([]string, error) {
 	for _, env := range []string{"VISUAL", "EDITOR"} {
 		v := strings.TrimSpace(os.Getenv(env))
 		if v == "" {
 			continue
 		}
 		if st, err := os.Stat(v); err == nil && !st.IsDir() {
-			return []string{v}
+			return []string{v}, nil
 		}
-		return strings.Fields(v)
+		argv, err := splitCommand(v, runtime.GOOS != "windows")
+		if err != nil {
+			return nil, usageErrorf("$%s: %v", env, err)
+		}
+		if len(argv) > 0 {
+			return argv, nil
+		}
 	}
 	if runtime.GOOS == "windows" {
-		return []string{"notepad"}
+		return []string{"notepad"}, nil
 	}
-	return []string{"vi"}
+	return []string{"vi"}, nil
+}
+
+// splitCommand splits a command line into words: blanks separate them,
+// single quotes keep everything literal, double quotes keep blanks, and
+// with escapes a backslash takes the next character literally (inside
+// double quotes only before " or \).
+func splitCommand(s string, escapes bool) ([]string, error) {
+	var out []string
+	var word strings.Builder
+	inWord := false
+	var quote rune
+	rs := []rune(s)
+	for i := 0; i < len(rs); i++ {
+		r := rs[i]
+		switch {
+		case quote == '\'':
+			if r == '\'' {
+				quote = 0
+			} else {
+				word.WriteRune(r)
+			}
+		case quote == '"':
+			switch {
+			case r == '"':
+				quote = 0
+			case escapes && r == '\\' && i+1 < len(rs) && (rs[i+1] == '"' || rs[i+1] == '\\'):
+				i++
+				word.WriteRune(rs[i])
+			default:
+				word.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote, inWord = r, true
+		case escapes && r == '\\':
+			if i+1 == len(rs) {
+				return nil, errors.New("ends with a backslash")
+			}
+			i++
+			word.WriteRune(rs[i])
+			inWord = true
+		case r == ' ' || r == '\t':
+			if inWord {
+				out = append(out, word.String())
+				word.Reset()
+				inWord = false
+			}
+		default:
+			word.WriteRune(r)
+			inWord = true
+		}
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated %c quote", quote)
+	}
+	if inWord {
+		out = append(out, word.String())
+	}
+	return out, nil
 }
 
 // ─── The changes ─────────────────────────────────────────────────────────────
