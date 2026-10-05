@@ -54,7 +54,8 @@ internal/cmd/update_doc.go    → update-doc subcommand (--diff, --if-unmodified
 internal/cmd/edit_doc.go      → edit-doc: newEditForm (editable fields from client.FormMetas), YAML render/parse, edit loop
                                 (runEditor/editInputDisabled test hooks), diff, body (full tables), conflictError
 internal/cmd/delete_doc.go    → delete-doc subcommand
-internal/cmd/count_docs.go    → count-docs subcommand
+internal/cmd/count_docs.go    → count-docs subcommand (--group-by → countByGroup in aggregate.go)
+internal/cmd/aggregate.go     → aggregate subcommand: buildAggregateQuery (shared with the MCP tool in mcp_aggregate.go), runAggregate (v15 string / v16 dict syntax from serverInfo, one retry), countByGroup (get_group_by_count)
 internal/cmd/get_schema.go    → get-schema subcommand, fetchSchema, compactSchema, mergeCustomFields, applyPropertySetters
 internal/cmd/list_doctypes.go → list-doctypes subcommand
 internal/cmd/list_reports.go  → list-reports subcommand
@@ -77,7 +78,7 @@ internal/cmd/mcp_audit.go         → MCP audit log mcp-audit.jsonl (0600, rotat
 internal/cmd/mcp_sites.go         → multi-site MCP: mcpSites, siteFor, list_sites, addSiteParam
 internal/cmd/mcp_confirm.go       → confirmation through MCP elicitation: needsConfirm, mcpPolicy.confirm, HMAC request state
 internal/cmd/mcp_args.go          → mcpEnv, toolHandler (parse → policy → confirm → client → call → audit), marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
-internal/cmd/mcp_tools.go         → MCP tools + handlers (27 with the lifecycle, identity and doc-context files); registerTools(); compactReportResult
+internal/cmd/mcp_tools.go         → MCP tools + handlers (28 with the lifecycle, identity, doc-context and aggregate files); registerTools(); compactReportResult
 internal/cmd/mcp_doc_context.go   → get_doc_context: parseDocContext, mcpPolicy.filterDocContext (parts from other DocTypes, hidden_by_policy), trimDocContext
 internal/cmd/mcp_identity_tools.go → whoami + check_permission read tools
 internal/cmd/mcp_lifecycle_tools.go → submit/cancel/amend/copy/rename/apply_workflow + get_transitions (docTool, docHandler)
@@ -92,6 +93,7 @@ internal/client/debug.go          → --debug trace (debugTransport under resty)
 internal/client/dryrun.go         → WithDryRun(ctx, scope), DryRunError; send() holds back writes (scope all: every request)
 internal/client/server.go         → ServerVersions/ServerInfo (FrappeMajor), LoggedUser, UserRoles (Has Role via get_list), HasPermission, DocPermissions, DocTypePermission/EvalDocTypePermission
 internal/client/fieldaccess.go    → ReadableFields/FieldAccess: fields the user may read (getdoctype permlevels + roles); doc-info filters version changes with it
+internal/client/aggregate.go      → Aggregate (list query with group_by; SyntaxDict for v16, SyntaxString for v15, SyntaxFor/SyntaxRejected), GroupByCount (get_group_by_count), ValidIdentifier
 internal/client/lifecycle.go      → SubmitDoc/CancelDoc/AmendDoc/DuplicateDoc (GetDoc + clean; no-copy fields from getdoctype),
                                     RenameDoc, RestoreDeleted (returns new_name), DiscardDoc (v16), workflow methods
 internal/config/config.go         → Config/SiteConfig, Read, Load, env overrides, default paths
@@ -229,6 +231,7 @@ Every method takes a `ctx` (Ctrl+C cancels the in-flight request). `do()` turns 
 - **Auth**: `client.New(ctx, cfg)` (fallible) picks it: `Authorization: Bearer <token>` for OAuth (`cfg.AccessToken`), `Authorization: token key:secret` for API key, `Cookie: sid=...` for username/password (live login inside `New`, relogin on 401/403 for long-lived clients).
 - **Response envelope**: v14+ wraps results in `"data"`, older versions use `"message"`. Both are handled for list endpoints.
 - **Error responses**: Frappe returns nested JSON with Python tracebacks. `frappeErrorResponse.userMessage()` extracts the human-readable message from `_server_messages` or `exception`.
+- **Aggregates in list `fields` are version-specific**: v16 refuses `"count(name) as n"` (417 ValidationError) and takes `{"COUNT":"name","as":"n"}`; v15 takes only the string (a dict is a 500 TypeError). Never hand-build either: use `client.Aggregate` with `client.SyntaxFor(serverInfo(...).FrappeMajor())` through `runAggregate`, which retries once on `client.SyntaxRejected`. Only plain identifiers reach the query (`client.ValidIdentifier`).
 - **Whitelisted methods**: Frappe also exposes `api/method/<dotted.path>` for server-side functions. These return results in `"message"`, except desk methods that set `frappe.response` keys: `getdoctype`/`getdoc` answer in `docs` (+ `docinfo`), `get_docinfo` in `docinfo` (read them with `do` into a map, or return `frappetest.Response` from the fake). A method missing on an older Frappe is a translated 417 that names it (`missingMethod` in client/docinfo.go).
 
 ## Output Formatting

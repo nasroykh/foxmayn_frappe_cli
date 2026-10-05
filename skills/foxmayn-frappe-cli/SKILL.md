@@ -91,7 +91,7 @@ export FFC_API_SECRET="your_secret"
 
 **MANDATORY for AI/LLM usage:** Always append `--json` (or `-j`) to every ffc command that supports it. The default table output is formatted for human reading and is not reliably parseable. JSON output is structured, complete, and easy to process.
 
-Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `delete-doc`, `count-docs`, `bulk-create`, `bulk-update`, `bulk-delete`, the lifecycle and `workflow` commands, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `search`, `doc-info`, `ping`, `whoami`, `can`, `doctor`, `site list`. (`call-method` always outputs JSON regardless. MCP tools always return JSON by design.)
+Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `delete-doc`, `count-docs`, `aggregate`, `bulk-create`, `bulk-update`, `bulk-delete`, the lifecycle and `workflow` commands, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `search`, `doc-info`, `ping`, `whoami`, `can`, `doctor`, `site list`. (`call-method` always outputs JSON regardless. MCP tools always return JSON by design.)
 
 ```bash
 # Always do this:
@@ -156,7 +156,7 @@ ffc list-docs -d "ToDo" --filters '{"status":"Open"}' -o "modified desc" --json
 | Flag         | Short | Required | Default | Description                                                       |
 | ------------ | ----- | -------- | ------- | ----------------------------------------------------------------- |
 | `--doctype`  | `-d`  | Yes      | —       | Frappe DocType to query                                           |
-| `--fields`   | `-f`  | No       | `name`  | Fields: `'["name","email"]'` or `name,email`                      |
+| `--fields`   | `-f`  | No       | `name`  | Fields: `'["name","email"]'` or `name,email` (no `count(…)` on v16: use `ffc aggregate`) |
 | `--filters`  | —     | No       | —       | JSON filter: `'{"status":"Open"}'` or `'[["status","=","Open"]]'` |
 | `--limit`    | `-l`  | No       | 20      | Max records to return                                             |
 | `--order-by` | `-o`  | No       | —       | Sort: `"modified desc"`, `"name asc"`                             |
@@ -218,12 +218,40 @@ ffc delete-doc -d "ToDo" -n "TD-0001" --yes
 
 ```bash
 ffc count-docs -d "Sales Invoice" --filters '{"status":"Unpaid"}' --json
+ffc count-docs -d "ToDo" --group-by status --json        # [{"status":"Open","count":4}, ...]
 ```
 
-| Flag        | Short | Required | Description            |
-| ----------- | ----- | -------- | ---------------------- |
-| `--doctype` | `-d`  | Yes      | Frappe DocType         |
-| `--filters` | —     | No       | JSON filter expression |
+| Flag         | Short | Required | Description            |
+| ------------ | ----- | -------- | ---------------------- |
+| `--doctype`  | `-d`  | Yes      | Frappe DocType         |
+| `--filters`  | —     | No       | JSON filter expression |
+| `--group-by` | —     | No       | Count per value of this field (list view sidebar count) |
+
+`--group-by` returns at most 50 groups, most frequent first (ffc warns when it gets 50: use `ffc aggregate` for all). `owner` puts your own group first; `assigned_to` counts open assignments of System Users instead of a field. An unknown field exits 6.
+
+#### `ffc aggregate` — Count, sum, average, min, max per group (server side)
+
+Use it for totals instead of fetching rows.
+
+```bash
+ffc aggregate -d ToDo --group-by status --json                                    # count per status
+ffc aggregate -d "Sales Invoice" --group-by customer --sum grand_total --count --limit 10 --json
+ffc aggregate -d "Sales Invoice" --sum grand_total --min posting_date --max posting_date --filters '{"docstatus":1}' --json
+```
+
+| Flag         | Short | Required | Default | Description |
+| ------------ | ----- | -------- | ------- | ----------- |
+| `--doctype`  | `-d`  | Yes      | —       | Frappe DocType |
+| `--group-by` | —     | No       | —       | Field(s) to group by (comma list or repeat, at most 5); omit for one row over all |
+| `--count`    | —     | No       | on when no other aggregate | Column `count` |
+| `--sum`/`--avg`/`--min`/`--max` | — | No | — | Field(s); columns `sum_F`, `avg_F`, `min_F`, `max_F` |
+| `--filters`  | —     | No       | —       | JSON filter expression |
+| `--order-by` | —     | No       | first aggregate desc | A group-by field or aggregate column, `asc`/`desc` |
+| `--limit`    | `-l`  | No       | 100     | Max groups (0 = all); a warning on stderr when groups were cut |
+
+Field names must be plain fieldnames of the DocType: `link.field` / `child.field` and anything not an identifier is a usage error (exit 2) before any request. Numbers keep the server literal (a Currency sum is `20.0`).
+
+**Version hazard:** Frappe v16 rejects SQL functions written as strings in `fields`, so `ffc list-docs --fields '["status","count(name) as n"]'` fails there (exit 6, `ValidationError: SQL functions are not allowed as strings in SELECT`); v15 accepts only that form. `ffc aggregate` picks the right form from the site's cached version and retries once with the other if the site refuses the first.
 
 ---
 
@@ -451,7 +479,7 @@ ffc call-method --method "frappe.client.get_count" --args '{"doctype":"ToDo","fi
 
 #### `ffc mcp` — Start an MCP server for AI agents
 
-Exposes Frappe API operations as 26 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
+Exposes Frappe API operations as 28 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
 
 **Three modes:**
 
@@ -506,6 +534,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `update_doc`    | `ffc update-doc`       |
 | `delete_doc`    | `ffc delete-doc`       |
 | `count_docs`    | `ffc count-docs`       |
+| `aggregate`     | `ffc aggregate`        |
 | `get_schema`    | `ffc get-schema`       |
 | `list_doctypes` | `ffc list-doctypes`    |
 | `list_reports`  | `ffc list-reports`     |
@@ -524,7 +553,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `get_transitions` | `ffc workflow transitions` |
 | `apply_workflow`  | `ffc workflow apply`       |
 
-With `--read-only`, only `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_doc_context` and `get_transitions` are registered.
+With `--read-only`, only `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `aggregate`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_doc_context` and `get_transitions` are registered.
 
 MCP tools always return JSON — no `--json` flag needed.
 
@@ -534,6 +563,7 @@ MCP tools always return JSON — no `--json` flag needed.
 - `run_report` returns only `columns`, `result`, `report_summary` (if non-null), plus `total_rows` and `truncated` when rows were cut — strips `execution_time`, `chart`, `add_total_row`, `message`. Defaults to 500 rows unless `limit` is given.
 - `search` takes `text` (required), `doctype` (optional) and `limit` (default 20, at most 100). With `doctype` it is search_link (names; Frappe marks it cacheable for 60 s, so a proxy may serve a minute-old answer); without, global search over Global Search Settings DocTypes only, and under an `allow_doctypes`/`deny_doctypes` policy its hits are filtered to the DocTypes the policy allows. A global search answers `{results, hidden_by_policy}` (the number of hits dropped by the policy), a DocType search a plain list.
 - `get_doc_context` takes `doctype`, `name`, `links` (default true) and `timeline` (default false) and returns the `ffc doc-info --json` object, with at most 50 comments, emails and workflow log entries, 100 attachments, assignments, shares and tags, 50 changes per version and 100 timeline entries (the rest counted in `omitted`). Under a DocType policy, parts read from DocTypes the policy does not allow (Version, Comment, Communication, File, ToDo, DocShare, Tag Link, linked DocTypes, timeline entries; an assignment, share or attachment log needs ToDo, DocShare or File as well as Comment) are left out and reported in `hidden_by_policy` (`{sections, linked_doctypes, timeline_entries}`).
+- `aggregate` takes `doctype` (required), `group_by`, `sum`, `avg`, `min`, `max` (arrays or comma lists of plain fieldnames), `count`, `filters`, `order_by` and `limit` (default 100, 1-1000), and answers `{doctype, rows, truncated}`. Same field rules as the CLI (no `link.field`), checked like any read of `doctype`.
 - A tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`). Rows are cut instead: `list_docs` returns `{data, truncated: true, next_start, hint}` (call again with `start = next_start`; a list that fits is a plain array), and `run_report` keeps `columns`/`result` and adds `truncated`, `total_rows` and a `hint` with the number of rows dropped (narrow the filters).
 - Bulk tools take at most 200 items per call.
 - JSON-valued arguments (`filters`, `fields`, `data`, `args`, …) may be passed as native JSON or as a JSON-encoded string.

@@ -29,6 +29,7 @@ var toolActions = map[string]toolAction{
 	"get_schema": actRead, "list_doctypes": actRead, "list_reports": actRead,
 	"run_report": actRead, "get_transitions": actRead, "search": actRead,
 	"whoami": actRead, "check_permission": actRead, "get_doc_context": actRead,
+	"aggregate": actRead,
 
 	"create_doc": actWrite, "update_doc": actWrite, "delete_doc": actWrite,
 	"bulk_create": actWrite, "bulk_update": actWrite, "bulk_delete": actWrite,
@@ -72,6 +73,7 @@ var toolSurface = map[string]struct {
 	"call_method":      {toolsetCore, "Call server method", true},
 	"whoami":           {toolsetCore, "Show signed-in user", false},
 	"check_permission": {toolsetCore, "Check permission", false},
+	"aggregate":        {toolsetCore, "Aggregate documents", true},
 
 	"submit_doc":      {toolsetLifecycle, "Submit document", false},
 	"cancel_doc":      {toolsetLifecycle, "Cancel document", false},

@@ -121,6 +121,7 @@ func New(t testing.TB) *Site {
 	s.registerSearch()
 	s.registerIdentity()
 	s.registerDocInfo()
+	s.registerAggregate()
 	// Every Frappe site has these; ffc reads them before some actions.
 	s.AddDocType("Workflow", "workflow_name", "document_type", "is_active", "workflow_state_field")
 	s.AddDocType("Deleted Document", "deleted_doctype", "deleted_name", "restored", "data")
@@ -669,9 +670,19 @@ func (s *Site) list(w http.ResponseWriter, r *http.Request, doctype string) {
 	q := r.URL.Query()
 	fields := []string{"name"}
 	if f := q.Get("fields"); f != "" {
-		if err := json.Unmarshal([]byte(f), &fields); err != nil {
+		var raw []interface{}
+		if err := json.Unmarshal([]byte(f), &raw); err != nil {
 			writeError(w, Validation("fields must be a JSON list"))
 			return
+		}
+		if q.Get("group_by") != "" || isAggregate(raw) {
+			s.aggregateList(w, q, doctype, raw)
+			return
+		}
+		fields = fields[:0]
+		for _, x := range raw {
+			str, _ := x.(string)
+			fields = append(fields, str)
 		}
 	}
 	var filters interface{}
