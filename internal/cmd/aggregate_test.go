@@ -92,7 +92,7 @@ func TestCmdAggregateV15String(t *testing.T) {
 	if fmt.Sprint(fields) != fmt.Sprint(want) {
 		t.Errorf("fields %q", fields)
 	}
-	if groupBy != "`tabToDo`.`status`" || orderBy != "`tabToDo`.`status` asc" {
+	if groupBy != "status" || orderBy != "status asc" {
 		t.Errorf("group_by %q order_by %q", groupBy, orderBy)
 	}
 	if n := len(s.RequestsTo("GET", "/api/resource/ToDo")); n != 1 {

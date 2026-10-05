@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -64,11 +65,58 @@ func TestAggregateFields(t *testing.T) {
 		f[2] != "sum(`tabSales Invoice`.`grand_total`) as sum_grand_total" {
 		t.Errorf("string fields %q", f)
 	}
-	if gb != "`tabSales Invoice`.`status`" || ob != "count desc, `tabSales Invoice`.`status` asc" {
+	if gb != "status" || ob != "count desc, status asc" {
 		t.Errorf("string group_by %q order_by %q", gb, ob)
 	}
 	f, gb, ob = q.fields("Sales Invoice", SyntaxDict)
 	if m, ok := f[1].(map[string]interface{}); !ok || m["COUNT"] != "*" || m["as"] != "count" || gb != "status" || ob != "count desc, status asc" {
 		t.Errorf("dict fields %v group_by %q order_by %q", f, gb, ob)
+	}
+}
+
+// group_by and order_by are qualified with the table only when a filter can
+// join another one: v15's ORDER_GROUP_PATTERN refuses a qualified name of a
+// DocType whose name is not plain ASCII.
+func TestAggregateFieldsQualifyOnJoin(t *testing.T) {
+	q := AggregateQuery{
+		GroupBy:    []string{"status"},
+		Aggregates: []AggregateField{{Func: AggCount, Alias: "count"}},
+		OrderBy:    []OrderTerm{{Column: "status"}},
+	}
+	for filters, join := range map[string]bool{
+		``:                                    false,
+		`{"status":"Open"}`:                   false,
+		`[["status","=","Open"]]`:             false,
+		`[["ToDo","status","=","Open"]]`:      false,
+		`[["status","in",["a","b"]]]`:         false,
+		`{"allocated_to.enabled":1}`:          true,
+		`[["owner.enabled","=",1]]`:           true,
+		`[["User","enabled","=",1]]`:          true,
+		`[["ToDo","owner.enabled","=",1]]`:    true,
+		"[[\"`tabUser`.`enabled`\",\"=\",1]]": true,
+		`[[["a","=",1],"or",["b.c","=",2]]]`:  true,
+		`[[["a","=",1],"or",["b","=",2]]]`:    false,
+		`not json`:                            true,
+	} {
+		q.Filters = filters
+		_, gb, ob := q.fields("ToDo", SyntaxString)
+		want := "status"
+		if join {
+			want = "`tabToDo`.`status`"
+		}
+		if gb != want || ob != want+" asc" {
+			t.Errorf("filters %s: group_by %q order_by %q, want %q", filters, gb, ob, want)
+		}
+	}
+}
+
+// v15 refuses if/like/regexp/rlike anywhere in group_by and order_by, so a
+// field of that name cannot be grouped there; ffc says why instead of
+// passing on "Illegal SQL Query". v16 has no such check.
+func TestAggregateV15OperatorField(t *testing.T) {
+	c := &FrappeClient{}
+	q := AggregateQuery{GroupBy: []string{"Like"}, Aggregates: []AggregateField{{Func: AggCount, Alias: "count"}}}
+	if _, err := c.Aggregate(context.Background(), "ToDo", q, SyntaxString); err == nil || !strings.Contains(err.Error(), "SQL operator") {
+		t.Errorf("err = %v", err)
 	}
 }

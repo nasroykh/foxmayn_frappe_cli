@@ -135,19 +135,27 @@ func (q AggregateQuery) validate(doctype string) error {
 }
 
 // fields returns the list query's fields, group_by and order_by in syntax.
-// The string syntax qualifies every field with its table, as Frappe's own
-// list view does: a filter on a child table joins it, and a bare "name" or
-// "status" would then be ambiguous.
+// The string syntax qualifies the selected fields with their table, as
+// Frappe's own list view does: a filter on a child table joins it, and a
+// bare "name" or "status" would then be ambiguous. group_by and order_by
+// are qualified only when the filters can join another table: v15 checks
+// them against ORDER_GROUP_PATTERN (db_query.py ~1542), which refuses any
+// character outside [a-z0-9-_ ,`'".()], so a qualified name of a DocType
+// with an accent in its name would be "Illegal SQL Query".
 func (q AggregateQuery) fields(doctype string, syntax AggregateSyntax) (fields []interface{}, groupBy, orderBy string) {
 	qual := func(f string) string { return f }
+	clause := qual
 	if syntax == SyntaxString {
 		qual = func(f string) string { return "`tab" + doctype + "`.`" + f + "`" }
+		if filtersJoin(q.Filters, doctype) {
+			clause = qual
+		}
 	}
 	groups := map[string]bool{}
 	var gb []string
 	for _, g := range q.GroupBy {
 		fields = append(fields, qual(g))
-		gb = append(gb, qual(g))
+		gb = append(gb, clause(g))
 		groups[g] = true
 	}
 	for _, a := range q.Aggregates {
@@ -172,7 +180,7 @@ func (q AggregateQuery) fields(doctype string, syntax AggregateSyntax) (fields [
 	for _, o := range q.OrderBy {
 		col := o.Column
 		if groups[col] {
-			col = qual(col)
+			col = clause(col)
 		}
 		dir := "asc"
 		if o.Desc {
@@ -183,12 +191,72 @@ func (q AggregateQuery) fields(doctype string, syntax AggregateSyntax) (fields [
 	return fields, strings.Join(gb, ", "), strings.Join(ob, ", ")
 }
 
+// filtersJoin reports whether list filters can join another table: a
+// four-element filter on another DocType, or a field written
+// "link.field", "child.field" or "`tabX`.`field`". Unreadable filters
+// count as joining (the qualified form is the safe one).
+func filtersJoin(filters, doctype string) bool {
+	if strings.TrimSpace(filters) == "" {
+		return false
+	}
+	var v interface{}
+	if json.Unmarshal([]byte(filters), &v) != nil {
+		return true
+	}
+	other := func(f interface{}) bool { s, _ := f.(string); return strings.ContainsAny(s, ".`") }
+	var walk func(v interface{}, depth int) bool
+	walk = func(v interface{}, depth int) bool {
+		if depth > 32 {
+			return true
+		}
+		switch x := v.(type) {
+		case map[string]interface{}:
+			for k := range x {
+				if other(k) {
+					return true
+				}
+			}
+		case []interface{}:
+			if len(x) == 0 {
+				return false
+			}
+			if first, ok := x[0].(string); ok {
+				if len(x) >= 4 {
+					if _, ok := x[2].(string); ok {
+						return first != doctype || other(x[1])
+					}
+				}
+				return other(first)
+			}
+			for _, c := range x {
+				if _, isOp := c.(string); !isOp && walk(c, depth+1) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(v, 0)
+}
+
+// v15Operators are the words v15's validate_order_by_and_group_by refuses
+// anywhere in group_by and order_by (db_query.py ~1559), field names
+// included.
+var v15Operators = map[string]bool{"if": true, "like": true, "regexp": true, "rlike": true}
+
 // Aggregate runs q against doctype with the given syntax and returns one row
 // per group: the group-by fields under their names and each aggregate under
 // its alias. Numbers stay json.Number.
 func (c *FrappeClient) Aggregate(ctx context.Context, doctype string, q AggregateQuery, syntax AggregateSyntax) ([]map[string]interface{}, error) {
 	if err := q.validate(doctype); err != nil {
 		return nil, err
+	}
+	if syntax == SyntaxString {
+		for _, g := range q.GroupBy {
+			if v15Operators[strings.ToLower(g)] {
+				return nil, fmt.Errorf("cannot group or sort by a field named %q on Frappe v15: its query check reads the name as an SQL operator", g)
+			}
+		}
 	}
 	fields, groupBy, orderBy := q.fields(doctype, syntax)
 	fieldsJSON, err := json.Marshal(fields)
