@@ -9,6 +9,9 @@ type APIError struct {
 	Status  int    // HTTP status code
 	ExcType string // Frappe exception class, e.g. "DoesNotExistError"; "" when the body was not Frappe JSON
 	Message string // user-facing message, including any hint
+	// MissingDocType is set when the error says the DocType does not exist,
+	// although Frappe answered 500 (ImportError) rather than 404.
+	MissingDocType bool
 }
 
 func (e *APIError) Error() string { return e.Message }

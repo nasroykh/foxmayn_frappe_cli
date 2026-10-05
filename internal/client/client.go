@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -350,6 +351,11 @@ func responseError(code int, body []byte, hints map[int]string) error {
 	if excType == "" {
 		excType = "ServerError"
 	}
+	if m := missingDocTypeRe.FindStringSubmatch(msg); m != nil && excType == "ImportError" {
+		e.MissingDocType = true
+		e.Message = fmt.Sprintf("DocType not found: Frappe found no controller %s (%s, HTTP %d)", m[1], excType, code)
+		return e
+	}
 	if msg != "" {
 		e.Message = fmt.Sprintf("[%s] %s (HTTP %d)", excType, msg, code)
 	} else {
@@ -357,6 +363,11 @@ func responseError(code int, body []byte, hints map[int]string) error {
 	}
 	return e
 }
+
+// missingDocTypeRe matches the error Frappe raises when a document of a
+// DocType that does not exist is read, created or updated: with no DocType
+// record, the module defaults to Core and importing the controller fails.
+var missingDocTypeRe = regexp.MustCompile(`^No module named '(frappe\.core\.doctype\.[a-z0-9_]+)'$`)
 
 const authHint = "authentication failed (401): check your credentials or run 'ffc init' to reconfigure"
 

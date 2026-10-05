@@ -274,3 +274,20 @@ func TestNoInputPrompts(t *testing.T) {
 		t.Errorf("init --no-input: code %d, stderr %q", r.Code, r.Stderr)
 	}
 }
+
+// TestUnknownDocTypeIsNotFound: Frappe answers 500 ImportError, not 404,
+// when a document of an unknown DocType is read or written.
+func TestUnknownDocTypeIsNotFound(t *testing.T) {
+	s := cmdTSite(t)
+	for _, args := range [][]string{
+		{"get-doc", "-d", "Ghost Type", "-n", "x"},
+		{"create-doc", "-d", "Ghost Type", "--data", `{"a":1}`},
+		{"update-doc", "-d", "Ghost Type", "-n", "x", "--data", `{"a":1}`},
+		{"list-docs", "-d", "Ghost Type"},
+	} {
+		r := cmdTRun(t, s, append(args, "--json")...)
+		if r.Code != exitNotFound || !strings.Contains(r.Stderr, `"code":"not_found"`) {
+			t.Errorf("%s: exit %d, stderr %s", args[0], r.Code, r.Stderr)
+		}
+	}
+}

@@ -157,7 +157,7 @@ func TestMCPFakeGetDocErrors(t *testing.T) {
 	s, site := newMCPFake(t, false)
 	mcpTSeedTodos(site)
 	mcpTErr(t, s, "get_doc", map[string]interface{}{"doctype": "ToDo", "name": "nope"}, "ToDo nope not found")
-	mcpTErr(t, s, "get_doc", map[string]interface{}{"doctype": "Ghost", "name": "x"}, "DocType Ghost not found")
+	mcpTErr(t, s, "get_doc", map[string]interface{}{"doctype": "Ghost", "name": "x"}, "DocType not found")
 	mcpTErr(t, s, "get_doc", map[string]interface{}{"name": "x"}, "doctype")
 }
 

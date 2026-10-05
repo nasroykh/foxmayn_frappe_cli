@@ -266,6 +266,19 @@ func writeError(w http.ResponseWriter, e *Error) {
 	writeJSON(w, e.Status, body)
 }
 
+// writeMissingController answers like Frappe when a document of an unknown
+// DocType is read or written: an ImportError with no _server_messages.
+func writeMissingController(w http.ResponseWriter, doctype string) {
+	module := "frappe.core.doctype." + strings.NewReplacer(" ", "_", "-", "_").Replace(strings.ToLower(doctype))
+	tb, _ := json.Marshal([]string{"Traceback (most recent call last):\nImportError: Module import failed for " + doctype +
+		", the DocType you're trying to open might be deleted.\nError: No module named '" + module + "'\n"})
+	writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+		"exception": "Error: No module named '" + module + "'",
+		"exc_type":  "ImportError",
+		"exc":       string(tb),
+	})
+}
+
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -464,7 +477,14 @@ func (s *Site) resource(w http.ResponseWriter, r *http.Request, body []byte, use
 	_, known := s.doctypes[doctype]
 	s.mu.Unlock()
 	if !known {
-		writeError(w, NotFound(fmt.Sprintf("DocType %s not found", doctype)))
+		// Listing or deleting checks the DocType record (404). Reading,
+		// creating or updating a document loads its controller first, and
+		// without a DocType record Frappe looks for it in Core (500).
+		if len(parts) == 1 && r.Method == http.MethodGet || r.Method == http.MethodDelete {
+			writeError(w, NotFound(fmt.Sprintf("DocType %s not found", doctype)))
+		} else {
+			writeMissingController(w, doctype)
+		}
 		return
 	}
 	if len(parts) == 1 {
