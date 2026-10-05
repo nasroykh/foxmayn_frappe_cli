@@ -56,7 +56,7 @@ var (
 // printed (sorted alphabetically).
 func PrintTable(rows []map[string]interface{}, fields []string) {
 	if len(rows) == 0 {
-		fmt.Fprintln(os.Stderr, warnStyle.Render("No records found."))
+		lipgloss.Fprintln(os.Stderr, warnStyle.Render("No records found."))
 		return
 	}
 
@@ -98,7 +98,7 @@ func PrintTable(rows []map[string]interface{}, fields []string) {
 
 	// Row count summary.
 	summary := fmt.Sprintf("%d record(s)", len(rows))
-	fmt.Fprintln(os.Stderr, dimStyle.Render(summary))
+	lipgloss.Fprintln(os.Stderr, dimStyle.Render(summary))
 }
 
 // PrintJSON pretty-prints data as indented JSON to stdout. It returns the
@@ -117,7 +117,7 @@ func PrintJSON(data interface{}) error {
 // fields are printed, sorted alphabetically.
 func PrintDocTable(doc map[string]interface{}, fields []string) {
 	if len(doc) == 0 {
-		fmt.Fprintln(os.Stderr, warnStyle.Render("Document is empty."))
+		lipgloss.Fprintln(os.Stderr, warnStyle.Render("Document is empty."))
 		return
 	}
 
@@ -169,12 +169,12 @@ func PrintDocTable(doc map[string]interface{}, fields []string) {
 
 // PrintError writes a styled error message to stderr.
 func PrintError(msg string) {
-	fmt.Fprintln(os.Stderr, errorStyle.Render("✗ "+text.Sanitize(msg)))
+	lipgloss.Fprintln(os.Stderr, errorStyle.Render("✗ "+text.Sanitize(msg)))
 }
 
 // PrintSuccess writes a styled success message to stderr.
 func PrintSuccess(msg string) {
-	fmt.Fprintln(os.Stderr, successStyle.Render("✓ "+text.Sanitize(msg)))
+	lipgloss.Fprintln(os.Stderr, successStyle.Render("✓ "+text.Sanitize(msg)))
 }
 
 // PrintCheck writes one line of a health report to stdout: a marker for the
@@ -188,15 +188,15 @@ func PrintCheck(status, check, message, hint string) {
 	case "fail":
 		style, mark = errorStyle, "✗"
 	}
-	fmt.Println(style.Render(mark+" "+text.Sanitize(check)) + "  " + text.Sanitize(message))
+	lipgloss.Println(style.Render(mark+" "+text.Sanitize(check)) + "  " + text.Sanitize(message))
 	if hint != "" {
-		fmt.Println(lipgloss.NewStyle().Foreground(gray).Render("    → " + text.Sanitize(hint)))
+		lipgloss.Println(lipgloss.NewStyle().Foreground(gray).Render("    → " + text.Sanitize(hint)))
 	}
 }
 
 // PrintWarning writes a styled warning to stderr.
 func PrintWarning(msg string) {
-	fmt.Fprintln(os.Stderr, warnStyle.Render(text.Sanitize(msg)))
+	lipgloss.Fprintln(os.Stderr, warnStyle.Render(text.Sanitize(msg)))
 }
 
 // tableColumns picks the columns to show. Requested fields are used as
