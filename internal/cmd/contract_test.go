@@ -412,6 +412,19 @@ func contractErrors(t *testing.T, real *client.FrappeClient, realURL string) {
 			_, err := c.GetList(contractCtx(t), "FFC Contract No Such DocType", client.ListOptions{})
 			return err
 		},
+		// Reading or writing a document of an unknown DocType is a 500
+		// ImportError, which ffc reports as not found.
+		"missing doctype read": func(c *client.FrappeClient, url string) error {
+			_, err := c.GetDoc(contractCtx(t), "FFC Contract No Such DocType", "x")
+			return err
+		},
+		"missing doctype create": func(c *client.FrappeClient, url string) error {
+			_, err := c.CreateDoc(contractCtx(t), "FFC Contract No Such DocType", map[string]interface{}{"title": "x"})
+			return err
+		},
+		"missing doctype delete": func(c *client.FrappeClient, url string) error {
+			return c.DeleteDoc(contractCtx(t), "FFC Contract No Such DocType", "x")
+		},
 		"unknown field": func(c *client.FrappeClient, url string) error {
 			_, err := c.GetList(contractCtx(t), contractDT, client.ListOptions{Fields: []string{"ffc_no_such_field"}})
 			return err
@@ -444,6 +457,9 @@ func contractErrors(t *testing.T, real *client.FrappeClient, realURL string) {
 			}
 			if rs, fs := httpStatus(realErr), httpStatus(fakeErr); rs != fs {
 				t.Errorf("status: real %s (%v), fake %s (%v)", rs, realErr, fs, fakeErr)
+			}
+			if rc, _ := classify(realErr); rc != func() int { c, _ := classify(fakeErr); return c }() {
+				t.Errorf("exit code: real %d (%v), fake differs (%v)", rc, realErr, fakeErr)
 			}
 		})
 	}

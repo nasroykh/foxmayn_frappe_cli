@@ -274,3 +274,27 @@ func TestNoInputPrompts(t *testing.T) {
 		t.Errorf("init --no-input: code %d, stderr %q", r.Code, r.Stderr)
 	}
 }
+
+// TestUnknownDocTypeIsNotFound: Frappe answers 500 ImportError, not 404,
+// when a document of an unknown DocType is read or written.
+func TestUnknownDocTypeIsNotFound(t *testing.T) {
+	s := cmdTSite(t)
+	for _, args := range [][]string{
+		{"get-doc", "-d", "Ghost Type", "-n", "x"},
+		{"create-doc", "-d", "Ghost Type", "--data", `{"a":1}`},
+		{"update-doc", "-d", "Ghost Type", "-n", "x", "--data", `{"a":1}`},
+		{"list-docs", "-d", "Ghost Type"},
+	} {
+		r := cmdTRun(t, s, append(args, "--json")...)
+		if r.Code != exitNotFound || !strings.Contains(r.Stderr, `"code":"not_found"`) {
+			t.Errorf("%s: exit %d, stderr %s", args[0], r.Code, r.Stderr)
+		}
+	}
+
+	// A broken controller of a DocType that exists stays a server error.
+	s.Handle("GET /api/resource/ToDo/TD-1", frappetest.ErrorHandler(&frappetest.Error{
+		Status: http.StatusInternalServerError, ExcType: "ImportError", Message: "No module named 'frappe.core.doctype.todo'"}))
+	if r := cmdTRun(t, s, "get-doc", "-d", "ToDo", "-n", "TD-1"); r.Code != exitNetwork {
+		t.Errorf("broken controller: exit %d, stderr %s", r.Code, r.Stderr)
+	}
+}

@@ -95,7 +95,7 @@ func classifyAPI(e *client.APIError) (int, string) {
 		return exitAuth, "auth"
 	case e.Status == http.StatusForbidden:
 		return exitPermission, "permission"
-	case e.Status == http.StatusNotFound:
+	case e.Status == http.StatusNotFound, e.MissingDocType:
 		return exitNotFound, "not_found"
 	case e.Status == http.StatusTooManyRequests, e.Status >= 500:
 		return exitNetwork, "server"
