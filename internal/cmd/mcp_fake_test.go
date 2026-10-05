@@ -29,12 +29,21 @@ func newMCPFake(t *testing.T, readOnly bool) (*server.MCPServer, *frappetest.Sit
 	if err != nil {
 		t.Fatal(err)
 	}
-	prev := mcpReadOnly
-	mcpReadOnly = readOnly
-	t.Cleanup(func() { mcpReadOnly = prev })
 	s := server.NewMCPServer("test", "0")
-	registerTools(s, func(context.Context) (*client.FrappeClient, error) { return c, nil })
+	mcpTRegister(s, c, &config.SiteConfig{Name: "test", MCP: &config.MCPPolicy{ReadOnly: readOnly}}, nil)
 	return s, site
+}
+
+// mcpTRegister registers the tools on s against c, with site's policy and
+// an audit log when audit is set.
+func mcpTRegister(s *server.MCPServer, c *client.FrappeClient, site *config.SiteConfig, audit *auditLog) *mcpEnv {
+	env := &mcpEnv{
+		site:   func(context.Context) (*config.SiteConfig, error) { return site, nil },
+		client: func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
+		audit:  audit,
+	}
+	registerTools(s, env, newMCPPolicy(site, env.flags))
+	return env
 }
 
 // mcpTOK calls a tool and fails the test on an error result.
@@ -325,10 +334,10 @@ func TestMCPFakeUpdateDoc(t *testing.T) {
 
 func TestMCPFakeUpdateDocSingle(t *testing.T) {
 	s, site := newMCPFake(t, false)
-	site.Add("System Settings", map[string]interface{}{"name": "System Settings", "language": "en"})
-	mcpTOK(t, s, "update_doc", map[string]interface{}{"doctype": "System Settings", "data": map[string]interface{}{"language": "fr"}})
-	mcpTOnly(t, site, "PUT", "/api/resource/System Settings/System Settings")
-	if d, _ := site.Doc("System Settings", "System Settings"); d["language"] != "fr" {
+	site.Add("Website Settings", map[string]interface{}{"name": "Website Settings", "app_name": "a"})
+	mcpTOK(t, s, "update_doc", map[string]interface{}{"doctype": "Website Settings", "data": map[string]interface{}{"app_name": "b"}})
+	mcpTOnly(t, site, "PUT", "/api/resource/Website Settings/Website Settings")
+	if d, _ := site.Doc("Website Settings", "Website Settings"); d["app_name"] != "b" {
 		t.Errorf("stored = %v", d)
 	}
 }

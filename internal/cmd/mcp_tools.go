@@ -26,30 +26,41 @@ func compactReportResult(r map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-// registerTools adds the Frappe API tools to the MCP server. With --read-only
-// only tools that cannot change data are exposed: tool annotations are hints
-// a client may ignore, while an unregistered tool cannot be called at all.
-func registerTools(s *server.MCPServer, getClient clientFn) {
-	registerPing(s, getClient)
-	registerGetDoc(s, getClient)
-	registerListDocs(s, getClient)
-	registerCountDocs(s, getClient)
-	registerGetSchema(s, getClient)
-	registerListDoctypes(s, getClient)
-	registerListReports(s, getClient)
-	registerRunReport(s, getClient)
-	registerGetTransitions(s, getClient)
-	if mcpReadOnly {
-		return
+// registerTools adds the Frappe API tools the policy allows to the MCP
+// server. With read_only (or --read-only) only tools that cannot change data
+// are exposed: tool annotations are hints a client may ignore, while an
+// unregistered tool cannot be called at all. The policy is checked again on
+// every call, so a later config edit can still narrow it (widening it needs
+// a restart).
+func registerTools(s *server.MCPServer, env *mcpEnv, policy mcpPolicy) {
+	registerAllTools(s, env)
+	var drop []string
+	for name := range s.ListTools() {
+		if policy.toolAllowed(name) != nil {
+			drop = append(drop, name)
+		}
 	}
-	registerCreateDoc(s, getClient)
-	registerUpdateDoc(s, getClient)
-	registerDeleteDoc(s, getClient)
-	registerCallMethod(s, getClient)
-	registerBulkCreate(s, getClient)
-	registerBulkUpdate(s, getClient)
-	registerBulkDelete(s, getClient)
-	registerLifecycleTools(s, getClient)
+	s.DeleteTools(drop...)
+}
+
+func registerAllTools(s *server.MCPServer, env *mcpEnv) {
+	registerPing(s, env)
+	registerGetDoc(s, env)
+	registerListDocs(s, env)
+	registerCountDocs(s, env)
+	registerGetSchema(s, env)
+	registerListDoctypes(s, env)
+	registerListReports(s, env)
+	registerRunReport(s, env)
+	registerGetTransitions(s, env)
+	registerCreateDoc(s, env)
+	registerUpdateDoc(s, env)
+	registerDeleteDoc(s, env)
+	registerCallMethod(s, env)
+	registerBulkCreate(s, env)
+	registerBulkUpdate(s, env)
+	registerBulkDelete(s, env)
+	registerLifecycleTools(s, env)
 }
 
 // jsonParam declares a parameter that takes a JSON value. It has no fixed
@@ -58,13 +69,13 @@ func jsonParam(name, desc string, opts ...mcp.PropertyOption) mcp.ToolOption {
 	return mcp.WithAny(name, append([]mcp.PropertyOption{mcp.Description(desc)}, opts...)...)
 }
 
-func registerPing(s *server.MCPServer, getClient clientFn) {
+func registerPing(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("ping",
 		mcp.WithDescription("Check that the Frappe site is reachable. frappe.ping answers without credentials, so a pong does not prove the configured login works; any other tool call does."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(true),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(mcp.CallToolRequest) (toolCall, error) {
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
 			resp, err := c.Ping(ctx)
 			if err != nil {
@@ -75,7 +86,7 @@ func registerPing(s *server.MCPServer, getClient clientFn) {
 	}))
 }
 
-func registerGetDoc(s *server.MCPServer, getClient clientFn) {
+func registerGetDoc(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("get_doc",
 		mcp.WithDescription("Retrieve a single Frappe document by its DocType and name. Returns all fields of the document, or only the requested fields. Use this when you know the exact document identifier. For Single DocTypes (e.g. 'System Settings', 'HR Settings'), omit name — the DocType name is used automatically."),
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -89,7 +100,7 @@ func registerGetDoc(s *server.MCPServer, getClient clientFn) {
 		),
 		jsonParam("fields", `Array of top-level field names to return, e.g. ["name","status","grand_total"]. Omit for all fields.`),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
 		if err != nil {
 			return nil, err
@@ -114,7 +125,7 @@ func registerGetDoc(s *server.MCPServer, getClient clientFn) {
 	}))
 }
 
-func registerListDocs(s *server.MCPServer, getClient clientFn) {
+func registerListDocs(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("list_docs",
 		mcp.WithDescription("List documents from a Frappe DocType with optional filtering, field selection, ordering, and pagination. Returns an array of document objects. Use this to search and browse records; page with start and limit rather than fetching everything."),
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -135,7 +146,7 @@ func registerListDocs(s *server.MCPServer, getClient clientFn) {
 			mcp.Description("Sort expression, e.g. 'modified desc', 'name asc'"),
 		),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
 		if err != nil {
 			return nil, err
@@ -174,7 +185,7 @@ func registerListDocs(s *server.MCPServer, getClient clientFn) {
 	}))
 }
 
-func registerCountDocs(s *server.MCPServer, getClient clientFn) {
+func registerCountDocs(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("count_docs",
 		mcp.WithDescription("Count the number of documents in a DocType, optionally filtered. Returns a single integer count. More efficient than list_docs when you only need the count."),
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -185,7 +196,7 @@ func registerCountDocs(s *server.MCPServer, getClient clientFn) {
 		),
 		jsonParam("filters", `Filter expression, e.g. {"status":"Open"} or [["status","=","Open"]]`),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
 		if err != nil {
 			return nil, err
@@ -204,7 +215,7 @@ func registerCountDocs(s *server.MCPServer, getClient clientFn) {
 	}))
 }
 
-func registerGetSchema(s *server.MCPServer, getClient clientFn) {
+func registerGetSchema(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("get_schema",
 		mcp.WithDescription("Get the definition of a Frappe DocType as the desk sees it (custom fields and Customize Form overrides applied): module, naming rule, submittability, permissions and all field metadata (fieldname, label, fieldtype, required, options, defaults, constraints). By default returns a compact view with zero-value noise and internal Frappe metadata stripped. Pass full=true for the raw response, or keys to select specific top-level properties."),
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -218,7 +229,7 @@ func registerGetSchema(s *server.MCPServer, getClient clientFn) {
 		),
 		jsonParam("keys", `Top-level keys to include, as an array (["name","module","fields"]) or a comma-separated string ("name,module,fields"). Applied after compact/full filtering.`),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
 		if err != nil {
 			return nil, err
@@ -254,7 +265,7 @@ func registerGetSchema(s *server.MCPServer, getClient clientFn) {
 
 // registerModuleList registers list_doctypes / list_reports, which share
 // their arguments and differ only in the DocType listed and fields fetched.
-func registerModuleList(s *server.MCPServer, getClient clientFn, name, desc, doctype string, fields []string) {
+func registerModuleList(s *server.MCPServer, env *mcpEnv, name, desc, doctype string, fields []string) {
 	tool := mcp.NewTool(name,
 		mcp.WithDescription(desc),
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -266,7 +277,7 @@ func registerModuleList(s *server.MCPServer, getClient clientFn, name, desc, doc
 			mcp.Description("Maximum number of rows to return. Default: 50. Use 0 for no limit."),
 		),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		limit, err := intArg(req, "limit", 50)
 		if err != nil {
 			return nil, err
@@ -285,19 +296,19 @@ func registerModuleList(s *server.MCPServer, getClient clientFn, name, desc, doc
 	}))
 }
 
-func registerListDoctypes(s *server.MCPServer, getClient clientFn) {
-	registerModuleList(s, getClient, "list_doctypes",
+func registerListDoctypes(s *server.MCPServer, env *mcpEnv) {
+	registerModuleList(s, env, "list_doctypes",
 		"List all DocTypes available on the Frappe site, optionally filtered by module. Returns name, module, and description for each DocType. Use this to discover what data types exist on the site.",
 		"DocType", doctypeListFields)
 }
 
-func registerListReports(s *server.MCPServer, getClient clientFn) {
-	registerModuleList(s, getClient, "list_reports",
+func registerListReports(s *server.MCPServer, env *mcpEnv) {
+	registerModuleList(s, env, "list_reports",
 		"List available reports on the Frappe site, optionally filtered by module. Returns report name, type, module, and reference DocType.",
 		"Report", reportListFields)
 }
 
-func registerRunReport(s *server.MCPServer, getClient clientFn) {
+func registerRunReport(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("run_report",
 		mcp.WithDescription("Execute a Frappe query report and return its columns and data rows. Strips execution metadata (timing, chart config). Includes report_summary if the report provides one. When rows are cut by limit, total_rows and truncated are included. Use list_reports first to discover available report names."),
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -311,7 +322,7 @@ func registerRunReport(s *server.MCPServer, getClient clientFn) {
 			mcp.Description("Maximum number of result rows to return. Default: 500. Use 0 for all rows (results over 512 KiB are refused)."),
 		),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		reportName, err := req.RequireString("report_name")
 		if err != nil {
 			return nil, err
@@ -335,7 +346,7 @@ func registerRunReport(s *server.MCPServer, getClient clientFn) {
 	}))
 }
 
-func registerCreateDoc(s *server.MCPServer, getClient clientFn) {
+func registerCreateDoc(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("create_doc",
 		mcp.WithDescription("Create a new document in a Frappe DocType. Provide field values as a JSON object. Returns the created document with all server-generated fields (name, creation date, etc.)."),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -347,7 +358,7 @@ func registerCreateDoc(s *server.MCPServer, getClient clientFn) {
 		),
 		jsonParam("data", `Object of field values, e.g. {"description":"Buy milk","priority":"Medium"}`, mcp.Required()),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
 		if err != nil {
 			return nil, err
@@ -362,7 +373,7 @@ func registerCreateDoc(s *server.MCPServer, getClient clientFn) {
 	}))
 }
 
-func registerUpdateDoc(s *server.MCPServer, getClient clientFn) {
+func registerUpdateDoc(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("update_doc",
 		mcp.WithDescription("Update an existing Frappe document. Provide only the fields you want to change as a JSON object (a \"name\" key in data is ignored). Returns the full updated document. For Single DocTypes (e.g. 'System Settings'), omit name — the DocType name is used automatically."),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -378,7 +389,7 @@ func registerUpdateDoc(s *server.MCPServer, getClient clientFn) {
 		),
 		jsonParam("data", `Object of fields to update, e.g. {"status":"Closed"}`, mcp.Required()),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
 		if err != nil {
 			return nil, err
@@ -399,7 +410,7 @@ func registerUpdateDoc(s *server.MCPServer, getClient clientFn) {
 	}))
 }
 
-func registerDeleteDoc(s *server.MCPServer, getClient clientFn) {
+func registerDeleteDoc(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("delete_doc",
 		mcp.WithDescription("Permanently delete a Frappe document. This action cannot be undone. Returns a confirmation message on success."),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -415,7 +426,7 @@ func registerDeleteDoc(s *server.MCPServer, getClient clientFn) {
 			mcp.Description("The name/ID of the document to delete"),
 		),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
 		if err != nil {
 			return nil, err
@@ -433,7 +444,7 @@ func registerDeleteDoc(s *server.MCPServer, getClient clientFn) {
 	}))
 }
 
-func registerCallMethod(s *server.MCPServer, getClient clientFn) {
+func registerCallMethod(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("call_method",
 		mcp.WithDescription("Call a whitelisted Frappe server method. This is a low-level escape hatch for operations not covered by other tools. The method must be whitelisted (@frappe.whitelist()) on the server. It may read or mutate data depending on the method."),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -451,7 +462,7 @@ func registerCallMethod(s *server.MCPServer, getClient clientFn) {
 			mcp.Description(`Return the whole response object instead of only "message": desk methods put "docs", "docinfo" and "_server_messages" next to it. Default: false.`),
 		),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		method, err := req.RequireString("method")
 		if err != nil {
 			return nil, err
@@ -483,7 +494,7 @@ func bulkTool(n int, done string, op func(ctx context.Context, c *client.FrappeC
 	}, nil
 }
 
-func registerBulkCreate(s *server.MCPServer, getClient clientFn) {
+func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_create",
 		mcp.WithDescription(fmt.Sprintf("Create multiple Frappe documents in one call (at most %d). Each element of the data array is an object of field values for one document. Returns per-item results with created names or error messages. Processing continues on individual failures.", maxMCPBulkItems)),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -495,7 +506,7 @@ func registerBulkCreate(s *server.MCPServer, getClient clientFn) {
 		),
 		jsonParam("data", `Array of field-value objects, e.g. [{"description":"Task 1"},{"description":"Task 2"}]`, mcp.Required()),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
 		if err != nil {
 			return nil, err
@@ -519,7 +530,7 @@ func registerBulkCreate(s *server.MCPServer, getClient clientFn) {
 	}))
 }
 
-func registerBulkUpdate(s *server.MCPServer, getClient clientFn) {
+func registerBulkUpdate(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_update",
 		mcp.WithDescription(fmt.Sprintf("Update multiple Frappe documents in one call (at most %d). Each element of the data array must include a \"name\" field identifying the document plus any fields to change. Returns per-item results. Processing continues on individual failures.", maxMCPBulkItems)),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -532,7 +543,7 @@ func registerBulkUpdate(s *server.MCPServer, getClient clientFn) {
 		),
 		jsonParam("data", `Array of objects; each must include "name" plus fields to update, e.g. [{"name":"TD-0001","status":"Closed"}]`, mcp.Required()),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
 		if err != nil {
 			return nil, err
@@ -556,7 +567,7 @@ func registerBulkUpdate(s *server.MCPServer, getClient clientFn) {
 	}))
 }
 
-func registerBulkDelete(s *server.MCPServer, getClient clientFn) {
+func registerBulkDelete(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_delete",
 		mcp.WithDescription(fmt.Sprintf("Permanently delete multiple Frappe documents in one call (at most %d). Provide document names as an array. Returns per-item results. Processing continues on individual failures. This action cannot be undone.", maxMCPBulkItems)),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -569,7 +580,7 @@ func registerBulkDelete(s *server.MCPServer, getClient clientFn) {
 		),
 		jsonParam("names", `Array of document names to delete, e.g. ["TD-0001","TD-0002"]`, mcp.Required()),
 	)
-	s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
 		if err != nil {
 			return nil, err

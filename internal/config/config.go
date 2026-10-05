@@ -33,6 +33,48 @@ type SiteConfig struct {
 	// Username/password session auth (POST /api/method/login, cookie-based).
 	Username string `yaml:"username,omitempty"`
 	Password string `yaml:"password,omitempty"`
+
+	// MCP is the policy `ffc mcp` enforces for this site; nil means the
+	// defaults (see internal/cmd/mcp_policy.go).
+	MCP *MCPPolicy `yaml:"mcp,omitempty"`
+}
+
+// MCPPolicy limits what MCP tools may do on a site. DocType and tool names
+// match exactly (DocTypes ignoring case); a method entry ending in "*" is a
+// prefix.
+type MCPPolicy struct {
+	// ReadOnly registers and allows only read tools.
+	ReadOnly bool `yaml:"read_only,omitempty"`
+	// AllowTools, when set, is the only tools that are registered.
+	AllowTools []string `yaml:"allow_tools,omitempty"`
+	// AllowDoctypes, when set, is the only DocTypes tools may touch. It is
+	// also the only way to let MCP write to a sensitive DocType.
+	AllowDoctypes []string `yaml:"allow_doctypes,omitempty"`
+	DenyDoctypes  []string `yaml:"deny_doctypes,omitempty"`
+	// AllowMethods, when set, is the only methods call_method may call. It is
+	// also the only way to call a method on the built-in deny list.
+	AllowMethods []string `yaml:"allow_methods,omitempty"`
+	DenyMethods  []string `yaml:"deny_methods,omitempty"`
+}
+
+// mcpPolicyKeys are the keys MCPPolicy accepts. A misspelt key is an error,
+// not ignored: a policy that silently does not apply fails open.
+var mcpPolicyKeys = map[string]bool{
+	"read_only": true, "allow_tools": true, "allow_doctypes": true, "deny_doctypes": true,
+	"allow_methods": true, "deny_methods": true,
+}
+
+// UnmarshalYAML decodes a policy, refusing unknown keys.
+func (p *MCPPolicy) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if k := node.Content[i].Value; !mcpPolicyKeys[k] {
+				return fmt.Errorf("line %d: unknown mcp policy key %q", node.Content[i].Line, k)
+			}
+		}
+	}
+	type plain MCPPolicy
+	return node.Decode((*plain)(p))
 }
 
 // IsOAuth reports whether this site uses OAuth Bearer tokens for authentication.
@@ -178,7 +220,7 @@ func applyEnvOverrides(site *SiteConfig) error {
 	key, secret := os.Getenv("FFC_API_KEY"), os.Getenv("FFC_API_SECRET")
 	envCreds := key != "" && secret != ""
 	if envCreds {
-		*site = SiteConfig{URL: site.URL, APIKey: key, APISecret: secret}
+		*site = SiteConfig{URL: site.URL, APIKey: key, APISecret: secret, MCP: site.MCP}
 	} else if key != "" || secret != "" {
 		fmt.Fprintln(os.Stderr, "warning: FFC_API_KEY and FFC_API_SECRET must be set together; ignoring them")
 	}

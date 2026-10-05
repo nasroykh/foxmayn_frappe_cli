@@ -166,6 +166,13 @@ func (f *File) PutSite(name string, site SiteConfig) error {
 		setNode(f.root, "sites", sites)
 	}
 	sites.Style = 0 // `sites: {}` left behind by a removal would stay in flow style
+	// Replacing the credentials (site add --force) keeps the site's MCP
+	// policy: dropping it would silently widen what MCP clients may do.
+	if site.MCP == nil {
+		if old := mapValue(mapValue(sites, name), "mcp"); old != nil {
+			setNode(&node, "mcp", old)
+		}
+	}
 	setNode(sites, name, &node)
 	if f.Get("default_site") == "" {
 		f.Set("default_site", name)
@@ -356,6 +363,11 @@ const (
 	lockWait  = 45 * time.Second
 	lockStale = 3 * MaxLockHold
 )
+
+// Lock takes the same exclusive, cross-process lock on path that Edit takes
+// on the config file, for other files under the config directory (the MCP
+// audit log). The returned func releases it.
+func Lock(path string) (func(), error) { return lockFile(path) }
 
 // lockFile takes an exclusive, cross-process lock on path by creating
 // path+".lock" with O_EXCL. A lock older than lockStale is assumed to belong
