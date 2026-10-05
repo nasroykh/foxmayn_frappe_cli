@@ -311,3 +311,73 @@ func TestRenameSite(t *testing.T) {
 		t.Fatalf("default_site = %q, want live", cfg.DefaultSite)
 	}
 }
+
+func TestMCPPolicy(t *testing.T) {
+	t.Setenv("FFC_URL", "")
+	t.Setenv("FFC_API_KEY", "")
+	t.Setenv("FFC_API_SECRET", "")
+	p := writeTemp(t, `default_site: dev
+sites:
+  dev:
+    url: https://a.example
+    access_token: tok
+    mcp:
+      read_only: true
+      allow_doctypes: ["ToDo ", User]
+      deny_methods: ["frappe.x.*"]
+`)
+	s, err := Load("", p)
+	if err != nil || s.MCP == nil || !s.MCP.ReadOnly || len(s.MCP.AllowDoctypes) != 2 || s.MCP.DenyMethods[0] != "frappe.x.*" || s.MCP.AllowDoctypes[0] != "ToDo" {
+		t.Fatalf("got %+v, %v", s.MCP, err)
+	}
+
+	t.Run("env credentials keep the policy", func(t *testing.T) {
+		t.Setenv("FFC_API_KEY", "k")
+		t.Setenv("FFC_API_SECRET", "s")
+		if s, err := Load("", p); err != nil || s.MCP == nil || !s.MCP.ReadOnly {
+			t.Fatalf("got %+v, %v", s, err)
+		}
+	})
+
+	t.Run("a misspelt key is an error", func(t *testing.T) {
+		bad := writeTemp(t, "default_site: dev\nsites:\n  dev:\n    url: https://a.example\n    mcp:\n      readonly: true\n")
+		if _, err := Load("", bad); err == nil || !strings.Contains(err.Error(), `unknown mcp policy key "readonly"`) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("replacing a site's credentials keeps its policy", func(t *testing.T) {
+		err := Edit(p, func(f *File) error {
+			return f.PutSite("dev", SiteConfig{URL: "https://a.example", APIKey: "k2", APISecret: "s2"})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := Load("", p)
+		if err != nil || s.APIKey != "k2" || s.AccessToken != "" || s.MCP == nil || !s.MCP.ReadOnly {
+			t.Fatalf("got %+v, %v", s, err)
+		}
+	})
+}
+
+func TestMCPPolicyRefusesAmbiguousForms(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty allow list": "      allow_doctypes: []\n",
+		"null allow list":  "      allow_tools:\n",
+		"misspelt mcp key": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			site := "    mcp:\n" + body
+			switch body {
+			case "":
+				site = "    MCP:\n      read_only: true\n"
+			case "merge":
+				site = "    <<: *b\n"
+			}
+			p := writeTemp(t, "x: &e []\nbase: &b {MCP: {read_only: true}}\ndefault_site: dev\nsites:\n  dev:\n    url: https://a.example\n"+site)
+			if _, err := Load("", p); err == nil {
+				t.Fatal("loaded")
+			}
+		})
+	}
+}

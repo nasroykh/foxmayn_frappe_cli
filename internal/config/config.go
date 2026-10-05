@@ -33,6 +33,108 @@ type SiteConfig struct {
 	// Username/password session auth (POST /api/method/login, cookie-based).
 	Username string `yaml:"username,omitempty"`
 	Password string `yaml:"password,omitempty"`
+
+	// MCP is the policy `ffc mcp` enforces for this site; nil means the
+	// defaults (see internal/cmd/mcp_policy.go).
+	MCP *MCPPolicy `yaml:"mcp,omitempty"`
+}
+
+// MCPPolicy limits what MCP tools may do on a site. DocType and tool names
+// match exactly (DocTypes ignoring case); a method entry ending in "*" is a
+// prefix.
+type MCPPolicy struct {
+	// ReadOnly registers and allows only read tools.
+	ReadOnly bool `yaml:"read_only,omitempty"`
+	// AllowTools, when set, is the only tools that are registered.
+	AllowTools []string `yaml:"allow_tools,omitempty"`
+	// AllowDoctypes, when set, is the only DocTypes tools may touch. It is
+	// also the only way to let MCP write to a sensitive DocType.
+	AllowDoctypes []string `yaml:"allow_doctypes,omitempty"`
+	DenyDoctypes  []string `yaml:"deny_doctypes,omitempty"`
+	// AllowMethods, when set, is the only methods call_method may call. It is
+	// also the only way to call a method on the built-in deny list.
+	AllowMethods []string `yaml:"allow_methods,omitempty"`
+	DenyMethods  []string `yaml:"deny_methods,omitempty"`
+}
+
+// mcpPolicyKeys are the keys MCPPolicy accepts. A misspelt key is an error,
+// not ignored: a policy that silently does not apply fails open.
+var mcpPolicyKeys = map[string]bool{
+	"read_only": true, "allow_tools": true, "allow_doctypes": true, "deny_doctypes": true,
+	"allow_methods": true, "deny_methods": true,
+}
+
+// UnmarshalYAML decodes a policy, refusing unknown keys and empty allow
+// lists: "allow_doctypes: []" reads as "none" but would mean "no limit".
+// Entries are trimmed, as call arguments are.
+func (p *MCPPolicy) UnmarshalYAML(node *yaml.Node) error {
+	for _, kv := range mappingPairs(node) {
+		k, v := kv[0], resolveAlias(kv[1])
+		if !mcpPolicyKeys[k.Value] {
+			return fmt.Errorf("line %d: unknown mcp policy key %q", k.Line, k.Value)
+		}
+		if strings.HasPrefix(k.Value, "allow_") && ((v.Kind == yaml.SequenceNode && len(v.Content) == 0) || v.Tag == "!!null") {
+			return fmt.Errorf("line %d: mcp.%s is empty; list at least one entry, or remove the key for no limit", k.Line, k.Value)
+		}
+	}
+	type plain MCPPolicy
+	if err := node.Decode((*plain)(p)); err != nil {
+		return err
+	}
+	for _, list := range []*[]string{&p.AllowTools, &p.AllowDoctypes, &p.DenyDoctypes, &p.AllowMethods, &p.DenyMethods} {
+		for i, v := range *list {
+			(*list)[i] = strings.TrimSpace(v)
+		}
+	}
+	return nil
+}
+
+// UnmarshalYAML decodes a site entry. A key that only differs from "mcp" in
+// case is an error, because the policy it holds would silently not apply.
+func (s *SiteConfig) UnmarshalYAML(node *yaml.Node) error {
+	for _, kv := range mappingPairs(node) {
+		if k := kv[0]; k.Value != "mcp" && strings.EqualFold(k.Value, "mcp") {
+			return fmt.Errorf("line %d: the MCP policy key is %q, not %q", k.Line, "mcp", k.Value)
+		}
+	}
+	type plain SiteConfig
+	return node.Decode((*plain)(s))
+}
+
+// mappingPairs returns the key/value pairs of a mapping, following aliases
+// and "<<" merge keys, so a key cannot hide behind either.
+func mappingPairs(node *yaml.Node) [][2]*yaml.Node {
+	var out [][2]*yaml.Node
+	var walk func(n *yaml.Node, depth int)
+	walk = func(n *yaml.Node, depth int) {
+		n = resolveAlias(n)
+		if n == nil || depth > 16 {
+			return
+		}
+		switch n.Kind {
+		case yaml.MappingNode:
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				if n.Content[i].Value == "<<" && n.Content[i].Tag == "!!merge" {
+					walk(n.Content[i+1], depth+1)
+					continue
+				}
+				out = append(out, [2]*yaml.Node{n.Content[i], n.Content[i+1]})
+			}
+		case yaml.SequenceNode: // "<<: [*a, *b]"
+			for _, c := range n.Content {
+				walk(c, depth+1)
+			}
+		}
+	}
+	walk(node, 0)
+	return out
+}
+
+func resolveAlias(n *yaml.Node) *yaml.Node {
+	for i := 0; n != nil && n.Kind == yaml.AliasNode && i < 16; i++ {
+		n = n.Alias
+	}
+	return n
 }
 
 // IsOAuth reports whether this site uses OAuth Bearer tokens for authentication.
@@ -178,7 +280,7 @@ func applyEnvOverrides(site *SiteConfig) error {
 	key, secret := os.Getenv("FFC_API_KEY"), os.Getenv("FFC_API_SECRET")
 	envCreds := key != "" && secret != ""
 	if envCreds {
-		*site = SiteConfig{URL: site.URL, APIKey: key, APISecret: secret}
+		*site = SiteConfig{URL: site.URL, APIKey: key, APISecret: secret, MCP: site.MCP}
 	} else if key != "" || secret != "" {
 		fmt.Fprintln(os.Stderr, "warning: FFC_API_KEY and FFC_API_SECRET must be set together; ignoring them")
 	}

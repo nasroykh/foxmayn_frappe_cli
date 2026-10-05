@@ -31,7 +31,7 @@ Build and extend the ffc CLI — a Go tool for interacting with Frappe ERP sites
 ```
 cmd/ffc/main.go               → calls cmd.Execute()
 internal/cmd/root.go          → root cobra command, global flags (--site, --config, --json, --quiet, --timeout)
-internal/cmd/site_client.go   → loadSite (config.Load + OAuth refresh under the config lock), newClient — the ONLY way a command/MCP tool gets a site client
+internal/cmd/site_client.go   → loadSite = loadSiteConfig (no network) + refreshSite (OAuth refresh under the config lock), newClient — the ONLY way a command/MCP tool gets a site client
 internal/cmd/helpers.go       → callSite[T] (client + spinner), runSpinner, confirm, readInput ("-" = stdin), parseObject, splitCSV, filterKeys/selectKeys, listLimit, docName, validateFiltersJSON
 internal/cmd/auth_wizard.go   → shared auth wizard (API key / password / OAuth) for init and site add; runForm (Esc/Ctrl+C → errAborted), validateSiteName, normalizeSiteURL, writeInitConfig, addSiteToConfig
 internal/cmd/init.go          → init subcommand (--oauth / --apikey / --password)
@@ -58,8 +58,10 @@ internal/cmd/workflow.go          → workflow transitions / apply / bulk-apply 
 internal/cmd/dryrun.go            → addDryRun, withDryRun (trackRunStart), printPlan, fieldChanges; planAll in bulk.go
 internal/cmd/update.go            → update subcommand: size-limited download, signed checksums.txt (relsig) + SHA256 check, atomic binary swap
 internal/cmd/update_check.go      → background update check; owns rootCmd.PersistentPreRunE + state file
-internal/cmd/mcp.go               → mcp subcommand: stdio/HTTP/detach routing, --detach/--port/--read-only, newMCPClientProvider (cached client)
-internal/cmd/mcp_args.go          → toolHandler, marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
+internal/cmd/mcp.go               → mcp subcommand: stdio/HTTP/detach routing, --detach/--port/--read-only + policy flags, newMCPEnv, startMCP
+internal/cmd/mcp_policy.go        → per-site MCP policy: toolActions, scopeOf, mcpPolicy.check, sensitive DocTypes, denied methods
+internal/cmd/mcp_audit.go         → MCP audit log mcp-audit.jsonl (0600, rotated at 10 MiB)
+internal/cmd/mcp_args.go          → mcpEnv, toolHandler (parse → policy → client → call → audit), marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
 internal/cmd/mcp_tools.go         → 22 MCP tools + handlers; registerTools(); compactReportResult
 internal/cmd/mcp_lifecycle_tools.go → submit/cancel/amend/copy/rename/apply_workflow + get_transitions (docTool, docHandler)
 internal/cmd/mcp_daemon.go        → startDetached(), runHTTPServer(), mcpStatusCmd, mcpStopCmd, state + lock files
@@ -323,7 +325,7 @@ The `mcp` command is structurally different from all other ffc commands — it's
 ### Adding a new MCP tool
 
 ```go
-func registerMyTool(s *server.MCPServer, getClient clientFn) {
+func registerMyTool(s *server.MCPServer, env *mcpEnv) {
     tool := mcp.NewTool("my_tool",
         mcp.WithDescription("What it does, what it returns, when to use it."),
         mcp.WithReadOnlyHintAnnotation(true),
@@ -331,7 +333,7 @@ func registerMyTool(s *server.MCPServer, getClient clientFn) {
         jsonParam("filters", `Filter as JSON object or array.`), // JSON-valued: no fixed schema type
         mcp.WithNumber("limit", mcp.Description("Max results. Default: 20")),
     )
-    s.AddTool(tool, toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+    s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
         doctype, err := req.RequireString("doctype")
         if err != nil {
             return nil, err
@@ -351,7 +353,7 @@ func registerMyTool(s *server.MCPServer, getClient clientFn) {
 }
 ```
 
-Then call `registerMyTool(s, getClient)` inside `registerTools()` in `mcp_tools.go`. Read tools go before the `if mcpReadOnly { return }` line; write tools (including `call_method` and bulk tools) go after it, so `--read-only` never registers them.
+Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`, and add the tool to `toolActions` in `mcp_policy.go` (`actRead`, `actWrite` or `actMethod`; it must match the read-only annotation). `registerTools` drops what the site's policy does not allow (`read_only`, `allow_tools`), and `toolHandler` checks the policy on every call before any request. If the tool names DocTypes or documents in arguments other than `doctype`/`name`, teach `scopeOf` about them.
 
 **Argument extraction** (`mcp_args.go`): never use `req.GetString` for JSON-valued params — it returns `""` for a native object and silently drops filters. Use `jsonArg` / `rawJSONArg` / `objectArg` (accept native JSON or a JSON-encoded string), `stringsArg` (array or CSV), and `intArg` (validated integers). `req.RequireString("key")` and `req.GetString("key", "default")` are fine for plain strings.
 
@@ -362,7 +364,7 @@ Then call `registerMyTool(s, getClient)` inside `registerTools()` in `mcp_tools.
 - `startDetached(ctx, port)` re-execs the binary with `mcp --port PORT [--site X] [--config X] [--read-only]` (no `--detach`), passes the bearer token and instance id via env (`FFC_MCP_TOKEN`, `FFC_MCP_INSTANCE`, never argv), calls `setSysProcAttr` (Setsid on Unix), writes the state file, and waits for a health check whose instance id matches
 - The HTTP server binds `127.0.0.1` only, requires `Authorization: Bearer <token>` (`mcpAuthMiddleware`) and rejects non-local Origins; `ffc mcp status` shows the token
 - `ffc mcp stop` verifies the PID via health check before terminating (`terminateProcess`); `--force` stops a PID that is alive but not health-confirmed
-- Long-lived clients: `newMCPClientProvider` caches one client while the site credentials are unchanged; every call still goes through `loadSite`, so OAuth refresh and config edits are picked up
+- Long-lived clients: `newMCPEnv` caches one client while the site credentials are unchanged; every call reads the site again (`loadSiteConfig`, so policy and credential edits apply at once) and `refreshSite` refreshes an expired OAuth token
 - Platform-specific process handling (`setSysProcAttr`, `terminateProcess`, `isProcessRunning`) is isolated in `mcp_detach_unix.go` (`!windows`) and `mcp_detach_windows.go`. **Keep `syscall` / `x/sys/windows` fields out of untagged files** — they won't compile cross-platform.
 
 ### Update check skip

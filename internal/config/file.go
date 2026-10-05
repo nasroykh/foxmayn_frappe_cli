@@ -166,6 +166,13 @@ func (f *File) PutSite(name string, site SiteConfig) error {
 		setNode(f.root, "sites", sites)
 	}
 	sites.Style = 0 // `sites: {}` left behind by a removal would stay in flow style
+	// Replacing the credentials (site add --force) keeps the site's MCP
+	// policy: dropping it would silently widen what MCP clients may do.
+	if site.MCP == nil {
+		if old := mapValue(mapValue(sites, name), "mcp"); old != nil {
+			setNode(&node, "mcp", old)
+		}
+	}
 	setNode(sites, name, &node)
 	if f.Get("default_site") == "" {
 		f.Set("default_site", name)

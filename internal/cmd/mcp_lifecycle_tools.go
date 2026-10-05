@@ -29,8 +29,8 @@ func docTool(name, desc string, readOnly, destructive bool, extra ...mcp.ToolOpt
 }
 
 // docHandler parses doctype and name, then the tool's own arguments.
-func docHandler(getClient clientFn, parse func(req mcp.CallToolRequest, doctype, name string) (toolCall, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return toolHandler(getClient, func(req mcp.CallToolRequest) (toolCall, error) {
+func docHandler(env *mcpEnv, parse func(req mcp.CallToolRequest, doctype, name string) (toolCall, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
 		if err != nil {
 			return nil, err
@@ -43,11 +43,11 @@ func docHandler(getClient clientFn, parse func(req mcp.CallToolRequest, doctype,
 	})
 }
 
-func registerLifecycleTools(s *server.MCPServer, getClient clientFn) {
+func registerLifecycleTools(s *server.MCPServer, env *mcpEnv) {
 	s.AddTool(docTool("submit_doc",
 		"Submit a draft document (docstatus 0 to 1), which makes it final: a submitted document can only be cancelled, not edited. Refused for DocTypes with an active Workflow (use apply_workflow). Returns the submitted document.",
 		false, true),
-		docHandler(getClient, func(_ mcp.CallToolRequest, doctype, name string) (toolCall, error) {
+		docHandler(env, func(_ mcp.CallToolRequest, doctype, name string) (toolCall, error) {
 			return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
 				if err := refuseWorkflow(ctx, c, doctype, name); err != nil {
 					return nil, err
@@ -59,7 +59,7 @@ func registerLifecycleTools(s *server.MCPServer, getClient clientFn) {
 	s.AddTool(docTool("cancel_doc",
 		"Cancel a submitted document (docstatus 1 to 2). This cannot be undone; amend_doc makes a corrected copy. Submitted documents that link to it block the cancel. Refused for DocTypes with an active Workflow (use apply_workflow). Returns the cancelled document.",
 		false, true),
-		docHandler(getClient, func(_ mcp.CallToolRequest, doctype, name string) (toolCall, error) {
+		docHandler(env, func(_ mcp.CallToolRequest, doctype, name string) (toolCall, error) {
 			return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
 				if err := refuseWorkflow(ctx, c, doctype, name); err != nil {
 					return nil, err
@@ -72,7 +72,7 @@ func registerLifecycleTools(s *server.MCPServer, getClient clientFn) {
 	s.AddTool(docTool("amend_doc",
 		"Create the amendment of a cancelled document: a new draft linked by amended_from, named <name>-1 (an amendment of <name>-1 is <name>-2). Returns the new draft.",
 		false, false, overrides),
-		docHandler(getClient, func(req mcp.CallToolRequest, doctype, name string) (toolCall, error) {
+		docHandler(env, func(req mcp.CallToolRequest, doctype, name string) (toolCall, error) {
 			data, err := objectArg(req, "data", false)
 			if err != nil {
 				return nil, err
@@ -85,7 +85,7 @@ func registerLifecycleTools(s *server.MCPServer, getClient clientFn) {
 	s.AddTool(docTool("copy_doc",
 		"Duplicate a document like the desk's Duplicate: identity and \"no copy\" fields are left out, child rows are copied. Returns the new document.",
 		false, false, overrides),
-		docHandler(getClient, func(req mcp.CallToolRequest, doctype, name string) (toolCall, error) {
+		docHandler(env, func(req mcp.CallToolRequest, doctype, name string) (toolCall, error) {
 			data, err := objectArg(req, "data", false)
 			if err != nil {
 				return nil, err
@@ -101,7 +101,7 @@ func registerLifecycleTools(s *server.MCPServer, getClient clientFn) {
 		mcp.WithString("new_name", mcp.Required(), mcp.Description("The new name, or the existing document to merge into")),
 		mcp.WithBoolean("merge", mcp.Description("Merge into the existing document new_name (default false)")),
 	),
-		docHandler(getClient, func(req mcp.CallToolRequest, doctype, name string) (toolCall, error) {
+		docHandler(env, func(req mcp.CallToolRequest, doctype, name string) (toolCall, error) {
 			newName, err := nameArg(req, "new_name", true)
 			if err != nil {
 				return nil, err
@@ -121,7 +121,7 @@ func registerLifecycleTools(s *server.MCPServer, getClient clientFn) {
 		false, true,
 		mcp.WithString("action", mcp.Required(), mcp.Description("The workflow action, as get_transitions lists it")),
 	),
-		docHandler(getClient, func(req mcp.CallToolRequest, doctype, name string) (toolCall, error) {
+		docHandler(env, func(req mcp.CallToolRequest, doctype, name string) (toolCall, error) {
 			action, err := req.RequireString("action")
 			if err != nil {
 				return nil, err
@@ -132,11 +132,11 @@ func registerLifecycleTools(s *server.MCPServer, getClient clientFn) {
 		}))
 }
 
-func registerGetTransitions(s *server.MCPServer, getClient clientFn) {
+func registerGetTransitions(s *server.MCPServer, env *mcpEnv) {
 	s.AddTool(docTool("get_transitions",
 		"List the workflow actions the current user can apply to a document in its current state (action, next_state, allowed). Empty when none apply.",
 		true, false),
-		docHandler(getClient, func(_ mcp.CallToolRequest, doctype, name string) (toolCall, error) {
+		docHandler(env, func(_ mcp.CallToolRequest, doctype, name string) (toolCall, error) {
 			return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
 				list, err := c.WorkflowTransitions(ctx, doctype, name)
 				if list == nil && err == nil {

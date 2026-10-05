@@ -273,8 +273,25 @@ var secretParts = []string{
 	"api-key", "api_key", "apikey", "private_key", "signature", "credential", "code_verifier",
 }
 
-// secretKey reports whether a header, query, form or JSON key carries a
+// SecretKey reports whether a header, query, form or JSON key carries a
 // credential.
+func SecretKey(k string) bool { return secretKey(k) }
+
+// RedactArgs returns a copy of v (decoded JSON, such as MCP tool arguments)
+// with every secret hidden as in the debug trace. v itself is not changed.
+func RedactArgs(v interface{}) interface{} {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return redacted
+	}
+	c, ok := parseJSONValue(b)
+	if !ok {
+		return redacted
+	}
+	r, _ := redactValue(c)
+	return r
+}
+
 func secretKey(k string) bool {
 	k = strings.ToLower(k)
 	switch k {

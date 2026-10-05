@@ -7,9 +7,12 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 )
 
 // maxToolResultBytes caps a tool result. Anything bigger is refused with a
@@ -20,35 +23,96 @@ const maxToolResultBytes = 512 << 10
 // maxMCPBulkItems caps the items a single bulk_* tool call may touch.
 const maxMCPBulkItems = 200
 
-// clientFn returns a ready-to-use FrappeClient for a tool call.
-type clientFn func(context.Context) (*client.FrappeClient, error)
-
 // toolCall is the site work of a tool, run once its arguments are valid.
 type toolCall func(ctx context.Context, c *client.FrappeClient) (interface{}, error)
 
-// toolHandler validates arguments first (so a bad call never costs a login
-// or a request), then runs the call. Every failure becomes a tool error with
-// a nil Go error, so the model sees it and can correct itself instead of the
-// client treating it as a protocol failure.
-func toolHandler(getClient clientFn, parse func(req mcp.CallToolRequest) (toolCall, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+// mcpEnv is what every tool call needs: the site (read on every call, so a
+// config edit applies at once), its client, the policy flags of `ffc mcp`
+// and the audit log.
+type mcpEnv struct {
+	site   func(ctx context.Context) (*config.SiteConfig, error)
+	client func(ctx context.Context, site *config.SiteConfig) (*client.FrappeClient, error)
+	flags  config.MCPPolicy
+	audit  *auditLog // nil: no audit log
+}
+
+// toolHandler runs a tool call in a fixed order: validate the arguments (so
+// a bad call never costs a login or a request), apply the site's MCP policy,
+// then get the client and run the call. Every call, refused or not, leaves a
+// line in the audit log. Every failure becomes a tool error with a nil Go
+// error, so the model sees it and can correct itself instead of the client
+// treating it as a protocol failure.
+func toolHandler(env *mcpEnv, parse func(req mcp.CallToolRequest) (toolCall, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		call, err := parse(req)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		c, err := getClient(ctx)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		out, err := call(ctx, c)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		if s, ok := out.(string); ok {
-			return mcp.NewToolResultText(s), nil
-		}
-		return marshalResult(out), nil
+		rec := auditRecord{Time: time.Now().UTC(), Tool: req.Params.Name, Client: mcpClientName(ctx)}
+		res := env.run(ctx, req, parse, &rec)
+		rec.DurationMS = time.Since(rec.Time).Milliseconds()
+		env.audit.write(rec, req.GetArguments())
+		return res, nil
 	}
+}
+
+func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(req mcp.CallToolRequest) (toolCall, error), rec *auditRecord) *mcp.CallToolResult {
+	fail := func(status string, err error) *mcp.CallToolResult {
+		rec.Status, rec.Error = status, err.Error()
+		return mcp.NewToolResultError(err.Error())
+	}
+	// The site is read first only so every audit line names it; a bad
+	// argument is still reported before a config error.
+	site, siteErr := env.site(ctx)
+	if siteErr == nil {
+		rec.Site = site.Name
+	}
+	call, err := parse(req)
+	if err != nil {
+		return fail(auditInvalid, err)
+	}
+	scope, err := scopeOf(req)
+	if err != nil {
+		return fail(auditDenied, err)
+	}
+	rec.Doctypes, rec.Names, rec.Method = scope.Doctypes, scope.Names, scope.Method
+	if siteErr != nil {
+		return fail(auditError, siteErr)
+	}
+	policy := newMCPPolicy(site, env.flags)
+	if err := policy.check(req.Params.Name, scope); err != nil {
+		return fail(auditDenied, err)
+	}
+	c, err := env.client(ctx, site)
+	if err != nil {
+		return fail(auditError, err)
+	}
+	if err := policy.checkReport(ctx, c, scope); err != nil {
+		return fail(auditDenied, err)
+	}
+	out, err := call(ctx, c)
+	if err != nil {
+		return fail(auditError, err)
+	}
+	var res *mcp.CallToolResult
+	if s, ok := out.(string); ok {
+		res = mcp.NewToolResultText(s)
+	} else {
+		res = marshalResult(out)
+	}
+	rec.Status = auditOK
+	if res.IsError {
+		rec.Status = auditError // the result was too large to return
+	}
+	return res
+}
+
+// mcpClientName is the name the MCP client gave for itself. It is
+// unauthenticated, so it is only recorded, never trusted.
+func mcpClientName(ctx context.Context) string {
+	if info := server.RequestProtocolInfoFromContext(ctx); info != nil && info.ClientInfo != nil && info.ClientInfo.Name != "" {
+		return info.ClientInfo.Name
+	}
+	if s, ok := server.ClientSessionFromContext(ctx).(server.SessionWithClientInfo); ok {
+		return s.GetClientInfo().Name
+	}
+	return ""
 }
 
 // marshalResult serializes data as compact JSON, refusing oversized results.

@@ -14,23 +14,39 @@ import (
 // for commands that talk to a site, so local commands (site, config, help,
 // completion) never touch the network.
 func loadSite(ctx context.Context) (*config.SiteConfig, error) {
+	cfg, err := loadSiteConfig()
+	if err != nil {
+		return nil, err
+	}
+	return refreshSite(ctx, cfg), nil
+}
+
+// loadSiteConfig loads the selected site without touching the network.
+func loadSiteConfig() (*config.SiteConfig, error) {
 	cfg, err := config.Load(siteName, configPath)
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
+	return cfg, nil
+}
+
+// refreshSite returns cfg with a fresh access token when cfg is an OAuth
+// site whose token has expired. A failure is a warning: the request then
+// gets a 401.
+func refreshSite(ctx context.Context, cfg *config.SiteConfig) *config.SiteConfig {
 	if cfg.Name == "" || !cfg.IsOAuth() || !cfg.IsTokenExpired() {
-		return cfg, nil
+		return cfg
 	}
 	if cfg.RefreshToken == "" {
 		fmt.Fprintf(os.Stderr, "warning: the OAuth token for site %q has expired and there is no refresh token; run 'ffc site add --oauth' again\n", cfg.Name)
-		return cfg, nil
+		return cfg
 	}
 	refreshed, err := refreshOAuth(ctx, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: refreshing the OAuth token for site %q failed: %v\n", cfg.Name, err)
-		return cfg, nil
+		return cfg
 	}
-	return refreshed, nil
+	return refreshed
 }
 
 // refreshOAuth refreshes cfg's access token and persists it. The read, the

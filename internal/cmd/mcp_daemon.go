@@ -20,7 +20,6 @@ import (
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -260,22 +259,7 @@ func startDetached(ctx context.Context, port int) error {
 		return fmt.Errorf("finding executable: %w", err)
 	}
 
-	// Build child args: the resolved site, same config flag, explicit port,
-	// no --detach. Pinning the site keeps a later default_site change from
-	// moving a running daemon. An env-only site (FFC_* vars) has no name.
-	args := []string{"mcp", "--port", strconv.Itoa(port)}
-	if site.Name != "" {
-		args = append(args, "--site", site.Name)
-	}
-	if configPath != "" {
-		args = append(args, "--config", configPath)
-	}
-	if mcpReadOnly {
-		args = append(args, "--read-only")
-	}
-	if level := debugLevelName(client.Debug); level != "" {
-		args = append(args, "--debug="+level) // the trace goes to mcp.log (0600)
-	}
+	args := daemonArgs(site.Name, port)
 
 	cmd := exec.Command(exe, args...)
 	cmd.Stdin = nil
@@ -374,20 +358,11 @@ func isLocalhostOrigin(origin string) bool {
 
 // runHTTPServer starts the MCP server over HTTP on the given port.
 func runHTTPServer(ctx context.Context, port int) error {
-	provider, closeProvider := newMCPClientProvider()
-	defer closeProvider()
-	// Validate credentials up front so misconfiguration fails immediately.
-	if _, err := provider(ctx); err != nil {
+	s, closeEnv, err := startMCP(ctx)
+	if err != nil {
 		return err
 	}
-
-	s := server.NewMCPServer(
-		"ffc",
-		version.Version,
-		server.WithToolCapabilities(false),
-		server.WithRecovery(),
-	)
-	registerTools(s, provider)
+	defer closeEnv()
 
 	// The token/instance are supplied by the parent when detached; generate
 	// them for a foreground `ffc mcp --port N` run.
@@ -540,4 +515,37 @@ func init() {
 	mcpStopCmd.Flags().BoolVar(&mcpStopForce, "force", false, "Stop the recorded PID even if the server can't be health-confirmed")
 	mcpCmd.AddCommand(mcpStatusCmd)
 	mcpCmd.AddCommand(mcpStopCmd)
+}
+
+// daemonArgs are the detached child's arguments: the resolved site, the
+// same config flag, an explicit port, the policy and debug flags, and no
+// --detach. Pinning the site keeps a later default_site change from moving
+// a running daemon. An env-only site (FFC_* vars) has no name.
+func daemonArgs(site string, port int) []string {
+	args := []string{"mcp", "--port", strconv.Itoa(port)}
+	if site != "" {
+		args = append(args, "--site", site)
+	}
+	if configPath != "" {
+		args = append(args, "--config", configPath)
+	}
+	if mcpReadOnly {
+		args = append(args, "--read-only")
+	}
+	for _, f := range []struct {
+		flag string
+		list []string
+	}{
+		{"--allow-tools", mcpFlags.AllowTools}, {"--allow-doctypes", mcpFlags.AllowDoctypes},
+		{"--deny-doctypes", mcpFlags.DenyDoctypes}, {"--allow-methods", mcpFlags.AllowMethods},
+		{"--deny-methods", mcpFlags.DenyMethods},
+	} {
+		for _, v := range f.list {
+			args = append(args, f.flag+"="+v)
+		}
+	}
+	if level := debugLevelName(client.Debug); level != "" {
+		args = append(args, "--debug="+level) // the trace goes to mcp.log (0600)
+	}
+	return args
 }

@@ -179,7 +179,7 @@ func newMCPTestServer(t *testing.T) (*server.MCPServer, *fakeSite) {
 		t.Fatal(err)
 	}
 	s := server.NewMCPServer("test", "0")
-	registerTools(s, func(context.Context) (*client.FrappeClient, error) { return c, nil })
+	mcpTRegister(s, c, &config.SiteConfig{Name: "test"}, nil)
 	return s, fs
 }
 
@@ -317,11 +317,10 @@ func TestMCPInvalidArgsNeverReachServer(t *testing.T) {
 }
 
 func TestMCPReadOnlyToolList(t *testing.T) {
-	old := mcpReadOnly
-	defer func() { mcpReadOnly = old }()
+	mcpReadOnly := false
 	names := func() map[string]bool {
 		s := server.NewMCPServer("t", "0")
-		registerTools(s, nil)
+		mcpTRegister(s, nil, &config.SiteConfig{Name: "t", MCP: &config.MCPPolicy{ReadOnly: mcpReadOnly}}, nil)
 		out := map[string]bool{}
 		for n := range s.ListTools() {
 			out[n] = true
