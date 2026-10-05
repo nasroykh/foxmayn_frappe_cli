@@ -303,8 +303,9 @@ func aggregateValue(c aggCol, docs []map[string]interface{}) interface{} {
 
 // getGroupByCount is frappe.desk.listview.get_group_by_count: {name, count}
 // per value of field, most frequent first, at most 50; "owner" puts the
-// signed-in user first and "assigned_to" counts the ToDo allocations of the
-// matching documents that are not Cancelled. A field the DocType lacks is a
+// signed-in user first and "assigned_to" counts the ToDo allocations that
+// are not Cancelled and whose reference_name is a matching document's name
+// (reference_type is not compared, as in Frappe). A field the DocType lacks is a
 // bare ValueError (500).
 func (s *Site) getGroupByCount(r *http.Request, args map[string]interface{}) (interface{}, error) {
 	doctype, _ := args["doctype"].(string)

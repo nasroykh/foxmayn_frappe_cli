@@ -354,7 +354,7 @@ func countByGroup(cmd *cobra.Command, doctype, filters, field string) error {
 	}
 	out, cols := groupCountRows(rows, field)
 	if len(out) >= groupByCountMax {
-		output.PrintWarning(fmt.Sprintf("The site returns at most %d groups; ffc aggregate -d %q --group-by %s counts all of them.", groupByCountMax, doctype, field))
+		output.PrintWarning(fmt.Sprintf("%s may have more groups (the server returns at most %d); ffc aggregate -d %q --group-by %s counts all of them.", doctype, groupByCountMax, doctype, field))
 	}
 	return render(out, cols, func() error {
 		output.PrintTable(out, cols)

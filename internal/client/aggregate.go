@@ -337,9 +337,12 @@ func SyntaxRejected(err error, syntax AggregateSyntax) bool {
 // (frappe.desk.listview.get_group_by_count): the number of documents
 // matching filters per value of field, most frequent first. Frappe returns
 // at most 50 groups, each {name: value, count: n}; for "owner" the
-// signed-in user's group comes first; "assigned_to" (not a field) counts
-// the open ToDo assignments of System Users on the matching documents; and
-// v16 adds title for a Link field whose DocType shows titles in links.
+// signed-in user's group comes first; "assigned_to" (not a field) counts,
+// per System User, the ToDo records allocated to them that are not
+// Cancelled (Closed ones included) whose reference_name is the name of a
+// matching document (reference_type is not compared, so a ToDo on a
+// document of another DocType with the same name counts too); and v16 adds
+// title for a Link field whose DocType shows titles in links.
 func (c *FrappeClient) GroupByCount(ctx context.Context, doctype, filters, field string) ([]map[string]interface{}, error) {
 	if filters == "" {
 		filters = "[]" // current_filters is a required argument

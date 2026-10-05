@@ -27,8 +27,11 @@ With --group-by FIELD, ffc runs the list view's sidebar count
 (frappe.desk.listview.get_group_by_count): one row per value of FIELD with
 its count, most frequent first, at most 50 groups (ffc aggregate has no
 such cap). Two values are special: "owner" puts your own group first, and
-"assigned_to" counts the open assignments of System Users on the matching
-documents instead of a field.
+"assigned_to" is not a field: it counts, per System User, the ToDo records
+allocated to them that are not Cancelled (Open and Closed) and whose
+reference_name is a matching document's name. Frappe does not compare
+reference_type, so a ToDo on a document of another DocType with the same
+name counts too.
 
 Examples:
   ffc count-docs -d "ToDo"
@@ -64,7 +67,7 @@ Examples:
 func init() {
 	countDocsCmd.Flags().StringVarP(&coDoctype, "doctype", "d", "", "Frappe DocType (required)")
 	countDocsCmd.Flags().StringVar(&coFilters, "filters", "", `Filter expression as JSON: '{"status":"Open"}' or '[["status","=","Open"]]'`)
-	countDocsCmd.Flags().StringVar(&coGroupBy, "group-by", "", `Count per value of this field (at most 50 groups; "assigned_to" counts assignments)`)
+	countDocsCmd.Flags().StringVar(&coGroupBy, "group-by", "", `Count per value of this field (at most 50 groups; "assigned_to" counts ToDo allocations)`)
 	_ = countDocsCmd.MarkFlagRequired("doctype")
 	rootCmd.AddCommand(countDocsCmd)
 }

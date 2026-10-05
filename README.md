@@ -396,7 +396,7 @@ ffc count-docs -d "ToDo" --group-by status          # one row per status, most f
 ffc count-docs -d "Sales Invoice" --group-by assigned_to
 ```
 
-`--group-by FIELD` runs the list view sidebar count (`frappe.desk.listview.get_group_by_count`): rows `{FIELD, count}`, most frequent first, at most 50 groups (ffc warns when it gets 50; `ffc aggregate` has no such cap). `owner` puts your own group first; `assigned_to` is not a field but counts the open assignments of System Users on the matching documents. On v16 a Link field whose DocType shows titles in links also gets a `title` column. A field the DocType lacks exits 6.
+`--group-by FIELD` runs the list view sidebar count (`frappe.desk.listview.get_group_by_count`): rows `{FIELD, count}`, most frequent first, at most 50 groups (with 50, ffc warns that there may be more; `ffc aggregate` has no such cap). `owner` puts your own group first; `assigned_to` is not a field: it counts, per System User, the ToDo records allocated to them that are not Cancelled (Open and Closed) and whose `reference_name` is a matching document's name. Frappe does not compare `reference_type`, so a ToDo on a document of another DocType with the same name counts too. On v16 a Link field whose DocType shows titles in links also gets a `title` column. A field the DocType lacks exits 6.
 
 **`aggregate`** (Count, sum, average, min and max per group, on the server)
 ```bash

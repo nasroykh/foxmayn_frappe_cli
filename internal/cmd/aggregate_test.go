@@ -316,7 +316,7 @@ func TestCmdCountDocsGroupByCap(t *testing.T) {
 	if rows := cmdTRows(t, r); len(rows) != 50 {
 		t.Fatalf("%d rows", len(rows))
 	}
-	cmdTHas(t, r.Stderr, "at most 50 groups", `ffc aggregate -d "Note" --group-by title`)
+	cmdTHas(t, r.Stderr, "Note may have more groups (the server returns at most 50)", `ffc aggregate -d "Note" --group-by title`)
 	// A field named title would clash with the title column: the group
 	// keeps the site's "name".
 	if rows := cmdTRows(t, r); rows[0]["name"] == nil || rows[0]["title"] != nil {

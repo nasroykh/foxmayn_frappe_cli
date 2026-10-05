@@ -227,7 +227,7 @@ ffc count-docs -d "ToDo" --group-by status --json        # [{"status":"Open","co
 | `--filters`  | —     | No       | JSON filter expression |
 | `--group-by` | —     | No       | Count per value of this field (list view sidebar count) |
 
-`--group-by` returns at most 50 groups, most frequent first (ffc warns when it gets 50: use `ffc aggregate` for all). `owner` puts your own group first; `assigned_to` counts open assignments of System Users instead of a field. An unknown field exits 6.
+`--group-by` returns at most 50 groups, most frequent first (with 50 ffc warns there may be more: use `ffc aggregate` for all). `owner` puts your own group first; `assigned_to` is not a field: it counts per System User the ToDos allocated to them that are not Cancelled (Open and Closed) whose `reference_name` is a matching document's name (`reference_type` is not compared). An unknown field exits 6.
 
 #### `ffc aggregate` — Count, sum, average, min, max per group (server side)
 
