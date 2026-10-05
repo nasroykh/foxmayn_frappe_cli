@@ -58,6 +58,7 @@ func registerAllTools(s *server.MCPServer, env *mcpEnv) {
 	registerListDoctypes(s, env)
 	registerListReports(s, env)
 	registerRunReport(s, env)
+	registerSearch(s, env)
 	registerGetTransitions(s, env)
 	registerCreateDoc(s, env)
 	registerUpdateDoc(s, env)
@@ -348,6 +349,60 @@ func registerRunReport(s *server.MCPServer, env *mcpEnv) {
 			}
 			limitReportRows(result, limit)
 			return compactReportResult(result), nil
+		}, nil
+	}))
+}
+
+func registerSearch(s *server.MCPServer, env *mcpEnv) {
+	tool := mcp.NewTool("search",
+		mcp.WithDescription(fmt.Sprintf("Find documents by text. With doctype, it resolves a name or title to document names the way a Link field does (search fields, title, link query and user permissions apply): each result has value (the document name), description and sometimes label; use it to turn \"Acme\" into the name \"CUST-0042\". An empty text lists the first documents of that DocType. Without doctype it runs Frappe's global search across DocTypes, ranked by relevance, and returns {results, hidden_by_policy}: each result has doctype, name, content, rank and sometimes title, and hidden_by_policy counts the hits dropped because this server may not read their DocType. \"a & b\" searches each phrase separately (at most %d phrases). Global search covers only DocTypes in Global Search Settings and fields flagged In Global Search, so a DocType missing there never matches (use list_docs with filters instead). A doctype search is cacheable for 60 seconds, so a proxy may serve a document created a moment ago late.", maxSearchPhrases)),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(true),
+		mcp.WithString("text",
+			mcp.Required(),
+			mcp.Description("Text to search for"),
+		),
+		mcp.WithString("doctype",
+			mcp.Description("Resolve names in this DocType only. Omit to search every DocType."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description(fmt.Sprintf("Maximum number of results. Default: %d, at most %d.", defaultSearchLimit, maxMCPSearchLimit)),
+		),
+	)
+	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
+		text, err := req.RequireString("text")
+		if err != nil {
+			return nil, err
+		}
+		doctype, err := stringArg(req, "doctype")
+		if err != nil {
+			return nil, err
+		}
+		doctype = strings.TrimSpace(doctype)
+		limit, err := intArg(req, "limit", defaultSearchLimit)
+		if err != nil {
+			return nil, err
+		}
+		if limit > maxMCPSearchLimit {
+			return nil, fmt.Errorf("limit: at most %d", maxMCPSearchLimit)
+		}
+		if err := validateSearch(text, doctype, limit); err != nil {
+			return nil, err
+		}
+		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
+			rows, err := runSearch(ctx, c, text, doctype, limit)
+			if err != nil {
+				return nil, err
+			}
+			if doctype != "" {
+				return rows, nil
+			}
+			policy, ok := policyFrom(ctx)
+			if !ok {
+				return nil, fmt.Errorf("policy: no policy to filter the global search with")
+			}
+			rows, hidden := policy.filterDoctypeRows(rows)
+			return map[string]interface{}{"results": rows, "hidden_by_policy": hidden}, nil
 		}, nil
 	}))
 }

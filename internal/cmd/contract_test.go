@@ -13,6 +13,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -88,6 +89,7 @@ func TestContract(t *testing.T) {
 	t.Run("lifecycle commands", func(t *testing.T) { contractLifecycleCLI(t, c, sc) })
 	t.Run("schema merges custom field and property setter", func(t *testing.T) { contractSchema(t, c) })
 	t.Run("api passthrough", func(t *testing.T) { contractAPI(t, c, sc) })
+	t.Run("search and global search", func(t *testing.T) { contractSearch(t, c, sc) })
 	t.Run("errors match the fake", func(t *testing.T) { contractErrors(t, c, sc.URL) })
 	t.Run("password session", func(t *testing.T) { contractSession(t, sc) })
 	// Last: an active workflow changes how the DocType submits.
@@ -299,6 +301,91 @@ func contractListDefault(t *testing.T, c *client.FrappeClient) {
 		if len(r) != 1 || r["name"] == nil {
 			t.Errorf("row = %v, want only name", r)
 		}
+	}
+}
+
+// contractSearch pins T2.2: the response shapes of search_link and the global
+// search (the fake in internal/frappetest copies them), the page length, an
+// empty answer being [] and an unknown DocType being a 404 DoesNotExistError.
+func contractSearch(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
+	ctx := contractCtx(t)
+	var names []string
+	for i := 0; i < 2; i++ {
+		names = append(names, createContractDoc(t, c, map[string]interface{}{"title": "search"}))
+	}
+
+	// search_link finds by name; without a title field a row is
+	// {value, description}, and v16 adds a label repeating the name.
+	rows, err := c.SearchLink(ctx, contractDT, names[0], 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0]["value"] != names[0] {
+		t.Fatalf("search_link by name = %v, want one row for %s", rows, names[0])
+	}
+	if l, ok := rows[0]["label"]; ok && l != names[0] {
+		t.Errorf("label = %#v, want the name %s", l, names[0])
+	}
+	if _, ok := rows[0]["description"].(string); !ok {
+		t.Errorf("description = %#v, want a string", rows[0]["description"])
+	}
+	// An empty text lists, page_length cuts.
+	if rows, err = c.SearchLink(ctx, contractDT, "", 1); err != nil || len(rows) != 1 {
+		t.Errorf("page_length 1: %d rows, %v", len(rows), err)
+	}
+	if rows, err = c.SearchLink(ctx, contractDT, "", 10); err != nil || len(rows) < 2 {
+		t.Errorf("empty text: %d rows, %v", len(rows), err)
+	}
+	// No hit is [], never null: the client refuses a missing list.
+	if rows, err = c.SearchLink(ctx, contractDT, "no-such-ffc-document", 10); err != nil || rows == nil || len(rows) != 0 {
+		t.Errorf("no hit = %#v, %v", rows, err)
+	}
+	var apiErr *client.APIError
+	if _, err = c.SearchLink(ctx, "FFC No Such DocType", "x", 10); !errors.As(err, &apiErr) || apiErr.Status != 404 || apiErr.ExcType != "DoesNotExistError" {
+		t.Errorf("unknown DocType: %v, want 404 DoesNotExistError", err)
+	}
+
+	// Global search only knows DocTypes in Global Search Settings, so the
+	// fixture is not found there; probe words an ERPNext site has hits for.
+	rows, err = c.GlobalSearch(ctx, "ffc-contract-no-such-text", 5)
+	if err != nil || rows == nil || len(rows) != 0 {
+		t.Fatalf("global search without a hit = %#v, %v", rows, err)
+	}
+	var hits []map[string]interface{}
+	for _, word := range []string{"admin", "account", "customer", "item", "user", "sales"} {
+		if hits, err = c.GlobalSearch(ctx, word, 3); err != nil {
+			t.Fatal(err)
+		}
+		if len(hits) > 0 {
+			break
+		}
+	}
+	if len(hits) == 0 {
+		t.Log("global search: no hits for any probe word; hit shape not checked")
+	}
+	for _, h := range hits {
+		for _, k := range []string{"doctype", "name", "content", "rank"} {
+			if h[k] == nil {
+				t.Errorf("hit %v lacks %s", h, k)
+			}
+		}
+		if n, ok := h["rank"].(json.Number); !ok || n.String() == "" {
+			t.Errorf("rank = %#v, want a json.Number", h["rank"])
+		}
+	}
+	if len(hits) > 3 {
+		t.Errorf("limit 3 gave %d hits", len(hits))
+	}
+
+	// The CLI end to end: JSON output and the exit code of an unknown DocType.
+	cfg := contractConfig(t, sc)
+	r := runFFC(t, cfg, "", "--json", "search", names[1], "-d", contractDT)
+	var viaCLI []map[string]interface{}
+	if r.Err != nil || json.Unmarshal([]byte(r.Stdout), &viaCLI) != nil || len(viaCLI) != 1 || viaCLI[0]["value"] != names[1] {
+		t.Errorf("ffc search -d: %v\n%s", r.Err, r.Stdout)
+	}
+	if r = runFFC(t, cfg, "", "search", "x", "-d", "FFC No Such DocType"); r.Code != 4 {
+		t.Errorf("unknown DocType exit = %d, want 4 (%v)", r.Code, r.Err)
 	}
 }
 

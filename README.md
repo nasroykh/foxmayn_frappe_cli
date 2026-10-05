@@ -450,6 +450,23 @@ echo '{"description":"x"}' | ffc api POST /api/resource/ToDo --input -
 
 ---
 
+### Search and name resolution
+
+**`search`** (Find a document by text)
+```bash
+ffc search acme -d Customer            # resolve "acme" to document names (like a Link field)
+ffc search "" -d Item --limit 5        # the first 5 items
+ffc search "overdue invoice"           # keyword search across DocTypes
+ffc search acme -d Customer --json
+```
+
+The text is a positional argument (several words are joined; put `--` before a text that starts with a dash). `--limit` / `-l` defaults to 20 and must be at least 1.
+
+- **With `--doctype`** it runs `frappe.desk.search.search_link`, the search a Link field does. It honours the DocType's search fields and title field, its link query (such as ERPNext's item query) and the user's permissions, and returns `value` (the document name), `description` and, for some DocTypes, `label`. Use it to turn "Acme" into `CUST-0042`. An empty text lists the first documents. Frappe marks this answer cacheable for 60 seconds (`Cache-Control: max-age=60`). ffc keeps no HTTP cache, but a caching proxy in front of the site may serve it up to a minute old, so a document created a moment ago may not appear yet.
+- **Without `--doctype`** it runs `frappe.utils.global_search.search`, ranked by relevance, and returns `doctype`, `name`, `content` and `rank`. It covers only the DocTypes listed in **Global Search Settings** and, in them, only the fields flagged **In Global Search**; a DocType missing there never returns a hit (use `list-docs --filters` instead). `a & b` searches the phrases `a` and `b` separately (at most 5 phrases) and combines the hits, cut to `--limit`.
+
+---
+
 ### Reports
 
 **1. `list-reports`** (List available query and script reports)
@@ -522,7 +539,7 @@ sites:
 - Built in, whatever the config says:
   - MCP may read but not write the sensitive DocTypes: users, roles and permissions (User, Role, Has Role, Role Profile, Module Profile, User Type, User Group, DocType, DocPerm, Custom DocPerm, User Permission, DocShare, Custom Field, Property Setter, Customize Form), settings and credentials (System Settings, OAuth Client, OAuth Provider Settings, OAuth Bearer Token, OAuth Authorization Code, Connected App, Token Cache, Social Login Key, LDAP Settings, Email Account), code and templates (Server Script, Client Script, Report, Print Format, Website Script, Web Page, Web Form, Custom HTML Block, Webhook, Notification, Auto Email Report, Assignment Rule, Energy Point Rule, Scheduled Job Type), Data Import and File. Listing one in the site's `allow_doctypes` allows writes to it.
   - `call_method` refuses `system_console.execute_code`, `user.generate_keys` and the Frappe Cloud app installer (`frappe.integrations.frappe_providers.*`) unless the site's `allow_methods` lists them.
-- With `allow_doctypes` set, `call_method` may call only the methods in `allow_methods`, since a method can reach any DocType. `run_report` is checked through the report's `ref_doctype`.
+- With `allow_doctypes` set, `call_method` may call only the methods in `allow_methods`, since a method can reach any DocType. `run_report` is checked through the report's `ref_doctype`. `search` with a `doctype` is checked like any read of that DocType; a global `search` names none, so its hits are filtered to the DocTypes the rules allow; the tool then answers `{results, hidden_by_policy}`, where `hidden_by_policy` counts the dropped hits.
 - An `allow_` list that is present but empty is an error, so it never reads as "none" while meaning "no limit". The same goes for a policy flag given with no value.
 - The flags `--allow-tools`, `--allow-doctypes`, `--deny-doctypes`, `--allow-methods` and `--deny-methods` only narrow the config, so an MCP client's config cannot widen what the site's owner allowed.
 - The policy is read again on every call, so an edit that narrows it applies at once. Widening the tool list needs a restart.
@@ -553,7 +570,7 @@ Some checks are best effort:
 
 **Audit log.** Every tool call, allowed or refused, appends one JSON line to `~/.config/ffc/mcp-audit.jsonl` (next to the config file, 0600). It records the time, site, the client's self-reported name, tool, DocTypes, document names (up to 20), status (`ok`, `error`, `denied`, `invalid`, `confirm_pending`, `declined`), error and duration. The arguments are logged with secrets redacted, and document data and method arguments reduced to their keys and size. The file is rotated to `mcp-audit.jsonl.1` at 10 MiB.
 
-Available MCP tools (23): `list_sites`, `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
+Available MCP tools (24): `list_sites`, `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
 
 Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`); `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
@@ -588,7 +605,7 @@ foxmayn_frappe_cli/
 │   │   ├── config_cmd.go     # Interactive settings menu, config get/set
 │   │   ├── ping.go, get_doc.go, list_docs.go, create_doc.go, update_doc.go,
 │   │   │   delete_doc.go, count_docs.go, get_schema.go, list_doctypes.go,
-│   │   │   list_reports.go, run_report.go, call_method.go   # data commands
+│   │   │   list_reports.go, run_report.go, search.go, call_method.go   # data commands
 │   │   ├── api.go            # api: raw requests to any site path
 │   │   ├── bulk.go           # Bulk worker pool and input parsers
 │   │   ├── bulk_create.go, bulk_update.go, bulk_delete.go
@@ -602,7 +619,7 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_confirm.go    # confirmation through MCP elicitation
 │   │   ├── mcp_sites.go      # multi-site MCP (--sites, --all-sites, list_sites)
 │   │   ├── mcp_args.go       # MCP argument parsing and result limits
-│   │   ├── mcp_tools.go      # MCP tool definitions (23 with mcp_lifecycle_tools.go)
+│   │   ├── mcp_tools.go      # MCP tool definitions (24 with mcp_lifecycle_tools.go)
 │   │   ├── mcp_lifecycle_tools.go  # submit/cancel/amend/copy/rename/workflow tools
 │   │   ├── mcp_daemon.go     # detached server, status/stop, state file
 │   │   └── mcp_detach_unix.go / mcp_detach_windows.go  # platform process handling

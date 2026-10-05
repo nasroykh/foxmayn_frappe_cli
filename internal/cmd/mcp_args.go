@@ -103,7 +103,7 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 	if err := policy.checkReport(ctx, c, scope); err != nil {
 		return fail(auditDenied, err)
 	}
-	out, err := call(ctx, c)
+	out, err := call(withPolicy(ctx, policy), c)
 	if err != nil {
 		return fail(auditError, err)
 	}
