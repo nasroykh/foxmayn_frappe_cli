@@ -50,7 +50,8 @@ func fakeConfig(t *testing.T, site *frappetest.Site, auth string) string {
 	case "password":
 		creds = fmt.Sprintf("    username: %q\n    password: %q\n", frappetest.Username, frappetest.Password)
 	case "oauth":
-		creds = fmt.Sprintf("    access_token: %q\n", frappetest.Token)
+		creds = fmt.Sprintf("    oauth_client_id: %q\n    access_token: %q\n    refresh_token: %q\n",
+			frappetest.OAuthClientID, frappetest.Token, frappetest.RefreshToken)
 	default:
 		t.Fatalf("fakeConfig: unknown auth %q", auth)
 	}

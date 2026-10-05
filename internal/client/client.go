@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -19,20 +20,50 @@ import (
 )
 
 // FrappeClient wraps a resty client configured for a specific Frappe site. It
-// is safe for concurrent use: the only mutable state (a session id) is guarded
-// by mu and attached per request, never by mutating the shared resty client.
+// is safe for concurrent use: the only mutable state (a session id or an
+// OAuth access token) is guarded by mu and attached per request, never by
+// mutating the shared resty client.
 type FrappeClient struct {
 	baseURL string // the site URL, without a trailing slash
 	r       *resty.Client
 	raw     *resty.Client // r without retries, for Raw: a streamed body cannot be retried
 
-	// Username/password sites only. loginMu serialises re-logins so that
-	// concurrent requests rejected by one expired session log in once.
+	// loginSem (one slot) serialises re-logins (session sites) and token
+	// refreshes (OAuth sites), so that concurrent requests rejected for the
+	// same reason log in or refresh once. It is a channel, not a mutex, so a
+	// waiter whose context ends stops waiting (lockLogin).
+	loginSem chan struct{}
+	mu       sync.Mutex
+
+	// Username/password sites only.
 	session    *sessionCreds
-	loginMu    sync.Mutex
-	mu         sync.Mutex
 	sid        string
 	loggedInAt time.Time
+
+	// OAuth sites only. token is the current access token; refresher (nil:
+	// no refresh) replaces it after a 401. A definitive refresh failure
+	// (permanentRefreshError) is remembered with the token it was for, so
+	// later requests rejected with that token do not each spend a refresh.
+	bearer      bool
+	token       string
+	refresher   TokenRefresher
+	failedToken string
+	failedErr   error
+}
+
+// TokenRefresher returns a new access token for an OAuth client whose
+// access token rejected was refused with a 401. It may return a token
+// another process obtained in the meantime instead of refreshing again. ctx
+// is the context of the rejected request.
+type TokenRefresher func(ctx context.Context, rejected string) (string, error)
+
+// SetTokenRefresher makes an OAuth client refresh its access token with f
+// when the site rejects it, and repeat the request once. It must be called
+// before the client is used; it does nothing for other clients.
+func (c *FrappeClient) SetTokenRefresher(f TokenRefresher) {
+	if c.bearer {
+		c.refresher = f
+	}
 }
 
 type sessionCreds struct{ url, user, pwd string }
@@ -67,13 +98,14 @@ func New(ctx context.Context, cfg *config.SiteConfig) (*FrappeClient, error) {
 		AddRetryCondition(retryableGET).
 		AddRetryHook(debugRetry).
 		SetHeader("Accept", "application/json")
-	c := &FrappeClient{r: r, baseURL: strings.TrimRight(cfg.URL, "/")}
+	c := &FrappeClient{r: r, baseURL: strings.TrimRight(cfg.URL, "/"), loginSem: make(chan struct{}, 1)}
 
 	// OAuth Bearer token takes priority; fall back to Frappe token auth, then
 	// to a fresh username/password session login.
 	switch {
 	case cfg.AccessToken != "":
-		r.SetHeader("Authorization", "Bearer "+cfg.AccessToken)
+		// Attached per request (send): a refresh replaces it mid-run.
+		c.bearer, c.token = true, cfg.AccessToken
 	case cfg.APIKey != "" && cfg.APISecret != "":
 		r.SetHeader("Authorization", fmt.Sprintf("token %s:%s", cfg.APIKey, cfg.APISecret))
 	case cfg.IsSessionAuth():
@@ -108,8 +140,10 @@ func (c *FrappeClient) login(ctx context.Context) error {
 // when the session is still valid (a genuine permission error), or when the
 // login fails.
 func (c *FrappeClient) relogin(ctx context.Context, used string) bool {
-	c.loginMu.Lock()
-	defer c.loginMu.Unlock()
+	if !c.lockLogin(ctx) {
+		return false
+	}
+	defer c.unlockLogin()
 
 	c.mu.Lock()
 	current, age := c.sid, time.Since(c.loggedInAt)
@@ -163,21 +197,162 @@ func (c *FrappeClient) CloseQuietly() {
 	c.Close(ctx)
 }
 
-// send executes a request built by build on r, attaching the session cookie,
-// and repeats it once after a fresh login when the session was rejected.
+// lockLogin takes loginSem, or gives up when ctx ends first: a refresh can
+// hold it for up to config.MaxLockHold (the config lock plus the token
+// request), longer than a waiter's --timeout.
+func (c *FrappeClient) lockLogin(ctx context.Context) bool {
+	select {
+	case c.loginSem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (c *FrappeClient) unlockLogin() { <-c.loginSem }
+
+// ErrNoRefreshToken is a TokenRefresher failure for a site that stores no
+// refresh token. Like a token endpoint refusal, it is definitive.
+var ErrNoRefreshToken = errors.New("no refresh token is stored")
+
+var (
+	errNoNewToken     = errors.New("no new access token")
+	errRefreshRefused = errors.New("the site refused the refreshed access token too")
+)
+
+// permanentRefreshError reports whether a refresh failure will not go away
+// by trying again: the token endpoint refused the grant or the client
+// (oauthlib answers 400 invalid_grant or 401 invalid_client), there is no
+// refresh token, or the new token is refused as well. A 5xx, a network
+// error, a timeout or a busy config lock is transient and not remembered,
+// so a long-lived client (the MCP server) recovers once the cause is gone.
+func permanentRefreshError(err error) bool {
+	var e *APIError
+	if errors.As(err, &e) {
+		return e.Status == http.StatusBadRequest || e.Status == http.StatusUnauthorized
+	}
+	return errors.Is(err, ErrNoRefreshToken) || errors.Is(err, errNoNewToken) || errors.Is(err, errRefreshRefused)
+}
+
+// readOnlyMethod reports whether an HTTP method cannot change anything.
+func readOnlyMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
+}
+
+// refreshToken handles a 401 received by a method request with access token
+// used. It reports true when the request should be repeated with the
+// current token: another request already refreshed, or this call did. It
+// reports false with a nil error (the rejection stands) when the client
+// cannot refresh, or when the token used is still valid: then the method
+// itself raised the 401 after it ran, and repeating it could run a write
+// twice. A write is therefore repeated after another request's refresh only
+// once its own token is shown refused. A failed refresh is the error; a
+// definitive one is returned to every request rejected with the same token.
+func (c *FrappeClient) refreshToken(ctx context.Context, method, used string) (bool, error) {
+	if !c.lockLogin(ctx) {
+		return false, ctx.Err()
+	}
+	defer c.unlockLogin()
+
+	c.mu.Lock()
+	current, failed, failedErr := c.token, c.failedToken, c.failedErr
+	c.mu.Unlock()
+	switch {
+	case current != used:
+		return readOnlyMethod(method) || c.tokenRefused(ctx, used), nil
+	case c.refresher == nil:
+		return false, nil
+	case failed == used:
+		return false, failedErr
+	case !c.tokenRefused(ctx, used):
+		return false, nil
+	}
+	tok, err := c.refresher(ctx, used)
+	if err == nil && (tok == "" || tok == used) {
+		err = errNoNewToken
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err != nil {
+		if ctx.Err() == nil && permanentRefreshError(err) {
+			c.failedToken, c.failedErr = used, err
+		}
+		return false, err
+	}
+	c.token = tok
+	return true, nil
+}
+
+// refreshedRefused handles a 401 received again with token, the token a
+// refresh just produced. When the site refuses that token too (a disabled
+// user or narrowed scopes: Frappe still refreshes, since validate_refresh_token
+// checks only that the token is Active), it is remembered as failed, so
+// later requests do not each refresh again, and the error is returned. nil
+// when the token is fine (the method raised the 401) or was replaced.
+func (c *FrappeClient) refreshedRefused(ctx context.Context, token string) error {
+	if !c.lockLogin(ctx) {
+		return nil
+	}
+	defer c.unlockLogin()
+	c.mu.Lock()
+	current, failed, failedErr := c.token, c.failedToken, c.failedErr
+	c.mu.Unlock()
+	switch {
+	case failed == token:
+		return failedErr
+	case current != token || !c.tokenRefused(ctx, token):
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failedToken, c.failedErr = token, errRefreshRefused
+	return errRefreshRefused
+}
+
+// tokenRefused reports whether the site refuses token outright: a request
+// with it is turned away by authentication (validate_auth) before any method
+// runs. Only a 401 counts. A network error or a 5xx says nothing about the
+// token, and refreshing then would let a write that may have run repeat.
+func (c *FrappeClient) tokenRefused(ctx context.Context, token string) bool {
+	resp, err := c.r.R().SetContext(ctx).SetHeader("Authorization", "Bearer "+token).
+		Get("/api/method/frappe.auth.get_logged_user")
+	return err == nil && resp.StatusCode() == http.StatusUnauthorized
+}
+
+// refreshFailed is the error for a request rejected with an access token
+// that could not be refreshed: the 401, with the refresh failure as hint.
+func refreshFailed(resp *resty.Response, cause error) error {
+	body := resp.Body()
+	if b := resp.RawBody(); b != nil {
+		if len(body) == 0 {
+			// A streamed (Raw) response has not been read yet.
+			body, _ = io.ReadAll(io.LimitReader(b, 64<<10))
+		}
+		_ = b.Close()
+	}
+	hint := fmt.Sprintf("authentication failed (401): the OAuth access token was rejected and refreshing it failed (%v); run 'ffc site add --oauth' to sign in again", cause)
+	return responseError(http.StatusUnauthorized, body, map[int]string{http.StatusUnauthorized: hint})
+}
+
+// send executes a request built by build on r, attaching the session cookie
+// or the OAuth access token, and repeats it once after a fresh login when
+// the session was rejected, or after a token refresh when the token was.
 func (c *FrappeClient) send(ctx context.Context, r *resty.Client, method, path string, build func(*resty.Request)) (*resty.Response, error) {
-	var sid string // the session id the last attempt used
+	var sid, tok string // the session id or access token the last attempt used
 	attempt := func() (*resty.Response, error) {
 		req := r.R().SetContext(ctx)
 		build(req)
 		if holdBack(ctx, method) {
 			return nil, plan(r, req, method, path)
 		}
+		c.mu.Lock()
+		sid, tok = c.sid, c.token
+		c.mu.Unlock()
 		if c.session != nil {
-			c.mu.Lock()
-			sid = c.sid
-			c.mu.Unlock()
 			req.SetHeader("Cookie", "sid="+sid)
+		}
+		if c.bearer {
+			req.SetHeader("Authorization", "Bearer "+tok)
 		}
 		resp, err := req.Execute(method, path)
 		if err != nil {
@@ -185,18 +360,49 @@ func (c *FrappeClient) send(ctx context.Context, r *resty.Client, method, path s
 		}
 		return resp, nil
 	}
+	discard := func(resp *resty.Response) {
+		if b := resp.RawBody(); b != nil {
+			_ = b.Close()
+		}
+	}
 
 	resp, err := attempt()
 	if err != nil {
 		return nil, err
 	}
-	if code := resp.StatusCode(); c.session != nil && (code == http.StatusUnauthorized || code == http.StatusForbidden) && c.relogin(ctx, sid) {
+	code := resp.StatusCode()
+	switch {
+	case c.session != nil && (code == http.StatusUnauthorized || code == http.StatusForbidden) && c.relogin(ctx, sid):
 		// The request was rejected before it ran, so repeating it (even a
 		// write) cannot duplicate anything.
-		if b := resp.RawBody(); b != nil {
-			_ = b.Close()
-		}
+		discard(resp)
 		return attempt()
+	case c.bearer && code == http.StatusUnauthorized:
+		// Frappe checks the bearer token in validate_auth (frappe/auth.py)
+		// before the method runs, and answers an expired or revoked token
+		// with AuthenticationError (401). refreshToken refreshes only when
+		// the token itself is refused, so the rejected request did not run
+		// and repeating it once, writes included, cannot duplicate anything.
+		// The body is a byte slice or a value resty encodes again, so it is
+		// sent intact. A second 401 is returned, never retried: never a loop.
+		retry, err := c.refreshToken(ctx, method, tok)
+		if err != nil {
+			if ctx.Err() != nil {
+				discard(resp)
+				return nil, &TransportError{ctx.Err()}
+			}
+			return nil, refreshFailed(resp, err)
+		}
+		if retry {
+			discard(resp)
+			resp, err = attempt()
+			if err != nil || resp.StatusCode() != http.StatusUnauthorized {
+				return resp, err
+			}
+			if err := c.refreshedRefused(ctx, tok); err != nil {
+				return nil, refreshFailed(resp, err)
+			}
+		}
 	}
 	return resp, nil
 }

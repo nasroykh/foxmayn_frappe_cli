@@ -34,7 +34,7 @@ Examples:
 			return err
 		}
 		start := time.Now()
-		c, err := client.New(cmd.Context(), cfg)
+		c, err := newSiteClient(cmd.Context(), cfg)
 		if err != nil {
 			return err
 		}

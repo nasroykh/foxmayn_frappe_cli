@@ -51,7 +51,11 @@ func newMCPEnv(sites []string) (*mcpEnv, func(), error) {
 		if sc.fc != nil && k == sc.key {
 			return sc.fc, nil
 		}
-		c, err := client.New(ctx, cfg)
+		// A client whose token the site rejects in the middle of a call
+		// refreshes it itself (newSiteClient); the next call then finds the
+		// new token in the config and builds a new client, as it does after
+		// a refresh by another process.
+		c, err := newSiteClient(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
