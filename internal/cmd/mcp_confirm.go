@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,46 +39,80 @@ const (
 	confirmTTL = 10 * time.Minute // how long a question stays answerable
 )
 
-// destructiveMethods delete or cancel documents; call_method confirms them
-// like delete_doc and cancel_doc. Best effort, like the DocType rules: a
-// custom method can delete without being listed.
+// destructiveMethods delete, cancel or discard documents, or run workflow
+// actions (which may submit or cancel); call_method confirms them like
+// delete_doc and cancel_doc. Best effort, like the DocType rules: a custom
+// method can delete without being listed.
 var destructiveMethods = []string{
 	"frappe.client.delete", "frappe.client.cancel",
-	"frappe.desk.reportview.delete_items", "frappe.desk.form.save.cancel",
+	"frappe.desk.reportview.delete_items",
+	"frappe.desk.form.save.cancel", "frappe.desk.form.save.discard",
+	"frappe.desk.form.linked_with.cancel_all_linked_docs",
+	"frappe.model.workflow.apply_workflow", "frappe.model.workflow.bulk_workflow_approval",
+}
+
+// argMethods are destructive only for some arguments: the method checks
+// whether the named argument holds one of the values (any case).
+var argMethods = []struct {
+	method, arg string
+	values      []string
+}{
+	// Whitelisted controller methods: Document.cancel, discard, rename.
+	{"frappe.handler.run_doc_method", "method", []string{"cancel", "discard", "rename"}},
+	{"frappe.desk.form.save.savedocs", "action", []string{"Cancel"}},
+	{"frappe.desk.doctype.bulk_update.bulk_update.submit_cancel_or_update_docs", "action", []string{"cancel"}},
 }
 
 // mergeMethods rename a document and, with merge set, merge it into another
 // one, which then no longer exists.
 var mergeMethods = []string{"frappe.client.rename_doc", "frappe.model.rename_doc.update_document_title"}
 
-// needsConfirm reports whether a call destroys or merges documents.
+// needsConfirm reports whether a call destroys, cancels or merges
+// documents, or runs a workflow action.
 func needsConfirm(req mcp.CallToolRequest, method string) bool {
 	switch req.Params.Name {
-	case "delete_doc", "bulk_delete", "cancel_doc":
+	case "delete_doc", "bulk_delete", "cancel_doc", "apply_workflow":
 		return true
 	case "rename_doc":
 		return req.GetBool("merge", false) // as the tool reads it
 	case "call_method":
 		names := methodNames(method)
-		return anyMatch(destructiveMethods, names) ||
-			anyMatch(mergeMethods, names) && mergeSet(req.GetArguments()["args"])
+		args := methodArgs(req.GetArguments()["args"])
+		if anyMatch(destructiveMethods, names) {
+			return true
+		}
+		if anyMatch(mergeMethods, names) {
+			return truthy(args["merge"])
+		}
+		for _, m := range argMethods {
+			if anyMatch([]string{m.method}, names) {
+				v, _ := args[m.arg].(string)
+				for _, x := range m.values {
+					if strings.EqualFold(strings.TrimSpace(v), x) {
+						return true
+					}
+				}
+			}
+		}
 	}
 	return false
 }
 
-// mergeSet reports whether method arguments (an object or JSON text) set
-// merge. Anything but an absent, false, zero or empty value counts: Python
-// treats the string "0" as true.
-func mergeSet(args interface{}) bool {
+// methodArgs decodes call_method arguments given as an object or JSON text.
+func methodArgs(args interface{}) map[string]interface{} {
 	if s, ok := args.(string); ok {
 		var m map[string]interface{}
-		if json.Unmarshal([]byte(s), &m) != nil {
-			return false
-		}
-		args = m
+		_ = json.Unmarshal([]byte(s), &m)
+		return m
 	}
 	m, _ := args.(map[string]interface{})
-	switch v := m["merge"].(type) {
+	return m
+}
+
+// truthy reports whether an argument is set. Anything but an absent,
+// false, zero or empty value counts: Python treats the string "0" as true.
+func truthy(v interface{}) bool {
+	switch v := v.(type) {
 	case nil:
 		return false
 	case bool:
@@ -92,6 +127,14 @@ func mergeSet(args interface{}) bool {
 	}
 	return true
 }
+
+// What the audit line records about the confirmation of a call that needed
+// one (auditRecord.Confirm).
+const (
+	confirmYes         = "confirmed"   // the user said yes
+	confirmUnsupported = "unsupported" // if-supported, and the client cannot ask
+	confirmOff         = "never"       // confirm: never
+)
 
 // confirmRank orders the modes from loosest to strictest.
 var confirmRank = map[string]int{config.ConfirmNever: 1, config.ConfirmIfSupported: 2, config.ConfirmAlways: 3}
@@ -213,14 +256,19 @@ var confirmSchema = map[string]interface{}{
 // go ahead, or the result to send instead: a question for the user, a
 // refusal, or the user's "no".
 func (p mcpPolicy) confirm(ctx context.Context, req mcp.CallToolRequest, sc toolScope, rec *auditRecord) *mcp.CallToolResult {
+	if !sc.Confirm {
+		return nil
+	}
 	mode := p.confirmMode()
-	if !sc.Confirm || mode == config.ConfirmNever {
+	if mode == config.ConfirmNever {
+		rec.Confirm = confirmOff
 		return nil
 	}
 	// A retry carries the answer. A missing answer or a state that is not
 	// ours, has expired or was used asks again rather than going ahead.
 	if answer := server.ElicitationResponse(req.Params.InputResponses, confirmID); answer != nil && mcpConfirm.spend(p.site, req) {
 		if answer.Action == mcp.ElicitationResponseActionAccept && confirmed(answer.Content) {
+			rec.Confirm = confirmYes
 			return nil
 		}
 		rec.Status = auditDeclined
@@ -228,6 +276,7 @@ func (p mcpPolicy) confirm(ctx context.Context, req mcp.CallToolRequest, sc tool
 	}
 	if !canElicit(ctx) {
 		if mode != config.ConfirmAlways {
+			rec.Confirm = confirmUnsupported
 			return nil
 		}
 		key := "--confirm always"
@@ -254,15 +303,65 @@ func confirmed(content interface{}) bool {
 	return yes
 }
 
-// confirmMessage says what the call will do. Every value the model chose is
-// sanitised and quoted, so it cannot pass for ffc's own words.
+// quoted shows a value the model chose: cut to max runes, then quoted with
+// every control, format and invisible character escaped (\u200b), so it
+// cannot pass for ffc's own words or hide what it names. It is not
+// sanitised first: that would show another document's name.
+func quoted(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return strconv.Quote(s)
+	}
+	return strconv.Quote(string(r[:max])) + "…"
+}
+
+// keyMethodArgs are shown first and in full (up to a cut per value) in a
+// call_method question, so padding arguments cannot push them out of view.
+var keyMethodArgs = []string{
+	"doctype", "dt", "name", "dn", "docname", "docnames", "names", "items", "docs", "doc",
+	"method", "action", "merge", "new_name", "old_name",
+}
+
+// methodSummary describes call_method arguments: the key ones with their
+// values, then only the names of the rest.
+func methodSummary(args interface{}) string {
+	m := methodArgs(client.RedactArgs(args))
+	if len(m) == 0 {
+		return "no arguments"
+	}
+	var shown, rest []string
+	seen := map[string]bool{}
+	for _, k := range keyMethodArgs {
+		if v, ok := m[k]; ok {
+			b, _ := json.Marshal(v)
+			shown = append(shown, k+"="+quoted(string(b), 300))
+			seen[k] = true
+		}
+	}
+	for k := range m {
+		if !seen[k] {
+			rest = append(rest, quoted(k, 40))
+		}
+	}
+	sort.Strings(rest)
+	out := strings.Join(shown, ", ")
+	if len(rest) > 0 {
+		if out != "" {
+			out += "; "
+		}
+		out += fmt.Sprintf("%d other arguments: %s", len(rest), strings.Join(rest, ", "))
+	}
+	return out
+}
+
+// confirmMessage says what the call will do.
 func confirmMessage(site string, req mcp.CallToolRequest, sc toolScope) string {
 	args := req.GetArguments()
 	dt := ""
 	if len(sc.Doctypes) > 0 {
-		dt = clip(sc.Doctypes[0], 140)
+		dt = quoted(sc.Doctypes[0], 140)
 	}
-	name := func(i int) string { return strconv.Quote(clip(sc.Names[i], 140)) }
+	name := func(i int) string { return quoted(sc.Names[i], 140) }
 	var what string
 	switch req.Params.Name {
 	case "delete_doc":
@@ -285,23 +384,29 @@ func confirmMessage(site string, req mcp.CallToolRequest, sc toolScope) string {
 		what += "."
 	case "rename_doc":
 		to, _ := docName(args["new_name"])
-		what = fmt.Sprintf("Merge %s %s into %s. %s will no longer exist.", dt, name(0), strconv.Quote(clip(to, 140)), name(0))
+		what = fmt.Sprintf("Merge %s %s into %s. %s will no longer exist.", dt, name(0), quoted(to, 140), name(0))
+	case "apply_workflow":
+		action, _ := args["action"].(string)
+		what = fmt.Sprintf("Apply the workflow action %s to %s %s. It may submit or cancel the document.", quoted(action, 100), dt, name(0))
 	case "call_method":
-		b, _ := json.Marshal(client.RedactArgs(args["args"]))
-		what = fmt.Sprintf("Call %s with %s.", strconv.Quote(clip(sc.Method, 200)), clip(string(b), 500))
+		what = fmt.Sprintf("Call %s with %s.", quoted(sc.Method, 200), methodSummary(args["args"]))
 	}
-	if site == "" {
+	site = quoted(site, 100)
+	if site == `""` {
 		site = "(from the environment)"
 	}
-	return fmt.Sprintf("An AI agent asks to change site %s. %s This cannot be undone.", strconv.Quote(clip(site, 100)), what)
+	return fmt.Sprintf("An AI agent asks to change site %s. %s This cannot be undone.", site, what)
 }
 
 // cliEquivalent is the ffc command that does what the call asked, for a
-// person to run (and confirm) in a terminal. A value with control or
-// invisible characters cannot be shown as is, and changing it would name
-// another document, so then only the command's name is given.
+// person to run (and confirm) in a terminal. When a value cannot be shown
+// as is (control or invisible characters) or would not reach the command
+// unchanged (a --names entry with a comma or edge spaces, which splitCSV
+// would split or trim), only the command's name is given: anything else
+// could name another document.
 func cliEquivalent(site string, req mcp.CallToolRequest, sc toolScope) string {
 	args := req.GetArguments()
+	cmdName := "ffc " + strings.ReplaceAll(req.Params.Name, "_", "-")
 	q := shellQuote
 	parts := []string{"ffc"}
 	if site != "" {
@@ -315,10 +420,19 @@ func cliEquivalent(site string, req mcp.CallToolRequest, sc toolScope) string {
 	case "delete_doc", "cancel_doc":
 		parts = append(parts, strings.ReplaceAll(req.Params.Name, "_", "-"), "--doctype", q(dt), "--name", q(sc.Names[0]))
 	case "bulk_delete":
+		for _, n := range sc.Names {
+			if strings.Contains(n, ",") || strings.TrimSpace(n) != n {
+				return cmdName
+			}
+		}
 		parts = append(parts, "bulk-delete", "--doctype", q(dt), "--names", q(strings.Join(sc.Names, ",")))
 	case "rename_doc":
 		to, _ := docName(args["new_name"])
 		parts = append(parts, "rename-doc", "--doctype", q(dt), "--name", q(sc.Names[0]), "--to", q(to), "--merge")
+	case "apply_workflow":
+		action, _ := args["action"].(string)
+		cmdName = "ffc workflow apply"
+		parts = append(parts, "workflow", "apply", "--doctype", q(dt), "--name", q(sc.Names[0]), "--action", q(action))
 	case "call_method":
 		parts = append(parts, "call-method", "--method", q(sc.Method))
 		if a := args["args"]; a != nil {
@@ -333,5 +447,5 @@ func cliEquivalent(site string, req mcp.CallToolRequest, sc toolScope) string {
 	if cmd := strings.Join(parts, " "); text.Sanitize(cmd) == cmd {
 		return cmd
 	}
-	return "ffc " + strings.ReplaceAll(req.Params.Name, "_", "-")
+	return cmdName
 }

@@ -46,6 +46,7 @@ type auditRecord struct {
 	Method     string      `json:"method,omitempty"`
 	Args       interface{} `json:"args,omitempty"`
 	Status     string      `json:"status"`
+	Confirm    string      `json:"confirm,omitempty"` // a call that needed confirmation: confirmed, unsupported or never
 	Error      string      `json:"error,omitempty"`
 	DurationMS int64       `json:"duration_ms"`
 }

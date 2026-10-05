@@ -104,7 +104,7 @@ func TestMCPConfirm(t *testing.T) {
 			if _, ok := site.Doc("ToDo", "TD-1"); ok {
 				t.Error("TD-1 still exists")
 			}
-			if len(a.asked) != 1 || !strings.Contains(a.asked[0], `site "prod"`) || !strings.Contains(a.asked[0], `Delete ToDo "TD-1".`) {
+			if len(a.asked) != 1 || !strings.Contains(a.asked[0], `site "prod"`) || !strings.Contains(a.asked[0], `Delete "ToDo" "TD-1".`) {
 				t.Errorf("asked %q", a.asked)
 			}
 			if got := strings.Join(mcpTStatuses(t, audit), ","); got != "confirm_pending,ok" {
@@ -197,7 +197,7 @@ func TestMCPConfirmOnlyDestructive(t *testing.T) {
 	if !isErr || !strings.Contains(out, "cancelled by the user") {
 		t.Errorf("merge: %v %q", isErr, out)
 	}
-	if len(a.asked) != 1 || !strings.Contains(a.asked[0], `Merge ToDo "TD-1" into "TD-2". "TD-1" will no longer exist.`) {
+	if len(a.asked) != 1 || !strings.Contains(a.asked[0], `Merge "ToDo" "TD-1" into "TD-2". "TD-1" will no longer exist.`) {
 		t.Errorf("asked %q", a.asked)
 	}
 }
@@ -214,7 +214,7 @@ func TestMCPConfirmBulkMessage(t *testing.T) {
 		t.Fatalf("asked %q", a.asked)
 	}
 	msg := a.asked[0]
-	if !strings.Contains(msg, `Delete 12 ToDo documents: "TD-1evil", "x\ny", "Na",`) || !strings.Contains(msg, `"Nh" and 2 more.`) {
+	if !strings.Contains(msg, `Delete 12 "ToDo" documents: "TD-1\u202eevil", "x\ny", "Na",`) || !strings.Contains(msg, `"Nh" and 2 more.`) {
 		t.Errorf("message %q", msg)
 	}
 	if strings.ContainsAny(msg, "\u202e\n") {
@@ -243,6 +243,19 @@ func TestNeedsConfirm(t *testing.T) {
 		{"call_method", map[string]interface{}{"method": "frappe.client.rename_doc", "args": map[string]interface{}{"merge": "0"}}, true},
 		{"call_method", map[string]interface{}{"method": "frappe.client.rename_doc", "args": `{"merge": 1}`}, true},
 		{"call_method", map[string]interface{}{"method": "frappe.client.rename_doc", "args": `{"doctype": "ToDo"}`}, false},
+		{"apply_workflow", nil, true},
+		{"call_method", map[string]interface{}{"method": "frappe.desk.form.save.discard"}, true},
+		{"call_method", map[string]interface{}{"method": "frappe.desk.form.linked_with.cancel_all_linked_docs"}, true},
+		{"call_method", map[string]interface{}{"method": "frappe.model.workflow.apply_workflow"}, true},
+		{"call_method", map[string]interface{}{"method": "frappe.model.workflow.bulk_workflow_approval"}, true},
+		{"call_method", map[string]interface{}{"method": "run_doc_method", "args": map[string]interface{}{"dt": "ToDo", "method": "cancel"}}, true},
+		{"call_method", map[string]interface{}{"method": "frappe.handler.run_doc_method", "args": `{"dt": "ToDo", "method": " Discard "}`}, true},
+		{"call_method", map[string]interface{}{"method": "frappe.handler.run_doc_method", "args": map[string]interface{}{"dt": "ToDo", "method": "rename"}}, true},
+		{"call_method", map[string]interface{}{"method": "frappe.handler.run_doc_method", "args": map[string]interface{}{"dt": "ToDo", "method": "get_feed"}}, false},
+		{"call_method", map[string]interface{}{"method": "frappe.desk.form.save.savedocs", "args": map[string]interface{}{"doc": "{}", "action": "Cancel"}}, true},
+		{"call_method", map[string]interface{}{"method": "frappe.desk.form.save.savedocs", "args": map[string]interface{}{"doc": "{}", "action": "Save"}}, false},
+		{"call_method", map[string]interface{}{"method": "frappe.desk.doctype.bulk_update.bulk_update.submit_cancel_or_update_docs", "args": map[string]interface{}{"doctype": "ToDo", "action": "cancel"}}, true},
+		{"call_method", map[string]interface{}{"method": "frappe.desk.doctype.bulk_update.bulk_update.submit_cancel_or_update_docs", "args": map[string]interface{}{"doctype": "ToDo"}}, false},
 	} {
 		req := mcp.CallToolRequest{}
 		req.Params.Name, req.Params.Arguments = tc.tool, tc.args
@@ -303,6 +316,9 @@ func TestCLIEquivalent(t *testing.T) {
 		{"rename_doc", map[string]interface{}{"doctype": "ToDo", "name": "a", "new_name": "it's", "merge": true}, `ffc --site prod rename-doc --doctype ToDo --name a --to 'it'\''s' --merge`},
 		{"call_method", map[string]interface{}{"method": "frappe.client.delete", "args": map[string]interface{}{"doctype": "ToDo", "name": "a"}}, `ffc --site prod call-method --method frappe.client.delete --args '{"doctype":"ToDo","name":"a"}'`},
 		{"delete_doc", map[string]interface{}{"doctype": "ToDo", "name": "a\x1b[2J"}, "ffc delete-doc"},
+		{"bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"A,B"}}, "ffc bulk-delete"},
+		{"bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"a", " b"}}, "ffc bulk-delete"},
+		{"apply_workflow", map[string]interface{}{"doctype": "ToDo", "name": "a", "action": "Reject it"}, "ffc --site prod workflow apply --doctype ToDo --name a --action 'Reject it'"},
 	} {
 		req := mcp.CallToolRequest{}
 		req.Params.Name, req.Params.Arguments = tc.tool, tc.args
@@ -332,5 +348,71 @@ func TestMCPConfirmFlag(t *testing.T) {
 	mcpFlags = config.MCPPolicy{Confirm: "always"}
 	if got := strings.Join(daemonArgs("", 1), " "); !strings.HasSuffix(got, " --confirm=always") {
 		t.Errorf("daemon args = %q", got)
+	}
+}
+
+// Padding arguments cannot push the key ones out of the question, and an
+// invisible character in a name shows escaped instead of disappearing.
+func TestConfirmMessageShowsWhatMatters(t *testing.T) {
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "call_method"
+	req.Params.Arguments = map[string]interface{}{"method": "frappe.desk.reportview.delete_items", "args": map[string]interface{}{
+		"a": strings.Repeat("x", 2000), "doctype": "Sales Invoice", "items": `["SINV-1"]`, "api_key": "secret-value",
+	}}
+	sc, err := scopeOf(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := confirmMessage("prod", req, sc)
+	for _, want := range []string{`doctype="\"Sales Invoice\""`, `items="\"[\\\"SINV-1\\\"]\""`, `2 other arguments: "a", "api_key"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message lacks %s:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "xxxx") || strings.Contains(msg, "secret-value") {
+		t.Errorf("message shows padding or a secret: %s", msg)
+	}
+
+	req.Params.Name = "delete_doc"
+	req.Params.Arguments = map[string]interface{}{"doctype": "ToDo", "name": "INV-001\u200b"}
+	if sc, err = scopeOf(req); err != nil {
+		t.Fatal(err)
+	}
+	if msg := confirmMessage("prod", req, sc); !strings.Contains(msg, `"INV-001\u200b"`) {
+		t.Errorf("zero-width space not shown: %s", msg)
+	}
+}
+
+// The audit line records whether a call that needed confirmation got it.
+func TestMCPConfirmAudit(t *testing.T) {
+	del := map[string]interface{}{"doctype": "ToDo", "name": "TD-1"}
+	for _, tc := range []struct {
+		name  string
+		cfg   *config.MCPPolicy
+		asker *mcpTAsker
+		want  string
+	}{
+		{"confirmed", nil, &mcpTAsker{action: mcp.ElicitationResponseActionAccept, confirm: true}, "confirmed"},
+		{"unsupported", nil, nil, "unsupported"},
+		{"never", &config.MCPPolicy{Confirm: "never"}, nil, "never"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _, audit := mcpTPolicy(t, tc.cfg, config.MCPPolicy{})
+			if out, isErr := mcpTCall(t, mcpTClient(t, s, tc.asker, false), "delete_doc", del); isErr {
+				t.Fatal(out)
+			}
+			raw, err := os.ReadFile(audit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+			var r auditRecord
+			if err := json.Unmarshal([]byte(lines[len(lines)-1]), &r); err != nil {
+				t.Fatal(err)
+			}
+			if r.Status != auditOK || r.Confirm != tc.want {
+				t.Errorf("last line status %q confirm %q, want ok %q", r.Status, r.Confirm, tc.want)
+			}
+		})
 	}
 }
