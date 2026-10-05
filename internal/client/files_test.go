@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -270,6 +271,90 @@ func TestDownloadRetries(t *testing.T) {
 	if resp.Status != http.StatusServiceUnavailable || k.Load() != 3 {
 		t.Errorf("status %d after %d requests, want 503 after 3", resp.Status, k.Load())
 	}
+
+	// A timeout is not retried: one request.
+	var slow atomic.Int32
+	release := make(chan struct{})
+	srvSlow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slow.Add(1)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srvSlow.Close()
+	defer close(release)
+	c = newKeyClient(t, srvSlow.URL)
+	c.raw.SetTimeout(100 * time.Millisecond)
+	if resp, err := c.Download(context.Background(), "/files/x", nil); err == nil {
+		_ = resp.Body.Close()
+		t.Error("timeout: no error")
+	}
+	if slow.Load() != 1 {
+		t.Errorf("timeout: %d requests, want 1", slow.Load())
+	}
+
+	// A connection reset is retried: three requests.
+	var reset atomic.Int32
+	srvReset := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reset.Add(1)
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if tc, ok := conn.(*net.TCPConn); ok {
+			_ = tc.SetLinger(0) // close with RST
+		}
+		_ = conn.Close()
+	}))
+	defer srvReset.Close()
+	c = newKeyClient(t, srvReset.URL)
+	if resp, err := c.Download(context.Background(), "/files/x", nil); err == nil {
+		_ = resp.Body.Close()
+		t.Error("reset: no error")
+	}
+	if reset.Load() != 3 {
+		t.Errorf("reset: %d requests, want 3", reset.Load())
+	}
+
+	// Every retried response's body is closed, and the last one is the
+	// caller's to close.
+	var opened, closed atomic.Int32
+	c = newKeyClient(t, srv3.URL)
+	c.raw.SetTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		resp, err := http.DefaultTransport.RoundTrip(r)
+		if err == nil {
+			opened.Add(1)
+			resp.Body = &closeCounter{ReadCloser: resp.Body, n: &closed}
+		}
+		return resp, err
+	}))
+	resp, err = c.Download(context.Background(), "/files/x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.Load() != 3 || closed.Load() != 2 {
+		t.Errorf("before Close: %d bodies opened, %d closed; want 3 and 2", opened.Load(), closed.Load())
+	}
+	_ = resp.Body.Close()
+	if closed.Load() != 3 {
+		t.Errorf("after Close: %d of 3 bodies closed", closed.Load())
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type closeCounter struct {
+	io.ReadCloser
+	n *atomic.Int32
+}
+
+func (b *closeCounter) Close() error {
+	b.n.Add(1)
+	return b.ReadCloser.Close()
 }
 
 // The client timeout bounds the whole download, not each attempt.
