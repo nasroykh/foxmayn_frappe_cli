@@ -571,7 +571,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `get_transitions` | `ffc workflow transitions` |
 | `apply_workflow`  | `ffc workflow apply`       |
 | `add_comment`     | `ffc comment` (collab)     |
-| `assign_to`       | `ffc assign` (collab)      |
+| `assign_to`       | `ffc assign` (collab; confirmed: an assignee who cannot read the document gets it shared) |
 | `remove_assignment` | `ffc unassign` (collab)  |
 | `add_tag`         | `ffc tag` (collab)         |
 | `remove_tag`      | `ffc untag` (collab)       |

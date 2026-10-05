@@ -382,3 +382,70 @@ func TestMCPCollabCallMethodScope(t *testing.T) {
 		t.Errorf("share.add via call_method: %v", err)
 	}
 }
+
+func TestCollabWidenConfirm(t *testing.T) {
+	req := func(tool string, args map[string]interface{}) mcp.CallToolRequest {
+		r := mcp.CallToolRequest{}
+		r.Params.Name, r.Params.Arguments = tool, args
+		return r
+	}
+	method := func(m string, args map[string]interface{}) bool {
+		return needsConfirm(req("call_method", map[string]interface{}{"method": m, "args": args}), m)
+	}
+	if !needsConfirm(req("assign_to", map[string]interface{}{"doctype": "ToDo", "name": "TD-1", "users": "u"}), "") {
+		t.Error("assign_to is not confirmed")
+	}
+	for _, c := range []struct {
+		method string
+		args   map[string]interface{}
+		want   bool
+	}{
+		{"frappe.share.add", map[string]interface{}{"doctype": "Note", "name": "N1", "user": "u"}, true},
+		{"frappe.desk.form.assign_to.add", map[string]interface{}{"doctype": "Note", "name": "N1", "assign_to": `["u"]`}, true},
+		{"frappe.desk.form.assign_to.add_multiple", map[string]interface{}{"doctype": "Note", "name": `["N1"]`}, true},
+		{"frappe.share.set_permission", map[string]interface{}{"doctype": "Note", "name": "N1", "user": "u", "permission_to": "write"}, true},
+		{"frappe.share.set_permission", map[string]interface{}{"doctype": "Note", "name": "N1", "permission_to": "write", "value": float64(1)}, true},
+		{"frappe.share.set_permission", map[string]interface{}{"doctype": "Note", "name": "N1", "permission_to": "write", "value": "1"}, true},
+		{"frappe.share.set_permission", map[string]interface{}{"doctype": "Note", "name": "N1", "permission_to": "read", "value": float64(0)}, false},
+		{"frappe.share.set_permission", map[string]interface{}{"doctype": "Note", "name": "N1", "permission_to": "read", "value": "0"}, false},
+		{"frappe.desk.form.assign_to.remove", map[string]interface{}{"doctype": "Note", "name": "N1", "assign_to": "u"}, false},
+	} {
+		if got := method(c.method, c.args); got != c.want {
+			t.Errorf("%s %v: confirm %v, want %v", c.method, c.args, got, c.want)
+		}
+	}
+
+	// The question says what may be widened, and the CLI equivalent assigns.
+	cfg := &config.MCPPolicy{Confirm: "always"}
+	s, site, _, _ := mcpTPolicy(t, cfg, config.MCPPolicy{})
+	todo := map[string]interface{}{"doctype": "ToDo", "name": "TD-1", "users": []string{"u@example.com"}, "priority": "High"}
+	mcpTErr(t, s, "assign_to", todo, "Run it in a terminal instead: ffc --site prod assign --doctype ToDo --name TD-1 --to 'u@example.com' --priority High")
+	if n := len(site.RequestsTo("POST", "/api/method/frappe.desk.form.assign_to.add")); n != 0 {
+		t.Error("assign_to sent without confirmation")
+	}
+	cfg.Confirm = ""
+	s, site, _, _ = mcpTPolicy(t, cfg, config.MCPPolicy{})
+	a := &mcpTAsker{action: mcp.ElicitationResponseActionAccept, confirm: true}
+	if out, isErr := mcpTCall(t, mcpTClient(t, s, a, false), "assign_to", todo); isErr {
+		t.Fatalf("assign_to: %s", out)
+	}
+	if len(a.asked) != 1 || !strings.Contains(a.asked[0], `to "u@example.com"`) || !strings.Contains(a.asked[0], "read access to it through a share") {
+		t.Errorf("asked %q", a.asked)
+	}
+	if site.Count("ToDo") != 2 { // TD-1 and the assignment
+		t.Errorf("%d ToDos", site.Count("ToDo"))
+	}
+
+	// call_method frappe.share.add is refused by default (DocShare is
+	// sensitive); allowed by the config, it is confirmed like share_doc.
+	share := map[string]interface{}{"method": "frappe.share.add", "args": map[string]interface{}{"doctype": "ToDo", "name": "TD-1", "user": "u@example.com"}}
+	mcpTErr(t, s, "call_method", share, `DocType "DocShare" is sensitive`)
+	s, _, _, _ = mcpTPolicy(t, &config.MCPPolicy{AllowDoctypes: []string{"ToDo", "DocShare"}, AllowMethods: []string{"frappe.share.*"}}, config.MCPPolicy{})
+	a = &mcpTAsker{action: mcp.ElicitationResponseActionDecline}
+	if out, _ := mcpTCall(t, mcpTClient(t, s, a, false), "call_method", share); !strings.Contains(out, "cancelled by the user") {
+		t.Errorf("call_method share.add: %s", out)
+	}
+	if len(a.asked) != 1 || !strings.Contains(a.asked[0], "access to documents beyond what their roles allow") || strings.Contains(a.asked[0], "cannot be undone") {
+		t.Errorf("asked %q", a.asked)
+	}
+}

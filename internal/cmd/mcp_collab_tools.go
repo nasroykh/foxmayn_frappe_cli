@@ -66,7 +66,7 @@ func registerCollabTools(s *server.MCPServer, env *mcpEnv) {
 		}))
 
 	s.AddTool(docTool("assign_to",
-		"Assign a document to users: each gets an open ToDo and a notification. Users already assigned are reported in already_assigned, not assigned twice. An assignee who cannot read the document gets it shared read-only. Needs read permission on the document. Returns assigned, already_assigned and assignees (everyone assigned now).",
+		"Assign a document to users: each gets an open ToDo and a notification. Users already assigned are reported in already_assigned, not assigned twice. An assignee who cannot read the document gets read access to it through a share, so the user may be asked to confirm. Needs read permission on the document. Returns assigned, already_assigned and assignees (everyone assigned now).",
 		false, false, idem,
 		listParam("users", `User IDs (usually emails) as an array, e.g. ["jane@example.com"], or comma-separated`),
 		mcp.WithString("description", mcp.Description(`ToDo description (default "Assignment for <DocType> <name>")`)),

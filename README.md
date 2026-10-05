@@ -704,13 +704,14 @@ sites:
 - A refused call sends nothing to the site and returns an error starting with `policy:` that names the setting to change.
 - A misspelt key under `mcp:` is an error, so a policy is never silently ignored.
 
-**Confirmation.** Before `delete_doc`, `bulk_delete`, `cancel_doc`, `rename_doc` with `merge`, `apply_workflow` (an action may submit or cancel), `share_doc` (it widens who can open the document) and the `call_method` equivalents, ffc asks the user through the MCP client (elicitation). The client shows what will be deleted, cancelled or merged, and nothing is sent to the site unless the user ticks Confirm. The `call_method` equivalents are:
+**Confirmation.** Before `delete_doc`, `bulk_delete`, `cancel_doc`, `rename_doc` with `merge`, `apply_workflow` (an action may submit or cancel), `share_doc` (it widens who can open the document), `assign_to` (Frappe shares the document read-only with an assignee who cannot read it) and the `call_method` equivalents, ffc asks the user through the MCP client (elicitation). The client shows what will be deleted, cancelled or merged, and nothing is sent to the site unless the user ticks Confirm. The `call_method` equivalents are:
 - `frappe.client.delete`, `frappe.client.cancel` and `frappe.desk.reportview.delete_items`;
 - `frappe.desk.form.save.cancel` and `discard`, `savedocs` with action Cancel, and `cancel_all_linked_docs`;
 - `submit_cancel_or_update_docs` with action cancel;
 - `run_doc_method` with cancel, discard or rename;
 - the `frappe.model.workflow` apply methods;
-- `rename_doc` or `update_document_title` with `merge`. A "no" returns `cancelled by the user; nothing was changed`.
+- `rename_doc` or `update_document_title` with `merge`;
+- `frappe.share.add`, `frappe.share.set_permission` with a true `value` (Frappe's default), and `frappe.desk.form.assign_to.add` / `add_multiple`, which may give users access to a document. A "no" returns `cancelled by the user; nothing was changed`.
 
 - `confirm: if-supported` (the default) asks when the client supports elicitation and goes ahead without asking when it does not.
 - `confirm: always` refuses the call when the client cannot ask, and names the `ffc` command to run in a terminal instead.
