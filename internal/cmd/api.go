@@ -542,5 +542,6 @@ func init() {
 	apiCmd.Flags().StringVar(&apiOutFile, "output-file", "", "Save the response body to a file (for binary downloads)")
 	apiCmd.Flags().BoolVar(&apiSilent, "silent", false, "Do not print the response body")
 	apiCmd.MarkFlagsMutuallyExclusive("output-file", "silent")
+	addDryRun(apiCmd, true)
 	rootCmd.AddCommand(apiCmd)
 }

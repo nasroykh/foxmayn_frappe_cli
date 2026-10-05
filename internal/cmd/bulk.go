@@ -253,6 +253,9 @@ func (f *bulkFlags) run(cmd *cobra.Command, title string, n int, done string, op
 		return bulkReport{}, err
 	}
 	defer c.CloseQuietly()
+	if client.IsDryRun(cmd.Context()) {
+		return bulkReport{}, planAll(cmd.Context(), c, n, op)
+	}
 	var rep bulkReport
 	_ = runSpinner(title, func() {
 		rep = runBulk(cmd.Context(), n, f.concurrency, f.failFast, done, func(ctx context.Context, i int) (string, error) {
@@ -260,4 +263,22 @@ func (f *bulkFlags) run(cmd *cobra.Command, title string, n int, done string, op
 		})
 	})
 	return rep, nil
+}
+
+// planAll runs op on every item under a dry run, one at a time, and returns
+// all the requests it would have sent as one *client.DryRunError.
+func planAll(ctx context.Context, c *client.FrappeClient, n int, op func(ctx context.Context, c *client.FrappeClient, i int) (string, error)) error {
+	all := &client.DryRunError{}
+	for i := 0; i < n; i++ {
+		_, err := op(ctx, c, i)
+		var plan *client.DryRunError
+		switch {
+		case err == nil:
+			return fmt.Errorf("item %d: the dry run held nothing back", i+1)
+		case !errors.As(err, &plan):
+			return fmt.Errorf("item %d: %w", i+1, err)
+		}
+		all.Requests = append(all.Requests, plan.Requests...)
+	}
+	return all
 }

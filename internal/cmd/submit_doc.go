@@ -71,5 +71,6 @@ func init() {
 	submitDocCmd.Flags().StringVar(&sdKeys, "keys", "", "Comma-separated keys to include in data output, e.g. name,docstatus")
 	_ = submitDocCmd.MarkFlagRequired("doctype")
 	_ = submitDocCmd.MarkFlagRequired("name")
+	addDryRun(submitDocCmd, false)
 	rootCmd.AddCommand(submitDocCmd)
 }

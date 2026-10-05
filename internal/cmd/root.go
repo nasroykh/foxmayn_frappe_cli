@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,6 +25,7 @@ var (
 	jsonOutput bool
 	quiet      bool
 	noInput    bool
+	debugFlag  string
 )
 
 var rootCmd = &cobra.Command{
@@ -32,8 +34,8 @@ var rootCmd = &cobra.Command{
 	Long: `ffc is a minimal CLI for interacting with Frappe ERP sites via the REST API.
 
 Config file: ~/.config/ffc/config.yaml
-Env vars:    FFC_SITE, FFC_CONFIG, FFC_TIMEOUT (like --site, --config, --timeout;
-             a flag wins over the variable),
+Env vars:    FFC_SITE, FFC_CONFIG, FFC_TIMEOUT, FFC_OUTPUT, FFC_DEBUG (like --site,
+             --config, --timeout, --output, --debug; a flag wins over the variable),
              FFC_API_KEY + FFC_API_SECRET (override the site's credentials),
              FFC_URL (with the env key pair, or alone when there is no config file),
              FFC_NO_UPDATE_CHECK (disable the daily update check)
@@ -88,6 +90,13 @@ func execute(ctx context.Context, args []string, stderr io.Writer) (int, error) 
 	if err == nil {
 		return exitOK, nil
 	}
+	// A dry run ends at its first held-back write: print it, exit 0.
+	if planned, perr := dryRunResult(err); planned {
+		if perr != nil {
+			return reportError(stderr, perr, jsonOutput), perr
+		}
+		return exitOK, nil
+	}
 	if ctx.Err() != nil {
 		err = fmt.Errorf("interrupted: %w", context.Canceled)
 	} else if !runStarted {
@@ -110,6 +119,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress the progress spinner (also off when stderr is not a terminal, or NO_COLOR or CI is set)")
 	rootCmd.PersistentFlags().BoolVar(&noInput, "no-input", false, "Never prompt; fail instead (also on when stdin is not a terminal). Pass --yes to confirm deletions")
 	rootCmd.PersistentFlags().DurationVar(&client.Timeout, "timeout", client.Timeout, "HTTP timeout per request to the site (raise it for heavy reports), e.g. 2m")
+	rootCmd.PersistentFlags().StringVar(&debugFlag, "debug", "", "Trace every HTTP request on stderr, secrets redacted; --debug=body adds headers and bodies (or $FFC_DEBUG)")
+	rootCmd.PersistentFlags().Lookup("debug").NoOptDefVal = "basic"
 
 	// Version template: "ffc version v0.1.0 (abc1234, 2026-03-09)"
 	cobra.OnInitialize(applyEnv)
@@ -126,6 +137,9 @@ var envErr error
 func applyEnv() {
 	envErr = resolveOutput()
 	flags := rootCmd.PersistentFlags()
+	if err := resolveDebug(flags.Changed("debug")); err != nil {
+		envErr = errors.Join(envErr, err)
+	}
 	if v := os.Getenv("FFC_SITE"); v != "" && !flags.Changed("site") {
 		siteName = v
 	}
@@ -140,4 +154,36 @@ func applyEnv() {
 		}
 		client.Timeout = d
 	}
+}
+
+// resolveDebug sets client.Debug from --debug or FFC_DEBUG (off, 1/basic,
+// body). An invalid value is a usage error, reported before any request.
+func resolveDebug(flagSet bool) error {
+	client.Debug = client.DebugOff
+	v, from := debugFlag, "--debug"
+	if !flagSet {
+		v, from = os.Getenv("FFC_DEBUG"), "FFC_DEBUG"
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "0", "false", "off":
+		return nil
+	case "1", "true", "on", "basic":
+		client.Debug = client.DebugBasic
+		return nil
+	case "body":
+		client.Debug = client.DebugBody
+		return nil
+	}
+	return usageErrorf("%s=%q: want basic or body", from, v)
+}
+
+// debugLevelName is the --debug value for a level ("" when off).
+func debugLevelName(l client.DebugLevel) string {
+	switch l {
+	case client.DebugBasic:
+		return "basic"
+	case client.DebugBody:
+		return "body"
+	}
+	return ""
 }

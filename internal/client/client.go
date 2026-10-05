@@ -63,6 +63,7 @@ func New(ctx context.Context, cfg *config.SiteConfig) (*FrappeClient, error) {
 		SetRetryMaxWaitTime(maxRetryAfter).
 		SetRetryAfter(retryAfter).
 		AddRetryCondition(retryableGET).
+		AddRetryHook(debugRetry).
 		SetHeader("Accept", "application/json")
 	c := &FrappeClient{r: r}
 
@@ -167,6 +168,9 @@ func (c *FrappeClient) send(ctx context.Context, r *resty.Client, method, path s
 	attempt := func() (*resty.Response, error) {
 		req := r.R().SetContext(ctx)
 		build(req)
+		if holdBack(ctx, method) {
+			return nil, plan(r, req, method, path)
+		}
 		if c.session != nil {
 			c.mu.Lock()
 			sid = c.sid

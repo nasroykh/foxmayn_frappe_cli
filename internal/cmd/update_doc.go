@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -49,7 +50,20 @@ Examples:
 		name := docNameOrSingle(udName, udDoctype)
 
 		doc, err := callSite(cmd, fmt.Sprintf("Updating %s %s…", udDoctype, name), func(ctx context.Context, c *client.FrappeClient) (map[string]interface{}, error) {
-			return c.UpdateDoc(ctx, udDoctype, name, data)
+			if !client.IsDryRun(ctx) {
+				return c.UpdateDoc(ctx, udDoctype, name, data)
+			}
+			// Show what the update would change, from the current document.
+			current, err := c.GetDoc(ctx, udDoctype, name)
+			if err != nil {
+				return nil, err
+			}
+			_, err = c.UpdateDoc(ctx, udDoctype, name, data)
+			var plan *client.DryRunError
+			if errors.As(err, &plan) {
+				plan.Requests[0].Changes = fieldChanges(current, data)
+			}
+			return nil, err
 		})
 		if err != nil {
 			return err
@@ -82,5 +96,6 @@ func init() {
 	_ = updateDocCmd.MarkFlagRequired("doctype")
 	_ = updateDocCmd.MarkFlagRequired("data")
 
+	addDryRun(updateDocCmd, false)
 	rootCmd.AddCommand(updateDocCmd)
 }

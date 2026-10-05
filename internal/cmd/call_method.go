@@ -63,5 +63,6 @@ func init() {
 	callMethodCmd.Flags().BoolVar(&cmGet, "get", false, "Send as a GET request (for methods whitelisted GET-only)")
 	callMethodCmd.Flags().BoolVar(&cmRaw, "raw", false, `Print the whole response object, not only "message"`)
 	_ = callMethodCmd.MarkFlagRequired("method")
+	addDryRun(callMethodCmd, true)
 	rootCmd.AddCommand(callMethodCmd)
 }

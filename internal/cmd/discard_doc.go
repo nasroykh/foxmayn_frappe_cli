@@ -30,7 +30,7 @@ Examples:
 `,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !dcYes {
+		if !dcYes && !dryRunOn(cmd) {
 			if err := confirm(fmt.Sprintf("Discard the draft %s %q?", dcDoctype, dcName)); err != nil {
 				return err
 			}
@@ -55,5 +55,6 @@ func init() {
 	discardDocCmd.Flags().BoolVarP(&dcYes, "yes", "y", false, "Skip confirmation prompt")
 	_ = discardDocCmd.MarkFlagRequired("doctype")
 	_ = discardDocCmd.MarkFlagRequired("name")
+	addDryRun(discardDocCmd, false)
 	rootCmd.AddCommand(discardDocCmd)
 }

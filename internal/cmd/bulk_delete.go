@@ -56,7 +56,7 @@ Examples:
 			return usageErrorf("provide --names or --file")
 		}
 
-		if !bdYes {
+		if !bdYes && !dryRunOn(cmd) {
 			preview := names
 			if len(preview) > 10 {
 				preview = append(append([]string{}, names[:10]...), fmt.Sprintf("… and %d more", len(names)-10))
@@ -89,5 +89,6 @@ func init() {
 	_ = bulkDeleteCmd.MarkFlagRequired("doctype")
 	bulkDeleteCmd.MarkFlagsMutuallyExclusive("names", "file")
 
+	addDryRun(bulkDeleteCmd, false)
 	rootCmd.AddCommand(bulkDeleteCmd)
 }
