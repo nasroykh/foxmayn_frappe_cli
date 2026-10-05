@@ -251,7 +251,7 @@ ffc aggregate -d "Sales Invoice" --sum grand_total --min posting_date --max post
 
 Field names must be plain fieldnames of the DocType: `link.field` / `child.field` and anything not an identifier is a usage error (exit 2) before any request. Numbers keep the server literal (a Currency sum is `20.0`).
 
-**Version hazard:** Frappe v16 rejects SQL functions written as strings in `fields`, so `ffc list-docs --fields '["status","count(name) as n"]'` fails there (exit 6, `ValidationError: SQL functions are not allowed as strings in SELECT`); v15 accepts only that form. `ffc aggregate` picks the right form from the site's cached version and retries once with the other if the site refuses the first.
+**Version hazard:** Frappe v16 rejects SQL functions written as strings in `fields`, so `ffc list-docs --fields '["status","count(name) as n"]'` fails there (exit 6, `ValidationError: SQL functions are not allowed as strings in SELECT`); v15 accepts only that form. `ffc aggregate` picks the right form from the site's cached version and retries once with the other if the site refuses the first. A field you may not read (permission level) exits 5 on both versions (v15 would silently drop the aggregate; ffc detects the missing column).
 
 ---
 

@@ -2,9 +2,13 @@ package client
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 )
 
 func TestSyntaxFor(t *testing.T) {
@@ -118,5 +122,36 @@ func TestAggregateV15OperatorField(t *testing.T) {
 	q := AggregateQuery{GroupBy: []string{"Like"}, Aggregates: []AggregateField{{Func: AggCount, Alias: "count"}}}
 	if _, err := c.Aggregate(context.Background(), "ToDo", q, SyntaxString); err == nil || !strings.Contains(err.Error(), "SQL operator") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// v15 drops an aggregate on a field above the user's permission level from
+// the query without a word; ffc then fails like v16 instead of returning
+// rows without the column.
+func TestAggregateMissingColumn(t *testing.T) {
+	body := `{"data":[{"status":"Open","count":2}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	fc, err := New(context.Background(), &config.SiteConfig{URL: srv.URL, APIKey: "k", APISecret: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := AggregateQuery{GroupBy: []string{"status"}, Aggregates: []AggregateField{
+		{Func: AggCount, Alias: "count"}, {Func: AggSum, Field: "secret", Alias: "sum_secret"}}}
+	_, err = fc.Aggregate(context.Background(), "ToDo", q, SyntaxString)
+	var e *APIError
+	if !errors.As(err, &e) || e.Status != http.StatusForbidden || e.ExcType != "PermissionError" || !strings.Contains(e.Message, "SUM(ToDo.secret)") {
+		t.Fatalf("err = %v", err)
+	}
+	q.Aggregates = q.Aggregates[:1]
+	if rows, err := fc.Aggregate(context.Background(), "ToDo", q, SyntaxString); err != nil || len(rows) != 1 {
+		t.Fatalf("rows %v, err %v", rows, err)
+	}
+	body = `{"data":[]}` // no row: nothing to check
+	q.GroupBy = []string{"priority"}
+	if _, err := fc.Aggregate(context.Background(), "ToDo", q, SyntaxString); err != nil {
+		t.Fatal(err)
 	}
 }

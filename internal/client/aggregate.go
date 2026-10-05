@@ -283,13 +283,37 @@ func (c *FrappeClient) Aggregate(ctx context.Context, doctype string, q Aggregat
 	if err := c.do(ctx, http.MethodGet, resourcePath(doctype), nil, params, readHints(doctype), &result); err != nil {
 		return nil, err
 	}
-	switch {
-	case result.Data != nil:
-		return result.Data, nil
-	case result.Message != nil:
-		return result.Message, nil
+	rows := result.Data
+	if rows == nil {
+		rows = result.Message
 	}
-	return []map[string]interface{}{}, nil
+	if rows == nil {
+		return []map[string]interface{}{}, nil
+	}
+	return rows, q.checkColumns(doctype, rows)
+}
+
+// checkColumns fails when a requested column is missing from the rows. v15's
+// reportview.validate_fields silently drops a field the user may not read
+// at its permission level (reportview.py ~131), so its aggregate would just
+// be absent; v16 refuses such a field with a PermissionError instead.
+func (q AggregateQuery) checkColumns(doctype string, rows []map[string]interface{}) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	for _, g := range q.GroupBy {
+		if _, ok := rows[0][g]; !ok {
+			return &APIError{Status: http.StatusForbidden, ExcType: "PermissionError",
+				Message: fmt.Sprintf("the site left %s.%s out of the result: your user may not read that field (permission level)", doctype, g)}
+		}
+	}
+	for _, a := range q.Aggregates {
+		if _, ok := rows[0][a.Alias]; !ok {
+			return &APIError{Status: http.StatusForbidden, ExcType: "PermissionError",
+				Message: fmt.Sprintf("the site left %s(%s.%s) out of the result: your user may not read that field (permission level)", a.Func, doctype, a.Field)}
+		}
+	}
+	return nil
 }
 
 // SyntaxRejected reports whether err is how a site that wants the other
