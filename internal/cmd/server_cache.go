@@ -27,22 +27,63 @@ const serverCacheTTL = 24 * time.Hour
 // on Linux only).
 var userCacheDir = os.UserCacheDir
 
-// serverCacheDir returns ffc's cache directory for a site:
-// <user cache dir>/ffc/<site>, where <site> is the site's name made safe for
-// a path plus a short hash of the exact name. A name may hold "/", "..", a
-// colon or anything else a config key can, and two names that differ only in
-// such characters ("a/b", "a_b") must not share a directory. A site that has
-// no name (it comes from FFC_* variables alone) is keyed by its URL.
+// serverCacheDir returns ffc's cache directory for a site and the
+// credentials it signs in with: <user cache dir>/ffc/<site>/<credential>.
+//
+// <site> is the site's name made safe for a path plus a short hash of the
+// exact name. A name may hold "/", "..", a colon or anything else a config
+// key can, and two names that differ only in such characters ("a/b", "a_b")
+// must not share a directory. A site that has no name (it comes from FFC_*
+// variables alone) is keyed by its URL.
+//
+// <credential> (credentialID) separates what one login may see from what
+// another may: the DocType and report lists and the schemas depend on the
+// user's permissions, so FFC_API_KEY on a named site, two env-only key pairs
+// on one URL, or a site re-added with other credentials never share entries.
 func serverCacheDir(cfg *config.SiteConfig) (string, error) {
+	root, err := siteCacheRoot(cfg)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, credentialID(cfg)), nil
+}
+
+// siteCacheRoot is <user cache dir>/ffc/<site>: the cache of every
+// credential of one site, which site remove, rename, edit and cache clear
+// delete.
+func siteCacheRoot(cfg *config.SiteConfig) (string, error) {
 	base, err := userCacheDir()
 	if err != nil {
 		return "", err
 	}
 	key := cfg.Name
 	if key == "" {
-		key = "env:" + cfg.URL
+		// A password in the URL must not end up in a directory name.
+		key = "env:" + redactedURL(cfg.URL)
 	}
 	return filepath.Join(base, "ffc", cacheDirName(key)), nil
+}
+
+// credentialID names the identity a site signs in as, in the order
+// client.New picks the method: the OAuth client, the API key or the
+// username, hashed. It never uses a secret (token, API secret, password),
+// so it stays the same when a token is refreshed. An OAuth site authorised
+// again as another user keeps its client id; that goes through site add,
+// which drops the site's cache.
+func credentialID(cfg *config.SiteConfig) string {
+	var kind, id string
+	switch {
+	case cfg.AccessToken != "":
+		kind, id = "oauth", cfg.OAuthClientID
+	case cfg.APIKey != "" && cfg.APISecret != "":
+		kind, id = "key", cfg.APIKey
+	case cfg.IsSessionAuth():
+		kind, id = "user", cfg.Username
+	default:
+		return "none"
+	}
+	sum := sha256.Sum256([]byte(kind + "\x00" + id))
+	return kind + "-" + hex.EncodeToString(sum[:8])
 }
 
 // cacheDirName turns a site name into one safe path element.

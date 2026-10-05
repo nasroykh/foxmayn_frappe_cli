@@ -327,11 +327,23 @@ func TestCacheCommands(t *testing.T) {
 		t.Errorf("table status: %s", r.Stdout)
 	}
 
-	// A DocType that does not exist fails warm (not found), after the lists
-	// were cached.
+	// A DocType that does not exist is a partial failure (exit 8), listed in
+	// the result; the lists and the other schema are still cached.
+	r = runFFC(t, cfgPath, "", "--json", "cache", "warm", "--doctypes", "Nope,ToDo")
+	var pw struct {
+		Doctypes int
+		Schemas  []string
+		Errors   []struct{ Item, Error string }
+	}
+	if err := json.Unmarshal([]byte(r.Stdout), &pw); err != nil || r.Code != exitPartial {
+		t.Fatalf("warm with an unknown DocType: code %d err %v\n%s", r.Code, r.Err, r.Stdout)
+	}
+	if pw.Doctypes != 5 || len(pw.Schemas) != 1 || len(pw.Errors) != 1 || pw.Errors[0].Item != "schema:Nope" || !strings.Contains(pw.Errors[0].Error, "Nope") {
+		t.Errorf("partial warm: %+v", pw)
+	}
 	r = runFFC(t, cfgPath, "", "cache", "warm", "--doctypes", "Nope")
-	if r.Err == nil || r.Code != exitNotFound || !strings.Contains(r.Stderr, "Nope") {
-		t.Errorf("warm with an unknown DocType: code %d err %v", r.Code, r.Err)
+	if r.Code != exitPartial || !strings.Contains(r.Stderr, "failed: schema:Nope") || !strings.Contains(r.Stdout, "Cached 5 DocTypes") {
+		t.Errorf("table warm: code %d\n%s\n%s", r.Code, r.Stdout, r.Stderr)
 	}
 
 	// The other site's cache is separate; clear removes only the selected one.

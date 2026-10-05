@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -58,9 +57,9 @@ var cacheStatusCmd = &cobra.Command{
 		if entries == nil {
 			entries = []cacheEntry{}
 		}
-		res := map[string]interface{}{"site": cfg.Name, "dir": dir, "entries": entries, "bytes": total}
+		res := map[string]interface{}{"site": cfg.Name, "url": redactedURL(cfg.URL), "dir": dir, "entries": entries, "bytes": total}
 		return render(res, nil, func() error {
-			fmt.Printf("Cache of site %s: %s\n", cfg.Name, dir)
+			fmt.Printf("Cache of %s: %s\n", cacheSiteLabel(cfg), dir)
 			if len(entries) == 0 {
 				fmt.Println("Empty.")
 				return nil
@@ -89,7 +88,8 @@ var cacheClearCmd = &cobra.Command{
 	Short: "Delete the cache of the selected site (or of every site with --all-sites)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		var dir, site string
+		var dir, label string
+		var cfg *config.SiteConfig
 		if ccAllSites {
 			base, err := userCacheDir()
 			if err != nil {
@@ -100,27 +100,28 @@ var cacheClearCmd = &cobra.Command{
 			}
 			dir = filepath.Join(base, "ffc")
 		} else {
-			cfg, err := loadSiteConfig()
-			if err != nil {
+			var err error
+			if cfg, err = loadSiteConfig(); err != nil {
 				return err
 			}
-			if dir, err = serverCacheDir(cfg); err != nil {
+			// Every credential's cache of the site.
+			if dir, err = siteCacheRoot(cfg); err != nil {
 				return fmt.Errorf("cache: %w", err)
 			}
-			site = cfg.Name
+			label = cacheSiteLabel(cfg)
 		}
 		n := countFiles(dir)
 		if err := os.RemoveAll(dir); err != nil {
 			return fmt.Errorf("cache: %w", err)
 		}
 		res := map[string]interface{}{"dir": dir, "removed": n}
-		if !ccAllSites {
-			res["site"] = site
+		if cfg != nil {
+			res["site"], res["url"] = cfg.Name, redactedURL(cfg.URL)
 		}
 		return render(res, nil, func() error {
 			what := "every site"
-			if !ccAllSites {
-				what = "site " + site
+			if cfg != nil {
+				what = label
 			}
 			fmt.Printf("Removed %d cached files of %s (%s).\n", n, what, dir)
 			return nil
@@ -140,15 +141,22 @@ Examples:
   ffc cache warm --doctypes "Sales Invoice,Customer"`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		type failure struct {
+			Item  string `json:"item"` // "reports" or "schema:<DocType>"
+			Error string `json:"error"`
+		}
 		type warmed struct {
-			Site     string   `json:"site"`
-			Doctypes int      `json:"doctypes"`
-			Reports  int      `json:"reports"`
-			Schemas  []string `json:"schemas"`
-			errs     []error
+			Site     string    `json:"site"`
+			URL      string    `json:"url"`
+			Doctypes int       `json:"doctypes"`
+			Reports  int       `json:"reports"`
+			Schemas  []string  `json:"schemas"`
+			Errors   []failure `json:"errors"`
+			label    string
+			items    int
 		}
 		res, err := callSiteCfg(cmd, "Warming the cache…", func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (warmed, error) {
-			w := warmed{Site: cfg.Name, Schemas: []string{}}
+			w := warmed{Site: cfg.Name, URL: redactedURL(cfg.URL), Schemas: []string{}, Errors: []failure{}, label: cacheSiteLabel(cfg), items: 1}
 			dts, err := c.GetList(ctx, "DocType", client.ListOptions{Fields: []string{"name"}, Limit: -1, OrderBy: "name asc"})
 			if err != nil {
 				return w, fmt.Errorf("listing DocTypes: %w", err)
@@ -159,7 +167,7 @@ Examples:
 			w.Doctypes = len(dts)
 			reps, err := c.GetList(ctx, "Report", client.ListOptions{Fields: []string{"name", "ref_doctype"}, Limit: -1, OrderBy: "name asc"})
 			if err != nil {
-				w.errs = append(w.errs, fmt.Errorf("listing reports: %w", err))
+				w.Errors = append(w.Errors, failure{"reports", err.Error()})
 			} else if err := writeListCache(cfg, "Report", reps); err != nil {
 				return w, fmt.Errorf("writing the cache: %w", err)
 			} else {
@@ -169,12 +177,13 @@ Examples:
 				if dt = strings.TrimSpace(dt); dt == "" {
 					continue
 				}
+				w.items++
 				if err := ctx.Err(); err != nil {
 					return w, err
 				}
 				doc, warnings, err := fetchSchema(ctx, c, dt)
 				if err != nil {
-					w.errs = append(w.errs, fmt.Errorf("schema of %s: %w", dt, err))
+					w.Errors = append(w.Errors, failure{"schema:" + dt, err.Error()})
 					continue
 				}
 				if err := writeSchemaCache(cfg, dt, compactSchema(doc), schemaTableRows(doc), warnings); err != nil {
@@ -188,13 +197,29 @@ Examples:
 			return err
 		}
 		if rerr := render(res, nil, func() error {
-			fmt.Printf("Cached %d DocTypes, %d reports and %d schemas of site %s.\n", res.Doctypes, res.Reports, len(res.Schemas), res.Site)
+			fmt.Printf("Cached %d DocTypes, %d reports and %d schemas of %s.\n", res.Doctypes, res.Reports, len(res.Schemas), res.label)
+			for _, f := range res.Errors {
+				fmt.Fprintf(os.Stderr, "failed: %s: %s\n", f.Item, f.Error)
+			}
 			return nil
 		}); rerr != nil {
 			return rerr
 		}
-		return errors.Join(res.errs...)
+		if len(res.Errors) > 0 {
+			// The lists and the schemas that did come back are cached.
+			return &partialError{fmt.Sprintf("cache warm: %d of %d items failed (the rest is cached)", len(res.Errors), res.items)}
+		}
+		return nil
 	},
+}
+
+// cacheSiteLabel names a site in messages: "site <name>", or its URL (password
+// hidden) for a site defined only by FFC_* variables.
+func cacheSiteLabel(cfg *config.SiteConfig) string {
+	if cfg.Name != "" {
+		return "site " + cfg.Name
+	}
+	return redactedURL(cfg.URL)
 }
 
 // countFiles counts the regular files under dir (0 when it does not exist).

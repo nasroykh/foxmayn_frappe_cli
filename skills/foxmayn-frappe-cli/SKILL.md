@@ -333,7 +333,7 @@ ffc list-doctypes --module "Accounts" --json
 ```bash
 ffc cache warm                                   # DocType + report lists (24 h)
 ffc cache warm --doctypes "Sales Invoice,Customer"  # + those schemas (1 h)
-ffc cache status --json                          # {"site","dir","entries":[{kind,name,fetched_at,age_seconds,bytes,fresh}],"bytes"}
+ffc cache status --json                          # {"site","url","dir","entries":[{kind,name,fetched_at,age_seconds,bytes,fresh}],"bytes"}
 ffc cache clear [--all-sites]
 ```
 

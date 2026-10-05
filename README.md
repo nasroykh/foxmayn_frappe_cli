@@ -303,7 +303,7 @@ ffc doctor [--json]                  # check config, network, login, server, loc
 
 **`whoami`** asks the site for the user (`frappe.auth.get_logged_user`), the user's roles and the installed apps (`frappe.utils.change_log.get_versions`). A user who is not a System Manager can read their own User document but not its roles table (permission level 1), so the roles are read from the user's Has Role rows (`frappe.client.get_list` with the parent DocType `User`), which they may list. If the site refuses that too, `roles_source` is `unavailable` and `notes` says why. The automatic roles (All, Guest, Desk User) are not Has Role rows and are not listed. When the site sees the credentials as Guest, the result is printed and the command exits 3, like `ping`. The URL is printed with any password in it hidden.
 
-The app versions are cached for 24 hours per site in `<user cache dir>/ffc/<site>-<hash>/server.json` (`~/.cache/ffc` on Linux; directory 0700, file 0600). `--refresh` reads them again. The cache is dropped when a request suggests the server changed (404, 5xx, no answer) and ignored when the site URL changed.
+The app versions are cached for 24 hours per site in `<user cache dir>/ffc/<site>-<hash>/<credential>/server.json` (`~/.cache/ffc` on Linux; directory 0700, file 0600). `--refresh` reads them again. The cache is dropped when a request suggests the server changed (404, 5xx, no answer) and ignored when the site URL changed.
 
 **`can`** exits 0 when the permission is held, **5** when it is not, 4 when the DocType or document does not exist. The answer is printed either way (`{"doctype","name","perm","allowed","basis"}` with `--json`). `--perm` is one of `select`, `read` (default), `write`, `create`, `delete`, `submit`, `cancel`, `amend`, `print`, `email`, `report`, `import`, `export`, `share`; with `-n` any lower-case permission type the site defines (custom types, Frappe v16) is accepted too.
 
@@ -462,7 +462,7 @@ ffc completion powershell | Out-String | Invoke-Expression
 
 Tab completes site names (`--site`, `site use/remove/rename/edit`, `config set --default-site`, `mcp --sites`), DocTypes (`-d/--doctype` on every command, `cache warm --doctypes`, `mcp --allow-doctypes/--deny-doctypes`), fields (`--fields`: the last item of the comma-separated list), report names (`run-report -n`) and fixed values (`--output`, `--number-format`, `--date-format`, `can --perm`, `mcp --toolsets/--confirm/--allow-tools`, `--debug`). Document names (`-n/--name`) are never completed.
 
-Completion reads only the config file and the local cache. It never sends a request, never signs in and never writes the cache; with no fresh cache entry it offers nothing. The cache lives in `<user cache dir>/ffc/<site>-<hash>/` (`~/.cache/ffc` on Linux; directories 0700, files 0600, written atomically), bound to the site URL (a changed URL ignores it):
+Completion reads only the config file and the local cache. It never sends a request, never signs in and never writes the cache; with no fresh cache entry it offers nothing. The cache lives in `<user cache dir>/ffc/<site>-<hash>/<credential>/` (`~/.cache/ffc` on Linux; directories 0700, files 0600, written atomically), bound to the site URL (a changed URL ignores it) and to the login: `<credential>` is a hash of the API key, username or OAuth client id (never a secret), so another login on the same site, `FFC_API_KEY` on a named site included, never sees what one login cached. A site defined only by `FFC_*` variables is keyed by its URL with any password removed:
 
 | Entry | Kept | Filled by |
 | --- | --- | --- |
@@ -477,9 +477,11 @@ The lists change only when an app or a DocType/report is added, and a stale name
 ffc cache warm                                   # DocType and report lists (2 requests)
 ffc cache warm --doctypes "Sales Invoice,Customer"  # + those schemas (3 requests each)
 ffc cache status                                 # entries, age, size, fresh/stale
-ffc cache clear                                  # the selected site
+ffc cache clear                                  # the selected site, every login
 ffc cache clear --all-sites
 ```
+
+A failed item of `cache warm` (the report list, a schema) is listed in `errors` (`[{"item","error"}]`, `item` is `reports` or `schema:<DocType>`) and makes it exit **8**; what did come back is cached. A failed DocType list fails the whole command.
 
 ---
 
