@@ -370,8 +370,14 @@ func TestMCPCollabCallMethodScope(t *testing.T) {
 	if sc := call("frappe.desk.doctype.tag.tag.add_tag", map[string]interface{}{"dt": "Note", "dn": "N1", "tag": "x"}); !reflect.DeepEqual(sc.Doctypes, []string{"Note", "Tag Link", "Tag"}) {
 		t.Errorf("add_tag doctypes = %v", sc.Doctypes)
 	}
+	// The query arguments (queryScope) are checked as well as the implicit
+	// DocType.
+	sc := call("frappe.share.add", map[string]interface{}{"doctype": "Note", "name": "N1", "filters": []interface{}{[]interface{}{"Customer", "name", "=", "x"}}})
+	if !contains(sc.Doctypes, "DocShare", false) || !contains(sc.Doctypes, "Customer", false) || !contains(sc.FilterFields, "name", false) {
+		t.Errorf("share.add with filters: doctypes %v, filter fields %v", sc.Doctypes, sc.FilterFields)
+	}
 	// Without a DocType the call is refused, not checked against DocShare only.
-	sc := call("frappe.share.add", map[string]interface{}{"name": "N1"})
+	sc = call("frappe.share.add", map[string]interface{}{"name": "N1"})
 	if len(sc.Doctypes) != 0 {
 		t.Errorf("doctypes = %v", sc.Doctypes)
 	}
