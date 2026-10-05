@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -27,6 +28,83 @@ var collabDoctypes = map[string][]string{
 	"unshare_doc":       {"DocShare"},
 }
 
+const addCommentMethod = "frappe.desk.form.utils.add_comment"
+
+// commentSavesFiles reports whether a comment may create File records:
+// add_comment saves every data-URI image in the HTML as a private File
+// attached to the document (extract_images_from_html, called from
+// frappe/desk/form/utils.py add_comment). Frappe matches
+// <img ... src="data:..."; any "data:" in HTML counts here. Plain text is
+// escaped, so it never holds an image.
+func commentSavesFiles(req mcp.CallToolRequest, method string) bool {
+	args := req.GetArguments()
+	switch req.Params.Name {
+	case "add_comment":
+		text, _ := args["text"].(string)
+		return req.GetBool("html", false) && strings.Contains(strings.ToLower(text), "data:")
+	case "call_method":
+		if anyMatch([]string{addCommentMethod}, methodNames(method)) {
+			content, _ := methodArgs(args["args"])["content"].(string)
+			return strings.Contains(strings.ToLower(content), "data:")
+		}
+	}
+	return false
+}
+
+// checkCommentAuthor refuses a call_method of add_comment that names
+// another author. Frappe stores comment_email and comment_by as given, so
+// the comment would show under someone else's name; the add_comment tool
+// always posts as the signed-in user. comment_by may be the user ID or the
+// User's full name (read only when the policy allows reading User).
+func checkCommentAuthor(ctx context.Context, c *client.FrappeClient, p mcpPolicy, req mcp.CallToolRequest, sc toolScope) error {
+	if req.Params.Name != "call_method" || !anyMatch([]string{addCommentMethod}, methodNames(sc.Method)) {
+		return nil
+	}
+	args := methodArgs(req.GetArguments()["args"])
+	str := func(k string) (string, error) {
+		switch v := args[k].(type) {
+		case nil:
+			return "", nil
+		case string:
+			return strings.TrimSpace(v), nil
+		}
+		return "", fmt.Errorf("policy: %s %s must be a string; use the add_comment tool, which posts as the signed-in user", addCommentMethod, k)
+	}
+	email, err := str("comment_email")
+	if err != nil {
+		return err
+	}
+	by, err := str("comment_by")
+	if err != nil {
+		return err
+	}
+	if email == "" && by == "" {
+		return nil
+	}
+	user, err := c.LoggedUser(ctx)
+	if err != nil {
+		return fmt.Errorf("policy: checking the comment's author: %w", err)
+	}
+	refuse := func(k, v string) error {
+		return fmt.Errorf("policy: %s with %s %s would post the comment under another name than the signed-in user %s; use the add_comment tool, which posts as the signed-in user",
+			addCommentMethod, k, quoted(v, 140), quoted(user, 140))
+	}
+	if email != "" && !strings.EqualFold(email, user) {
+		return refuse("comment_email", email)
+	}
+	if by == "" || strings.EqualFold(by, user) {
+		return nil
+	}
+	if p.doctypeAllowed("User", false) == nil {
+		if doc, err := c.GetDoc(ctx, "User", user); err == nil {
+			if full, _ := doc["full_name"].(string); strings.TrimSpace(full) == by {
+				return nil
+			}
+		}
+	}
+	return refuse("comment_by", by)
+}
+
 // listParam declares a list of strings, given as an array or a
 // comma-separated string.
 func listParam(name, desc string) mcp.ToolOption {
@@ -46,7 +124,7 @@ func registerCollabTools(s *server.MCPServer, env *mcpEnv) {
 	idem := mcp.WithIdempotentHintAnnotation(true)
 
 	s.AddTool(docTool("add_comment",
-		"Add a comment to a document's timeline as the signed-in user. text is plain text (escaped, line breaks kept) unless html is true; Frappe sanitises HTML either way. Needs read permission on the document. Returns the Comment's name and stored content.",
+		"Add a comment to a document's timeline as the signed-in user. text is plain text (escaped, line breaks kept) unless html is true; Frappe sanitises HTML either way and saves data-URI images in it as private Files attached to the document (then the DocType rules for File apply). Needs read permission on the document. Returns the Comment's name and stored content.",
 		false, false,
 		mcp.WithString("text", mcp.Required(), mcp.Description("The comment")),
 		mcp.WithBoolean("html", mcp.Description("text is HTML (default false: plain text)")),

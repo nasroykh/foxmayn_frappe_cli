@@ -449,3 +449,70 @@ func TestCollabWidenConfirm(t *testing.T) {
 		t.Errorf("asked %q", a.asked)
 	}
 }
+
+func TestMCPCommentFilesAndAuthor(t *testing.T) {
+	scope := func(tool string, args map[string]interface{}) []string {
+		req := mcp.CallToolRequest{}
+		req.Params.Name, req.Params.Arguments = tool, args
+		sc, err := scopeOf(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sc.Doctypes
+	}
+	img := `<p><img src="data:image/png;base64,iVBORw0KGgo="></p>`
+	for _, c := range []struct {
+		tool string
+		args map[string]interface{}
+		want []string
+	}{
+		{"add_comment", map[string]interface{}{"doctype": "Note", "name": "N1", "text": img, "html": true}, []string{"Note", "Comment", "File"}},
+		{"add_comment", map[string]interface{}{"doctype": "Note", "name": "N1", "text": img}, []string{"Note", "Comment"}},
+		{"add_comment", map[string]interface{}{"doctype": "Note", "name": "N1", "text": "<b>hi</b>", "html": true}, []string{"Note", "Comment"}},
+		{"call_method", map[string]interface{}{"method": addCommentMethod, "args": map[string]interface{}{"reference_doctype": "Note", "content": img}}, []string{"Note", "Comment", "File"}},
+		{"call_method", map[string]interface{}{"method": addCommentMethod, "args": map[string]interface{}{"reference_doctype": "Note", "content": "hi"}}, []string{"Note", "Comment"}},
+	} {
+		if got := scope(c.tool, c.args); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s %v: doctypes %v, want %v", c.tool, c.args, got, c.want)
+		}
+	}
+
+	// File is sensitive: an HTML comment with an image is refused by default.
+	s, site, _, _ := mcpTPolicy(t, nil, config.MCPPolicy{})
+	mcpTErr(t, s, "add_comment", map[string]interface{}{"doctype": "ToDo", "name": "TD-1", "text": img, "html": true}, `DocType "File" is sensitive`)
+	if site.Count("Comment") != 0 {
+		t.Error("comment added")
+	}
+
+	// call_method add_comment may only post as the signed-in user.
+	site.SetUser("jane@example.com")
+	site.Add("User", map[string]interface{}{"name": "jane@example.com", "full_name": "Jane Doe"})
+	comment := func(email, by interface{}) map[string]interface{} {
+		return map[string]interface{}{"method": addCommentMethod, "args": map[string]interface{}{
+			"reference_doctype": "ToDo", "reference_name": "TD-1", "content": "hi", "comment_email": email, "comment_by": by,
+		}}
+	}
+	mcpTErr(t, s, "call_method", comment("boss@example.com", "jane@example.com"), `comment_email "boss@example.com" would post the comment under another name than the signed-in user "jane@example.com"; use the add_comment tool`)
+	mcpTErr(t, s, "call_method", comment("jane@example.com", "The Boss"), `comment_by "The Boss"`)
+	mcpTErr(t, s, "call_method", comment(float64(1), "jane@example.com"), "comment_email must be a string")
+	if site.Count("Comment") != 0 {
+		t.Fatal("a refused comment was added")
+	}
+	mcpTOK(t, s, "call_method", comment("JANE@example.com", "jane@example.com"))
+	mcpTOK(t, s, "call_method", comment("", ""))
+	mcpTOK(t, s, "call_method", comment("jane@example.com", "Jane Doe"))
+	if site.Count("Comment") != 3 {
+		t.Errorf("%d comments", site.Count("Comment"))
+	}
+	if len(site.RequestsTo("GET", "/api/resource/User/jane@example.com")) == 0 {
+		t.Error("the full name was accepted without reading User")
+	}
+	// A policy that denies reading User leaves only the user ID.
+	s, site, _, _ = mcpTPolicy(t, &config.MCPPolicy{DenyDoctypes: []string{"User"}}, config.MCPPolicy{})
+	site.SetUser("jane@example.com")
+	site.Add("User", map[string]interface{}{"name": "jane@example.com", "full_name": "Jane Doe"})
+	mcpTErr(t, s, "call_method", comment("jane@example.com", "Jane Doe"), `comment_by "Jane Doe"`)
+	if n := len(site.RequestsTo("GET", "/api/resource/User/jane@example.com")); n != 0 {
+		t.Errorf("User read %d times against the policy", n)
+	}
+}

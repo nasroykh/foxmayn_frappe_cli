@@ -109,6 +109,9 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 	if err := policy.checkReport(ctx, c, scope); err != nil {
 		return fail(auditDenied, err)
 	}
+	if err := checkCommentAuthor(ctx, c, policy, req, scope); err != nil {
+		return fail(auditDenied, err)
+	}
 	out, err := call(withProgress(withSite(withPolicy(ctx, policy), site), req), c)
 	if err != nil {
 		return fail(auditError, err)

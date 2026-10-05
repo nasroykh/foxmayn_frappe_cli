@@ -197,6 +197,9 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 	sc.FilterFields, sc.SelectFields = q.filterFields, q.selectFields
 	// The collab tools also write a Comment, ToDo, Tag Link or DocShare.
 	sc.Doctypes = append(sc.Doctypes, collabDoctypes[tool]...)
+	if len(sc.Doctypes) > 0 && commentSavesFiles(req, sc.Method) {
+		sc.Doctypes = append(sc.Doctypes, "File")
+	}
 	for i, dt := range sc.Doctypes {
 		if text.Sanitize(dt) != dt {
 			return sc, fmt.Errorf("policy: DocType name %q contains control or invisible characters", dt)
