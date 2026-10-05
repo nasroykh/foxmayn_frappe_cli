@@ -19,9 +19,12 @@ var (
 // defaultSearchLimit is the page length of ffc search and the MCP search
 // tool; maxMCPSearchLimit caps what a model may ask for (global search loads
 // every hit's document on the server).
+// maxSearchPhrases caps the "&" phrases of a global search: Frappe runs one
+// query per phrase, each up to the limit.
 const (
 	defaultSearchLimit = 20
 	maxMCPSearchLimit  = 100
+	maxSearchPhrases   = 5
 )
 
 var searchCmd = &cobra.Command{
@@ -86,8 +89,22 @@ func validateSearch(text, doctype string, limit int) error {
 		return usageErrorf("--limit must be at least 1")
 	case doctype == "" && strings.TrimSpace(text) == "":
 		return usageErrorf("search text is empty: give some text, or --doctype to list a DocType")
+	case doctype == "" && searchPhrases(text) > maxSearchPhrases:
+		return usageErrorf("search text has %d phrases separated by \"&\"; at most %d", searchPhrases(text), maxSearchPhrases)
 	}
 	return nil
+}
+
+// searchPhrases counts the queries Frappe's global search runs for text: one
+// per distinct non-blank piece between "&" (it deduplicates before trimming).
+func searchPhrases(text string) int {
+	seen := map[string]bool{}
+	for _, w := range strings.Split(text, "&") {
+		if strings.TrimSpace(w) != "" {
+			seen[w] = true
+		}
+	}
+	return len(seen)
 }
 
 // runSearch runs search_link for a DocType and the global search without one.
@@ -95,7 +112,11 @@ func runSearch(ctx context.Context, c *client.FrappeClient, text, doctype string
 	if doctype != "" {
 		return c.SearchLink(ctx, doctype, text, limit)
 	}
-	return c.GlobalSearch(ctx, text, limit)
+	rows, err := c.GlobalSearch(ctx, text, limit)
+	if len(rows) > limit {
+		rows = rows[:limit] // each "&" phrase returns up to limit hits
+	}
+	return rows, err
 }
 
 // searchTableRows shapes search rows for the table and returns the columns.

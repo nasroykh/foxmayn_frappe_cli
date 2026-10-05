@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -160,12 +162,16 @@ func TestMCPSearch(t *testing.T) {
 	if len(rows) != 1 || rows[0]["value"] != "CUST-0001" || rows[0]["description"] != "Acme Corp" {
 		t.Fatalf("link rows %v", rows)
 	}
-	rows = mcpTRows(t, mcpTOK(t, s, "search", map[string]interface{}{"text": "acme"}))
-	if len(rows) != 1 || rows[0]["doctype"] != "Customer" || rows[0]["name"] != "CUST-0001" {
-		t.Fatalf("global rows %v", rows)
+	rows, hidden := mcpTGlobal(t, mcpTOK(t, s, "search", map[string]interface{}{"text": "acme"}))
+	if len(rows) != 1 || rows[0]["doctype"] != "Customer" || rows[0]["name"] != "CUST-0001" || hidden != 0 {
+		t.Fatalf("global rows %v, hidden %d", rows, hidden)
+	}
+	// Each "&" phrase returns up to limit hits; the combined list is cut to it.
+	if rows, _ = mcpTGlobal(t, mcpTOK(t, s, "search", map[string]interface{}{"text": "acme & beta", "limit": 1})); len(rows) != 1 {
+		t.Errorf("two phrases with limit 1: %v", rows)
 	}
 	// An empty list is [], not null; an empty text lists a DocType.
-	if got := mcpTOK(t, s, "search", map[string]interface{}{"text": "zzz"}); got != "[]" {
+	if got := mcpTOK(t, s, "search", map[string]interface{}{"text": "zzz"}); !strings.Contains(got, `"results":[]`) {
 		t.Errorf("no hit = %q", got)
 	}
 	if rows = mcpTRows(t, mcpTOK(t, s, "search", map[string]interface{}{"text": "", "doctype": "Customer", "limit": "1"})); len(rows) != 1 {
@@ -178,6 +184,28 @@ func TestMCPSearch(t *testing.T) {
 	mcpTErr(t, s, "search", map[string]interface{}{"text": "a", "limit": 101}, "limit: at most 100")
 	mcpTErr(t, s, "search", map[string]interface{}{"text": "a", "doctype": []string{"x"}}, "doctype: expected a string")
 	mcpTErr(t, s, "search", map[string]interface{}{"text": "a", "doctype": "Nope"}, "Nope")
+	mcpTErr(t, s, "search", map[string]interface{}{"text": "a&b&c&d&e&f"}, "6 phrases")
+}
+
+// mcpTGlobal decodes the result of a global search.
+func mcpTGlobal(t *testing.T, text string) ([]map[string]interface{}, int) {
+	t.Helper()
+	var m struct {
+		Results []map[string]interface{} `json:"results"`
+		Hidden  *int                     `json:"hidden_by_policy"`
+	}
+	if err := json.Unmarshal([]byte(text), &m); err != nil || m.Results == nil || m.Hidden == nil {
+		t.Fatalf("not a global search result (%v): %.200s", err, text)
+	}
+	return m.Results, *m.Hidden
+}
+
+func TestSearchPhrases(t *testing.T) {
+	for text, want := range map[string]int{"a": 1, "a & b": 2, "a&a": 1, " & &": 0, "a & a": 2, "a&b&c&d&e": 5} {
+		if got := searchPhrases(text); got != want {
+			t.Errorf("searchPhrases(%q) = %d, want %d", text, got, want)
+		}
+	}
 }
 
 // TestMCPSearchPolicyFilter: a global search names no DocType, so the policy
@@ -205,10 +233,14 @@ func TestMCPSearchPolicyFilter(t *testing.T) {
 				site.GlobalSearch(dt, "title")
 			}
 			var got []string
-			for _, r := range mcpTRows(t, mcpTOK(t, s, "search", map[string]interface{}{"text": "findme"})) {
+			rows, hidden := mcpTGlobal(t, mcpTOK(t, s, "search", map[string]interface{}{"text": "findme"}))
+			for _, r := range rows {
 				got = append(got, fmt.Sprint(r["doctype"], "/", r["name"]))
 			}
 			cmdTEq(t, got, c.want...)
+			if hidden != 3-len(c.want) {
+				t.Errorf("hidden_by_policy = %d, want %d", hidden, 3-len(c.want))
+			}
 		})
 	}
 }
@@ -223,12 +255,28 @@ func TestFilterDoctypeRows(t *testing.T) {
 		{"doctype": 7, "name": "5"},
 	}
 	var got []string
-	for _, r := range p.filterDoctypeRows(rows) {
+	kept, hidden := p.filterDoctypeRows(rows)
+	for _, r := range kept {
 		got = append(got, r["name"].(string))
 	}
 	cmdTEq(t, got, "1", "2")
-	if out := (mcpPolicy{}).filterDoctypeRows(nil); out == nil || len(out) != 0 {
+	if hidden != 3 {
+		t.Errorf("hidden = %d, want 3", hidden)
+	}
+	if out, _ := (mcpPolicy{}).filterDoctypeRows(nil); out == nil || len(out) != 0 {
 		t.Errorf("empty input must give an empty, non-nil list, got %#v", out)
+	}
+}
+
+// policyFrom fails closed: without a stored policy the caller must not fall
+// back to the zero policy, which allows everything.
+func TestPolicyFrom(t *testing.T) {
+	if _, ok := policyFrom(context.Background()); ok {
+		t.Error("policyFrom found a policy in an empty context")
+	}
+	want := newMCPPolicy(&config.SiteConfig{Name: "x", MCP: &config.MCPPolicy{ReadOnly: true}}, config.MCPPolicy{})
+	if got, ok := policyFrom(withPolicy(context.Background(), want)); !ok || !got.readOnly() {
+		t.Errorf("policyFrom = %v, %v", got, ok)
 	}
 }
 

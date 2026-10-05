@@ -340,7 +340,7 @@ TEXT is a positional argument (several words are joined with spaces; `--` before
 | `--limit`   | `-l`  | No       | 20      | Max results (at least 1) |
 
 - With `-d`: the search a Link field runs. It honours the DocType's search fields, title field, link query and user permissions. Rows: `value` (the document name), `description`, sometimes `label`. Use it to turn a title into a name before `get-doc`. An empty TEXT lists the first documents. **Frappe marks the answer cacheable for 60 seconds** (`max-age=60`; ffc keeps no cache, but a proxy in front of the site may), so a document created a moment ago may be missing.
-- Without `-d`: Frappe's global search, ranked. Rows: `doctype`, `name`, `content`, `rank` (and `title` for some DocTypes). **It covers only DocTypes listed in Global Search Settings and fields flagged "In Global Search"**: no hit does not mean the document does not exist. Fall back to `list-docs --filters '[["name","like","%x%"]]'`. `a & b` searches `a` and `b` separately and combines the hits.
+- Without `-d`: Frappe's global search, ranked. Rows: `doctype`, `name`, `content`, `rank` (and `title` for some DocTypes). **It covers only DocTypes listed in Global Search Settings and fields flagged "In Global Search"**: no hit does not mean the document does not exist. Fall back to `list-docs --filters '[["name","like","%x%"]]'`. `a & b` searches `a` and `b` separately (at most 5 phrases) and combines the hits, cut to `--limit`.
 
 ---
 
@@ -464,14 +464,14 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `get_transitions` | `ffc workflow transitions` |
 | `apply_workflow`  | `ffc workflow apply`       |
 
-With `--read-only`, only `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search` and `get_transitions` are registered.
+With `--read-only`, only `list_sites`, `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search` and `get_transitions` are registered.
 
 MCP tools always return JSON — no `--json` flag needed.
 
 **MCP-specific output behaviour (differs from CLI defaults):**
 - `get_schema` returns the compact view by default (same as `ffc get-schema --json`). The LLM can pass `full=true` for the raw Frappe response, or `keys="fields"` / `keys="name,module,fields"` to select specific top-level properties.
 - `run_report` returns only `columns`, `result`, `report_summary` (if non-null), plus `total_rows` and `truncated` when rows were cut — strips `execution_time`, `chart`, `add_total_row`, `message`. Defaults to 500 rows unless `limit` is given.
-- `search` takes `text` (required), `doctype` (optional) and `limit` (default 20, at most 100). With `doctype` it is search_link (names; Frappe marks it cacheable for 60 s, so a proxy may serve a minute-old answer); without, global search over Global Search Settings DocTypes only, and under an `allow_doctypes`/`deny_doctypes` policy its hits are filtered to the DocTypes the policy allows.
+- `search` takes `text` (required), `doctype` (optional) and `limit` (default 20, at most 100). With `doctype` it is search_link (names; Frappe marks it cacheable for 60 s, so a proxy may serve a minute-old answer); without, global search over Global Search Settings DocTypes only, and under an `allow_doctypes`/`deny_doctypes` policy its hits are filtered to the DocTypes the policy allows. A global search answers `{results, hidden_by_policy}` (the number of hits dropped by the policy), a DocType search a plain list.
 - A tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`).
 - Bulk tools take at most 200 items per call.
 - JSON-valued arguments (`filters`, `fields`, `data`, `args`, …) may be passed as native JSON or as a JSON-encoded string.
