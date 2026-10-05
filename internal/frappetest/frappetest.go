@@ -616,12 +616,18 @@ func (s *Site) update(w http.ResponseWriter, doctype, name string, body []byte, 
 		writeError(w, NotFound(fmt.Sprintf("%s %s not found", doctype, name)))
 		return
 	}
+	// Frappe's check_if_latest: a "modified" sent with the update must be
+	// the stored one (it runs before every other check).
+	if m, ok := patch["modified"]; ok && fmt.Sprint(m) != fmt.Sprint(doc["modified"]) {
+		writeError(w, &Error{http.StatusExpectationFailed, "TimestampMismatchError", fmt.Sprintf(
+			"Error: %s (%s) has been modified after you have opened it (%v, %v). Please refresh to get the latest document.",
+			name, doctype, doc["modified"], m)})
+		return
+	}
 	if fmt.Sprint(doc["docstatus"]) != "0" {
-		for k := range patch {
-			if k != "name" && !s.onSubmit[doctype][k] {
-				writeError(w, &Error{http.StatusExpectationFailed, "UpdateAfterSubmitError", fmt.Sprintf("Not allowed to change %s after submission", k)})
-				return
-			}
+		if e := s.updateAfterSubmit(doctype, doc, patch); e != nil {
+			writeError(w, e)
+			return
 		}
 	}
 	for k, v := range patch {

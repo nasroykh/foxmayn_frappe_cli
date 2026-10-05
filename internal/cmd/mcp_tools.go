@@ -465,6 +465,9 @@ func registerUpdateDoc(s *server.MCPServer, env *mcpEnv) {
 			mcp.Description("The name/ID of the document to update. Omit for Single DocTypes."),
 		),
 		jsonParam("data", `Object of fields to update, e.g. {"status":"Closed"}`, mcp.Required()),
+		mcp.WithString("if_unmodified",
+			mcp.Description(`The document's "modified" value as you read it (get_doc). If someone saved the document since, nothing is saved and the call fails with TimestampMismatchError: read it again and retry.`),
+		),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
@@ -481,8 +484,14 @@ func registerUpdateDoc(s *server.MCPServer, env *mcpEnv) {
 			return nil, err
 		}
 		data = withoutName(data)
+		since := "the modified timestamp given"
+		if v := req.GetString("if_unmodified", ""); v != "" {
+			data["modified"] = v
+			since = fmt.Sprintf("if_unmodified %q", v)
+		}
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
-			return c.UpdateDoc(ctx, doctype, name, data)
+			d, err := c.UpdateDoc(ctx, doctype, name, data)
+			return d, conflictError(err, doctype, name, since)
 		}, nil
 	}))
 }

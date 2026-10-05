@@ -111,8 +111,16 @@ func (s *Site) getdoctype(_ *http.Request, args map[string]interface{}) (interfa
 	for _, dt := range dts {
 		fields := []interface{}{}
 		for _, f := range s.meta[dt] {
-			fields = append(fields, map[string]interface{}{"fieldname": f.name, "fieldtype": f.fieldtype, "no_copy": f.noCopy,
-				"options": f.options, "permlevel": f.permlevel})
+			field := map[string]interface{}{"fieldname": f.name, "fieldtype": f.fieldtype, "no_copy": f.noCopy,
+				"read_only": 0, "hidden": 0, "allow_on_submit": 0, "is_virtual": 0, "set_only_once": 0, "fetch_if_empty": 0,
+				"options": f.options, "permlevel": f.permlevel}
+			if s.onSubmit[dt][f.name] {
+				field["allow_on_submit"] = 1
+			}
+			for k, v := range f.props {
+				field[k] = v
+			}
+			fields = append(fields, field)
 		}
 		perms := []interface{}{}
 		for _, row := range s.docPerms[dt] {
@@ -134,11 +142,18 @@ type metaField struct {
 	noCopy          int
 	options         string // the child DocType of a Table field
 	permlevel       int
+	props           map[string]interface{} // other DocField properties, see FieldProp
 }
 
+// addField declares f, replacing a field of the same name but keeping its
+// properties.
 func (s *Site) addField(doctype string, f metaField) {
 	for i, old := range s.meta[doctype] {
 		if old.name == f.name {
+			f.props = old.props
+			if f.permlevel == 0 {
+				f.permlevel = old.permlevel
+			}
 			s.meta[doctype][i] = f
 			return
 		}
@@ -164,6 +179,23 @@ func (s *Site) Permlevel(doctype, fieldname string, level int) {
 		}
 	}
 	panic("frappetest: Permlevel on undeclared field " + doctype + "." + fieldname)
+}
+
+// FieldProp sets a property of a declared field in the meta getdoctype
+// returns, e.g. "read_only", "hidden", "is_virtual" or "fetch_from".
+func (s *Site) FieldProp(doctype, fieldname, prop string, value interface{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, f := range s.meta[doctype] {
+		if f.name == fieldname {
+			if f.props == nil {
+				s.meta[doctype][i].props = map[string]interface{}{}
+			}
+			s.meta[doctype][i].props[prop] = value
+			return
+		}
+	}
+	panic("frappetest.FieldProp: undeclared field " + doctype + "." + fieldname)
 }
 
 // NoCopy declares fields of a DocType marked "no copy".
@@ -201,7 +233,8 @@ func (s *Site) AllowOnSubmit(doctype string, fields ...string) {
 }
 
 // stampRows gives the rows of declared child tables their identity; the
-// caller holds s.mu.
+// caller holds s.mu. A row sent with a name keeps it (Frappe updates that
+// row), a row without one gets a new name.
 func (s *Site) stampRows(doctype string, d map[string]interface{}) {
 	for field, child := range s.tables[doctype] {
 		rows, _ := d[field].([]interface{})
@@ -210,12 +243,84 @@ func (s *Site) stampRows(doctype string, d map[string]interface{}) {
 			if !ok {
 				continue
 			}
-			s.seq++
-			row["name"] = fmt.Sprintf("row-%04d", s.seq)
+			if name, _ := row["name"].(string); name == "" {
+				s.seq++
+				row["name"] = fmt.Sprintf("row-%04d", s.seq)
+			}
 			row["doctype"], row["parent"], row["parentfield"], row["parenttype"] = child, d["name"], field, doctype
 			row["idx"] = json.Number(fmt.Sprint(i + 1))
 		}
 	}
+}
+
+// updateAfterSubmit checks an update of a submitted document like Frappe's
+// validate_update_after_submit: a field that is not "allow on submit" must
+// keep its value, a table that is not keeps its number of rows, and the
+// rows keep their fields that are not. The caller holds s.mu.
+func (s *Site) updateAfterSubmit(doctype string, doc, patch map[string]interface{}) *Error {
+	refuse := func(field string) *Error {
+		return &Error{http.StatusExpectationFailed, "UpdateAfterSubmitError", fmt.Sprintf("Not allowed to change %s after submission", field)}
+	}
+	for k, v := range patch {
+		if k == "name" || k == "modified" {
+			continue
+		}
+		child, isTable := s.tables[doctype][k]
+		switch {
+		case !isTable && s.onSubmit[doctype][k]:
+		case !isTable:
+			if !sameJSON(doc[k], v) {
+				return refuse(k)
+			}
+		default:
+			if !s.onSubmit[doctype][k] && len(rowList(doc[k])) != len(rowList(v)) {
+				return refuse(k)
+			}
+			if !s.rowsKeepFields(child, doc[k], v) {
+				return refuse(k)
+			}
+		}
+	}
+	return nil
+}
+
+// rowsKeepFields reports whether the rows sent keep the stored values of
+// their child DocType's fields that are not "allow on submit".
+func (s *Site) rowsKeepFields(child string, stored, sent interface{}) bool {
+	byName := map[string]map[string]interface{}{}
+	for _, r := range rowList(stored) {
+		if row, ok := r.(map[string]interface{}); ok {
+			byName[fmt.Sprint(row["name"])] = row
+		}
+	}
+	for _, r := range rowList(sent) {
+		row, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		old := byName[fmt.Sprint(row["name"])]
+		if old == nil {
+			continue // a new row
+		}
+		for f, v := range row {
+			if !standardFields[f] && !s.onSubmit[child][f] && f != "parent" && f != "parentfield" && f != "parenttype" && !sameJSON(old[f], v) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// rowList is a table value's rows (none for null).
+func rowList(v interface{}) []interface{} {
+	rows, _ := v.([]interface{})
+	return rows
+}
+
+func sameJSON(a, b interface{}) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
 }
 
 // amendmentName is the name Frappe gives an amendment of orig: orig-1, or

@@ -95,6 +95,7 @@ func TestContract(t *testing.T) {
 	t.Run("password session", func(t *testing.T) { contractSession(t, sc) })
 	t.Run("identity and permissions", func(t *testing.T) { contractIdentity(t, c, sc) })
 	t.Run("document context", func(t *testing.T) { contractDocInfo(t, c, sc) })
+	t.Run("edit-doc and if-unmodified", func(t *testing.T) { contractEdit(t, c, sc) })
 	// Last: an active workflow changes how the DocType submits.
 	t.Run("workflow", func(t *testing.T) { contractWorkflow(t, c, sc) })
 }
