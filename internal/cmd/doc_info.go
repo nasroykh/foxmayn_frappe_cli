@@ -134,6 +134,9 @@ type docContextRaw struct {
 	Onload        map[string]interface{}
 	onloadRead    bool
 	Notes         []string
+	// access says which fields the user may read; nil when it could not be
+	// read, and the versions are then left out (fail closed).
+	access *client.FieldAccess
 }
 
 // full is the --full view: the raw answers, keyed by part.
@@ -171,6 +174,17 @@ func fetchDocContext(ctx context.Context, c *client.FrappeClient, doctype, name 
 		r.onloadRead = true
 	} else if r.Docinfo, err = c.DocInfo(ctx, doctype, name); err != nil {
 		return nil, err
+	}
+	// get_versions is a plain get_all on Version: its data holds every
+	// changed field, whatever the user may read. Filter it like the timeline
+	// does, which needs the meta and the user's roles.
+	if len(ctxList(r.Docinfo["versions"])) > 0 {
+		if r.access, err = c.ReadableFields(ctx, doctype); err != nil {
+			if ctx.Err() != nil {
+				return nil, err
+			}
+			r.Notes = append(r.Notes, fmt.Sprintf("versions left out: the fields you may read are unknown (%v)", err))
+		}
 	}
 	optional := func(part string, fn func() (map[string]interface{}, error)) (map[string]interface{}, error) {
 		v, err := fn()
@@ -216,6 +230,9 @@ type ctxVersion struct {
 	RowsAdded      map[string]int `json:"rows_added,omitempty"`
 	RowsRemoved    map[string]int `json:"rows_removed,omitempty"`
 	ImpersonatedBy string         `json:"impersonated_by,omitempty"`
+	// HiddenFields counts the changes left out: fields the user may not
+	// read, Password fields, fields no longer in the meta.
+	HiddenFields int `json:"hidden_fields,omitempty"`
 }
 
 type ctxComment struct {
@@ -278,9 +295,9 @@ type ctxActivity struct {
 	Type  string `json:"type"`
 	Field string `json:"field,omitempty"`
 	Text  string `json:"text"`
-	// source is the DocType the entry was read from ("" for the document
-	// itself, "?" when unknown), for the MCP policy filter.
-	source string
+	// sources are the DocTypes the entry was read from (none for the
+	// document itself, "?" when unknown), for the MCP policy filter.
+	sources []string
 }
 
 // ctxHidden is what the MCP policy took out of a context.
@@ -333,8 +350,10 @@ func compactDocContext(r *docContextRaw) *docContext {
 		}
 		sort.Strings(out.Permissions)
 	}
-	for _, v := range ctxRows(d["versions"]) {
-		out.Versions = append(out.Versions, compactVersion(v))
+	if r.access != nil {
+		for _, v := range ctxRows(d["versions"]) {
+			out.Versions = append(out.Versions, compactVersion(v, r.access))
+		}
 	}
 	for _, c := range ctxRows(d["comments"]) {
 		out.Comments = append(out.Comments, ctxComment{Name: ctxStr(c["name"]), By: ctxStr(c["owner"]), At: ctxStr(c["creation"]), Text: ctxPlain(ctxStr(c["content"]), ctxTextMax)})
@@ -366,7 +385,13 @@ func compactDocContext(r *docContextRaw) *docContext {
 		out.WorkflowLog = append(out.WorkflowLog, ctxLog{By: ctxStr(l["owner"]), At: ctxStr(l["creation"]), Text: ctxPlain(ctxStr(l["content"]), ctxTextMax)})
 	}
 	if r.Links != nil {
-		out.Links = compactLinks(r.Links)
+		if links, ok := compactLinks(r.Links); ok {
+			out.Links = links
+		} else {
+			// get_open_count answers {"count": []} when a count query
+			// ran over its one-second limit.
+			out.Notes = append(out.Notes, "link counts timed out")
+		}
 	}
 	if r.Timeline != nil {
 		out.Timeline = compactTimeline(r.Timeline)
@@ -378,8 +403,10 @@ func compactDocContext(r *docContextRaw) *docContext {
 }
 
 // compactVersion flattens a Version's data: changed fields, then the
-// fields changed inside child rows as "table[row].field".
-func compactVersion(v map[string]interface{}) ctxVersion {
+// fields changed inside child rows as "table[row].field". Changes to fields
+// the user may not read (access) are left out and counted in hidden_fields,
+// rows added or removed in such a table too.
+func compactVersion(v map[string]interface{}, access *client.FieldAccess) ctxVersion {
 	cv := ctxVersion{Name: ctxStr(v["name"]), By: ctxStr(v["owner"]), At: ctxStr(v["creation"]), Changed: []ctxChange{}}
 	var data struct {
 		Changed        [][]interface{} `json:"changed"`
@@ -395,9 +422,14 @@ func compactVersion(v map[string]interface{}) ctxVersion {
 	}
 	cv.ImpersonatedBy = data.ImpersonatedBy
 	for _, c := range data.Changed {
-		if len(c) >= 3 {
-			cv.Changed = append(cv.Changed, ctxChange{Field: ctxStr(c[0]), From: ctxClipValue(c[1]), To: ctxClipValue(c[2])})
+		if len(c) < 3 {
+			continue
 		}
+		if !access.Readable(ctxStr(c[0])) {
+			cv.HiddenFields++
+			continue
+		}
+		cv.Changed = append(cv.Changed, ctxChange{Field: ctxStr(c[0]), From: ctxClipValue(c[1]), To: ctxClipValue(c[2])})
 	}
 	// row_changed entries are [table, row index, row name, [[field, old, new]...]].
 	for _, rc := range data.RowChanged {
@@ -412,9 +444,15 @@ func compactVersion(v map[string]interface{}) ctxVersion {
 		}
 		changes, _ := rc[3].([]interface{})
 		for _, ch := range changes {
-			if c, ok := ch.([]interface{}); ok && len(c) >= 3 {
-				cv.Changed = append(cv.Changed, ctxChange{Field: fmt.Sprintf("%s[%s].%s", ctxStr(rc[0]), row, ctxStr(c[0])), From: ctxClipValue(c[1]), To: ctxClipValue(c[2])})
+			c, ok := ch.([]interface{})
+			if !ok || len(c) < 3 {
+				continue
 			}
+			if !access.ReadableRow(ctxStr(rc[0]), ctxStr(c[0])) {
+				cv.HiddenFields++
+				continue
+			}
+			cv.Changed = append(cv.Changed, ctxChange{Field: fmt.Sprintf("%s[%s].%s", ctxStr(rc[0]), row, ctxStr(c[0])), From: ctxClipValue(c[1]), To: ctxClipValue(c[2])})
 		}
 	}
 	count := func(entries [][]interface{}) map[string]int {
@@ -423,9 +461,17 @@ func compactVersion(v map[string]interface{}) ctxVersion {
 		}
 		m := map[string]int{}
 		for _, e := range entries {
-			if len(e) > 0 {
-				m[ctxStr(e[0])]++
+			if len(e) == 0 {
+				continue
 			}
+			if !access.Readable(ctxStr(e[0])) {
+				cv.HiddenFields++
+				continue
+			}
+			m[ctxStr(e[0])]++
+		}
+		if len(m) == 0 {
+			return nil
 		}
 		return m
 	}
@@ -434,10 +480,14 @@ func compactVersion(v map[string]interface{}) ctxVersion {
 }
 
 // compactLinks keeps the linked DocTypes that have documents, the ones
-// this document points to (internal) first.
-func compactLinks(raw map[string]interface{}) []ctxLink {
+// this document points to (internal) first. ok is false when the answer
+// holds no counts.
+func compactLinks(raw map[string]interface{}) (links []ctxLink, ok bool) {
 	out := []ctxLink{}
-	counts, _ := raw["count"].(map[string]interface{})
+	counts, ok := raw["count"].(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
 	for _, l := range ctxRows(counts["internal_links_found"]) {
 		link := ctxLink{Doctype: ctxStr(l["doctype"]), Count: ctxInt(l["count"]), Internal: true}
 		for _, n := range ctxList(l["names"]) {
@@ -457,7 +507,7 @@ func compactLinks(raw map[string]interface{}) []ctxLink {
 			out = append(out, link)
 		}
 	}
-	return out
+	return out, true
 }
 
 // compactTimeline turns activities into one line each, oldest first as
@@ -471,11 +521,10 @@ func compactTimeline(raw map[string]interface{}) []ctxActivity {
 		if by == "" {
 			by = ctxStr(author["email"])
 		}
-		e := ctxActivity{At: ctxStr(a["timestamp"]), By: by, Type: ctxStr(a["type"]), source: "?"}
-		key := ctxStr(a["key"])
+		e := ctxActivity{At: ctxStr(a["timestamp"]), By: by, Type: ctxStr(a["type"]), sources: []string{"?"}}
 		switch e.Type {
 		case "version":
-			e.source, e.Field = "Version", ctxStr(data["fieldname"])
+			e.sources, e.Field = []string{"Version"}, ctxStr(data["fieldname"])
 			if ctxStr(data["type"]) == "diff" {
 				e.Text = ctxStr(data["prefix"])
 				if from := ctxStr(data["from"]); from != "" {
@@ -488,22 +537,14 @@ func compactTimeline(raw map[string]interface{}) []ctxActivity {
 				e.Text = ctxStr(data["text"])
 			}
 		case "comment":
-			e.source, e.Text = "Comment", ctxPlain(ctxStr(data["content"]), ctxTextMax)
+			e.sources, e.Text = []string{"Comment"}, ctxPlain(ctxStr(data["content"]), ctxTextMax)
 		case "email":
-			e.source, e.Text = "Communication", ctxPlain(ctxStr(data["subject"]), ctxTextMax)
+			e.sources, e.Text = []string{"Communication"}, ctxPlain(ctxStr(data["subject"]), ctxTextMax)
 		case "attachment_log":
-			e.source, e.Text = "Comment", strings.TrimSpace(ctxStr(data["action"])+" "+ctxStr(data["fileName"]))
+			// A Comment of type Attachment that names a File.
+			e.sources, e.Text = []string{"Comment", "File"}, strings.TrimSpace(ctxStr(data["action"])+" "+ctxStr(data["fileName"]))
 		case "log":
-			switch {
-			case key == "creation" || key == "edited":
-				e.source = ""
-			case strings.HasPrefix(key, "log:"):
-				e.source = "Comment"
-			case strings.HasPrefix(key, "view:"):
-				e.source = "View Log"
-			case strings.HasPrefix(key, "milestone:"):
-				e.source = "Milestone"
-			}
+			e.sources = logSources(ctxStr(data["subtype"]))
 			e.Text = ctxPlain(ctxStr(data["text"]), ctxTextMax)
 		default:
 			e.Text = ctxPlain(ctxStr(data["text"]), ctxTextMax)
@@ -511,6 +552,28 @@ func compactTimeline(raw map[string]interface{}) []ctxActivity {
 		out = append(out, e)
 	}
 	return out
+}
+
+// logSources maps a timeline log entry to the DocTypes it shows, by its
+// subtype (frappe/desk/form/activity.py): assignment logs name the assignee
+// and the ToDo's description, share logs the users, so each needs Comment
+// and the DocType it reports on. An unknown subtype is an unknown DocType.
+func logSources(subtype string) []string {
+	switch subtype {
+	case "created", "edited":
+		return nil // the document's own creation and last edit
+	case "view":
+		return []string{"View Log"}
+	case "milestone":
+		return []string{"Milestone"}
+	case "assigned", "assignment_completed":
+		return []string{"Comment", "ToDo"}
+	case "shared":
+		return []string{"Comment", "DocShare"}
+	case "like", "workflow", "info":
+		return []string{"Comment"}
+	}
+	return []string{"Comment", "?"}
 }
 
 // ─── human view ─────────────────────────────────────────────────────────────

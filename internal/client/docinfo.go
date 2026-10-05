@@ -10,8 +10,9 @@ import (
 )
 
 // Document context: the desk's form sidebar and timeline, read through the
-// methods the desk itself calls. All are sent as GET (whitelisted for every
-// HTTP method), so they are retried like any read and run under --dry-run.
+// methods the desk itself calls. The reads are sent as GET (whitelisted for
+// every HTTP method), so they are retried like any read and run under
+// --dry-run; FormLoad, which writes a view log, is a POST.
 
 const (
 	docinfoMethod  = "frappe.desk.form.load.get_docinfo"
@@ -95,7 +96,11 @@ func (c *FrappeClient) LinkCounts(ctx context.Context, doctype, name string) (ma
 // track views or seen it adds a View Log entry and marks the document seen
 // by the user, and it runs the controller's onload.
 func (c *FrappeClient) FormLoad(ctx context.Context, doctype, name string) (doc, docinfo map[string]interface{}, err error) {
-	out, err := c.formCall(ctx, getdocMethod, map[string]string{"doctype": doctype, "name": name}, doctype, name)
+	// POST, not GET: getdoc writes, and only GETs are retried (a retry
+	// after a lost answer would record a second view).
+	var out map[string]interface{}
+	err = c.do(ctx, http.MethodPost, "/api/method/"+url.PathEscape(getdocMethod), map[string]interface{}{"doctype": doctype, "name": name},
+		nil, docHints(doctype, name, "read"), &out)
 	if err != nil {
 		return nil, nil, err
 	}

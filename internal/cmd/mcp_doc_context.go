@@ -10,11 +10,15 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 )
 
-// The MCP view keeps at most this many comments (newest) and timeline
-// entries (newest); the rest are counted in omitted.
+// The MCP view keeps at most this many entries per section (the newest),
+// timeline entries and changes per version; the rest are counted in
+// omitted, so a long history still fits a tool result (512 KiB). Every text
+// in an entry is already clipped (ctxTextMax, ctxValueMax).
 const (
 	mcpContextComments = 50
 	mcpContextTimeline = 100
+	mcpContextChanges  = 50
+	mcpContextRows     = 100
 )
 
 func registerGetDocContext(s *server.MCPServer, env *mcpEnv) {
@@ -77,6 +81,16 @@ var contextSections = []struct {
 func (p mcpPolicy) filterDocContext(d *docContext) {
 	h := &ctxHidden{Sections: []string{}}
 	allowed := func(dt string) bool { return p.doctypeAllowed(dt, false) == nil }
+	// A timeline entry is shown only when every DocType it reports on is
+	// allowed: an assignment log needs Comment and ToDo.
+	allowedAll := func(dts []string) bool {
+		for _, dt := range dts {
+			if !allowed(dt) {
+				return false
+			}
+		}
+		return true
+	}
 	for _, s := range contextSections {
 		if allowed(s.doctype) {
 			continue
@@ -114,7 +128,7 @@ func (p mcpPolicy) filterDocContext(d *docContext) {
 	if d.Timeline != nil {
 		kept := []ctxActivity{}
 		for _, a := range d.Timeline {
-			if a.source == "" || allowed(a.source) {
+			if allowedAll(a.sources) {
 				kept = append(kept, a)
 			}
 		}
@@ -124,21 +138,41 @@ func (p mcpPolicy) filterDocContext(d *docContext) {
 	d.HiddenByPolicy = h
 }
 
-// trimDocContext keeps the newest comments and timeline entries, so a long
-// history fits a tool result.
+// trimDocContext keeps the newest entries of each section and the first
+// changes of each version, so a long history fits a tool result.
 func trimDocContext(d *docContext) {
 	omit := func(key string, n int) {
+		if n <= 0 {
+			return
+		}
 		if d.Omitted == nil {
 			d.Omitted = map[string]int{}
 		}
-		d.Omitted[key] = n
+		d.Omitted[key] += n
 	}
-	if n := len(d.Comments) - mcpContextComments; n > 0 {
-		d.Comments = d.Comments[:mcpContextComments] // newest first
-		omit("comments", n)
+	// Sections listed newest first keep their head.
+	omit("comments", trimHead(&d.Comments, mcpContextComments))
+	omit("communications", trimHead(&d.Communications, mcpContextComments))
+	omit("workflow_log", trimHead(&d.WorkflowLog, mcpContextComments))
+	omit("attachments", trimHead(&d.Attachments, mcpContextRows))
+	omit("assignments", trimHead(&d.Assignments, mcpContextRows))
+	omit("shares", trimHead(&d.Shares, mcpContextRows))
+	omit("tags", trimHead(&d.Tags, mcpContextRows))
+	for i := range d.Versions {
+		omit("changes", trimHead(&d.Versions[i].Changed, mcpContextChanges))
 	}
 	if n := len(d.Timeline) - mcpContextTimeline; n > 0 {
 		d.Timeline = d.Timeline[n:] // oldest first
 		omit("timeline", n)
 	}
+}
+
+// trimHead keeps the first max entries of s and returns how many it cut.
+func trimHead[T any](s *[]T, max int) int {
+	n := len(*s) - max
+	if n <= 0 {
+		return 0
+	}
+	*s = (*s)[:max]
+	return n
 }

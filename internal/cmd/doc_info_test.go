@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -22,10 +23,17 @@ const (
 
 // docInfoTSite has SINV-0001 with two versions (jane changed grand_total,
 // bob a row and remarks), comments, a file, an assignment, a share, a tag,
-// an email, a workflow log entry and two Payment Entries that link to it.
+// an email, a workflow log entry, assignment, share and attachment logs and
+// two Payment Entries that link to it.
 func docInfoTSite(t *testing.T, s *frappetest.Site) {
 	t.Helper()
 	s.Add("Sales Invoice", map[string]interface{}{"name": "SINV-0001", "grand_total": json.Number("300.0")})
+	// The meta the versions are filtered with.
+	s.DocField("Sales Invoice", "grand_total", "Currency")
+	s.DocField("Sales Invoice", "status", "Select")
+	s.DocField("Sales Invoice", "remarks", "Small Text")
+	s.ChildTable("Sales Invoice", "items", "Sales Invoice Item")
+	s.DocField("Sales Invoice Item", "qty", "Float")
 	ref := func(extra map[string]interface{}) map[string]interface{} {
 		extra["reference_doctype"], extra["reference_name"] = "Sales Invoice", "SINV-0001"
 		return extra
@@ -40,7 +48,9 @@ func docInfoTSite(t *testing.T, s *frappetest.Site) {
 	s.Add("Comment",
 		ref(map[string]interface{}{"name": "c1", "comment_type": "Comment", "owner": "jane@example.com", "content": "<p>Check the <b>total</b> &amp; tax\x1b\x07</p>"}),
 		ref(map[string]interface{}{"name": "c2", "comment_type": "Workflow", "owner": "bob@example.com", "content": "Approved"}),
-		ref(map[string]interface{}{"name": "c3", "comment_type": "Assigned", "owner": "bob@example.com", "content": "assigned jane"}),
+		ref(map[string]interface{}{"name": "c3", "comment_type": "Assigned", "owner": "bob@example.com", "content": "bob@example.com assigned jane@example.com: Review"}),
+		ref(map[string]interface{}{"name": "c5", "comment_type": "Shared", "owner": "bob@example.com", "content": "bob@example.com shared this document with jane@example.com"}),
+		ref(map[string]interface{}{"name": "c6", "comment_type": "Attachment", "owner": "bob@example.com", "content": "scan.pdf"}),
 		map[string]interface{}{"name": "c4", "comment_type": "Comment", "reference_doctype": "Sales Invoice", "reference_name": "SINV-0002", "content": "other doc"},
 	)
 	s.Add("File", map[string]interface{}{"name": "f1", "attached_to_doctype": "Sales Invoice", "attached_to_name": "SINV-0001",
@@ -201,7 +211,8 @@ func TestCmdDocInfoTimeline(t *testing.T) {
 	}
 	got := strings.Join(lines, "\n")
 	for _, want := range []string{"log||Administrator created this document", "version|grand_total|changed grand_total: 200.00 → 300.00",
-		"comment||Check the total & tax", "log||bob@example.com Approved"} {
+		"comment||Check the total & tax", "log||bob@example.com Approved", "log||bob@example.com assigned jane@example.com: Review",
+		"attachment_log||added scan.pdf"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("timeline lacks %q:\n%s", want, got)
 		}
@@ -234,7 +245,8 @@ func TestCmdDocInfoOnloadAndFull(t *testing.T) {
 		t.Fatalf("onload = %v", d.Onload)
 	}
 	// getdoc returns the docinfo too: one request, no get_docinfo.
-	if n, m := len(s.RequestsTo("GET", getdocMethodT)), len(s.RequestsTo("GET", docInfoMethod)); n != 1 || m != 0 {
+	// getdoc writes a view log: POST, so it is never retried.
+	if n, m := len(s.RequestsTo("POST", getdocMethodT)), len(s.RequestsTo("GET", docInfoMethod)); n != 1 || m != 0 {
 		t.Errorf("requests: getdoc %d, get_docinfo %d", n, m)
 	}
 	r = cmdTOK(t, cmdTRun(t, s, "doc-info", "-d", "Customer", "-n", "Acme", "--onload"))
@@ -265,7 +277,10 @@ func TestCompactLinksInternalAndTimeouts(t *testing.T) {
 			map[string]interface{}{"doctype": "Dunning", "count": json.Number("0"), "open_count": json.Number("0")},
 		},
 	}}
-	got := compactLinks(raw)
+	got, ok := compactLinks(raw)
+	if !ok {
+		t.Fatal("compactLinks: no counts")
+	}
 	want := []ctxLink{
 		{Doctype: "Sales Order", Count: 1, Internal: true, Names: []string{"SO-1"}},
 		{Doctype: "GL Entry", TimedOut: true},
@@ -293,7 +308,7 @@ func TestMCPGetDocContext(t *testing.T) {
 	if d.Timeline != nil || d.Onload != nil {
 		t.Errorf("unrequested parts: timeline %v onload %v", d.Timeline, d.Onload)
 	}
-	if len(site.RequestsTo("GET", getdocMethodT)) != 0 {
+	if len(site.Requests()) == 0 || len(site.RequestsTo("POST", getdocMethodT))+len(site.RequestsTo("GET", getdocMethodT)) != 0 {
 		t.Error("get_doc_context called getdoc, which writes a view log")
 	}
 
@@ -323,8 +338,25 @@ func TestMCPGetDocContextPolicy(t *testing.T) {
 			t.Errorf("timeline kept a comment: %+v", a)
 		}
 	}
-	if d.HiddenByPolicy.TimelineEntries != 3 {
-		t.Errorf("hidden timeline entries = %d, want 3", d.HiddenByPolicy.TimelineEntries)
+	// The comment, the workflow, assignment, share and attachment logs: all
+	// Comments.
+	if d.HiddenByPolicy.TimelineEntries != 5 {
+		t.Errorf("hidden timeline entries = %d, want 5", d.HiddenByPolicy.TimelineEntries)
+	}
+
+	// Logs that report on another DocType need it too: an assignment log
+	// names the assignee and the ToDo, a share log the users, an attachment
+	// log the file. Plain comments and the workflow log stay.
+	s, site, _, _ = mcpTPolicy(t, &config.MCPPolicy{DenyDoctypes: []string{"ToDo", "DocShare", "File"}}, config.MCPPolicy{})
+	docInfoTSite(t, site)
+	d = docInfoTDecode(t, mcpTOK(t, s, "get_doc_context", map[string]interface{}{"doctype": "Sales Invoice", "name": "SINV-0001", "timeline": true}))
+	for _, a := range d.Timeline {
+		if strings.Contains(a.Text, "jane@example.com") && a.Type != "version" || strings.Contains(a.Text, "scan.pdf") {
+			t.Errorf("timeline kept %+v", a)
+		}
+	}
+	if d.HiddenByPolicy.TimelineEntries != 3 || len(d.Comments) != 1 || len(d.WorkflowLog) != 1 {
+		t.Errorf("hidden timeline entries = %d (want 3), comments %d, workflow %d", d.HiddenByPolicy.TimelineEntries, len(d.Comments), len(d.WorkflowLog))
 	}
 
 	// An allow list: only the document's DocType and Version; the creation
@@ -373,8 +405,110 @@ func TestMCPGetDocContextFailsClosed(t *testing.T) {
 	}
 }
 
+// TestDocInfoVersionsReadableFields: versions show only the changes the
+// user may read, as the desk timeline does: permission levels the user's
+// roles read, no Password fields, no fields missing from the meta. A child
+// row's field needs the table field and the child field.
+func TestDocInfoVersionsReadableFields(t *testing.T) {
+	s := frappetest.New(t)
+	docInfoTSite(t, s)
+	s.DocField("Sales Invoice", "api_secret", "Password")
+	s.Add("Version", map[string]interface{}{"name": "v3", "ref_doctype": "Sales Invoice", "docname": "SINV-0001", "owner": "bob@example.com",
+		"creation": "2027-01-01 00:00:00",
+		"data":     `{"changed":[["api_secret","*","**"],["gone","a","b"],["docstatus",0,1]],"added":[],"removed":[],"row_changed":[]}`})
+	s.Permlevel("Sales Invoice", "grand_total", 1)
+	s.Permlevel("Sales Invoice Item", "qty", 2)
+	s.SetUser("clerk@example.com", "Clerk")
+	s.DocPerm("Sales Invoice", map[string]interface{}{"role": "Clerk", "permlevel": 0, "read": 1})
+	s.DocPerm("Sales Invoice", map[string]interface{}{"role": "Auditor", "permlevel": 1, "read": 1})
+
+	fields := func(d docContext) (out []string, hidden int) {
+		for _, v := range d.Versions {
+			for _, c := range v.Changed {
+				out = append(out, c.Field)
+			}
+			hidden += v.HiddenFields
+		}
+		return out, hidden
+	}
+	r := cmdTOK(t, cmdTRun(t, s, "--json", "doc-info", "-d", "Sales Invoice", "-n", "SINV-0001"))
+	d := docInfoTDecode(t, r.Stdout)
+	got, hidden := fields(d)
+	// Hidden: api_secret (Password), gone (not in the meta), grand_total
+	// (level 1), items[2].qty (child field at level 2).
+	cmdTEq(t, got, "docstatus", "remarks", "status")
+	if hidden != 4 {
+		t.Errorf("hidden_fields = %d, want 4", hidden)
+	}
+	if strings.Contains(r.Stdout, "300.00") || strings.Contains(r.Stdout, `"**"`) {
+		t.Errorf("a value the user may not read: %s", r.Stdout)
+	}
+	// MCP gives the same view.
+	ms, site := newMCPFake(t, true)
+	docInfoTSite(t, site)
+	site.Permlevel("Sales Invoice", "grand_total", 1)
+	site.SetUser("clerk@example.com", "Clerk")
+	site.DocPerm("Sales Invoice", map[string]interface{}{"role": "Clerk", "permlevel": 0, "read": 1})
+	d = docInfoTDecode(t, mcpTOK(t, ms, "get_doc_context", map[string]interface{}{"doctype": "Sales Invoice", "name": "SINV-0001"}))
+	if _, _, ok := changeBy(d, "grand_total"); ok {
+		t.Errorf("MCP kept a level-1 change: %+v", d.Versions)
+	}
+
+	// A role that reads level 1 sees it; rows added to a readable table
+	// are counted.
+	s.SetUser("auditor@example.com", "Clerk", "Auditor")
+	d = docInfoTDecode(t, cmdTOK(t, cmdTRun(t, s, "--json", "doc-info", "-d", "Sales Invoice", "-n", "SINV-0001")).Stdout)
+	if _, _, ok := changeBy(d, "grand_total"); !ok {
+		t.Errorf("auditor lacks grand_total: %+v", d.Versions)
+	}
+	// Administrator has every role.
+	s.SetUser(frappetest.Username)
+	d = docInfoTDecode(t, cmdTOK(t, cmdTRun(t, s, "--json", "doc-info", "-d", "Sales Invoice", "-n", "SINV-0001")).Stdout)
+	if _, _, ok := changeBy(d, "items[2].qty"); ok {
+		t.Error("items[2].qty shown though no permission row reads level 2")
+	}
+	if _, _, ok := changeBy(d, "grand_total"); !ok {
+		t.Error("Administrator lacks grand_total")
+	}
+
+	// The meta cannot be read: versions are left out with a note (CLI and
+	// MCP alike), the rest is still shown.
+	s.HandleMethod("frappe.desk.form.load.getdoctype", nil)
+	d = docInfoTDecode(t, cmdTOK(t, cmdTRun(t, s, "--json", "doc-info", "-d", "Sales Invoice", "-n", "SINV-0001")).Stdout)
+	if len(d.Versions) != 0 || len(d.Notes) != 1 || !strings.Contains(d.Notes[0], "versions left out") || len(d.Comments) != 1 {
+		t.Errorf("versions %d, notes %v", len(d.Versions), d.Notes)
+	}
+	site.HandleMethod("frappe.desk.form.load.getdoctype", nil)
+	d = docInfoTDecode(t, mcpTOK(t, ms, "get_doc_context", map[string]interface{}{"doctype": "Sales Invoice", "name": "SINV-0001"}))
+	if len(d.Versions) != 0 || len(d.Notes) != 1 {
+		t.Errorf("MCP: versions %d, notes %v", len(d.Versions), d.Notes)
+	}
+}
+
+// TestDocInfoLinksTimedOut: get_open_count answers {"count": []} when its
+// queries ran over the statement timeout; that is a note, not "no links".
+func TestDocInfoLinksTimedOut(t *testing.T) {
+	s := frappetest.New(t)
+	docInfoTSite(t, s)
+	s.HandleMethod("frappe.desk.notifications.get_open_count", func(*http.Request, map[string]interface{}) (interface{}, error) {
+		return map[string]interface{}{"count": []interface{}{}}, nil
+	})
+	r := cmdTOK(t, cmdTRun(t, s, "--json", "doc-info", "-d", "Sales Invoice", "-n", "SINV-0001", "--links"))
+	d := docInfoTDecode(t, r.Stdout)
+	if d.Links != nil || strings.Contains(r.Stdout, `"links"`) {
+		t.Errorf("links = %v", d.Links)
+	}
+	cmdTEq(t, d.Notes, "link counts timed out")
+}
+
 func TestTrimDocContext(t *testing.T) {
-	d := &docContext{}
+	d := &docContext{Versions: []ctxVersion{{}}}
+	for i := 0; i < mcpContextChanges+3; i++ {
+		d.Versions[0].Changed = append(d.Versions[0].Changed, ctxChange{Field: fmt.Sprint(i)})
+	}
+	for i := 0; i < mcpContextRows+2; i++ {
+		d.Attachments = append(d.Attachments, ctxAttachment{Name: fmt.Sprint(i)})
+	}
 	for i := 0; i < mcpContextComments+5; i++ {
 		d.Comments = append(d.Comments, ctxComment{Name: fmt.Sprint(i)})
 	}
@@ -387,5 +521,11 @@ func TestTrimDocContext(t *testing.T) {
 	}
 	if len(d.Timeline) != mcpContextTimeline || d.Timeline[0].Text != "7" || d.Omitted["timeline"] != 7 {
 		t.Errorf("timeline: %d kept, first %s, omitted %v", len(d.Timeline), d.Timeline[0].Text, d.Omitted)
+	}
+	if len(d.Versions[0].Changed) != mcpContextChanges || d.Omitted["changes"] != 3 || len(d.Attachments) != mcpContextRows || d.Omitted["attachments"] != 2 {
+		t.Errorf("changes %d, attachments %d, omitted %v", len(d.Versions[0].Changed), len(d.Attachments), d.Omitted)
+	}
+	if _, ok := d.Omitted["shares"]; ok {
+		t.Errorf("omitted lists a section that was not cut: %v", d.Omitted)
 	}
 }

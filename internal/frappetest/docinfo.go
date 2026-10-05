@@ -237,10 +237,10 @@ func (s *Site) activityTimeline(_ *http.Request, args map[string]interface{}) (i
 			})
 			continue
 		}
-		acts = append(acts, map[string]interface{}{
-			"type": "log", "key": fmt.Sprintf("log:%v", c["name"]), "timestamp": c["creation"], "author": author(c["owner"]),
-			"data": map[string]interface{}{"name": c["name"], "subtype": strings.ToLower(fmt.Sprint(c["comment_type"])), "text": fmt.Sprintf("%v %v", c["owner"], c["content"])},
-		})
+		if act := logActivity(c); act != nil {
+			act["timestamp"], act["author"] = c["creation"], author(c["owner"])
+			acts = append(acts, act)
+		}
 	}
 	sort.SliceStable(acts, func(i, j int) bool {
 		a, b := fmt.Sprint(acts[i]["timestamp"]), fmt.Sprint(acts[j]["timestamp"])
@@ -254,6 +254,38 @@ func (s *Site) activityTimeline(_ *http.Request, args map[string]interface{}) (i
 		list[i] = a
 	}
 	return map[string]interface{}{"activities": list, "has_more_emails": false, "has_more_milestones": false, "next_milestone_start": json.Number("0")}, nil
+}
+
+// logActivity shapes a Comment that is not a plain comment as the timeline
+// does (activity.py add_activity_record, attachment_log_activity): the
+// comment_type picks the subtype, assignment logs name the assignee (the
+// content's third word, as in "Administrator assigned jane@x: Task") and
+// attachment logs the file. Types the timeline does not show give nil.
+func logActivity(c map[string]interface{}) map[string]interface{} {
+	content := fmt.Sprint(c["content"])
+	switch ct := fmt.Sprint(c["comment_type"]); ct {
+	case "Attachment", "Attachment Removed":
+		action := "added"
+		if ct == "Attachment Removed" {
+			action = "removed"
+		}
+		return map[string]interface{}{"type": "attachment_log", "key": fmt.Sprintf("attachment:%v", c["name"]),
+			"data": map[string]interface{}{"name": c["name"], "action": action, "fileName": content, "fileUrl": nil, "isPrivate": false}}
+	case "Assigned", "Assignment Completed", "Like", "Workflow", "Info", "Edit", "Label", "Shared", "Unshared":
+		subtype := map[string]string{"Assigned": "assigned", "Assignment Completed": "assignment_completed", "Like": "like",
+			"Workflow": "workflow", "Info": "info", "Edit": "info", "Label": "info", "Shared": "shared", "Unshared": "shared"}[ct]
+		data := map[string]interface{}{"name": c["name"], "subtype": subtype, "text": content}
+		switch subtype {
+		case "assigned", "assignment_completed":
+			if f := strings.Fields(content); len(f) > 2 {
+				data["assignee"] = strings.TrimSuffix(f[2], ":")
+			}
+		case "workflow", "info":
+			data["text"] = fmt.Sprintf("%v %s", c["owner"], content)
+		}
+		return map[string]interface{}{"type": "log", "key": fmt.Sprintf("log:%v", c["name"]), "data": data}
+	}
+	return nil
 }
 
 // openCount counts, per DocType declared with Dashboard, the documents
