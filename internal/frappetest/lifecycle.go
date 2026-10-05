@@ -113,7 +113,11 @@ func (s *Site) getdoctype(_ *http.Request, args map[string]interface{}) (interfa
 		for _, f := range s.meta[dt] {
 			fields = append(fields, map[string]interface{}{"fieldname": f.name, "fieldtype": f.fieldtype, "no_copy": f.noCopy})
 		}
-		docs = append(docs, map[string]interface{}{"name": dt, "fields": fields})
+		perms := []interface{}{}
+		for _, row := range s.docPerms[dt] {
+			perms = append(perms, row)
+		}
+		docs = append(docs, map[string]interface{}{"name": dt, "fields": fields, "permissions": perms})
 	}
 	return Response{"docs": docs}, nil
 }

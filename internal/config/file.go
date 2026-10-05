@@ -406,3 +406,29 @@ func lockFile(path string) (func(), error) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// LockInfo describes the lock file of the config at a path.
+type LockInfo struct {
+	Path   string
+	Exists bool
+	Age    time.Duration
+	// Stale: the lock is older than any process may hold it, so its owner
+	// crashed and the next write breaks it.
+	Stale bool
+}
+
+// LockStatus reports on the lock file next to the config file at path
+// without taking or breaking it.
+func LockStatus(path string) LockInfo {
+	if real, err := resolveSymlink(path); err == nil {
+		path = real
+	}
+	info := LockInfo{Path: path + ".lock"}
+	st, err := os.Stat(info.Path)
+	if err != nil {
+		return info
+	}
+	info.Exists, info.Age = true, time.Since(st.ModTime())
+	info.Stale = info.Age > lockStale
+	return info
+}

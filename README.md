@@ -242,11 +242,11 @@ Without a terminal (pipes, cron, CI, agents) ffc never waits for input: a comman
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Success |
-| 1 | Other error (config file, unexpected response, declined confirmation) |
+| 1 | Other error (config file, unexpected response, declined confirmation, a failed `ffc doctor` check) |
 | 2 | Usage: unknown command or flag, wrong arguments, invalid flag value, input needed but no terminal |
 | 3 | Authentication: rejected credentials (401), failed login |
 | 4 | Not found (404) |
-| 5 | Permission denied (403) |
+| 5 | Permission denied (403), or `ffc can` found the permission is not held |
 | 6 | Validation or conflict: 417 (e.g. ValidationError, LinkExistsError), 409 duplicate, 400, TimestampMismatchError, or a document in the wrong state for the command (amending a draft, submitting under an active Workflow) |
 | 7 | Network or server: no connection, timeout, 429, 5xx |
 | 8 | Partial bulk failure: some items of a bulk command did not succeed |
@@ -276,7 +276,8 @@ With `--json`, an error is printed on stderr as one JSON object, and stdout carr
 *   **`config`**: Interactive TUI to tweak settings, or non-interactive via subcommands:
     *   `ffc config get [--json|--yaml]` — print all settings
     *   `ffc config set --default-site <name> --number-format <fmt> --date-format <fmt>` — update settings
-*   **`ping`**: Quickly check connection to the active Frappe site.
+*   **`ping`**: Check the connection to the active Frappe site. `frappe.ping` answers without credentials, so ping also asks who the credentials belong to and prints the user (`--json` adds `user`); credentials the site rejects fail with exit 3.
+*   **`whoami`**, **`can`**, **`doctor`**: who you are on the site, what you may do, and whether the setup is healthy (see below).
 *   **`update`**: Update ffc to the latest release in place — works regardless of how it was installed.
 
 ```bash
@@ -288,6 +289,46 @@ ffc update --yes     # update without confirmation
 `ffc update` installs a release only if its `checksums.txt` carries a valid Ed25519 signature (`checksums.txt.sig`) from the release key built into ffc, and the archive matches its checksum. Someone who can replace the release assets cannot also forge the signature. Versions before 1.6.1 do not check the signature, so the first update from them relies on the checksum alone. `install.sh` checks the same signature when OpenSSL 3 is present; `install.ps1` checks the checksum only. For a manual download, run `gh attestation verify <archive> --repo nasroykh/foxmayn_frappe_cli`.
 
 ffc also checks for updates automatically (at most once a day) and prints a one-line notice to stderr when a newer version is available.
+
+---
+
+### Identity, Permissions and Health
+
+```bash
+ffc whoami [--refresh] [--json]      # user, roles, installed apps and versions
+ffc can -d "Sales Invoice" --perm create          # may I create one at all?
+ffc can -d ToDo -n TD-0001 --perm write [--all]   # may I change this document?
+ffc doctor [--refresh] [--json]      # check config, network, login, server, local state
+```
+
+**`whoami`** asks the site for the user (`frappe.auth.get_logged_user`), the user's roles and the installed apps (`frappe.utils.change_log.get_versions`). A user who is not a System Manager can read their own User document but not its roles table (permission level 1), so the roles are read from the user's Has Role rows (`frappe.client.get_list` with the parent DocType `User`), which they may list. If the site refuses that too, `roles_source` is `unavailable` and `notes` says why.
+
+The app versions are cached for 24 hours per site in `<user cache dir>/ffc/<site>-<hash>/server.json` (`~/.cache/ffc` on Linux; directory 0700, file 0600). `--refresh` reads them again. The cache is dropped when a request suggests the server changed (404, 5xx, no answer) and ignored when the site URL changed.
+
+**`can`** exits 0 when the permission is held, **5** when it is not, 4 when the DocType or document does not exist. The answer is printed either way (`{"doctype","name","perm","allowed","basis"}` with `--json`). `--perm` is one of `select`, `read` (default), `write`, `create`, `delete`, `submit`, `cancel`, `amend`, `print`, `email`, `report`, `import`, `export`, `share`.
+
+*   With `-n NAME` the site judges that document (`frappe.client.has_permission`): user permissions, sharing and controller rules count. `basis` is `document`. `--all` also lists every right on it (`frappe.client.get_doc_permissions`, role rules only; the two can differ, e.g. a User may edit their own User document).
+*   Without `-n` the site cannot judge a DocType alone (`has_permission` needs a document), so ffc applies the DocType's permission rows (permission level 0) to the user's roles: `basis` is `doctype`. That answers "may I create a Sales Invoice", but ignores user permissions, sharing and controller rules, and assumes the automatic roles All, Guest and Desk User. `owner_only` is set when only rows limited to the user's own documents allow it.
+*   The user `Administrator` is allowed everything, whether or not the document exists.
+
+**`doctor`** runs these checks and prints each as pass, warn or fail, with a hint:
+
+| Check | What it looks at |
+| ----- | ---------------- |
+| `config.file`, `config.dir` | the config file is 0600 (fail otherwise: it holds credentials) and its directory 0700 (warn) |
+| `config.parse` | the file parses and a site resolves (values in parse errors are never printed) |
+| `config.lock` | no stale `config.yaml.lock` (warn; ffc breaks it on the next write) |
+| `net.tls` | the certificate verifies and is not about to end (14 days: warn); plain `http://` to a non-loopback host is a warning |
+| `net.reachable` | the URL answers `frappe.ping` with a pong |
+| `net.clock` | the local clock against the server's `Date` header: over 1 minute warns, over 10 minutes fails |
+| `auth.valid` | the credentials log in; names the user |
+| `auth.oauth_token` | an OAuth site's token expiry (an expired token is renewed first; fail when it cannot be) |
+| `server.versions` | the installed apps (cached; warns for Frappe older than v15) |
+| `server.api_v2` | whether `/api/v2` exists (warn only on Frappe v16+, which provides it) |
+| `mcp.daemon`, `mcp.state_file` | the detached MCP server's health; its state file (it holds the bearer token) is 0600 |
+| `update.check` | whether the background update check saw a newer ffc |
+
+`doctor` exits **1** when any check fails, 0 otherwise (warnings do not fail it). Checks that need the site are skipped when it cannot be reached. With `--json` the output is an array of `{"check","status","message","hint"}` (`hint` is `""` when there is nothing to do). No secret is printed.
 
 ---
 
@@ -570,7 +611,7 @@ Some checks are best effort:
 
 **Audit log.** Every tool call, allowed or refused, appends one JSON line to `~/.config/ffc/mcp-audit.jsonl` (next to the config file, 0600). It records the time, site, the client's self-reported name, tool, DocTypes, document names (up to 20), status (`ok`, `error`, `denied`, `invalid`, `confirm_pending`, `declined`), error and duration. The arguments are logged with secrets redacted, and document data and method arguments reduced to their keys and size. The file is rotated to `mcp-audit.jsonl.1` at 10 MiB.
 
-Available MCP tools (24): `list_sites`, `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
+Available MCP tools (26): `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
 
 Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`); `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
@@ -603,6 +644,7 @@ foxmayn_frappe_cli/
 │   │   ├── oauth_flow.go     # OAuth PKCE callback server and flow
 │   │   ├── site.go           # site list/add/remove/use
 │   │   ├── config_cmd.go     # Interactive settings menu, config get/set
+│   │   ├── whoami.go, can.go, doctor.go, server_cache.go  # identity, permissions, health; version cache
 │   │   ├── ping.go, get_doc.go, list_docs.go, create_doc.go, update_doc.go,
 │   │   │   delete_doc.go, count_docs.go, get_schema.go, list_doctypes.go,
 │   │   │   list_reports.go, run_report.go, search.go, call_method.go   # data commands
@@ -619,7 +661,7 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_confirm.go    # confirmation through MCP elicitation
 │   │   ├── mcp_sites.go      # multi-site MCP (--sites, --all-sites, list_sites)
 │   │   ├── mcp_args.go       # MCP argument parsing and result limits
-│   │   ├── mcp_tools.go      # MCP tool definitions (24 with mcp_lifecycle_tools.go)
+│   │   ├── mcp_tools.go      # MCP tool definitions (26 with mcp_lifecycle_tools.go, mcp_identity_tools.go)
 │   │   ├── mcp_lifecycle_tools.go  # submit/cancel/amend/copy/rename/workflow tools
 │   │   ├── mcp_daemon.go     # detached server, status/stop, state file
 │   │   └── mcp_detach_unix.go / mcp_detach_windows.go  # platform process handling
@@ -628,6 +670,7 @@ foxmayn_frappe_cli/
 │   │   ├── client.go         # Frappe REST API client (Bearer, token and session auth)
 │   │   ├── raw.go            # Raw requests (ffc api): SitePath, streamed bodies
 │   │   ├── lifecycle.go      # Submit, cancel, amend, copy, rename, restore, workflow
+│   │   ├── server.go         # Versions, logged user, roles, permission checks
 │   │   ├── oauth.go          # ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser
 │   │   └── session.go        # Username/password login
 │   ├── config/

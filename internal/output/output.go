@@ -177,6 +177,23 @@ func PrintSuccess(msg string) {
 	fmt.Fprintln(os.Stderr, successStyle.Render("✓ "+text.Sanitize(msg)))
 }
 
+// PrintCheck writes one line of a health report to stdout: a marker for the
+// status ("pass", "warn" or "fail"), the check name and its message, then
+// the hint, indented, when there is one.
+func PrintCheck(status, check, message, hint string) {
+	style, mark := successStyle, "✓"
+	switch status {
+	case "warn":
+		style, mark = warnStyle, "!"
+	case "fail":
+		style, mark = errorStyle, "✗"
+	}
+	fmt.Println(style.Render(mark+" "+text.Sanitize(check)) + "  " + text.Sanitize(message))
+	if hint != "" {
+		fmt.Println(lipgloss.NewStyle().Foreground(gray).Render("    → " + text.Sanitize(hint)))
+	}
+}
+
 // PrintWarning writes a styled warning to stderr.
 func PrintWarning(msg string) {
 	fmt.Fprintln(os.Stderr, warnStyle.Render(text.Sanitize(msg)))

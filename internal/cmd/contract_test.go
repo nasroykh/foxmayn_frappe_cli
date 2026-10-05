@@ -92,6 +92,7 @@ func TestContract(t *testing.T) {
 	t.Run("search and global search", func(t *testing.T) { contractSearch(t, c, sc) })
 	t.Run("errors match the fake", func(t *testing.T) { contractErrors(t, c, sc.URL) })
 	t.Run("password session", func(t *testing.T) { contractSession(t, sc) })
+	t.Run("identity and permissions", func(t *testing.T) { contractIdentity(t, c, sc) })
 	// Last: an active workflow changes how the DocType submits.
 	t.Run("workflow", func(t *testing.T) { contractWorkflow(t, c, sc) })
 }
