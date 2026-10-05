@@ -27,7 +27,7 @@ const (
 var toolActions = map[string]toolAction{
 	"list_sites": actRead, "ping": actRead, "get_doc": actRead, "list_docs": actRead, "count_docs": actRead,
 	"get_schema": actRead, "list_doctypes": actRead, "list_reports": actRead,
-	"run_report": actRead, "get_transitions": actRead,
+	"run_report": actRead, "get_transitions": actRead, "search": actRead,
 
 	"create_doc": actWrite, "update_doc": actWrite, "delete_doc": actWrite,
 	"bulk_create": actWrite, "bulk_update": actWrite, "bulk_delete": actWrite,
@@ -325,6 +325,36 @@ func (p mcpPolicy) checkReport(ctx context.Context, c *client.FrappeClient, sc t
 		return fmt.Errorf("policy: report %q has no ref_doctype, so the DocType rules cannot be checked", sc.Report)
 	}
 	return p.doctypeAllowed(dt, false)
+}
+
+type policyCtxKey struct{}
+
+// withPolicy hands the policy a call was checked against to the call itself,
+// for tools whose result spans DocTypes the request does not name.
+func withPolicy(ctx context.Context, p mcpPolicy) context.Context {
+	return context.WithValue(ctx, policyCtxKey{}, p)
+}
+
+// policyFrom returns the policy withPolicy stored. Without one it is the
+// zero policy, which allows everything: the call-level check has already run
+// by the time a tool uses it.
+func policyFrom(ctx context.Context) mcpPolicy {
+	p, _ := ctx.Value(policyCtxKey{}).(mcpPolicy)
+	return p
+}
+
+// filterDoctypeRows keeps the rows whose "doctype" the DocType rules allow
+// reading. A global search spans DocTypes, so the request names none for
+// check to refuse; its hits are filtered here instead. A row with no DocType
+// is dropped: it cannot be checked.
+func (p mcpPolicy) filterDoctypeRows(rows []map[string]interface{}) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, r := range rows {
+		if dt, _ := r["doctype"].(string); dt != "" && p.doctypeAllowed(strings.TrimSpace(dt), false) == nil {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func contains(list []string, s string, fold bool) bool {

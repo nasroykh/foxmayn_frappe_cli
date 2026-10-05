@@ -49,6 +49,7 @@ internal/cmd/get_schema.go    → get-schema subcommand, fetchSchema, compactSch
 internal/cmd/list_doctypes.go → list-doctypes subcommand
 internal/cmd/list_reports.go  → list-reports subcommand
 internal/cmd/run_report.go    → run-report subcommand, limitReportRows
+internal/cmd/search.go        → search subcommand (search_link with -d, global search without), runSearch/validateSearch shared with the MCP tool
 internal/cmd/call_method.go   → call-method subcommand
 internal/cmd/bulk.go          → runBulk worker pool, bulkReport, parseObjects/parseNames/splitUpdates, bulkFlags
 internal/cmd/bulk_{create,update,delete}.go → bulk commands (--concurrency 1-10, --fail-fast)
@@ -64,7 +65,7 @@ internal/cmd/mcp_audit.go         → MCP audit log mcp-audit.jsonl (0600, rotat
 internal/cmd/mcp_sites.go         → multi-site MCP: mcpSites, siteFor, list_sites, addSiteParam
 internal/cmd/mcp_confirm.go       → confirmation through MCP elicitation: needsConfirm, mcpPolicy.confirm, HMAC request state
 internal/cmd/mcp_args.go          → mcpEnv, toolHandler (parse → policy → confirm → client → call → audit), marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
-internal/cmd/mcp_tools.go         → 23 MCP tools + handlers; registerTools(); compactReportResult
+internal/cmd/mcp_tools.go         → 24 MCP tools + handlers; registerTools(); compactReportResult
 internal/cmd/mcp_lifecycle_tools.go → submit/cancel/amend/copy/rename/apply_workflow + get_transitions (docTool, docHandler)
 internal/cmd/mcp_daemon.go        → startDetached(), runHTTPServer(), mcpStatusCmd, mcpStopCmd, state + lock files
 internal/cmd/mcp_detach_unix.go   → setSysProcAttr (Setsid=true), terminateProcess, isProcessRunning — build tag: !windows

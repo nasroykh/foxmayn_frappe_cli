@@ -2,7 +2,8 @@
 //
 // It serves /api/resource (list, get, create, update, delete), the
 // /api/method endpoints ffc uses (login, logout, get_logged_user, ping,
-// get_count, query_report.run) and any method registered with HandleMethod.
+// get_count, query_report.run, search_link, global search) and any method
+// registered with HandleMethod.
 // Errors use the shapes a real Frappe v15/v16 site returns (exc_type,
 // _server_messages, exception), captured from a live site.
 //
@@ -64,21 +65,24 @@ type Response map[string]interface{}
 type Site struct {
 	URL string
 
-	mu        sync.Mutex
-	doctypes  map[string]map[string]map[string]interface{} // doctype → name → doc
-	fields    map[string]map[string]bool                   // fields declared with AddDocType
-	meta      map[string][]metaField                       // getdoctype fields, see DocField
-	tables    map[string]map[string]string                 // parent → table field → child DocType
-	onSubmit  map[string]map[string]bool                   // allow-on-submit fields
-	reports   map[string]map[string]interface{}
-	methods   map[string]MethodFunc
-	overrides map[string]http.Handler
-	sessions  map[string]bool
-	reqs      []Request
-	seq       int
-	logins    int
-	logouts   int
-	clock     time.Time
+	mu       sync.Mutex
+	doctypes map[string]map[string]map[string]interface{} // doctype → name → doc
+	fields   map[string]map[string]bool                   // fields declared with AddDocType
+	meta     map[string][]metaField                       // getdoctype fields, see DocField
+	tables   map[string]map[string]string                 // parent → table field → child DocType
+	onSubmit map[string]map[string]bool                   // allow-on-submit fields
+	// search_link fields and the DocTypes in the global search, see search.go
+	searchFields map[string][]string
+	globalSearch map[string][]string
+	reports      map[string]map[string]interface{}
+	methods      map[string]MethodFunc
+	overrides    map[string]http.Handler
+	sessions     map[string]bool
+	reqs         []Request
+	seq          int
+	logins       int
+	logouts      int
+	clock        time.Time
 }
 
 // New starts a fake site, closed when the test ends.
@@ -97,6 +101,7 @@ func New(t testing.TB) *Site {
 		clock:     time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC),
 	}
 	s.registerLifecycle()
+	s.registerSearch()
 	// Every Frappe site has these; ffc reads them before some actions.
 	s.AddDocType("Workflow", "workflow_name", "document_type", "is_active", "workflow_state_field")
 	s.AddDocType("Deleted Document", "deleted_doctype", "deleted_name", "restored", "data")
