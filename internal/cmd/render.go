@@ -9,6 +9,7 @@ import (
 
 	"github.com/itchyny/gojq"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 	"github.com/spf13/cobra"
@@ -260,12 +261,29 @@ func (p *pageFlags) register(cmd *cobra.Command, exclusive ...string) {
 // Without --order-by, --all sorts by creation and name, because Frappe's
 // default (modified desc) moves rows between pages while documents change.
 func listDocs(cmd *cobra.Command, p pageFlags, title, doctype string, opts client.ListOptions, fields []string, table func([]map[string]interface{}) error) error {
+	return listDocsTo(cmd, p, title, doctype, opts, fields, table, nil)
+}
+
+// listDocsTo is listDocs that also hands a complete result (every row the
+// query matches: --all, no limit, or fewer rows than the limit) to done,
+// with the site's config, e.g. to cache it.
+func listDocsTo(cmd *cobra.Command, p pageFlags, title, doctype string, opts client.ListOptions, fields []string,
+	table func([]map[string]interface{}) error, done func(*config.SiteConfig, []map[string]interface{})) error {
 	if !p.all {
-		rows, err := callSite(cmd, title, func(ctx context.Context, c *client.FrappeClient) ([]map[string]interface{}, error) {
-			return c.GetList(ctx, doctype, opts)
+		type result struct {
+			rows []map[string]interface{}
+			cfg  *config.SiteConfig
+		}
+		res, err := callSiteCfg(cmd, title, func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (result, error) {
+			rows, err := c.GetList(ctx, doctype, opts)
+			return result{rows, cfg}, err
 		})
 		if err != nil {
 			return err
+		}
+		rows := res.rows
+		if done != nil && (opts.Limit < 0 || len(rows) < opts.Limit) {
+			done(res.cfg, rows)
 		}
 		return render(rows, fields, func() error { return table(rows) })
 	}
@@ -276,16 +294,25 @@ func listDocs(cmd *cobra.Command, p pageFlags, title, doctype string, opts clien
 		opts.OrderBy = "creation asc, name asc"
 	}
 	ctx := cmd.Context()
-	c, err := newClient(ctx)
+	c, cfg, err := newClientCfg(ctx)
 	if err != nil {
 		return err
 	}
 	defer c.CloseQuietly()
-	return renderAll(ctx, title, p.pageSize, func(ctx context.Context, start, size int) ([]map[string]interface{}, error) {
+	var seen []map[string]interface{}
+	err = renderAll(ctx, title, p.pageSize, func(ctx context.Context, start, size int) ([]map[string]interface{}, error) {
 		o := opts
 		o.Start, o.Limit = start, size
-		return c.GetList(ctx, doctype, o)
+		rows, err := c.GetList(ctx, doctype, o)
+		if done != nil {
+			seen = append(seen, rows...)
+		}
+		return rows, err
 	}, fields, table)
+	if err == nil && done != nil {
+		done(cfg, seen)
+	}
+	return err
 }
 
 // machineOutput reports whether the result is printed as data (a machine

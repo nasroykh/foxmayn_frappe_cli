@@ -482,8 +482,10 @@ func TestCmdGetSchemaMergesCustomFieldsAndPropertySetters(t *testing.T) {
 	r = cmdTOK(t, cmdTRun(t, s, "get-schema", "-d", "Ticket"))
 	cmdTHas(t, r.Stdout, "FIELDNAME", "region", "Select", "orphan")
 
-	// the exact queries fetchSchema makes
-	if n := len(s.RequestsTo("GET", "/api/resource/Custom Field")); n != 4 {
+	// the exact queries fetchSchema makes: the first call and --full (the
+	// cache keeps only the compact view) fetch; --keys and the table are
+	// answered from the cache.
+	if n := len(s.RequestsTo("GET", "/api/resource/Custom Field")); n != 2 {
 		t.Fatalf("Custom Field queries: %d", n)
 	}
 }

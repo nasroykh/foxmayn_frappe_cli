@@ -43,6 +43,10 @@ internal/cmd/whoami.go        → whoami subcommand, buildWhoami (shared with th
 internal/cmd/can.go           → can subcommand, checkPermission (shared with the MCP tool), parsePerm, deniedError (exit 5)
 internal/cmd/doctor.go        → doctor subcommand: one method per check on `doctor`, doctorCheck {check,status,message,hint}
 internal/cmd/server_cache.go  → per-site server.json cache in os.UserCacheDir() (serverInfo, cacheDirName; the dir comes from the `userCacheDir` var)
+internal/cmd/meta_cache.go    → DocType/report lists (24 h) and compact schemas (1 h, max 100) next to server.json; listCacher
+internal/cmd/cache_cmd.go     → ffc cache status / clear [--all-sites] / warm [--doctypes]
+internal/cmd/completion.go    → shell completion (registerCompletions, run once in execute); reads config + cache only
+internal/cmd/mcp_completion.go → MCP completion/complete for resource templates and prompts, cache only, policy-gated
 internal/cmd/get_doc.go       → get-doc subcommand
 internal/cmd/list_docs.go     → list-docs subcommand + parseFields()
 internal/cmd/create_doc.go    → create-doc subcommand
@@ -171,6 +175,8 @@ func init() {
 - **Global flags** `siteName`, `configPath`, `jsonOutput`, `quiet` (and `client.Timeout` for `--timeout`) are package-level vars set in `root.go` — use them directly, don't redeclare.
 - **Never build a client with `client.New` directly** in a command — use `callSite` / `newClient` so `loadSite` runs and an expired OAuth token is refreshed. (`ping` is the one exception: it calls `loadSite` + `newSiteClient` itself to time the whole round-trip; `newSiteClient` is `client.New` plus the OAuth `tokenRefresher`.) A command that also needs the site config (to key a cache, name the auth method) uses `callSiteCfg` / `newClientCfg`.
 - **Site facts are cached, not refetched.** Installed apps and versions go through `serverInfo(ctx, c, cfg, refresh)` (24 h, `<user cache dir>/ffc/<name>-<hash>/server.json`, 0700/0600, atomic, keyed by URL too). A command with a `--refresh` flag passes it (doctor has none: it reads live and never touches the cache). Version-dependent behaviour uses `serverInfo(...).FrappeMajor()`. Never build a cache path from a raw site name: use `cacheDirName`. Tests repoint the `userCacheDir` seam (TestMain, `cacheTEnv`); setting XDG_CACHE_HOME would not work on macOS or Windows.
+- **Completion never touches the site.** A completion function (cobra `RegisterFlagCompletionFunc`/`ValidArgsFunction`, or the MCP completer) reads the config (`loadSiteConfig`, `resolveCfgPath`) and the cache (`readListCache`, `readSchemaCache`) only: no client, no login, no cache write, and nothing on a miss (`cobra.ShellCompDirectiveNoFileComp`). Completion is registered by flag name in `registerCompletions`: a new command with a `doctype` flag (and `fields` beside it) completes without code; a new enum flag adds one `reg(cmd, flag, fixedValues(...))` line. Tests run `ffc __complete --config <cfg> …` through `runFFC` and assert the fake saw zero requests.
+- **Metadata cache.** Fill it only from a complete, unfiltered result (`listDocsTo` + `listCacher`) or a fresh fetch (`get-schema`, `cache warm`); never cache documents. A reader treats any problem as a miss. MCP tools do not use it (MCP `get_schema` stays live); MCP completion does.
 - **A new `doctor` check** is a method on `doctor` that calls `d.add(id, checkPass|checkWarn|checkFail, message, hint)`. Check ids are part of the JSON contract: never rename one. Messages must not contain secrets (config values in parse errors are stripped; URLs go through `redactedURL`). A check must not change state (no OAuth refresh, no cache write, no cleanup). The probe is one request: `net.tls` reads `resp.RawResponse.TLS`, so a proxy is honoured. Tests use the seams `doctorNow` and `doctorTLSRoots`.
 - **`Args: cobra.NoArgs`** on data commands.
 - **Flag variable prefixes**: Each command uses a unique 2-letter prefix for its flag vars to avoid collisions within the `cmd` package. Check existing files before choosing one.
@@ -408,6 +414,7 @@ Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`
 - `filterSchemaKeys(doc, keys)` — keeps only the specified top-level keys (for `--keys` flag)
 - `isTruthy(v)` — returns true for non-zero float64, int, or bool true
 - `fetchSchema(ctx, c, doctype)` — shared by the CLI and MCP: fetches the DocType, merges Custom Fields, applies Property Setters; problems come back as warnings (`_warnings` in JSON), not failures
+- `loadSchema(cmd, doctype, full, refresh)` — the CLI path: a fresh cache entry answers with no request and no login (same stdout and stderr: the cache keeps the compact view, the table rows and the warnings); otherwise it fetches and caches. `--full` always fetches, `--refresh` skips the read. MCP `get_schema` calls `fetchSchema` directly and never uses the cache.
 
 ## Custom Fields in get-schema
 

@@ -84,6 +84,7 @@ func describeTools(s *server.MCPServer) {
 func registerSurface(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy) {
 	resources := registerResources(s, env)
 	registerPrompts(s, env)
+	registerMCPCompletions(s, env)
 	server.WithInstructions(mcpInstructions(s, env, policies, resources))(s)
 }
 

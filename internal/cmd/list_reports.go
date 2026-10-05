@@ -31,10 +31,10 @@ Examples:
 		if err != nil {
 			return err
 		}
-		return listDocs(cmd, lrPages, "Fetching reports…", "Report", opts, reportListFields, func(rows []map[string]interface{}) error {
+		return listDocsTo(cmd, lrPages, "Fetching reports…", "Report", opts, reportListFields, func(rows []map[string]interface{}) error {
 			output.PrintTable(rows, []string{"name", "report_type", "module", "ref_doctype"})
 			return nil
-		})
+		}, listCacher("Report", lrModule))
 	},
 }
 

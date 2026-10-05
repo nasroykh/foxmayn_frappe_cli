@@ -83,6 +83,15 @@ func debugRetry(resp *resty.Response, err error) {
 		resp.Request.Method, redactURL(resp.Request.URL), reason, resp.Request.Attempt+1))
 }
 
+// DebugNote writes one line to the --debug trace (nothing when tracing is
+// off), e.g. that a command answered from the local cache instead of a
+// request. msg must hold no secret.
+func DebugNote(msg string) {
+	if Debug != DebugOff {
+		debugWrite("debug: " + msg)
+	}
+}
+
 func debugWrite(block string) {
 	debugMu.Lock()
 	defer debugMu.Unlock()

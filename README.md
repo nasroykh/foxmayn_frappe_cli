@@ -446,6 +446,39 @@ ffc get-schema -d "Sales Invoice" --json
 ffc get-schema -d "Sales Invoice" --json --full
 ffc get-schema -d "Sales Invoice" --json --keys fields
 ffc get-schema -d "Sales Invoice" --json --keys name,module,fields
+ffc get-schema -d "Sales Invoice" --refresh   # skip the local cache
+```
+
+`get-schema` caches the compact schema per site for **1 hour** and answers from the cache until then: no request and no login, the same output. `--refresh` fetches it again (do that right after a Customize Form change); `--full` always fetches, because the cache keeps only the compact view. `--debug` says when the answer came from the cache.
+
+### Shell completion and the local cache
+
+```bash
+ffc completion bash > /etc/bash_completion.d/ffc        # or: source <(ffc completion bash)
+ffc completion zsh > "${fpath[1]}/_ffc"
+ffc completion fish > ~/.config/fish/completions/ffc.fish
+ffc completion powershell | Out-String | Invoke-Expression
+```
+
+Tab completes site names (`--site`, `site use/remove/rename/edit`, `config set --default-site`, `mcp --sites`), DocTypes (`-d/--doctype` on every command, `cache warm --doctypes`, `mcp --allow-doctypes/--deny-doctypes`), fields (`--fields`: the last item of the comma-separated list), report names (`run-report -n`) and fixed values (`--output`, `--number-format`, `--date-format`, `can --perm`, `mcp --toolsets/--confirm/--allow-tools`, `--debug`). Document names (`-n/--name`) are never completed.
+
+Completion reads only the config file and the local cache. It never sends a request, never signs in and never writes the cache; with no fresh cache entry it offers nothing. The cache lives in `<user cache dir>/ffc/<site>-<hash>/` (`~/.cache/ffc` on Linux; directories 0700, files 0600, written atomically), bound to the site URL (a changed URL ignores it):
+
+| Entry | Kept | Filled by |
+| --- | --- | --- |
+| `server.json` (app versions) | 24 h | `whoami` |
+| `doctypes.json` | 24 h | `list-doctypes` returning the whole list (no `--module`; `--all`, `--limit 0` or fewer rows than the limit), `cache warm` |
+| `reports.json` (with `ref_doctype`) | 24 h | `list-reports`, same rule, `cache warm` |
+| `schema/<doctype>.json` (compact, at most 100; the oldest is evicted) | 1 h | `get-schema`, `cache warm --doctypes` |
+
+The lists change only when an app or a DocType/report is added, and a stale name costs one failed command, so they last a day. A schema is what writes are built from and Customize Form changes it at once, so it lasts an hour. Documents are never cached.
+
+```bash
+ffc cache warm                                   # DocType and report lists (2 requests)
+ffc cache warm --doctypes "Sales Invoice,Customer"  # + those schemas (3 requests each)
+ffc cache status                                 # entries, age, size, fresh/stale
+ffc cache clear                                  # the selected site
+ffc cache clear --all-sites
 ```
 
 ---
@@ -627,6 +660,8 @@ Resources (read-only, JSON):
 
 A resource read runs through the same tool handler: the site must be served, the site's policy applies (a denied DocType is refused, `read_only` does not matter for reads), it is audited, and the 512 KiB cap applies. A template is offered only when its tool is. A failed read is a JSON-RPC error whose message is the tool's (a refusal starts with `policy:`); mcp-go v1.1.1 gives every such error the code -32603, so read the message, not the code. A URI that does not fit a template (an extra segment, a bad `%` escape) is answered as resource not found.
 
+**Completion.** The server answers `completion/complete` for the templates' `{site}` and `{doctype}` and for the prompts' `site`, `doctype` and `report_name`, from the local cache the CLI fills (`ffc cache warm`, see [Shell completion and the local cache](#shell-completion-and-the-local-cache)); without a fresh cache it offers nothing. It sends no request and offers nothing the site's policy would refuse: a site whose policy does not allow the tools, a denied DocType (for `safe-bulk-import`, which writes, a sensitive one too), a report whose `ref_doctype` the DocType rules deny or do not know. Document names are not completed. `get_schema` itself never uses the cache: a long-lived server must not hand a model an hour-old schema to write with.
+
 Prompts (guidance only; they call nothing): `inspect-doctype` (doctype), `safe-bulk-import` (doctype, optional source), `audit-doc-changes` (doctype, name) and `explain-report` (report_name). Each lists which tools to call in which order and what to check, leaving out steps whose tools this server does not expose. With several sites they take a required `site`. A prompt whose essential tools are not exposed is not offered. Arguments are quoted as JSON in the text, and one longer than its limit (140 characters, 500 for `source`) is refused, never cut.
 
 **Progress and structured results.** `bulk_create`, `bulk_update` and `bulk_delete` send `notifications/progress` after each item when the call carries a progress token; cancelling the call stops starting new items. Progress is best effort: a notification can be dropped when the client reads slowly, or arrive after the result. `count_docs` (`{count, doctype}`), `whoami` (the same object as its text) and `list_sites` (`{sites}`; its text stays the bare list) declare an output schema and return `structuredContent`; their text is unchanged. Every tool has a title.
@@ -665,6 +700,7 @@ foxmayn_frappe_cli/
 │   │   ├── site.go           # site list/add/remove/use
 │   │   ├── config_cmd.go     # Interactive settings menu, config get/set
 │   │   ├── whoami.go, can.go, doctor.go, server_cache.go  # identity, permissions, health; version cache
+│   │   ├── meta_cache.go, cache_cmd.go, completion.go  # DocType/report/schema cache, ffc cache, shell completion
 │   │   ├── ping.go, get_doc.go, list_docs.go, create_doc.go, update_doc.go,
 │   │   │   delete_doc.go, count_docs.go, get_schema.go, list_doctypes.go,
 │   │   │   list_reports.go, run_report.go, search.go, call_method.go   # data commands
@@ -683,6 +719,7 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_args.go       # MCP argument parsing and result limits
 │   │   ├── mcp_tools.go      # MCP tool definitions (26 with mcp_lifecycle_tools.go, mcp_identity_tools.go)
 │   │   ├── mcp_lifecycle_tools.go  # submit/cancel/amend/copy/rename/workflow tools
+│   │   ├── mcp_completion.go # completion/complete for resource templates and prompts (cache only)
 │   │   ├── mcp_daemon.go     # detached server, status/stop, state file
 │   │   └── mcp_detach_unix.go / mcp_detach_windows.go  # platform process handling
 │   ├── client/
