@@ -5,6 +5,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +143,48 @@ func contractCollab(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig)
 	}
 	if res, err = shareDoc(ctx, c, contractDT, name, client.ShareOptions{Everyone: true}); err != nil || res["everyone"] != true {
 		t.Errorf("share with everyone = %v, %v", res, err)
+	}
+	// An everyone-share stores no user. share.add without a user shares
+	// with the session user, and removing that share leaves the
+	// everyone-share alone: get_share_name with everyone=0 filters on the
+	// user only, and DocShare.validate_user clears an everyone-share's user.
+	self, err := c.LoggedUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shareKeys := func() map[string]bool {
+		rows, err := c.Shares(ctx, contractDT, name)
+		if err != nil {
+			t.Fatalf("shares: %v", err)
+		}
+		keys := map[string]bool{}
+		for _, r := range rows {
+			keys[fmt.Sprintf("%v/%v/w%v", r["user"], truthy(r["everyone"]), truthy(r["write"]))] = true
+		}
+		return keys
+	}
+	if _, err := c.CallMethod(ctx, "frappe.share.add", map[string]interface{}{"doctype": contractDT, "name": name}, false); err != nil {
+		t.Errorf("share.add without a user: %v", err)
+	}
+	if keys := shareKeys(); len(keys) != 2 || !keys["<nil>/true/wfalse"] || !keys[self+"/false/wfalse"] {
+		t.Errorf("shares = %v; want an everyone-share without a user and one for %s", keys, self)
+	}
+	if res, err = unshareDoc(ctx, c, contractDT, name, self, false); err != nil || res["removed"] != true {
+		t.Errorf("unshare self = %v, %v", res, err)
+	}
+	if keys := shareKeys(); len(keys) != 1 || !keys["<nil>/true/wfalse"] {
+		t.Errorf("shares after unsharing self = %v; want the everyone-share", keys)
+	}
+	// set_permission with a true value and no share creates one with read.
+	if _, err := c.CallMethod(ctx, "frappe.share.set_permission", map[string]interface{}{
+		"doctype": contractDT, "name": name, "user": contractUser, "permission_to": "write", "value": 1}, false); err != nil {
+		t.Errorf("set_permission write=1: %v", err)
+	}
+	if keys := shareKeys(); len(keys) != 2 || !keys[contractUser+"/false/wtrue"] {
+		t.Errorf("shares after set_permission = %v", keys)
+	}
+	if res, err = unshareDoc(ctx, c, contractDT, name, contractUser, false); err != nil || res["removed"] != true {
+		t.Errorf("unshare = %v, %v", res, err)
 	}
 	if res, err = unshareDoc(ctx, c, contractDT, name, "", true); err != nil || res["removed"] != true {
 		t.Errorf("unshare everyone = %v, %v", res, err)

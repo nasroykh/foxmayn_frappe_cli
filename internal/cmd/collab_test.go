@@ -516,3 +516,74 @@ func TestMCPCommentFilesAndAuthor(t *testing.T) {
 		t.Errorf("User read %d times against the policy", n)
 	}
 }
+
+// TestCollabFakeShares pins the share side effects the fake models after
+// Frappe (share.py, assign_to.py); contract_collab_test checks them on a
+// real site.
+func TestCollabFakeShares(t *testing.T) {
+	s := collabTSite(t)
+	shares := func() []map[string]interface{} {
+		r := cmdTOK(t, cmdTRun(t, s, "call-method", "--method", "frappe.share.get_users", "--args", `{"doctype":"Note","name":"N1"}`, "--json"))
+		var out []map[string]interface{}
+		if err := json.Unmarshal([]byte(r.Stdout), &out); err != nil {
+			t.Fatalf("%v: %s", err, r.Stdout)
+		}
+		return out
+	}
+
+	// An assignee who cannot read the document gets a read-only share; one
+	// who can read gets none.
+	s.DenyUser("Note", "jane@example.com")
+	cmdTOK(t, cmdTRun(t, s, "assign", "-d", "Note", "-n", "N1", "--to", "jane@example.com,bob@example.com"))
+	if sh := shares(); len(sh) != 1 || sh[0]["user"] != "jane@example.com" || fmt.Sprint(sh[0]["read"]) != "1" || fmt.Sprint(sh[0]["write"]) != "0" {
+		t.Errorf("shares after assign = %v", sh)
+	}
+	cmdTOK(t, cmdTRun(t, s, "unassign", "-d", "Note", "-n", "N1", "--to", "jane@example.com,bob@example.com"))
+	cmdTOK(t, cmdTRun(t, s, "unshare", "-d", "Note", "-n", "N1", "--user", "jane@example.com"))
+
+	// share.add without a user shares with the session user; with
+	// everyone, the share has no user.
+	cmdTOK(t, cmdTRun(t, s, "call-method", "--method", "frappe.share.add", "--args", `{"doctype":"Note","name":"N1"}`))
+	cmdTOK(t, cmdTRun(t, s, "share", "-d", "Note", "-n", "N1", "--everyone", "--yes"))
+	sh := shares()
+	users := map[string]bool{}
+	for _, d := range sh {
+		users[fmt.Sprint(d["user"])+"/"+fmt.Sprint(d["everyone"])] = true
+	}
+	if len(sh) != 2 || !users[frappetest.Username+"/0"] || !users["<nil>/1"] {
+		t.Errorf("shares = %v", sh)
+	}
+
+	// set_permission with a true (or absent) value adds the right, creating
+	// a read share when there is none; value 0 on read removes the share.
+	cmdTOK(t, cmdTRun(t, s, "call-method", "--method", "frappe.share.set_permission", "--args",
+		`{"doctype":"Note","name":"N1","user":"bob@example.com","permission_to":"write","value":1}`))
+	cmdTOK(t, cmdTRun(t, s, "call-method", "--method", "frappe.share.set_permission", "--args",
+		`{"doctype":"Note","name":"N1","user":"jane@example.com","permission_to":"share"}`))
+	got := map[string]string{}
+	for _, d := range shares() {
+		got[fmt.Sprint(d["user"])] = fmt.Sprintf("r%v w%v s%v", d["read"], d["write"], d["share"])
+	}
+	if got["bob@example.com"] != "r1 w1 s0" || got["jane@example.com"] != "r1 w0 s1" {
+		t.Errorf("set_permission shares = %v", got)
+	}
+	cmdTOK(t, cmdTRun(t, s, "call-method", "--method", "frappe.share.set_permission", "--args",
+		`{"doctype":"Note","name":"N1","user":"bob@example.com","permission_to":"read","value":0}`))
+	if len(shares()) != 3 {
+		t.Errorf("shares after removing bob = %v", shares())
+	}
+
+	// Sharing write needs write permission; an assignment that must share
+	// needs share permission. An everyone-share lets every user read, so it
+	// goes first.
+	cmdTOK(t, cmdTRun(t, s, "unshare", "-d", "Note", "-n", "N1", "--everyone"))
+	s.Deny("Note", "write")
+	lcTCode(t, cmdTRun(t, s, "call-method", "--method", "frappe.share.set_permission", "--args",
+		`{"doctype":"Note","name":"N1","user":"bob@example.com","permission_to":"write"}`), exitPermission)
+	s.Deny("Note", "share")
+	s.DenyUser("Note", "bob@example.com")
+	lcTCode(t, cmdTRun(t, s, "assign", "-d", "Note", "-n", "N1", "--to", "bob@example.com"), exitPermission)
+	if s.Count("ToDo") != 2 { // both closed by unassign; none added
+		t.Errorf("%d ToDos", s.Count("ToDo"))
+	}
+}

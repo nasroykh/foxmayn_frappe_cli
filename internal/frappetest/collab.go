@@ -39,6 +39,54 @@ func (s *Site) collabDoc(doctype, name, ptype string) (map[string]interface{}, e
 	return doc, nil
 }
 
+// DenyUser makes users other than the session user unable to read a
+// DocType unless a DocShare gives them the document, as has_permission(doc,
+// user=...) answers for them. assign_to.add then shares the document with
+// such an assignee.
+func (s *Site) DenyUser(doctype string, users ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cannotRead == nil {
+		s.cannotRead = map[string]map[string]bool{}
+	}
+	if s.cannotRead[doctype] == nil {
+		s.cannotRead[doctype] = map[string]bool{}
+	}
+	for _, u := range users {
+		s.cannotRead[doctype][strings.ToLower(u)] = true
+	}
+}
+
+// userCanRead is has_permission(doc, user=user) for another user: a user
+// DenyUser names reads only through a share; s.mu must be held.
+func (s *Site) userCanRead(doctype, name, user string) bool {
+	return !s.cannotRead[doctype][strings.ToLower(user)] ||
+		s.findShare(doctype, name, user, false) != nil || s.findShare(doctype, name, "", true) != nil
+}
+
+// sessionUser is the user requests run as (frappe.session.user); s.mu must
+// be held.
+func (s *Site) sessionUser() string {
+	if s.userName != "" {
+		return s.userName
+	}
+	return Username
+}
+
+// msgprints wraps a result with msgprint alerts in _server_messages.
+func msgprints(result interface{}, msgs ...string) interface{} {
+	if len(msgs) == 0 {
+		return result
+	}
+	list := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		b, _ := json.Marshal(map[string]interface{}{"message": m, "alert": true})
+		list = append(list, string(b))
+	}
+	sm, _ := json.Marshal(list)
+	return Response{"message": result, "_server_messages": string(sm)}
+}
+
 // userExists reports whether user is a User; s.mu must be held.
 func (s *Site) userExists(user string) bool {
 	if user == "Administrator" || user == "Guest" {
@@ -126,7 +174,7 @@ func (s *Site) assignAdd(_ *http.Request, args map[string]interface{}) (interfac
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	doctype, name := argString(args, "doctype"), argString(args, "name")
-	var duplicates []string
+	var duplicates, shared []string
 	for _, u := range users {
 		doc, err := s.collabDoc(doctype, name, "read")
 		if err != nil {
@@ -157,19 +205,34 @@ func (s *Site) assignAdd(_ *http.Request, args map[string]interface{}) (interfac
 		if _, ok := args["date"]; ok {
 			date = argString(args, "date")
 		}
+		// An assignee who cannot read the document gets it shared read-only
+		// through frappe.share.add, which checks that the session user may
+		// share (assign_to.py, add). The fake checks before inserting the
+		// ToDo; Frappe rolls the insert back.
+		if !s.userCanRead(doctype, name, u) {
+			if s.denied[doctype]["share"] {
+				return nil, Permission(fmt.Sprintf("No permission to share %s %s", doctype, name))
+			}
+			s.insert("DocShare", map[string]interface{}{
+				"share_doctype": doctype, "share_name": name, "user": u, "everyone": json.Number("0"),
+				"read": json.Number("1"), "write": json.Number("0"), "submit": json.Number("0"), "share": json.Number("0"),
+			})
+			shared = append(shared, u)
+		}
 		s.insert("ToDo", map[string]interface{}{
 			"allocated_to": u, "reference_type": doctype, "reference_name": name, "description": desc,
 			"priority": priority, "status": "Open", "date": date, "assigned_by": "Administrator",
 		})
 		s.syncAssign(doc, doctype, name)
 	}
-	out := s.openToDos(doctype, name)
-	if len(duplicates) > 0 {
-		msg, _ := json.Marshal(map[string]interface{}{"message": "Already in the following Users ToDo list:<br><br>" + strings.Join(duplicates, "<br>"), "alert": true})
-		sm, _ := json.Marshal([]string{string(msg)})
-		return Response{"message": out, "_server_messages": string(sm)}, nil
+	var msgs []string
+	if len(shared) > 0 {
+		msgs = append(msgs, "Shared with the following Users with Read access:<br><br>"+strings.Join(shared, "<br>"))
 	}
-	return out, nil
+	if len(duplicates) > 0 {
+		msgs = append(msgs, "Already in the following Users ToDo list:<br><br>"+strings.Join(duplicates, "<br>"))
+	}
+	return msgprints(s.openToDos(doctype, name), msgs...), nil
 }
 
 func (s *Site) assignRemove(_ *http.Request, args map[string]interface{}) (interface{}, error) {
@@ -308,7 +371,7 @@ func (s *Site) shareAdd(_ *http.Request, args map[string]interface{}) (interface
 	everyone := flag(args, "everyone") == 1
 	user := argString(args, "user")
 	if user == "" {
-		user = "Administrator"
+		user = s.sessionUser() // add_docshare; DocShare.validate_user drops it for everyone
 	}
 	if !everyone && !s.userExists(user) {
 		return nil, linkError("User", user)
@@ -348,15 +411,36 @@ func (s *Site) shareSetPermission(_ *http.Request, args map[string]interface{}) 
 		return nil, Permission(fmt.Sprintf("No permission to share %s %s", doctype, name))
 	}
 	perm := argString(args, "permission_to")
-	d := s.findShare(doctype, name, argString(args, "user"), flag(args, "everyone") == 1)
-	if d == nil || flag(args, "value") == 1 {
-		return nil, nil // the fake only removes rights
+	everyone := flag(args, "everyone") == 1
+	user := argString(args, "user")
+	value := 1 // Frappe's default
+	if _, ok := args["value"]; ok {
+		value = flag(args, "value")
 	}
-	d[perm] = json.Number("0")
-	if perm == "read" {
+	if value == 1 && (perm == "write" || perm == "submit") && s.denied[doctype][perm] {
+		return nil, Permission(fmt.Sprintf("You cannot share `%s` on %s `%s` as you do not have `%s` permission on `%s`", perm, doctype, name, perm, doctype))
+	}
+	d := s.findShare(doctype, name, user, everyone)
+	switch {
+	case d == nil && value == 0:
+		return nil, nil // nothing to remove
+	case d == nil:
+		if !everyone && !s.userExists(user) {
+			return nil, linkError("User", user)
+		}
+		d = map[string]interface{}{"share_doctype": doctype, "share_name": name, "user": user, "everyone": json.Number("0"),
+			"read": json.Number("1"), "write": json.Number("0"), "submit": json.Number("0"), "share": json.Number("0")}
+		if everyone {
+			d["user"], d["everyone"] = nil, json.Number("1")
+		}
+		key := s.insert("DocShare", d)["name"].(string)
+		d = s.doctypes["DocShare"][key]
+	}
+	d[perm] = json.Number(fmt.Sprint(value))
+	if perm == "read" && value == 0 {
 		delete(s.doctypes["DocShare"], fmt.Sprint(d["name"]))
 	}
-	return nil, nil
+	return copyDoc(d), nil
 }
 
 func (s *Site) shareGetUsers(_ *http.Request, args map[string]interface{}) (interface{}, error) {

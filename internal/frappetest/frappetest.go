@@ -99,6 +99,8 @@ type Site struct {
 
 	oauth oauthState // oauth.go
 
+	cannotRead map[string]map[string]bool // collab.go: DocType -> lower-case user
+
 	// docinfo.go
 	dashboards map[string]map[string]string
 	onload     map[string]map[string]interface{}
