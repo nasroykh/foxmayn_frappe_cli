@@ -38,11 +38,12 @@ func newMCPFake(t *testing.T, readOnly bool) (*server.MCPServer, *frappetest.Sit
 // an audit log when audit is set.
 func mcpTRegister(s *server.MCPServer, c *client.FrappeClient, site *config.SiteConfig, audit *auditLog) *mcpEnv {
 	env := &mcpEnv{
-		site:   func(context.Context) (*config.SiteConfig, error) { return site, nil },
+		sites:  []string{site.Name},
+		site:   func(context.Context, string) (*config.SiteConfig, error) { return site, nil },
 		client: func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
 		audit:  audit,
 	}
-	registerTools(s, env, newMCPPolicy(site, env.flags))
+	registerTools(s, env, []mcpPolicy{newMCPPolicy(site, env.flags)})
 	return env
 }
 
@@ -808,7 +809,7 @@ func mcpTToolNames(t *testing.T, s *server.MCPServer) []string {
 }
 
 func TestMCPFakeToolSets(t *testing.T) {
-	read := []string{"count_docs", "get_doc", "get_schema", "get_transitions", "list_docs", "list_doctypes", "list_reports", "ping", "run_report"}
+	read := []string{"count_docs", "get_doc", "get_schema", "get_transitions", "list_docs", "list_doctypes", "list_reports", "list_sites", "ping", "run_report"}
 	write := []string{"amend_doc", "apply_workflow", "bulk_create", "bulk_delete", "bulk_update", "call_method", "cancel_doc",
 		"copy_doc", "create_doc", "delete_doc", "rename_doc", "submit_doc", "update_doc"}
 	all := append(append([]string(nil), read...), write...)
@@ -829,7 +830,7 @@ func TestMCPFakeToolSets(t *testing.T) {
 	}
 
 	s, _ = newMCPFake(t, false)
-	if got := mcpTToolNames(t, s); !reflect.DeepEqual(got, all) || len(got) != 22 {
+	if got := mcpTToolNames(t, s); !reflect.DeepEqual(got, all) || len(got) != 23 {
 		t.Errorf("full tools = %v, want %v", got, all)
 	}
 }

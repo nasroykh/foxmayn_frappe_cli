@@ -373,7 +373,7 @@ ffc call-method --method "frappe.client.get_count" --args '{"doctype":"ToDo","fi
 
 #### `ffc mcp` — Start an MCP server for AI agents
 
-Exposes Frappe API operations as 22 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
+Exposes Frappe API operations as 23 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
 
 **Three modes:**
 
@@ -404,6 +404,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `--port`   | `-p`  | Port for HTTP mode (default: 8765, implies HTTP transport) |
 | `--read-only` | —  | Expose only read tools (no create, update, delete, bulk, lifecycle, workflow or `call_method`) |
 | `--allow-tools`, `--allow-doctypes`, `--deny-doctypes`, `--allow-methods`, `--deny-methods` | — | Narrow the site's MCP policy (never widen it) |
+| `--sites`, `--all-sites` | — | Serve several sites; every tool call then needs `site` (see `list_sites`) |
 | `--confirm` | — | `always` or `if-supported`: tighten when destructive calls ask the user |
 
 **Policy and audit.** A site's config entry may hold an `mcp:` block with `read_only`, `allow_tools`, `allow_doctypes`, `deny_doctypes`, `allow_methods`, `deny_methods` and `confirm`. A misspelt key is an error. MCP may read but never write the sensitive DocTypes (User, Role, DocType, DocPerm, System Settings, Server Script, …) unless the site's `allow_doctypes` lists them. `call_method` refuses `execute_code`, `generate_keys` and the Frappe Cloud app installer unless `allow_methods` lists them. With `allow_doctypes` set, `call_method` needs `allow_methods`. A refused call returns an error starting with `policy:` that names the setting, and sends nothing. Every tool call is logged to `~/.config/ffc/mcp-audit.jsonl` with secrets redacted and document data reduced to its keys.
@@ -414,6 +415,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 
 | Tool            | Equivalent ffc command |
 | --------------- | ---------------------- |
+| `list_sites`    | `ffc site list` (served sites only) |
 | `ping`          | `ffc ping`             |
 | `get_doc`       | `ffc get-doc`          |
 | `list_docs`     | `ffc list-docs`        |

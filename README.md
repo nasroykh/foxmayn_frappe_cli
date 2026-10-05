@@ -479,11 +479,21 @@ ffc mcp --port 8765 --site mysite
 **Detached mode** — background HTTP server, doesn't block the terminal:
 ```bash
 ffc mcp --detach [--port 8765] [--site mysite]
-ffc mcp status   # show PID, URL, bearer token, site, start time, log path
+ffc mcp status   # show PID, URL, bearer token, site(s), start time, log path
 ffc mcp stop     # stop the server and clean up (--force if it is not responding)
 ```
 
 The HTTP endpoint is `http://127.0.0.1:<port>/mcp` (Streamable HTTP transport, localhost only, bearer token shown by `ffc mcp status`).
+
+**Several sites** — one server for several sites (opt-in):
+```bash
+ffc mcp --sites prod,staging      # these sites; the default is --site, else default_site, else the first
+ffc mcp --all-sites               # every site in the config
+```
+
+Every tool then takes a required `site` argument (one of the served sites), so a call never lands on a site by default, and the `list_sites` tool lists them (name, URL, how ffc signs in, read-only, default; never secrets). Each site's own `mcp:` policy applies to calls on that site; write tools are exposed when any served site allows them, and a write to a read-only site is refused. The policy flags apply to every site. The set of sites is fixed when the server starts. `FFC_API_KEY`/`FFC_API_SECRET` cannot be combined with several sites (they would replace every site's credentials).
+
+> **Warning:** one connection that spans several sites lets one mistake by the agent reach every one of them, including other clients' data. Serve only the sites a task needs, make the others `read_only`, and keep `confirm` on.
 
 **Read-only mode** — expose only read tools (no create, update, delete, bulk, lifecycle, workflow or `call_method`):
 ```bash
@@ -540,7 +550,7 @@ Some checks are best effort:
 
 **Audit log.** Every tool call, allowed or refused, appends one JSON line to `~/.config/ffc/mcp-audit.jsonl` (next to the config file, 0600). It records the time, site, the client's self-reported name, tool, DocTypes, document names (up to 20), status (`ok`, `error`, `denied`, `invalid`, `confirm_pending`, `declined`), error and duration. The arguments are logged with secrets redacted, and document data and method arguments reduced to their keys and size. The file is rotated to `mcp-audit.jsonl.1` at 10 MiB.
 
-Available MCP tools (22): `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
+Available MCP tools (23): `list_sites`, `ping`, `get_doc`, `list_docs`, `count_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `get_transitions`, and the write tools `create_doc`, `update_doc`, `delete_doc`, `bulk_create`, `bulk_update`, `bulk_delete`, `call_method` (`full_response: true` returns the whole response object), `submit_doc`, `cancel_doc`, `amend_doc`, `copy_doc`, `rename_doc`, `apply_workflow`.
 
 Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`); `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
@@ -587,8 +597,9 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_policy.go     # per-site MCP policy (DocTypes, tools, methods)
 │   │   ├── mcp_audit.go      # MCP audit log (mcp-audit.jsonl)
 │   │   ├── mcp_confirm.go    # confirmation through MCP elicitation
+│   │   ├── mcp_sites.go      # multi-site MCP (--sites, --all-sites, list_sites)
 │   │   ├── mcp_args.go       # MCP argument parsing and result limits
-│   │   ├── mcp_tools.go      # MCP tool definitions (22 with mcp_lifecycle_tools.go)
+│   │   ├── mcp_tools.go      # MCP tool definitions (23 with mcp_lifecycle_tools.go)
 │   │   ├── mcp_lifecycle_tools.go  # submit/cancel/amend/copy/rename/workflow tools
 │   │   ├── mcp_daemon.go     # detached server, status/stop, state file
 │   │   └── mcp_detach_unix.go / mcp_detach_windows.go  # platform process handling

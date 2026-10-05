@@ -61,9 +61,10 @@ internal/cmd/update_check.go      → background update check; owns rootCmd.Pers
 internal/cmd/mcp.go               → mcp subcommand: stdio/HTTP/detach routing, --detach/--port/--read-only + policy flags, newMCPEnv, startMCP
 internal/cmd/mcp_policy.go        → per-site MCP policy: toolActions, scopeOf, mcpPolicy.check, sensitive DocTypes, denied methods
 internal/cmd/mcp_audit.go         → MCP audit log mcp-audit.jsonl (0600, rotated at 10 MiB)
+internal/cmd/mcp_sites.go         → multi-site MCP: mcpSites, siteFor, list_sites, addSiteParam
 internal/cmd/mcp_confirm.go       → confirmation through MCP elicitation: needsConfirm, mcpPolicy.confirm, HMAC request state
 internal/cmd/mcp_args.go          → mcpEnv, toolHandler (parse → policy → confirm → client → call → audit), marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
-internal/cmd/mcp_tools.go         → 22 MCP tools + handlers; registerTools(); compactReportResult
+internal/cmd/mcp_tools.go         → 23 MCP tools + handlers; registerTools(); compactReportResult
 internal/cmd/mcp_lifecycle_tools.go → submit/cancel/amend/copy/rename/apply_workflow + get_transitions (docTool, docHandler)
 internal/cmd/mcp_daemon.go        → startDetached(), runHTTPServer(), mcpStatusCmd, mcpStopCmd, state + lock files
 internal/cmd/mcp_detach_unix.go   → setSysProcAttr (Setsid=true), terminateProcess, isProcessRunning — build tag: !windows

@@ -41,7 +41,8 @@ const (
 type mcpState struct {
 	PID       int       `json:"pid"`
 	Port      int       `json:"port"`
-	Site      string    `json:"site"`
+	Site      string    `json:"site"`            // the default site; older ffc versions read only this
+	Sites     []string  `json:"sites,omitempty"` // every served site, the default first
 	StartedAt time.Time `json:"started_at"`
 	LogPath   string    `json:"log_path"`
 	Token     string    `json:"token"`    // bearer token required by the HTTP transport (C2)
@@ -205,9 +206,9 @@ func startDetached(ctx context.Context, port int) error {
 	// site fails here instead of after the health-check timeout, and the state
 	// file records the site actually served, not just the --site flag. The
 	// child validates the credentials.
-	site, err := config.Load(siteName, configPath)
+	sites, err := mcpSites()
 	if err != nil {
-		return fmt.Errorf("config: %w", err)
+		return err
 	}
 
 	if dir := mcpStateDir(); dir != "" {
@@ -259,7 +260,7 @@ func startDetached(ctx context.Context, port int) error {
 		return fmt.Errorf("finding executable: %w", err)
 	}
 
-	args := daemonArgs(site.Name, port)
+	args := daemonArgs(sites, port)
 
 	cmd := exec.Command(exe, args...)
 	cmd.Stdin = nil
@@ -280,7 +281,8 @@ func startDetached(ctx context.Context, port int) error {
 	if err := writeMCPState(mcpState{
 		PID:       cmd.Process.Pid,
 		Port:      port,
-		Site:      site.Name,
+		Site:      sites[0],
+		Sites:     sites,
 		StartedAt: time.Now().UTC(),
 		LogPath:   logPath,
 		Token:     token,
@@ -433,7 +435,11 @@ var mcpStatusCmd = &cobra.Command{
 			fmt.Printf("  PID:     %d\n", state.PID)
 			fmt.Printf("  URL:     http://127.0.0.1:%d/mcp\n", state.Port)
 			fmt.Printf("  Auth:    Bearer %s\n", state.Token)
-			fmt.Printf("  Site:    %s\n", state.Site)
+			if len(state.Sites) > 1 {
+				fmt.Printf("  Sites:   %s (default %s)\n", strings.Join(state.Sites, ", "), state.Sites[0])
+			} else {
+				fmt.Printf("  Site:    %s\n", state.Site)
+			}
 			fmt.Printf("  Started: %s\n", state.StartedAt.Local().Format("2006-01-02 15:04:05"))
 			fmt.Printf("  Log:     %s\n", state.LogPath)
 		} else if isProcessRunning(state.PID) {
@@ -517,14 +523,20 @@ func init() {
 	mcpCmd.AddCommand(mcpStopCmd)
 }
 
-// daemonArgs are the detached child's arguments: the resolved site, the
+// daemonArgs are the detached child's arguments: the resolved sites, the
 // same config flag, an explicit port, the policy and debug flags, and no
-// --detach. Pinning the site keeps a later default_site change from moving
-// a running daemon. An env-only site (FFC_* vars) has no name.
-func daemonArgs(site string, port int) []string {
+// --detach. Pinning the sites keeps a later default_site change (or a site
+// added for --all-sites) from changing a running daemon. An env-only site
+// (FFC_* vars) has no name.
+func daemonArgs(sites []string, port int) []string {
 	args := []string{"mcp", "--port", strconv.Itoa(port)}
-	if site != "" {
-		args = append(args, "--site", site)
+	if len(sites) > 0 && sites[0] != "" {
+		args = append(args, "--site", sites[0])
+	}
+	if len(sites) > 1 {
+		for _, s := range sites {
+			args = append(args, "--sites="+csvField(s))
+		}
 	}
 	if configPath != "" {
 		args = append(args, "--config", configPath)
@@ -541,7 +553,7 @@ func daemonArgs(site string, port int) []string {
 		{"--deny-methods", mcpFlags.DenyMethods},
 	} {
 		for _, v := range f.list {
-			args = append(args, f.flag+"="+v)
+			args = append(args, f.flag+"="+csvField(v))
 		}
 	}
 	if mcpFlags.Confirm != "" {
@@ -551,4 +563,13 @@ func daemonArgs(site string, port int) []string {
 		args = append(args, "--debug="+level) // the trace goes to mcp.log (0600)
 	}
 	return args
+}
+
+// csvField quotes v for a string-slice flag, which reads each value as a
+// CSV record: a name with a comma or a quote would otherwise be split.
+func csvField(v string) string {
+	if !strings.ContainsAny(v, ",\"\r\n") && strings.TrimSpace(v) == v {
+		return v
+	}
+	return `"` + strings.ReplaceAll(v, `"`, `""`) + `"`
 }

@@ -15,30 +15,41 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newMCPEnv returns the environment the MCP tools run in, plus a close func
-// to call on shutdown. The site is read from the config on every call, so a
-// policy or credential edit applies to the next call. The client is built
-// once and reused (one HTTP transport, one login for session-auth sites)
-// while the site's credentials are unchanged; an expired OAuth token is
-// refreshed, and a token refreshed by another ffc process is picked up by
-// rebuilding the client.
-func newMCPEnv() (*mcpEnv, func(), error) {
+// newMCPEnv returns the environment the MCP tools run in for the served
+// sites, plus a close func to call on shutdown. A site is read from the
+// config on every call, so a policy or credential edit applies to the next
+// call. Each site's client is built once and reused (one HTTP transport, one
+// login for session-auth sites) while its credentials are unchanged; an
+// expired OAuth token is refreshed, and a token refreshed by another ffc
+// process is picked up by rebuilding the client.
+func newMCPEnv(sites []string) (*mcpEnv, func(), error) {
 	audit, err := newAuditLog()
 	if err != nil {
 		return nil, nil, err
 	}
-	var (
-		mu  sync.Mutex
+	type siteClient struct {
+		mu  sync.Mutex // one build or login per site at a time
 		key string
 		fc  *client.FrappeClient
+	}
+	var (
+		mu      sync.Mutex
+		clients = map[string]*siteClient{}
 	)
 	get := func(ctx context.Context, site *config.SiteConfig) (*client.FrappeClient, error) {
 		mu.Lock()
-		defer mu.Unlock()
+		sc := clients[site.Name]
+		if sc == nil {
+			sc = &siteClient{}
+			clients[site.Name] = sc
+		}
+		mu.Unlock()
+		sc.mu.Lock()
+		defer sc.mu.Unlock()
 		cfg := refreshSite(ctx, site)
 		k := strings.Join([]string{cfg.URL, cfg.AccessToken, cfg.APIKey, cfg.APISecret, cfg.Username, cfg.Password}, "\x00")
-		if fc != nil && k == key {
-			return fc, nil
+		if sc.fc != nil && k == sc.key {
+			return sc.fc, nil
 		}
 		c, err := client.New(ctx, cfg)
 		if err != nil {
@@ -46,19 +57,30 @@ func newMCPEnv() (*mcpEnv, func(), error) {
 		}
 		// The old client is dropped without logging out: tool calls that
 		// fetched it before the swap may still be using its session.
-		fc, key = c, k
-		return fc, nil
+		sc.fc, sc.key = c, k
+		return sc.fc, nil
 	}
 	closeFn := func() {
 		mu.Lock()
 		defer mu.Unlock()
-		if fc != nil {
-			fc.CloseQuietly()
-			fc = nil
+		for _, sc := range clients {
+			sc.mu.Lock()
+			if sc.fc != nil {
+				sc.fc.CloseQuietly()
+				sc.fc = nil
+			}
+			sc.mu.Unlock()
 		}
 	}
 	env := &mcpEnv{
-		site:   func(context.Context) (*config.SiteConfig, error) { return loadSiteConfig() },
+		sites: sites,
+		site: func(_ context.Context, name string) (*config.SiteConfig, error) {
+			site, err := config.Load(name, configPath)
+			if err != nil {
+				return nil, fmt.Errorf("config: %w", err)
+			}
+			return site, nil
+		},
 		client: get,
 		flags:  mcpFlags,
 		audit:  audit,
@@ -96,21 +118,33 @@ func cleanMCPFlags(cmd *cobra.Command) error {
 	return nil
 }
 
-// startMCP builds the environment and the server with the tools the site's
-// policy allows. It checks the credentials once up front, so a
-// misconfiguration fails at start rather than on the first tool call.
+// startMCP builds the environment and the server with the tools the served
+// sites' policies allow. It checks the default site's credentials up front,
+// so a misconfiguration fails at start rather than on the first tool call;
+// another site that fails is reported and its calls fail until it is fixed.
 func startMCP(ctx context.Context) (*server.MCPServer, func(), error) {
-	env, closeEnv, err := newMCPEnv()
+	sites, err := mcpSites()
 	if err != nil {
 		return nil, nil, err
 	}
-	site, err := env.site(ctx)
-	if err == nil {
-		_, err = env.client(ctx, site)
-	}
+	env, closeEnv, err := newMCPEnv(sites)
 	if err != nil {
-		closeEnv()
 		return nil, nil, err
+	}
+	var policies []mcpPolicy
+	for i, name := range sites {
+		site, err := env.site(ctx, name)
+		if err == nil {
+			policies = append(policies, newMCPPolicy(site, env.flags))
+			_, err = env.client(ctx, site)
+		}
+		switch {
+		case err != nil && i == 0:
+			closeEnv()
+			return nil, nil, err
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "warning: site %q: %v\n", name, err)
+		}
 	}
 	s := server.NewMCPServer(
 		"ffc",
@@ -118,7 +152,10 @@ func startMCP(ctx context.Context) (*server.MCPServer, func(), error) {
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 	)
-	registerTools(s, env, newMCPPolicy(site, env.flags))
+	registerTools(s, env, policies)
+	if len(sites) > 1 {
+		fmt.Fprintf(os.Stderr, "Serving %d sites: %s. Every tool call must name its site.\n", len(sites), strings.Join(sites, ", "))
+	}
 	return s, closeEnv, nil
 }
 
@@ -126,6 +163,8 @@ var (
 	mcpDetach   bool
 	mcpPort     int
 	mcpReadOnly bool
+	mcpAllSites bool
+	mcpSiteList []string // --sites
 	// mcpFlags is the policy given on the command line. It can only narrow
 	// the site's config: a project's MCP client config must not be able to
 	// widen what the site owner allowed.
@@ -194,6 +233,8 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 
 func init() {
 	mcpCmd.Flags().BoolVarP(&mcpDetach, "detach", "d", false, "Run as a background HTTP server (use 'ffc mcp stop' to stop)")
+	mcpCmd.Flags().StringSliceVar(&mcpSiteList, "sites", nil, "Serve these sites; every tool call then names its site (default: the selected site only)")
+	mcpCmd.Flags().BoolVar(&mcpAllSites, "all-sites", false, "Serve every site in the config; every tool call then names its site")
 	mcpCmd.Flags().BoolVar(&mcpReadOnly, "read-only", false, "Expose only read tools (no create, update, delete, bulk or call_method)")
 	mcpCmd.Flags().StringSliceVar(&mcpFlags.AllowTools, "allow-tools", nil, "Expose only these tools (narrows sites.<site>.mcp.allow_tools)")
 	mcpCmd.Flags().StringSliceVar(&mcpFlags.AllowDoctypes, "allow-doctypes", nil, "Allow only these DocTypes (narrows the config; never unlocks a sensitive DocType)")
