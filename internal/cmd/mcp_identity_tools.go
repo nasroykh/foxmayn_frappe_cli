@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -16,12 +17,25 @@ func registerIdentityTools(s *server.MCPServer, env *mcpEnv) {
 	registerCheckPermission(s, env)
 }
 
+// whoamiSchema is whoami's output schema (whoamiResult; its structuredContent
+// is the same object as the text).
+var whoamiSchema = json.RawMessage(`{"type":"object","properties":{` +
+	`"user":{"type":"string"},"full_name":{"type":"string"},"roles":{"type":"array","items":{"type":"string"}},` +
+	`"roles_source":{"type":"string","enum":["has_role","user_doc","unavailable"]},"site":{"type":"string"},` +
+	`"url":{"type":"string"},"auth":{"type":"string","enum":["oauth","api_key","password","none"]},` +
+	`"server":{"type":"object","properties":{"frappe":{"type":"string"},"major":{"type":"integer"},` +
+	`"apps":{"type":"object","additionalProperties":{"type":"object","properties":{"title":{"type":"string"},"version":{"type":"string"},"branch":{"type":"string"}}}},` +
+	`"cached":{"type":"boolean"},"fetched_at":{"type":"string"}}},` +
+	`"notes":{"type":"array","items":{"type":"string"}}},` +
+	`"required":["user","roles","roles_source","url","auth"]}`)
+
 func registerWhoami(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("whoami",
 		mcp.WithDescription("Show which user the configured credentials belong to on the Frappe site, the user's roles, and the installed apps with their versions (Frappe major version included). Unlike ping this proves the login works. Versions are cached for 24 hours."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(true),
 		mcp.WithBoolean("refresh", mcp.Description("Read the site's app versions again instead of using the cache.")),
+		mcp.WithRawOutputSchema(whoamiSchema),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		refresh := req.GetBool("refresh", false)
@@ -30,7 +44,11 @@ func registerWhoami(s *server.MCPServer, env *mcpEnv) {
 			if !ok {
 				return nil, fmt.Errorf("whoami: no site in the call context")
 			}
-			return buildWhoami(ctx, c, site, refresh)
+			res, err := buildWhoami(ctx, c, site, refresh)
+			if err != nil {
+				return nil, err
+			}
+			return structuredOut{Text: res, Structured: res}, nil
 		}, nil
 	}))
 }

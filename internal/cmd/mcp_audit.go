@@ -50,6 +50,8 @@ type auditRecord struct {
 	Confirm    string      `json:"confirm,omitempty"` // a call that needed confirmation: confirmed, unsupported or never
 	Error      string      `json:"error,omitempty"`
 	DurationMS int64       `json:"duration_ms"`
+
+	cause error // the failure itself, for a resource read's error; not logged
 }
 
 // auditLog appends records to mcp-audit.jsonl next to the config file.

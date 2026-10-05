@@ -54,13 +54,16 @@ func toolHandler(env *mcpEnv, parse func(req mcp.CallToolRequest) (toolCall, err
 		res := env.run(ctx, req, parse, &rec)
 		rec.DurationMS = time.Since(rec.Time).Milliseconds()
 		env.audit.write(rec, req.GetArguments())
+		if read := resourceReadFrom(ctx); read != nil {
+			read.status, read.err = rec.Status, rec.cause
+		}
 		return res, nil
 	}
 }
 
 func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(req mcp.CallToolRequest) (toolCall, error), rec *auditRecord) *mcp.CallToolResult {
 	fail := func(status string, err error) *mcp.CallToolResult {
-		rec.Status, rec.Error = status, err.Error()
+		rec.Status, rec.Error, rec.cause = status, err.Error(), err
 		return mcp.NewToolResultError(err.Error())
 	}
 	if siteless[req.Params.Name] {

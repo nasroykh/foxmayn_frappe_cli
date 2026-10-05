@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -166,8 +167,8 @@ func TestMCPToolSurface(t *testing.T) {
 }
 
 func TestMCPToolsets(t *testing.T) {
-	core := []string{"bulk_create", "bulk_delete", "bulk_update", "call_method", "count_docs", "create_doc", "delete_doc",
-		"get_doc", "get_schema", "list_docs", "list_doctypes", "list_reports", "list_sites", "ping", "run_report", "search", "update_doc"}
+	core := []string{"bulk_create", "bulk_delete", "bulk_update", "call_method", "check_permission", "count_docs", "create_doc", "delete_doc",
+		"get_doc", "get_schema", "list_docs", "list_doctypes", "list_reports", "list_sites", "ping", "run_report", "search", "update_doc", "whoami"}
 	lifecycle := []string{"amend_doc", "apply_workflow", "cancel_doc", "copy_doc", "get_transitions", "list_sites", "rename_doc", "submit_doc"}
 	if got := mcpTToolNames(t, mcpTToolsets(t, []string{"core"})); !reflect.DeepEqual(got, core) {
 		t.Errorf("core = %v", got)
@@ -259,7 +260,7 @@ func TestMCPInstructions(t *testing.T) {
 
 	mcpTSites(t, []string{"prod", "dev"}, false, "")
 	text = mcpTInstructions(t, mcpTStart(t))
-	for _, want := range []string{`serves 2 sites: "dev", "Prod"`, "needs a site argument", "Read-only sites (write tools refuse them): Prod.", "ffc://<site>/schema/{doctype}"} {
+	for _, want := range []string{`serves 2 sites: "dev", "Prod"`, "needs a site argument", "Read-only sites (write tools refuse them): Prod.", "ffc://{site}/schema/{doctype}"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("multi-site instructions lack %q:\n%s", want, text)
 		}
@@ -544,13 +545,18 @@ func TestMCPRunReportTruncates(t *testing.T) {
 	if kept == 0 || kept >= 3000 || m["truncated"] != true || m["total_rows"] != 3000.0 || m["columns"] == nil {
 		t.Fatalf("kept %d, %v", kept, m["total_rows"])
 	}
-	if want := fmt.Sprintf("%d of 3000 rows did not fit", 3000-kept); !strings.Contains(m["hint"].(string), want) {
-		t.Errorf("hint %q lacks %q", m["hint"], want)
+	hint := m["hint"].(string)
+	if want := fmt.Sprintf("%d of the 3000 rows did not fit", 3000-kept); !strings.Contains(hint, want) || strings.Contains(hint, "limit had") {
+		t.Errorf("hint %q lacks %q", hint, want)
 	}
-	// Cut by limit first: total_rows stays the report's total.
+	// Cut by limit first: total_rows stays the report's total, and the hint
+	// counts the size cut from the limited rows, the limit cut apart.
 	m = mcpTObj(t, mcpTOK(t, s, "run_report", map[string]interface{}{"report_name": "Big", "limit": 2000}))
-	if m["total_rows"] != 3000.0 || !strings.Contains(m["hint"].(string), "of 3000 rows") {
-		t.Errorf("limit 2000: total %v hint %v", m["total_rows"], m["hint"])
+	kept = len(m["result"].([]interface{}))
+	hint = m["hint"].(string)
+	if m["total_rows"] != 3000.0 || !strings.Contains(hint, fmt.Sprintf("%d of the 2000 rows did not fit", 2000-kept)) ||
+		!strings.Contains(hint, "limit had already cut the report's 3000 rows to 2000") {
+		t.Errorf("limit 2000: total %v kept %d hint %v", m["total_rows"], kept, hint)
 	}
 }
 
@@ -675,5 +681,193 @@ func TestMCPBulkCancel(t *testing.T) {
 	}
 	if site.Count("ToDo") != 4 { // TD-2's override deleted nothing
 		t.Errorf("ToDo count = %d", site.Count("ToDo"))
+	}
+}
+
+// The instructions, resources and prompts name only what is registered.
+func TestMCPSurfaceFollowsTools(t *testing.T) {
+	s, _, _, _ := mcpTPolicy(t, &config.MCPPolicy{AllowTools: []string{"get_doc", "list_docs"}}, config.MCPPolicy{})
+	text := mcpTInstructions(t, s)
+	for _, absent := range []string{"update_doc", "create_doc", "search", "list_sites", "ffc://sites", "/schema/", "get_schema",
+		"submit_doc", "get_transitions", "count_docs", "whoami", "check_permission", "inspect-doctype", "explain-report", "safe-bulk-import"} {
+		if strings.Contains(text, absent) {
+			t.Errorf("instructions mention %q:\n%s", absent, text)
+		}
+	}
+	for _, want := range []string{"get_doc takes no name", "Resources (the same JSON as the tools): ffc://prod/doc/{doctype}/{name} (get_doc).", "Prompts with step-by-step plans: audit-doc-changes."} {
+		if !strings.Contains(text, want) {
+			t.Errorf("instructions lack %q:\n%s", want, text)
+		}
+	}
+
+	// A prompt leaves out the steps whose tools are missing.
+	get := func(s *server.MCPServer, name string, args map[string]string) string {
+		raw, errMsg := mcpTRPC(t, s, "prompts/get", map[string]interface{}{"name": name, "arguments": args})
+		if errMsg != "" {
+			t.Fatalf("%s: %s", name, errMsg)
+		}
+		var res struct {
+			Messages []struct{ Content struct{ Text string } }
+		}
+		if err := json.Unmarshal(raw, &res); err != nil {
+			t.Fatal(err)
+		}
+		return res.Messages[0].Content.Text
+	}
+	s, _, _, _ = mcpTPolicy(t, &config.MCPPolicy{AllowTools: []string{"get_schema", "list_docs", "count_docs", "get_doc", "run_report"}}, config.MCPPolicy{})
+	for name, args := range map[string]map[string]string{
+		"inspect-doctype":   {"doctype": "ToDo"},
+		"audit-doc-changes": {"doctype": "ToDo", "name": "TD-1"},
+		"explain-report":    {"report_name": "Todos"},
+	} {
+		text := get(s, name, args)
+		for _, absent := range []string{"get_transitions", "check_permission", "search", "list_reports", "bulk_delete", "submit_doc"} {
+			if strings.Contains(text, absent) {
+				t.Errorf("%s mentions %s:\n%s", name, absent, text)
+			}
+		}
+		if !strings.Contains(text, "1. ") || strings.Contains(text, "\n\n\n") {
+			t.Errorf("%s steps:\n%s", name, text)
+		}
+	}
+	s, _ = newMCPFake(t, false)
+	if text := get(s, "inspect-doctype", map[string]string{"doctype": "ToDo"}); !strings.Contains(text, "4. If it is submittable, get_transitions") || !strings.Contains(text, "5. check_permission") {
+		t.Errorf("full inspect-doctype:\n%s", text)
+	}
+	if text := get(s, "safe-bulk-import", map[string]string{"doctype": "ToDo"}); !strings.Contains(text, "bulk_delete") || !strings.Contains(text, "search doctype=") || !strings.Contains(text, "submit_doc") {
+		t.Errorf("full safe-bulk-import:\n%s", text)
+	}
+}
+
+// Prompt arguments go into the text as JSON, exactly, and an over-long one
+// is refused rather than cut.
+func TestMCPPromptArgs(t *testing.T) {
+	s, _ := newMCPFake(t, false)
+	raw, errMsg := mcpTRPC(t, s, "prompts/get", map[string]interface{}{"name": "audit-doc-changes",
+		"arguments": map[string]string{"doctype": "To<Do>", "name": "a\"b\x01\u202ec"}})
+	if errMsg != "" {
+		t.Fatal(errMsg)
+	}
+	var res struct {
+		Messages []struct{ Content struct{ Text string } }
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		t.Fatal(err)
+	}
+	text := res.Messages[0].Content.Text
+	i := strings.Index(text, `{"ref_doctype":`)
+	j := strings.Index(text[i:], "}")
+	var filters map[string]string
+	if err := json.Unmarshal([]byte(text[i:i+j+1]), &filters); err != nil {
+		t.Fatalf("filters are not JSON: %v: %s", err, text[i:i+j+1])
+	}
+	if filters["ref_doctype"] != "To<Do>" || filters["docname"] != "a\"b\x01\u202ec" {
+		t.Errorf("filters = %q", filters)
+	}
+	if strings.ContainsAny(text, "\x01\u202e") {
+		t.Error("control or bidi character shown raw")
+	}
+	_, errMsg = mcpTRPC(t, s, "prompts/get", map[string]interface{}{"name": "audit-doc-changes",
+		"arguments": map[string]string{"doctype": "ToDo", "name": strings.Repeat("n", 141)}})
+	if !strings.Contains(errMsg, "argument name is 141 characters long, at most 140") {
+		t.Errorf("long name: %q", errMsg)
+	}
+}
+
+// mcp-go v1.1.1 answers every resource handler error with -32603; the class
+// is in the error for OnError hooks, and the message is the tool's.
+func TestMCPResourceErrors(t *testing.T) {
+	site := frappetest.New(t)
+	site.Add("ToDo", map[string]interface{}{"name": "TD-1"})
+	c, err := client.New(context.Background(), &config.SiteConfig{URL: site.URL, APIKey: frappetest.APIKey, APISecret: frappetest.APISecret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := &config.SiteConfig{Name: "prod", MCP: &config.MCPPolicy{DenyDoctypes: []string{"Note"}}}
+	env := &mcpEnv{
+		sites:  []string{"prod"},
+		site:   func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
+		client: func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
+	}
+	var (
+		mu   sync.Mutex
+		errs []error
+	)
+	hooks := &server.Hooks{}
+	hooks.AddOnError(func(_ context.Context, _ any, _ mcp.MCPMethod, _ any, err error) {
+		mu.Lock()
+		errs = append(errs, err)
+		mu.Unlock()
+	})
+	s := server.NewMCPServer("t", "0", server.WithHooks(hooks))
+	registerTools(s, env, []mcpPolicy{newMCPPolicy(sc, env.flags)})
+
+	read := func(uri string) (int, string) {
+		msg, _ := json.Marshal(map[string]interface{}{"jsonrpc": "2.0", "id": 1, "method": "resources/read", "params": map[string]interface{}{"uri": uri}})
+		b, _ := json.Marshal(s.HandleMessage(context.Background(), msg))
+		var resp struct {
+			Error struct {
+				Code    int
+				Message string
+			}
+		}
+		_ = json.Unmarshal(b, &resp)
+		return resp.Error.Code, resp.Error.Message
+	}
+	for _, tc := range []struct {
+		uri, msg string
+		class    error
+	}{
+		{"ffc://prod/doc/ToDo/Nope", "not found", server.ErrResourceNotFound},
+		{"ffc://prod/doc/Ghost/x", `doctype "Ghost" not found on this site`, server.ErrResourceNotFound},
+		{"ffc://prod/doc/Note/x", `policy: DocType "Note" is denied`, mcp.ErrInvalidParams},
+		{"ffc://other/doc/ToDo/TD-1", "is not served", mcp.ErrInvalidParams},
+	} {
+		mu.Lock()
+		errs = nil
+		mu.Unlock()
+		code, msg := read(tc.uri)
+		if code != mcp.INTERNAL_ERROR || !strings.HasPrefix(msg, strings.SplitN(tc.msg, " ", 2)[0]) && !strings.Contains(msg, tc.msg) {
+			t.Errorf("%s: code %d message %q", tc.uri, code, msg)
+		}
+		mu.Lock()
+		if len(errs) != 1 || !errors.Is(errs[0], tc.class) {
+			t.Errorf("%s: hook errors %v, want one wrapping %v", tc.uri, errs, tc.class)
+		}
+		mu.Unlock()
+	}
+	// A policy refusal still reads as one.
+	if _, msg := read("ffc://prod/doc/Note/x"); !strings.HasPrefix(msg, "policy:") {
+		t.Errorf("policy message = %q", msg)
+	}
+	// The template rejects a bad escape before any handler: mcp-go's own
+	// not-found answer (-32002 before protocol 2026-07-28).
+	if code, _ := read("ffc://prod/doc/ToDo/%zz"); code != mcp.RESOURCE_NOT_FOUND {
+		t.Errorf("bad escape code = %d", code)
+	}
+}
+
+func TestMCPWhoamiStructured(t *testing.T) {
+	cacheTEnv(t)
+	site := frappetest.New(t)
+	cfg := &config.SiteConfig{Name: "test", URL: site.URL, APIKey: frappetest.APIKey, APISecret: frappetest.APISecret}
+	c, err := client.New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := server.NewMCPServer("test", "0", server.WithOutputSchemaValidation())
+	mcpTRegister(s, c, cfg, nil)
+	site.SetUser("jane@example.com", "Sales User")
+	res := callTool(t, s, "whoami", nil)
+	if res.IsError {
+		t.Fatalf("whoami (validated against its schema): %s", resultText(t, res))
+	}
+	text := mcpTObj(t, resultText(t, res))
+	sc, _ := res.StructuredContent.(map[string]interface{})
+	if !reflect.DeepEqual(text, sc) || sc["user"] != "jane@example.com" {
+		t.Errorf("structured %v\ntext %v", sc, text)
+	}
+	if len(s.ListTools()["whoami"].Tool.RawOutputSchema) == 0 {
+		t.Error("whoami has no output schema")
 	}
 }

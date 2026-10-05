@@ -150,7 +150,7 @@ func (env *mcpEnv) policies(ctx context.Context) ([]mcpPolicy, error) {
 // served site's policy allows it.
 func (env *mcpEnv) runSiteless(ctx context.Context, req mcp.CallToolRequest, parse func(req mcp.CallToolRequest) (toolCall, error), rec *auditRecord) *mcp.CallToolResult {
 	fail := func(status string, err error) *mcp.CallToolResult {
-		rec.Status, rec.Error = status, err.Error()
+		rec.Status, rec.Error, rec.cause = status, err.Error(), err
 		return mcp.NewToolResultError(err.Error())
 	}
 	call, err := parse(req)
@@ -204,7 +204,8 @@ func authKind(s *config.SiteConfig) string {
 }
 
 // listSitesSchema is list_sites' output schema (its structuredContent).
-var listSitesSchema = json.RawMessage(`{"type":"object","properties":{"sites":{"type":"array","items":{"type":"object",` +
+var listSitesSchema = json.RawMessage(`{"type":"object","description":"The served sites. The text content is the bare array, as before structured output; structuredContent wraps the same array as {sites}.",` +
+	`"properties":{"sites":{"type":"array","items":{"type":"object",` +
 	`"properties":{"name":{"type":"string"},"url":{"type":"string"},"auth":{"type":"string","enum":["oauth","api_key","password","none"]},` +
 	`"read_only":{"type":"boolean"},"default":{"type":"boolean"}},"required":["name","url","auth","read_only"]}}},"required":["sites"]}`)
 
