@@ -138,6 +138,7 @@ func TestBulkFiltersAllPages(t *testing.T) {
 	for i := 0; i < 45; i++ {
 		s.Add("Note", map[string]interface{}{"name": fmt.Sprintf("N-%02d", i), "state": "new"})
 	}
+	s.Add("Note", map[string]interface{}{"name": "keep", "state": "kept"})
 	cfg := fakeConfig(t, s, "apikey")
 	r := runFFC(t, cfg, "", "bulk-update", "-d", "Note", "--filters", `{"state":"new"}`, "--set", `{"state":"old"}`, "--yes", "--json")
 	if r.Code != 0 {
@@ -152,6 +153,6 @@ func TestBulkFiltersAllPages(t *testing.T) {
 	}
 	r = runFFC(t, cfg, "", "bulk-delete", "-d", "Note", "--filters", `{"state":"old"}`, "--json")
 	if r.Code != 0 || !strings.Contains(r.Stdout, `"results": []`) {
-		t.Errorf("no-match JSON: exit %d: %s", r.Code, r.Stdout)
+		t.Errorf("no-match JSON: exit %d: %s %s", r.Code, r.Stdout, r.Stderr)
 	}
 }
