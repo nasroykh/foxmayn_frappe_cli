@@ -8,8 +8,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
@@ -20,6 +22,7 @@ var (
 	gsDoctype string
 	gsFull    bool
 	gsKeys    string
+	gsRefresh bool
 )
 
 var getSchemaCmd = &cobra.Command{
@@ -36,6 +39,13 @@ Flags (JSON mode only):
   --keys    Comma-separated top-level keys to include in the output.
             Use --keys fields to get just the field definitions array.
 
+The schema is cached locally for 1 hour per site and login (the compact
+view): a repeat call prints the same output without a request. A cache hit
+does not check the credentials or that the DocType still exists: a revoked
+key or a deleted DocType shows only once the entry expires or with
+--refresh, which fetches it again (also after a Customize Form change).
+--full always fetches.
+
 Examples:
   ffc get-schema -d "Sales Invoice"
   ffc get-schema -d "Sales Invoice" --json
@@ -45,23 +55,15 @@ Examples:
 `,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		type schema struct {
-			doc      map[string]interface{}
-			warnings []string
-		}
-		res, err := callSite(cmd, fmt.Sprintf("Fetching schema for %s…", gsDoctype), func(ctx context.Context, c *client.FrappeClient) (schema, error) {
-			doc, warnings, err := fetchSchema(ctx, c, gsDoctype)
-			return schema{doc, warnings}, err
-		})
+		res, err := loadSchema(cmd, gsDoctype, gsFull, gsRefresh)
 		if err != nil {
 			return err
 		}
-		doc := res.doc
 
 		if machineOutput() {
-			result := doc
-			if !gsFull {
-				result = compactSchema(doc)
+			result := res.compact
+			if gsFull {
+				result = res.full
 			}
 			result = selectKeys(result, gsKeys)
 			if len(res.warnings) > 0 {
@@ -76,34 +78,74 @@ Examples:
 		for _, w := range res.warnings {
 			fmt.Fprintln(os.Stderr, "warning: "+w)
 		}
-
-		rawFields, ok := doc["fields"].([]interface{})
-		if !ok || len(rawFields) == 0 {
+		if len(res.rows) == 0 {
 			fmt.Fprintln(os.Stderr, "No fields found in schema.")
 			return nil
 		}
-		rows := make([]map[string]interface{}, 0, len(rawFields))
-		for _, rf := range rawFields {
-			f, ok := rf.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			reqd := ""
-			if isTruthy(f["reqd"]) {
-				reqd = "✓"
-			}
-			rows = append(rows, map[string]interface{}{
-				"fieldname": f["fieldname"],
-				"label":     f["label"],
-				"fieldtype": f["fieldtype"],
-				"required":  reqd,
-				"options":   f["options"],
-				"default":   f["default"],
-			})
-		}
-		output.PrintTable(rows, []string{"fieldname", "label", "fieldtype", "required", "options", "default"})
+		output.PrintTable(res.rows, []string{"fieldname", "label", "fieldtype", "required", "options", "default"})
 		return nil
 	},
+}
+
+// schemaResult is what get-schema prints: the compact view (--json), the
+// full definition (--full; nil when it came from the cache), the table rows
+// and the warnings of a partial fetch.
+type schemaResult struct {
+	compact, full map[string]interface{}
+	rows          []map[string]interface{}
+	warnings      []string
+}
+
+// loadSchema answers from the local cache while it is fresh, unless full
+// (the cache keeps only the compact view) or refresh is set; otherwise it
+// fetches the schema and caches it. A cache hit sends no request and does
+// not sign in, so it checks neither the credentials nor that the DocType
+// still exists (documented in the help). --debug says which it was.
+func loadSchema(cmd *cobra.Command, doctype string, full, refresh bool) (schemaResult, error) {
+	if !full && !refresh {
+		if cfg, err := loadSiteConfig(); err == nil {
+			if sc := readSchemaCache(cfg, doctype, time.Now()); sc != nil {
+				touchSchemaCache(cfg, doctype)
+				client.DebugNote(fmt.Sprintf("schema of %q from the local cache, fetched %s ago (--refresh fetches it)",
+					doctype, time.Since(sc.FetchedAt).Round(time.Second)))
+				return schemaResult{compact: sc.Schema, rows: sc.Rows, warnings: sc.Warnings}, nil
+			}
+		}
+	}
+	return callSiteCfg(cmd, fmt.Sprintf("Fetching schema for %s…", doctype), func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (schemaResult, error) {
+		doc, warnings, err := fetchSchema(ctx, c, doctype)
+		if err != nil {
+			return schemaResult{}, err
+		}
+		res := schemaResult{compact: compactSchema(doc), full: doc, rows: schemaTableRows(doc), warnings: warnings}
+		_ = writeSchemaCache(cfg, doctype, res.compact, res.rows, warnings) // a cache that cannot be written costs the next call a request
+		return res, nil
+	})
+}
+
+// schemaTableRows are the rows of get-schema's table: one per field.
+func schemaTableRows(doc map[string]interface{}) []map[string]interface{} {
+	rawFields, _ := doc["fields"].([]interface{})
+	rows := make([]map[string]interface{}, 0, len(rawFields))
+	for _, rf := range rawFields {
+		f, ok := rf.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		reqd := ""
+		if isTruthy(f["reqd"]) {
+			reqd = "✓"
+		}
+		rows = append(rows, map[string]interface{}{
+			"fieldname": f["fieldname"],
+			"label":     f["label"],
+			"fieldtype": f["fieldtype"],
+			"required":  reqd,
+			"options":   f["options"],
+			"default":   f["default"],
+		})
+	}
+	return rows
 }
 
 // fetchSchema returns a DocType definition as the desk sees it: the base
@@ -395,14 +437,20 @@ func castProperty(v, propertyType interface{}) interface{} {
 	if !ok {
 		return v
 	}
+	// A json.Number, like every number the site sends (UseNumber): the table
+	// prints it the same whether it was just fetched or read from the cache.
+	// A float is written as encoding/json writes a float64, so the JSON
+	// output is what it was; NaN and Inf stay strings.
 	switch propertyType {
 	case "Check", "Int":
 		if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil {
-			return float64(n)
+			return json.Number(strconv.Itoa(n))
 		}
 	case "Float", "Currency", "Percent":
 		if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil {
-			return f
+			if b, err := json.Marshal(f); err == nil {
+				return json.Number(b)
+			}
 		}
 	}
 	return s
@@ -503,6 +551,7 @@ func init() {
 	getSchemaCmd.Flags().StringVarP(&gsDoctype, "doctype", "d", "", "DocType to inspect (required)")
 	getSchemaCmd.Flags().BoolVar(&gsFull, "full", false, "Return the complete unfiltered Frappe response (JSON mode only)")
 	getSchemaCmd.Flags().StringVar(&gsKeys, "keys", "", "Comma-separated top-level keys to include, e.g. name,fields (JSON mode only)")
+	getSchemaCmd.Flags().BoolVar(&gsRefresh, "refresh", false, "Fetch the schema from the site instead of the local cache (kept 1 h)")
 	_ = getSchemaCmd.MarkFlagRequired("doctype")
 	rootCmd.AddCommand(getSchemaCmd)
 }

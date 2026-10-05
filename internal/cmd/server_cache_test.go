@@ -72,8 +72,9 @@ func TestServerCacheStaysInsideTheCacheDir(t *testing.T) {
 			t.Fatal(err)
 		}
 		rel, err := filepath.Rel(filepath.Join(base, "ffc"), dir)
-		if err != nil || rel == ".." || strings.Contains(rel, string(filepath.Separator)) {
-			t.Errorf("site %q gives %s, outside ffc/<one element>", name, dir)
+		parts := strings.Split(rel, string(filepath.Separator))
+		if err != nil || len(parts) != 2 || parts[0] == ".." || parts[1] != "none" {
+			t.Errorf("site %q gives %s, not ffc/<site>/<credential>", name, dir)
 		}
 	}
 	// A site with no name (FFC_* variables) is keyed by its URL.

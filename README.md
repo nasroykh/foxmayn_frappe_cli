@@ -303,7 +303,7 @@ ffc doctor [--json]                  # check config, network, login, server, loc
 
 **`whoami`** asks the site for the user (`frappe.auth.get_logged_user`), the user's roles and the installed apps (`frappe.utils.change_log.get_versions`). A user who is not a System Manager can read their own User document but not its roles table (permission level 1), so the roles are read from the user's Has Role rows (`frappe.client.get_list` with the parent DocType `User`), which they may list. If the site refuses that too, `roles_source` is `unavailable` and `notes` says why. The automatic roles (All, Guest, Desk User) are not Has Role rows and are not listed. When the site sees the credentials as Guest, the result is printed and the command exits 3, like `ping`. The URL is printed with any password in it hidden.
 
-The app versions are cached for 24 hours per site in `<user cache dir>/ffc/<site>-<hash>/server.json` (`~/.cache/ffc` on Linux; directory 0700, file 0600). `--refresh` reads them again. The cache is dropped when a request suggests the server changed (404, 5xx, no answer) and ignored when the site URL changed.
+The app versions are cached for 24 hours per site in `<user cache dir>/ffc/<site>-<hash>/<credential>/server.json` (`~/.cache/ffc` on Linux; directory 0700, file 0600). `--refresh` reads them again. The cache is dropped when a request suggests the server changed (404, 5xx, no answer) and ignored when the site URL changed.
 
 **`can`** exits 0 when the permission is held, **5** when it is not, 4 when the DocType or document does not exist. The answer is printed either way (`{"doctype","name","perm","allowed","basis"}` with `--json`). `--perm` is one of `select`, `read` (default), `write`, `create`, `delete`, `submit`, `cancel`, `amend`, `print`, `email`, `report`, `import`, `export`, `share`; with `-n` any lower-case permission type the site defines (custom types, Frappe v16) is accepted too.
 
@@ -446,7 +446,42 @@ ffc get-schema -d "Sales Invoice" --json
 ffc get-schema -d "Sales Invoice" --json --full
 ffc get-schema -d "Sales Invoice" --json --keys fields
 ffc get-schema -d "Sales Invoice" --json --keys name,module,fields
+ffc get-schema -d "Sales Invoice" --refresh   # skip the local cache
 ```
+
+`get-schema` caches the compact schema per site for **1 hour** and answers from the cache until then: no request and no login, the same output. `--refresh` fetches it again (do that right after a Customize Form change); `--full` always fetches, because the cache keeps only the compact view. **A cache hit does not check credentials** (or that the DocType still exists): a revoked key or a deleted DocType still gets the cached schema, exit 0, until the entry expires; `--refresh` does check. `--debug` says when the answer came from the cache.
+
+### Shell completion and the local cache
+
+```bash
+ffc completion bash > /etc/bash_completion.d/ffc        # or: source <(ffc completion bash)
+ffc completion zsh > "${fpath[1]}/_ffc"
+ffc completion fish > ~/.config/fish/completions/ffc.fish
+ffc completion powershell | Out-String | Invoke-Expression
+```
+
+Tab completes site names (`--site`, `site use/remove/rename/edit`, `config set --default-site`, `mcp --sites`), DocTypes (`-d/--doctype` on every command, `cache warm --doctypes`, `mcp --allow-doctypes/--deny-doctypes`), fields (`--fields`: the last item of the comma-separated list), report names (`run-report -n`) and fixed values (`--output`, `--number-format`, `--date-format`, `can --perm`, `mcp --toolsets/--confirm/--allow-tools`, `--debug`). Document names (`-n/--name`) are never completed.
+
+Completion reads only the config file and the local cache. It never sends a request, never signs in and never writes the cache; with no fresh cache entry it offers nothing. The cache lives in `<user cache dir>/ffc/<site>-<hash>/<credential>/` (`~/.cache/ffc` on Linux; directories 0700, files 0600, written atomically), bound to the site URL (a changed URL ignores it) and to the login: `<credential>` is a hash of the API key, username or OAuth client id (never a secret), so another login on the same site, `FFC_API_KEY` on a named site included, never sees what one login cached. A site defined only by `FFC_*` variables is keyed by its URL with any password removed. `site remove`, `site rename`, `site edit` and `site add`/`init` over an existing name delete that site's cache:
+
+| Entry | Kept | Filled by |
+| --- | --- | --- |
+| `server.json` (app versions) | 24 h | `whoami` |
+| `doctypes.json` | 24 h | `list-doctypes` returning the whole list (no `--module`; `--all`, `--limit 0` or fewer rows than the limit), `cache warm` |
+| `reports.json` (with `ref_doctype`) | 24 h | `list-reports`, same rule, `cache warm` |
+| `schema/<doctype>.json` (compact, at most 100; the least recently used is evicted) | 1 h | `get-schema`, `cache warm --doctypes` |
+
+The lists change only when an app or a DocType/report is added, and a stale name costs one failed command, so they last a day. A schema is what writes are built from and Customize Form changes it at once, so it lasts an hour. Documents are never cached.
+
+```bash
+ffc cache warm                                   # DocType and report lists (2 requests)
+ffc cache warm --doctypes "Sales Invoice,Customer"  # + those schemas (3 requests each)
+ffc cache status                                 # entries, age, size, fresh/stale
+ffc cache clear                                  # the selected site, every login
+ffc cache clear --all-sites
+```
+
+A failed item of `cache warm` (the report list, a schema) is listed in `errors` (`[{"item","error"}]`, `item` is `reports` or `schema:<DocType>`) and makes it exit **8**; what did come back is cached. A failed DocType list fails the whole command.
 
 ---
 
@@ -627,6 +662,8 @@ Resources (read-only, JSON):
 
 A resource read runs through the same tool handler: the site must be served, the site's policy applies (a denied DocType is refused, `read_only` does not matter for reads), it is audited, and the 512 KiB cap applies. A template is offered only when its tool is. A failed read is a JSON-RPC error whose message is the tool's (a refusal starts with `policy:`); mcp-go v1.1.1 gives every such error the code -32603, so read the message, not the code. A URI that does not fit a template (an extra segment, a bad `%` escape) is answered as resource not found.
 
+**Completion.** The server answers `completion/complete` for the templates' `{site}` and `{doctype}` and for the prompts' `site`, `doctype` and `report_name`, from the local cache the CLI fills (`ffc cache warm`, see [Shell completion and the local cache](#shell-completion-and-the-local-cache)); without a fresh cache it offers nothing. It sends no request and offers nothing the site's policy would refuse: a site whose policy does not allow the tools, a denied DocType (for `safe-bulk-import`, which writes, a sensitive one too), a report whose `ref_doctype` the DocType rules deny or do not know. Document names are not completed. `get_schema` itself never uses the cache: a long-lived server must not hand a model an hour-old schema to write with.
+
 Prompts (guidance only; they call nothing): `inspect-doctype` (doctype), `safe-bulk-import` (doctype, optional source), `audit-doc-changes` (doctype, name) and `explain-report` (report_name). Each lists which tools to call in which order and what to check, leaving out steps whose tools this server does not expose. With several sites they take a required `site`. A prompt whose essential tools are not exposed is not offered. Arguments are quoted as JSON in the text, and one longer than its limit (140 characters, 500 for `source`) is refused, never cut.
 
 **Progress and structured results.** `bulk_create`, `bulk_update` and `bulk_delete` send `notifications/progress` after each item when the call carries a progress token; cancelling the call stops starting new items. Progress is best effort: a notification can be dropped when the client reads slowly, or arrive after the result. `count_docs` (`{count, doctype}`), `whoami` (the same object as its text) and `list_sites` (`{sites}`; its text stays the bare list) declare an output schema and return `structuredContent`; their text is unchanged. Every tool has a title.
@@ -665,6 +702,7 @@ foxmayn_frappe_cli/
 │   │   ├── site.go           # site list/add/remove/use
 │   │   ├── config_cmd.go     # Interactive settings menu, config get/set
 │   │   ├── whoami.go, can.go, doctor.go, server_cache.go  # identity, permissions, health; version cache
+│   │   ├── meta_cache.go, cache_cmd.go, completion.go  # DocType/report/schema cache, ffc cache, shell completion
 │   │   ├── ping.go, get_doc.go, list_docs.go, create_doc.go, update_doc.go,
 │   │   │   delete_doc.go, count_docs.go, get_schema.go, list_doctypes.go,
 │   │   │   list_reports.go, run_report.go, search.go, call_method.go   # data commands
@@ -683,6 +721,7 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_args.go       # MCP argument parsing and result limits
 │   │   ├── mcp_tools.go      # MCP tool definitions (26 with mcp_lifecycle_tools.go, mcp_identity_tools.go)
 │   │   ├── mcp_lifecycle_tools.go  # submit/cancel/amend/copy/rename/workflow tools
+│   │   ├── mcp_completion.go # completion/complete for resource templates and prompts (cache only)
 │   │   ├── mcp_daemon.go     # detached server, status/stop, state file
 │   │   └── mcp_detach_unix.go / mcp_detach_windows.go  # platform process handling
 │   ├── client/

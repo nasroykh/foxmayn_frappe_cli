@@ -17,10 +17,13 @@ func TestCastPropertyTypes(t *testing.T) {
 		v, typ interface{}
 		want   interface{}
 	}{
-		{"1", "Check", 1.0},
-		{"0", "Check", 0.0},
-		{" 7 ", "Int", 7.0},
-		{"2.5", "Float", 2.5},
+		{"1", "Check", json.Number("1")},
+		{"0", "Check", json.Number("0")},
+		{" 7 ", "Int", json.Number("7")},
+		{"2.5", "Float", json.Number("2.5")},
+		{"2.50", "Currency", json.Number("2.5")},
+		{"1e21", "Float", json.Number("1e+21")},
+		{"NaN", "Float", "NaN"},
 		{"abc", "Int", "abc"},
 		{"abc", "Float", "abc"},
 		{"Hello", "Data", "Hello"},
@@ -93,8 +96,8 @@ func TestApplyPropertySetters(t *testing.T) {
 		m := f.(map[string]interface{})
 		byName[m["fieldname"].(string)] = m
 	}
-	if byName["a"]["reqd"] != 1.0 {
-		t.Errorf("a.reqd = %#v, want 1.0", byName["a"]["reqd"])
+	if byName["a"]["reqd"] != json.Number("1") {
+		t.Errorf("a.reqd = %#v, want json.Number 1", byName["a"]["reqd"])
 	}
 	if byName["b"]["label"] != "New B" {
 		t.Errorf("b.label = %#v", byName["b"]["label"])

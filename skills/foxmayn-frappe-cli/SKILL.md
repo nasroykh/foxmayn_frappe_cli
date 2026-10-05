@@ -287,6 +287,7 @@ ffc get-schema -d "Sales Invoice" --json
 ffc get-schema -d "Sales Invoice" --json --full
 ffc get-schema -d "Sales Invoice" --json --keys fields
 ffc get-schema -d "Sales Invoice" --json --keys name,module,fields
+ffc get-schema -d "Sales Invoice" --json --refresh   # after a Customize Form change
 ```
 
 | Flag        | Short | Required | Description                                              |
@@ -294,6 +295,9 @@ ffc get-schema -d "Sales Invoice" --json --keys name,module,fields
 | `--doctype` | `-d`  | Yes      | DocType to inspect                                       |
 | `--full`    | —     | No       | Return the complete unfiltered Frappe response           |
 | `--keys`    | —     | No       | Comma-separated top-level keys to include, e.g. `fields` |
+| `--refresh` | —     | No       | Fetch from the site instead of the local cache           |
+
+**The schema is cached locally for 1 hour** per site (the compact view; same output, no request). If a field was just added or changed in Customize Form, pass `--refresh`. `--full` always fetches. A cache hit does not check the credentials or that the DocType still exists; `--refresh` does.
 
 Both `--full` and `--keys` only apply to `--json` output. Problems merging custom fields or Property Setters are reported as warnings (`_warnings` in the JSON), not failures. Property Setter overrides (DocField and DocType level, `field_order`) are applied after custom fields are merged.
 
@@ -321,6 +325,19 @@ ffc list-doctypes --module "Accounts" --json
 | `--limit`  | `-l`  | No       | 50      | Max records to return |
 
 ---
+
+#### Shell completion and `ffc cache`
+
+`ffc completion bash|zsh|fish|powershell` prints a completion script. Tab completes site names, DocTypes (`-d`), fields (`--fields`, comma-separated), report names (`run-report -n`) and enum flags (`--output`, `--perm`, `--number-format`, `--date-format`, `mcp --toolsets/--confirm`). It reads only the config and a local cache, never the site; with no fresh cache it offers nothing. Document names are never completed or cached.
+
+```bash
+ffc cache warm                                   # DocType + report lists (24 h)
+ffc cache warm --doctypes "Sales Invoice,Customer"  # + those schemas (1 h)
+ffc cache status --json                          # {"site","url","dir","entries":[{kind,name,fetched_at,age_seconds,bytes,fresh}],"bytes"}
+ffc cache clear [--all-sites]
+```
+
+`list-doctypes`/`list-reports` refresh the lists when they return the whole list (no `--module`; `--all` or `--limit 0`), `get-schema` the schema.
 
 ### Search and name resolution
 
@@ -474,6 +491,7 @@ With `--read-only`, only `list_sites`, `ping`, `whoami`, `check_permission`, `ge
 MCP tools always return JSON — no `--json` flag needed.
 
 **MCP-specific output behaviour (differs from CLI defaults):**
+- `get_schema` always reads the site (it never uses the CLI's local schema cache). The server answers `completion/complete` for the resource templates' `{site}`/`{doctype}` and the prompts' `site`/`doctype`/`report_name` from that cache (run `ffc cache warm` first), offering only what the site's policy allows.
 - `get_schema` returns the compact view by default (same as `ffc get-schema --json`). The LLM can pass `full=true` for the raw Frappe response, or `keys="fields"` / `keys="name,module,fields"` to select specific top-level properties.
 - `run_report` returns only `columns`, `result`, `report_summary` (if non-null), plus `total_rows` and `truncated` when rows were cut — strips `execution_time`, `chart`, `add_total_row`, `message`. Defaults to 500 rows unless `limit` is given.
 - `search` takes `text` (required), `doctype` (optional) and `limit` (default 20, at most 100). With `doctype` it is search_link (names; Frappe marks it cacheable for 60 s, so a proxy may serve a minute-old answer); without, global search over Global Search Settings DocTypes only, and under an `allow_doctypes`/`deny_doctypes` policy its hits are filtered to the DocTypes the policy allows. A global search answers `{results, hidden_by_policy}` (the number of hits dropped by the policy), a DocType search a plain list.

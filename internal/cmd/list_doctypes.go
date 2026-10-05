@@ -29,10 +29,10 @@ Examples:
 		if err != nil {
 			return err
 		}
-		return listDocs(cmd, ltPages, "Fetching DocTypes…", "DocType", opts, doctypeListFields, func(rows []map[string]interface{}) error {
+		return listDocsTo(cmd, ltPages, "Fetching DocTypes…", "DocType", opts, doctypeListFields, func(rows []map[string]interface{}) error {
 			output.PrintTable(rows, []string{"name", "module", "is_submittable", "description"})
 			return nil
-		})
+		}, listCacher("DocType", ltModule))
 	},
 }
 

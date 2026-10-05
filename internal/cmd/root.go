@@ -82,6 +82,7 @@ var trackOnce sync.Once
 func execute(ctx context.Context, args []string, stderr io.Writer) (int, error) {
 	rootCmd.SetArgs(args)
 	trackOnce.Do(func() { trackRunStart(rootCmd) })
+	completionOnce.Do(func() { registerCompletions(rootCmd) })
 	runStarted = false
 	err := rootCmd.ExecuteContext(ctx)
 	// Wait for any background update-check goroutine to finish writing the

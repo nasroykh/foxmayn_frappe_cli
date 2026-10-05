@@ -237,6 +237,7 @@ Examples:
 			return err
 		}
 
+		dropSiteCache(name)
 		fmt.Fprintf(os.Stderr, "✓ Site %q removed.\n", name)
 		if wasDefault {
 			if newDefault != "" {
@@ -275,6 +276,10 @@ Examples:
 		}); err != nil {
 			return err
 		}
+		// The old name's cache is gone with it; a cache left under the new
+		// name by an earlier site of that name is not this site's.
+		dropSiteCache(oldName)
+		dropSiteCache(newName)
 		fmt.Fprintf(os.Stderr, "✓ Site %q renamed to %q.\n", oldName, newName)
 		return nil
 	},
@@ -327,6 +332,7 @@ Examples:
 		}); err != nil {
 			return err
 		}
+		dropSiteCache(name) // another server: its lists and schemas differ
 		fmt.Fprintf(os.Stderr, "✓ Site %q now points at %s.\n", name, newURL)
 		return nil
 	},
