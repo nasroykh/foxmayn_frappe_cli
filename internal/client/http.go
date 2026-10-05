@@ -113,7 +113,8 @@ func retryableGET(resp *resty.Response, err error) bool {
 // retryableTransport reports whether a GET that got no response is worth
 // repeating: not after a timeout or a cancel, and not when the next attempt
 // is bound to fail the same way (a refused redirect, a certificate that does
-// not verify, a TLS handshake with a server that does not speak TLS).
+// not verify, a TLS handshake with a server that does not speak TLS or that
+// refuses it with an alert, such as one that requires a client certificate).
 func retryableTransport(err error) bool {
 	var (
 		ne   net.Error
@@ -124,12 +125,15 @@ func retryableTransport(err error) bool {
 		ci   x509.CertificateInvalidError
 		rh   tls.RecordHeaderError
 		alrt tls.AlertError
+		op   *net.OpError
 	)
 	switch {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled),
 		errors.As(err, &ne) && ne.Timeout(),
 		errors.As(err, &re), errors.As(err, &cv), errors.As(err, &ua), errors.As(err, &he),
-		errors.As(err, &ci), errors.As(err, &rh), errors.As(err, &alrt):
+		errors.As(err, &ci), errors.As(err, &rh), errors.As(err, &alrt),
+		// An alert the server sent: tls.AlertError wraps it only over QUIC.
+		errors.As(err, &op) && op.Op == "remote error":
 		return false
 	}
 	return true

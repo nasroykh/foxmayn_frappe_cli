@@ -245,6 +245,26 @@ func TestNoRetryOnTLSOrRedirectErrors(t *testing.T) {
 	if !retryableTransport(&url.Error{Op: "Get", URL: "x", Err: syscall.ECONNRESET}) {
 		t.Error("connection reset is not retryable")
 	}
+
+	// A server that requires a client certificate refuses the handshake with
+	// an alert, which arrives as a net.OpError "remote error", not as
+	// tls.AlertError.
+	mtls := httptest.NewUnstartedServer(http.NotFoundHandler())
+	mtls.Config.ErrorLog = log.New(io.Discard, "", 0)
+	mtls.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert, MaxVersion: tls.VersionTLS12}
+	mtls.StartTLS()
+	defer mtls.Close()
+	conn, err := tls.Dial("tcp", mtls.Listener.Addr().String(), &tls.Config{InsecureSkipVerify: true, MaxVersion: tls.VersionTLS12})
+	if err == nil {
+		err = conn.Handshake()
+		_ = conn.Close()
+	}
+	if err == nil {
+		t.Fatal("handshake without a client certificate succeeded")
+	}
+	if retryableTransport(&url.Error{Op: "Get", URL: "x", Err: err}) {
+		t.Errorf("TLS alert %v (%T) is retryable", err, err)
+	}
 }
 
 func TestCallMethodGETArgEncoding(t *testing.T) {
