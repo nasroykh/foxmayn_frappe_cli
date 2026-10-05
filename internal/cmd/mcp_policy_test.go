@@ -35,13 +35,14 @@ func mcpTPolicy(t *testing.T, cfg *config.MCPPolicy, flags config.MCPPolicy) (*s
 	sc := &config.SiteConfig{Name: "prod", MCP: cfg}
 	audit := &auditLog{path: filepath.Join(t.TempDir(), auditFileName)}
 	env := &mcpEnv{
-		site:   func(context.Context) (*config.SiteConfig, error) { return sc, nil },
+		sites:  []string{sc.Name},
+		site:   func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
 		client: func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
 		flags:  flags,
 		audit:  audit,
 	}
 	s := server.NewMCPServer("test", "0")
-	registerTools(s, env, newMCPPolicy(sc, flags))
+	registerTools(s, env, []mcpPolicy{newMCPPolicy(sc, flags)})
 	return s, site, sc, audit.path
 }
 
@@ -333,7 +334,7 @@ func TestDaemonArgsCarryThePolicy(t *testing.T) {
 	t.Cleanup(func() { mcpFlags, mcpReadOnly = prevFlags, prevRO })
 	mcpReadOnly = true
 	mcpFlags = config.MCPPolicy{AllowDoctypes: []string{"Sales Invoice", "ToDo"}, DenyMethods: []string{"frappe.client.*"}}
-	got := strings.Join(daemonArgs("prod", 8765), " ")
+	got := strings.Join(daemonArgs([]string{"prod"}, 8765), " ")
 	want := "mcp --port 8765 --site prod --read-only --allow-doctypes=Sales Invoice --allow-doctypes=ToDo --deny-methods=frappe.client.*"
 	if got != want {
 		t.Errorf("args = %q\nwant   %q", got, want)

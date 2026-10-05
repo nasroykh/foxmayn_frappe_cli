@@ -25,7 +25,7 @@ const (
 // time (fail closed), and TestMCPPolicyCoversEveryTool keeps the list in
 // step with registerTools.
 var toolActions = map[string]toolAction{
-	"ping": actRead, "get_doc": actRead, "list_docs": actRead, "count_docs": actRead,
+	"list_sites": actRead, "ping": actRead, "get_doc": actRead, "list_docs": actRead, "count_docs": actRead,
 	"get_schema": actRead, "list_doctypes": actRead, "list_reports": actRead,
 	"run_report": actRead, "get_transitions": actRead,
 

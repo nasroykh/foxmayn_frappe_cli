@@ -32,18 +32,24 @@ func compactReportResult(r map[string]interface{}) map[string]interface{} {
 // unregistered tool cannot be called at all. The policy is checked again on
 // every call, so a later config edit can still narrow it (widening it needs
 // a restart).
-func registerTools(s *server.MCPServer, env *mcpEnv, policy mcpPolicy) {
+//
+// With several sites, a tool is registered when some site's policy allows
+// it, each call is checked against its own site's policy, and every site
+// tool gets a required `site` argument.
+func registerTools(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy) {
 	registerAllTools(s, env)
 	var drop []string
 	for name := range s.ListTools() {
-		if policy.toolAllowed(name) != nil {
+		if anyAllows(policies, name) != nil {
 			drop = append(drop, name)
 		}
 	}
 	s.DeleteTools(drop...)
+	addSiteParam(s, env)
 }
 
 func registerAllTools(s *server.MCPServer, env *mcpEnv) {
+	registerListSites(s, env)
 	registerPing(s, env)
 	registerGetDoc(s, env)
 	registerListDocs(s, env)

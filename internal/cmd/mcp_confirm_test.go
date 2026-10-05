@@ -346,7 +346,7 @@ func TestMCPConfirmFlag(t *testing.T) {
 	prev := mcpFlags
 	t.Cleanup(func() { mcpFlags = prev })
 	mcpFlags = config.MCPPolicy{Confirm: "always"}
-	if got := strings.Join(daemonArgs("", 1), " "); !strings.HasSuffix(got, " --confirm=always") {
+	if got := strings.Join(daemonArgs(nil, 1), " "); !strings.HasSuffix(got, " --confirm=always") {
 		t.Errorf("daemon args = %q", got)
 	}
 }

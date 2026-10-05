@@ -26,11 +26,15 @@ const maxMCPBulkItems = 200
 // toolCall is the site work of a tool, run once its arguments are valid.
 type toolCall func(ctx context.Context, c *client.FrappeClient) (interface{}, error)
 
-// mcpEnv is what every tool call needs: the site (read on every call, so a
-// config edit applies at once), its client, the policy flags of `ffc mcp`
-// and the audit log.
+// mcpEnv is what every tool call needs: the sites the server serves, a
+// site's config (read on every call, so a config edit applies at once), its
+// client, the policy flags of `ffc mcp` and the audit log.
 type mcpEnv struct {
-	site   func(ctx context.Context) (*config.SiteConfig, error)
+	// sites are the served sites by their exact config names, the default
+	// one first. A single-site server has one entry ("" for a site defined
+	// only by FFC_* variables).
+	sites  []string
+	site   func(ctx context.Context, name string) (*config.SiteConfig, error)
 	client func(ctx context.Context, site *config.SiteConfig) (*client.FrappeClient, error)
 	flags  config.MCPPolicy
 	audit  *auditLog // nil: no audit log
@@ -57,13 +61,23 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 		rec.Status, rec.Error = status, err.Error()
 		return mcp.NewToolResultError(err.Error())
 	}
+	if siteless[req.Params.Name] {
+		return env.runSiteless(ctx, req, parse, rec)
+	}
 	// The site is read first only so every audit line names it; a bad
 	// argument is still reported before a config error.
-	site, siteErr := env.site(ctx)
-	if siteErr == nil {
-		rec.Site = site.Name
+	name, nameErr := env.siteFor(req)
+	var site *config.SiteConfig
+	siteErr := nameErr
+	if nameErr == nil {
+		if site, siteErr = env.site(ctx, name); siteErr == nil {
+			rec.Site = site.Name
+		}
 	}
 	call, err := parse(req)
+	if err == nil {
+		err = nameErr
+	}
 	if err != nil {
 		return fail(auditInvalid, err)
 	}
