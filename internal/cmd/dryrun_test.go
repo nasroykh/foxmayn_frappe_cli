@@ -169,3 +169,58 @@ func TestDryRunSessionSite(t *testing.T) {
 		t.Errorf("password printed")
 	}
 }
+
+// TestDryRunEveryWriteCommand covers the write commands the other dry-run
+// tests do not. Tests have no terminal, so a command that still asked for
+// confirmation would fail with "pass --yes".
+func TestDryRunEveryWriteCommand(t *testing.T) {
+	s := lcTSite(t)
+	s.Add("Deleted Document",
+		map[string]interface{}{"name": "del-1", "deleted_doctype": "Sales Order", "deleted_name": "SO-9", "restored": json.Number("0")})
+	s.Add("ToDo", map[string]interface{}{"name": "TD-1", "status": "Open", "amount": json.Number("1500.0"), "done": json.Number("0")})
+
+	for _, args := range [][]string{
+		{"discard-doc", "-d", "Sales Order", "-n", "SO-1"},
+		{"restore-doc", "--deleted", "del-1"},
+		{"copy-doc", "-d", "Sales Order", "-n", "SO-2"},
+		{"bulk-update", "-d", "ToDo", "--data", `[{"name":"TD-1","status":"Closed"}]`},
+	} {
+		reqs := dryTPlan(t, cmdTRun(t, s, append(args, "--dry-run", "--json")...))
+		if len(reqs) == 0 {
+			t.Errorf("%s: empty plan", args[0])
+		}
+	}
+
+	// Equal values written with another literal are not changes.
+	reqs := dryTPlan(t, cmdTRun(t, s, "update-doc", "-d", "ToDo", "-n", "TD-1", "--dry-run", "--json",
+		"--data", `{"amount":1500,"done":false,"status":"Closed"}`))
+	if changes, _ := reqs[0]["changes"].(map[string]interface{}); len(changes) != 1 || changes["status"] == nil {
+		t.Errorf("changes = %v", reqs[0]["changes"])
+	}
+
+	// bulk-delete checks each document exists, like delete-doc.
+	lcTCode(t, cmdTRun(t, s, "bulk-delete", "-d", "ToDo", "--names", "TD-1,nope", "--dry-run"), exitNotFound)
+
+	// Headers set for the request appear in the plan, credentials do not.
+	reqs = dryTPlan(t, cmdTRunStdin(t, s, "usr=a&pwd=hunter2", "api", "/api/method/login", "--input", "-",
+		"-H", "Content-Type: application/x-www-form-urlencoded", "-H", "X-API-Key: k3y", "--dry-run", "--json"))
+	h, _ := reqs[0]["headers"].(map[string]interface{})
+	if reqs[0]["body"] != "usr=a&pwd=***" || h["Content-Type"] != "application/x-www-form-urlencoded" || h["X-Api-Key"] != "***" {
+		t.Errorf("api plan = %v", reqs[0])
+	}
+
+	if n := dryTWrites(s); n != 0 {
+		t.Fatalf("%d writes reached the site", n)
+	}
+}
+
+func TestDryRunWorkflowApply(t *testing.T) {
+	s := lcTWorkflowSite(t)
+	reqs := dryTPlan(t, cmdTRun(t, s, "workflow", "apply", "-d", "Leave Application", "-n", "LA-1", "--action", "Approve", "--dry-run", "--json"))
+	if !strings.HasSuffix(fmt.Sprint(reqs[0]["url"]), "frappe.model.workflow.apply_workflow") {
+		t.Errorf("plan = %v", reqs)
+	}
+	if d, _ := s.Doc("Leave Application", "LA-1"); d["workflow_state"] != "Open" || dryTWrites(s) != 0 {
+		t.Errorf("site changed: %v", d)
+	}
+}

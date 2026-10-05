@@ -3,6 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -92,5 +94,32 @@ func TestDebugBasic(t *testing.T) {
 	cliEnv = nil
 	if r := debugTRun(t, cfg, "", "ping", "--debug=loud"); r.Code != exitUsage {
 		t.Errorf("--debug=loud: exit %d", r.Code)
+	}
+}
+
+// TestDebugOAuthRefreshRedacted traces a token refresh: the client secret,
+// both refresh tokens and the new access token stay out of the trace.
+func TestDebugOAuthRefreshRedacted(t *testing.T) {
+	s := frappetest.New(t)
+	s.Add("ToDo", map[string]interface{}{"name": "a"})
+	s.Handle("POST "+tokenPath, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"` + frappetest.Token + `","refresh_token":"rt-new-value","expires_in":3600,"token_type":"Bearer"}`))
+	}))
+	cfg := filepath.Join(t.TempDir(), "config.yaml")
+	body := "default_site: t\nsites:\n  t:\n    url: " + s.URL + "\n    oauth_client_id: cid\n    oauth_client_secret: cs-value\n" +
+		"    access_token: at-old-value\n    refresh_token: rt-old-value\n    token_expiry: 1\n"
+	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := debugTRun(t, cfg, "", "get-doc", "-d", "ToDo", "-n", "a", "--debug=body")
+	cmdTOK(t, r)
+	if len(s.RequestsTo(http.MethodPost, tokenPath)) != 1 || !strings.Contains(r.Stderr, tokenPath) {
+		t.Fatalf("no traced refresh:\n%s", r.Stderr)
+	}
+	for _, secret := range []string{"cs-value", "rt-old-value", "rt-new-value", "at-old-value", frappetest.Token} {
+		if strings.Contains(r.Stderr, secret) {
+			t.Errorf("trace contains %q:\n%s", secret, r.Stderr)
+		}
 	}
 }

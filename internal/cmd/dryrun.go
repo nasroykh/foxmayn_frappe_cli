@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"sort"
 
@@ -83,6 +85,14 @@ func printPlan(plan *client.DryRunError) error {
 			fmt.Println()
 		}
 		fmt.Println(clean(r.Method + " " + r.URL))
+		names := make([]string, 0, len(r.Headers))
+		for k := range r.Headers {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		for _, k := range names {
+			fmt.Println(clean(k + ": " + r.Headers[k]))
+		}
 		if r.Body != nil {
 			b, err := json.MarshalIndent(r.Body, "", "  ")
 			if err != nil {
@@ -108,16 +118,78 @@ func printPlan(plan *client.DryRunError) error {
 }
 
 // fieldChanges compares the fields data would set with doc's current
-// values: field → {"from", "to"} for each that differs.
+// values: field → {"from", "to"} for each that differs. Numbers compare by
+// value (1500 and 1500.0 are equal), and a boolean equals 0 or 1, as Frappe
+// stores a Check.
 func fieldChanges(doc, data map[string]interface{}) map[string]interface{} {
 	out := map[string]interface{}{}
 	for k, to := range data {
 		from := doc[k]
-		a, _ := json.Marshal(from)
-		b, _ := json.Marshal(to)
-		if string(a) != string(b) {
+		if !sameValue(from, to) {
 			out[k] = map[string]interface{}{"from": from, "to": to}
 		}
 	}
 	return out
+}
+
+func sameValue(a, b interface{}) bool {
+	x, y := canonical(a), canonical(b)
+	if bx, ok := x.(bool); ok {
+		if _, num := y.(*big.Float); num {
+			x = boolNumber(bx)
+		}
+	}
+	if by, ok := y.(bool); ok {
+		if _, num := x.(*big.Float); num {
+			y = boolNumber(by)
+		}
+	}
+	if fx, ok := x.(*big.Float); ok {
+		fy, ok := y.(*big.Float)
+		return ok && fx.Cmp(fy) == 0
+	}
+	ja, _ := json.Marshal(x)
+	jb, _ := json.Marshal(y)
+	return string(ja) == string(jb)
+}
+
+// canonical is v as decoded JSON with each number as a *big.Float, so
+// different literals of one value compare equal.
+func canonical(v interface{}) interface{} {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var out interface{}
+	if dec.Decode(&out) != nil {
+		return v
+	}
+	return numbersToFloat(out)
+}
+
+func numbersToFloat(v interface{}) interface{} {
+	switch val := v.(type) {
+	case json.Number:
+		if f, ok := new(big.Float).SetString(val.String()); ok {
+			return f
+		}
+	case map[string]interface{}:
+		for k, x := range val {
+			val[k] = numbersToFloat(x)
+		}
+	case []interface{}:
+		for i, x := range val {
+			val[i] = numbersToFloat(x)
+		}
+	}
+	return v
+}
+
+func boolNumber(b bool) *big.Float {
+	if b {
+		return big.NewFloat(1)
+	}
+	return big.NewFloat(0)
 }

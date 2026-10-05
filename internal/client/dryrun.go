@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -50,12 +49,15 @@ func holdBack(ctx context.Context, method string) bool {
 	return false
 }
 
-// PlannedRequest is a request a dry run did not send. Secrets in the URL
-// and the body are redacted.
+// PlannedRequest is a request a dry run did not send. Secrets in the URL,
+// the headers and the body are redacted.
 type PlannedRequest struct {
-	Method string      `json:"method"`
-	URL    string      `json:"url"`
-	Body   interface{} `json:"body,omitempty"`
+	Method string `json:"method"`
+	URL    string `json:"url"`
+	// Headers are the ones set for this request (ffc api -H, Content-Type),
+	// not the credentials every request carries.
+	Headers map[string]string `json:"headers,omitempty"`
+	Body    interface{}       `json:"body,omitempty"`
 	// Changes is filled in by commands that can tell what a write would
 	// change (update-doc): field → {"from": current, "to": new}.
 	Changes map[string]interface{} `json:"changes,omitempty"`
@@ -86,12 +88,24 @@ func plan(r *resty.Client, req *resty.Request, method, path string) *DryRunError
 		}
 		u += sep + q
 	}
-	return &DryRunError{Requests: []PlannedRequest{{Method: method, URL: redactURL(u), Body: planBody(req.Body)}}}
+	var headers map[string]string
+	for k := range req.Header {
+		if headers == nil {
+			headers = map[string]string{}
+		}
+		headers[k] = redactHeader(k, strings.Join(req.Header.Values(k), ", "))
+	}
+	return &DryRunError{Requests: []PlannedRequest{{
+		Method:  method,
+		URL:     redactURL(u),
+		Headers: headers,
+		Body:    planBody(req.Body, req.Header.Get("Content-Type")),
+	}}}
 }
 
 // planBody is a request body as data: JSON as its value, other text as a
 // string, binary as a size; secrets redacted.
-func planBody(body interface{}) interface{} {
+func planBody(body interface{}, contentType string) interface{} {
 	var raw []byte
 	switch b := body.(type) {
 	case nil:
@@ -106,39 +120,17 @@ func planBody(body interface{}) interface{} {
 			return fmt.Sprintf("(%T body)", b)
 		}
 	}
-	if len(raw) == 0 {
+	switch {
+	case len(raw) == 0:
 		return nil
-	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var v interface{}
-	if err := dec.Decode(&v); err == nil && !dec.More() {
-		return redactValue(v)
-	}
-	if !utf8.Valid(raw) {
+	case !utf8.Valid(raw):
 		return fmt.Sprintf("(binary, %s)", size(int64(len(raw))))
+	case strings.Contains(contentType, "x-www-form-urlencoded"):
+		return redactForm(string(raw))
 	}
-	return RedactJSON(string(raw))
-}
-
-// redactValue hides the values of secret keys in decoded JSON, and secret
-// members of JSON documents passed as strings (Frappe method arguments).
-func redactValue(v interface{}) interface{} {
-	switch val := v.(type) {
-	case map[string]interface{}:
-		for k, x := range val {
-			if secretKey(k) {
-				val[k] = redacted
-			} else {
-				val[k] = redactValue(x)
-			}
-		}
-	case []interface{}:
-		for i, x := range val {
-			val[i] = redactValue(x)
-		}
-	case string:
-		return RedactJSON(val)
+	if v, ok := parseJSONValue(raw); ok {
+		r, _ := redactValue(v)
+		return r
 	}
-	return v
+	return redactJSONText(string(raw))
 }

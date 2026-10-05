@@ -70,6 +70,12 @@ Examples:
 
 		rep, err := bdBulk.run(cmd, fmt.Sprintf("Deleting %d %s documents…", len(names), bdDoctype), len(names), "deleted",
 			func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
+				if client.IsDryRun(ctx) {
+					// Like delete-doc: the plan only lists documents that exist.
+					if _, err := c.GetDoc(ctx, bdDoctype, names[i]); err != nil {
+						return names[i], err
+					}
+				}
 				return names[i], c.DeleteDoc(ctx, bdDoctype, names[i])
 			})
 		if err != nil {

@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -100,8 +102,16 @@ func (t *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		var b strings.Builder
 		fmt.Fprintf(&b, "debug #%d > %s %s", id, req.Method, target)
 		writeHeaders(&b, id, ">", req.Header)
-		if body := requestBody(req); len(body) > 0 {
-			writeBody(&b, id, ">", body, len(body), req.Header.Get("Content-Type"))
+		body, err := requestBody(req)
+		if err != nil {
+			return nil, err
+		}
+		if len(body) > 0 {
+			total := len(body)
+			if req.ContentLength > 0 {
+				total = int(req.ContentLength)
+			}
+			writeBody(&b, id, ">", body, total, req.Header.Get("Content-Type"))
 		}
 		debugWrite(b.String())
 	}
@@ -138,27 +148,29 @@ func (t *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-// requestBody returns a copy of the request body without consuming it.
-func requestBody(req *http.Request) []byte {
+// requestBody returns the first debugBodyCap+1 bytes of the request body
+// without consuming it.
+func requestBody(req *http.Request) ([]byte, error) {
 	if req.Body == nil || req.Body == http.NoBody {
-		return nil
+		return nil, nil
 	}
 	if req.GetBody != nil {
-		rc, err := req.GetBody()
-		if err == nil {
+		if rc, err := req.GetBody(); err == nil {
 			defer rc.Close()
-			b, _ := io.ReadAll(io.LimitReader(rc, debugBodyCap+1))
-			return b
+			return io.ReadAll(io.LimitReader(rc, debugBodyCap+1))
 		}
 	}
-	// No way to rewind: read it and put it back.
-	b, err := io.ReadAll(req.Body)
-	_ = req.Body.Close()
-	req.Body = io.NopCloser(bytes.NewReader(b))
+	// No way to rewind: read the head and send it followed by the rest.
+	head, err := io.ReadAll(io.LimitReader(req.Body, debugBodyCap+1))
 	if err != nil {
-		return nil
+		_ = req.Body.Close()
+		return nil, fmt.Errorf("reading request body: %w", err)
 	}
-	return b
+	req.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(head), req.Body), req.Body}
+	return head, nil
 }
 
 // debugBody counts a response body as it is read, keeps its first
@@ -239,7 +251,7 @@ func writeBody(b *strings.Builder, id int64, dir string, head []byte, total int,
 	case strings.Contains(contentType, "x-www-form-urlencoded"):
 		s = redactForm(string(shown))
 	default:
-		s = RedactJSON(string(shown))
+		s = redactJSON(string(shown))
 	}
 	if total > len(shown) && !strings.HasPrefix(s, "(binary") {
 		s += fmt.Sprintf("\n… (%s more)", size(int64(total-len(shown))))
@@ -253,16 +265,23 @@ func writeBody(b *strings.Builder, id int64, dir string, head []byte, total int,
 
 const redacted = "***"
 
+// secretParts mark a header, query, form or JSON key as a credential when
+// they appear anywhere in it; "pwd", "sid", "code" (OAuth) and "key"
+// (password reset) only as the whole key.
+var secretParts = []string{
+	"password", "passwd", "secret", "token", "authorization", "cookie",
+	"api-key", "api_key", "apikey", "private_key", "signature", "credential", "code_verifier",
+}
+
 // secretKey reports whether a header, query, form or JSON key carries a
-// credential: passwords, secrets, tokens, session ids, OAuth codes and
-// verifiers, and password-reset keys.
+// credential.
 func secretKey(k string) bool {
 	k = strings.ToLower(k)
 	switch k {
-	case "pwd", "sid", "code", "key", "authorization", "cookie", "set-cookie":
+	case "pwd", "sid", "code", "key":
 		return true
 	}
-	for _, s := range []string{"password", "secret", "token", "code_verifier"} {
+	for _, s := range secretParts {
 		if strings.Contains(k, s) {
 			return true
 		}
@@ -273,13 +292,13 @@ func secretKey(k string) bool {
 // redactHeader keeps a credential header's scheme ("token", "Bearer") and
 // cookie names, never their values.
 func redactHeader(k, v string) string {
-	switch strings.ToLower(k) {
-	case "authorization":
+	switch lk := strings.ToLower(k); {
+	case strings.HasSuffix(lk, "authorization"):
 		if scheme, _, ok := strings.Cut(v, " "); ok {
 			return scheme + " " + redacted
 		}
 		return redacted
-	case "cookie", "set-cookie":
+	case lk == "cookie" || lk == "set-cookie":
 		parts := strings.Split(v, ";")
 		for i, p := range parts {
 			name, _, ok := strings.Cut(strings.TrimSpace(p), "=")
@@ -295,14 +314,18 @@ func redactHeader(k, v string) string {
 	return v
 }
 
-// redactURL hides the values of secret query parameters.
+// redactURL hides the values of secret query parameters and the password
+// of any user info in the URL.
 func redactURL(raw string) string {
 	u, err := url.Parse(raw)
-	if err != nil || u.RawQuery == "" {
+	if err != nil {
+		if base, query, ok := strings.Cut(raw, "?"); ok {
+			return base + "?" + redactForm(query)
+		}
 		return raw
 	}
 	u.RawQuery = redactForm(u.RawQuery)
-	return u.String()
+	return u.Redacted()
 }
 
 // redactForm hides the values of secret keys in a URL-encoded form or
@@ -318,19 +341,182 @@ func redactForm(raw string) string {
 	return strings.Join(pairs, "&")
 }
 
-// secretKeyRe is secretKey as a pattern for JSON keys.
-const secretKeyRe = `(?:[^"\\]*(?:password|secret|token)[^"\\]*|pwd|sid|code|code_verifier|key)`
+// redactJSON hides the values of secret members in JSON text. The text
+// pass keeps the layout and key order and also covers a body cut at the
+// trace limit; when the result parses, redactValue then catches what only
+// the structure shows ({"fieldname": "new_password", "value": …}).
+func redactJSON(s string) string {
+	out := redactJSONText(s)
+	if v, ok := parseJSONValue([]byte(out)); ok {
+		if r, changed := redactValue(v); changed {
+			return encodeJSON(r, strings.Contains(s, "\n"))
+		}
+	}
+	return out
+}
 
-// secretPairRe and escapedPairRe match a JSON string member whose key looks
-// secret: plain, or escaped inside a JSON string ({"doc": "{\"pwd\": \"x\"}"}).
-// Regular expressions, not a parse, so a truncated body is redacted too.
+// redactValue hides the values of secret keys in decoded JSON, in JSON
+// documents passed as strings (Frappe method arguments), and the value of a
+// frappe.client.set_value-style {"fieldname": "new_password", "value": …}.
+// It reports whether anything was hidden.
+func redactValue(v interface{}) (interface{}, bool) {
+	changed := false
+	switch val := v.(type) {
+	case map[string]interface{}:
+		if f, ok := val["fieldname"].(string); ok && secretKey(f) {
+			if x, ok := val["value"]; ok && x != redacted {
+				val["value"], changed = redacted, true
+			}
+		}
+		for k, x := range val {
+			if secretKey(k) {
+				if x != redacted {
+					val[k], changed = redacted, true
+				}
+			} else if r, ch := redactValue(x); ch {
+				val[k], changed = r, true
+			}
+		}
+	case []interface{}:
+		for i, x := range val {
+			if r, ch := redactValue(x); ch {
+				val[i], changed = r, true
+			}
+		}
+	case string:
+		t := strings.TrimSpace(val)
+		if t == "" || (t[0] != '{' && t[0] != '[') {
+			return v, false
+		}
+		if inner, ok := parseJSONValue([]byte(t)); ok {
+			if r, ch := redactValue(inner); ch {
+				return encodeJSON(r, false), true
+			}
+			return v, false
+		}
+		if r := redactJSONText(val); r != val {
+			return r, true
+		}
+	}
+	return v, changed
+}
+
+// parseJSONValue decodes b as exactly one JSON value, keeping number literals.
+func parseJSONValue(b []byte) (interface{}, bool) {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var v interface{}
+	if err := dec.Decode(&v); err != nil {
+		return nil, false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, false
+	}
+	return v, true
+}
+
+func encodeJSON(v interface{}, indent bool) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if indent {
+		enc.SetIndent("", "  ")
+	}
+	if err := enc.Encode(v); err != nil {
+		return redacted
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+// jsonKeyRe matches a JSON member key and its colon, at any escaping depth:
+// a key inside a JSON document passed as a string has its quotes escaped
+// (\"pwd\"), one level deeper (\\\"pwd\\\") and so on. \uXXXX escapes in
+// the key are allowed.
 var (
-	secretPairRe  = regexp.MustCompile(`(?i)("` + secretKeyRe + `"\s*:\s*)"(?:[^"\\]|\\.)*"`)
-	escapedPairRe = regexp.MustCompile(`(?i)(\\"` + secretKeyRe + `\\"\s*:\s*)\\"(?:[^"\\]|\\[^"])*?\\"`)
+	jsonKeyRe     = regexp.MustCompile(`(\\*)"((?:[^"\\]|\\+u[0-9a-fA-F]{4}){1,100}?)(\\*)"\s*:\s*`)
+	keyUnicodeRe  = regexp.MustCompile(`\\+u([0-9a-fA-F]{4})`)
+	scalarEndRune = ",}]\"\\ \t\r\n"
 )
 
-// RedactJSON hides the string values of secret keys in JSON text.
-func RedactJSON(s string) string {
-	s = secretPairRe.ReplaceAllString(s, `$1"`+redacted+`"`)
-	return escapedPairRe.ReplaceAllString(s, `$1\"`+redacted+`\"`)
+// redactJSONText hides the values of secret members in text that does not
+// parse as JSON, typically a body cut at the trace limit. Whatever follows
+// a secret key is hidden: a string, number, array or object, up to its end
+// or the end of the text.
+func redactJSONText(s string) string {
+	var out strings.Builder
+	pos := 0
+	for pos < len(s) {
+		m := jsonKeyRe.FindStringSubmatchIndex(s[pos:])
+		if m == nil {
+			break
+		}
+		open, keyStart, keyEnd, closeLen, end := m[3]-m[2], pos+m[4], pos+m[5], m[7]-m[6], pos+m[1]
+		key := keyUnicodeRe.ReplaceAllStringFunc(s[keyStart:keyEnd], func(e string) string {
+			r, err := strconv.ParseUint(e[len(e)-4:], 16, 32)
+			if err != nil {
+				return e
+			}
+			return string(rune(r))
+		})
+		if open != closeLen || !secretKey(key) {
+			out.WriteString(s[pos:end])
+			pos = end
+			continue
+		}
+		esc := strings.Repeat(`\`, open)
+		out.WriteString(s[pos:end] + esc + `"` + redacted + esc + `"`)
+		pos = skipJSONValue(s, end, open)
+	}
+	out.WriteString(s[pos:])
+	return out.String()
+}
+
+// skipJSONValue returns the end of the JSON value that starts at s[i], at an
+// escaping depth whose quotes are preceded by n backslashes (0, 1, 3, 7…),
+// or len(s) when the text ends first.
+func skipJSONValue(s string, i, n int) int {
+	// A quote of this depth follows c backslashes with c%(2n+2) == n; a
+	// quote inside one of its strings follows 2n+1 (mod 2n+2).
+	isQuote := func(j int) bool {
+		c := 0
+		for k := j - 1; k >= i && s[k] == '\\'; k-- {
+			c++
+		}
+		return c%(2*n+2) == n
+	}
+	switch {
+	case strings.HasPrefix(s[i:], strings.Repeat(`\`, n)+`"`):
+		for j := i + n + 1; j < len(s); j++ {
+			if s[j] == '"' && isQuote(j) {
+				return j + 1
+			}
+		}
+		return len(s)
+	case i < len(s) && (s[i] == '{' || s[i] == '['):
+		depth, inString := 0, false
+		for j := i; j < len(s); j++ {
+			switch s[j] {
+			case '"':
+				if isQuote(j) {
+					inString = !inString
+				}
+			case '{', '[':
+				if !inString {
+					depth++
+				}
+			case '}', ']':
+				if !inString {
+					if depth--; depth == 0 {
+						return j + 1
+					}
+				}
+			}
+		}
+		return len(s)
+	}
+	j := i
+	for j < len(s) && !strings.ContainsRune(scalarEndRune, rune(s[j])) {
+		j++
+	}
+	return j
 }
