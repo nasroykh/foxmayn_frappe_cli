@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -211,7 +213,7 @@ func TestCmdAggregateLimit(t *testing.T) {
 		t.Fatalf("rows %v", rows)
 	}
 	cmdTHas(t, r.Stderr, "Showing the first 2 group(s)")
-	if _, _, _, limit := aggTLast(t, s); limit != "3" {
+	if _, _, _, limit := aggTLast(t, s); limit != "20" {
 		t.Errorf("limit %q", limit)
 	}
 	// Exactly the limit: no warning.
@@ -223,6 +225,140 @@ func TestCmdAggregateLimit(t *testing.T) {
 	cmdTOK(t, cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "status", "--limit", "0"))
 	if _, _, _, limit := aggTLast(t, s); limit != "0" {
 		t.Errorf("limit %q", limit)
+	}
+}
+
+// pgTSite has 30 owners with 1 to 7 ToDos each: by name, the groups are
+// far from count order.
+func pgTSite(t *testing.T, postgres bool) (*frappetest.Site, []string) {
+	t.Helper()
+	s := frappetest.New(t)
+	if postgres {
+		s.Postgres()
+	}
+	return s, pgTSeed(s)
+}
+
+func pgTSeed(s *frappetest.Site) []string {
+	type grp struct {
+		owner string
+		n     int
+	}
+	var groups []grp
+	k := 0
+	for i := 0; i < 30; i++ {
+		g := grp{fmt.Sprintf("u%02d@x.com", i), (i*5)%7 + 1}
+		groups = append(groups, g)
+		for j := 0; j < g.n; j++ {
+			k++
+			s.Add("ToDo", map[string]interface{}{"name": fmt.Sprintf("TD-%03d", k), "owner": g.owner, "status": "Open"})
+		}
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		if groups[i].n != groups[j].n {
+			return groups[i].n > groups[j].n
+		}
+		return groups[i].owner < groups[j].owner
+	})
+	var want []string
+	for _, g := range groups {
+		want = append(want, fmt.Sprintf("%s=%d", g.owner, g.n))
+	}
+	return want
+}
+
+func pgTRows(t *testing.T, r cliResult) []string {
+	t.Helper()
+	var out []string
+	for _, row := range cmdTRows(t, r) {
+		out = append(out, fmt.Sprintf("%v=%v", row["owner"], row["count"]))
+	}
+	return out
+}
+
+// Frappe v16 on PostgreSQL ignores order_by when grouping: ffc notices a
+// page that is out of order, fetches the groups without the limit and
+// sorts and cuts them itself.
+func TestCmdAggregateServerIgnoresOrder(t *testing.T) {
+	s, want := pgTSite(t, true)
+	r := cmdTOK(t, cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "owner", "--limit", "3"))
+	if got := pgTRows(t, r); fmt.Sprint(got) != fmt.Sprint(want[:3]) {
+		t.Errorf("rows %v, want %v", got, want[:3])
+	}
+	reqs := s.RequestsTo("GET", "/api/resource/ToDo")
+	if len(reqs) != 2 || reqs[0].Query.Get("limit_page_length") != "20" || reqs[1].Query.Get("limit_page_length") != "10001" {
+		t.Errorf("%d requests", len(reqs))
+	}
+	cmdTHas(t, r.Stderr, "Showing the first 3 group(s)")
+	if strings.Contains(r.Stderr, "ignored the sort order") {
+		t.Errorf("stderr %s", r.Stderr)
+	}
+
+	// Without a limit every group comes back and is sorted here.
+	r = cmdTOK(t, cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "owner", "--limit", "0"))
+	if got := pgTRows(t, r); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("rows %v", got)
+	}
+
+	// More groups than ffc fetches: the rows may not be the top ones.
+	old := aggregateFetchCap
+	aggregateFetchCap = 25
+	t.Cleanup(func() { aggregateFetchCap = old })
+	r = cmdTOK(t, cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "owner", "--limit", "3"))
+	cmdTHas(t, r.Stderr, "ignored the sort order", "more than 25 groups")
+	if len(cmdTRows(t, r)) != 3 {
+		t.Errorf("stdout %s", r.Stdout)
+	}
+	sm, site := newMCPFake(t, true)
+	site.Postgres()
+	pgTSeed(site)
+	res := callTool(t, sm, "aggregate", map[string]interface{}{"doctype": "ToDo", "group_by": "owner", "limit": 3})
+	if msg := resultText(t, res); res.IsError || !strings.Contains(msg, `"warning"`) {
+		t.Errorf("mcp %s", msg)
+	}
+}
+
+// A site that sorts answers once; fewer groups than the probe are sorted
+// here whatever the site did.
+func TestCmdAggregateServerSorts(t *testing.T) {
+	s, want := pgTSite(t, false)
+	r := cmdTOK(t, cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "owner", "--limit", "3"))
+	if got := pgTRows(t, r); fmt.Sprint(got) != fmt.Sprint(want[:3]) {
+		t.Errorf("rows %v, want %v", got, want[:3])
+	}
+	if n := len(s.RequestsTo("GET", "/api/resource/ToDo")); n != 1 {
+		t.Errorf("%d requests", n)
+	}
+
+	s = aggTSite(t, "16.36.1")
+	s.Postgres()
+	r = cmdTOK(t, cmdTRun(t, s, "--json", "aggregate", "-d", "ToDo", "--group-by", "status", "--order-by", "count desc", "--limit", "2"))
+	rows := cmdTRows(t, r)
+	if len(rows) != 2 || rows[0]["status"] != "Open" || rows[1]["status"] != "Closed" {
+		t.Errorf("rows %v", rows)
+	}
+	if n := len(s.RequestsTo("GET", "/api/resource/ToDo")); n != 1 {
+		t.Errorf("%d requests", n)
+	}
+}
+
+func TestCompareAggValues(t *testing.T) {
+	ordered := []interface{}{nil, json.Number("-1"), json.Number("2"), json.Number("10.5"), "apple", "Banana", "banana", "cherry"}
+	for i := range ordered {
+		for j := range ordered {
+			got := compareAggValues(ordered[i], ordered[j])
+			if want := cmp.Compare(i, j); got != want {
+				t.Errorf("compare(%v, %v) = %d, want %d", ordered[i], ordered[j], got, want)
+			}
+		}
+	}
+	// A null where PostgreSQL puts it (last, ascending) is still in order.
+	order := []client.OrderTerm{{Column: "v"}}
+	if !rowsSorted([]map[string]interface{}{{"v": "a"}, {"v": "b"}, {"v": nil}}, order) {
+		t.Error("nulls last read as unsorted")
+	}
+	if rowsSorted([]map[string]interface{}{{"v": "b"}, {"v": "a"}}, order) {
+		t.Error("b before a read as sorted")
 	}
 }
 

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -94,6 +95,9 @@ Examples:
 		})
 		if err != nil {
 			return err
+		}
+		if res.Warning != "" {
+			output.PrintWarning(res.Warning)
 		}
 		if res.Truncated {
 			output.PrintWarning(fmt.Sprintf("Showing the first %d group(s); there are more (raise --limit, or 0 for all).", len(res.Rows)))
@@ -214,8 +218,16 @@ func buildAggregateQuery(a aggregateArgs, prefix string) (client.AggregateQuery,
 	}
 	if len(order) == 0 {
 		order = append(order, client.OrderTerm{Column: q.Aggregates[0].Alias, Desc: true})
-		for _, g := range q.GroupBy {
-			order = append(order, client.OrderTerm{Column: g}) // ties in a stable order
+	}
+	// The group fields break ties, so the order (and what a limit keeps) is
+	// the same on every run and ffc's own sort agrees with the site's.
+	for _, g := range q.GroupBy {
+		seen := false
+		for _, o := range order {
+			seen = seen || o.Column == g
+		}
+		if !seen {
+			order = append(order, client.OrderTerm{Column: g})
 		}
 	}
 	q.OrderBy = order
@@ -281,14 +293,65 @@ func aggregateColumns(q client.AggregateQuery) []string {
 }
 
 // aggregateResult is the groups of an aggregate query. Truncated is set when
-// the limit cut groups off.
+// the limit cut groups off; Warning says when the rows may not be the top
+// groups (see runAggregate).
 type aggregateResult struct {
 	Rows      []map[string]interface{}
 	Truncated bool
+	Warning   string
 	Syntax    client.AggregateSyntax
 }
 
-// runAggregate picks the aggregate syntax from the site's Frappe version
+// aggregateProbeRows is the fewest groups runAggregate asks for with a
+// limit, so that rows in the requested order are no accident.
+const aggregateProbeRows = 20
+
+// aggregateFetchCap caps the groups runAggregate fetches when the site
+// ignored the order (a variable so tests can lower it).
+var aggregateFetchCap = 10000
+
+// runAggregate runs q and returns its rows sorted by q.OrderBy, at most
+// q.Limit of them (0: all).
+//
+// ffc sorts the rows itself: Frappe v16 drops ORDER BY on PostgreSQL when
+// the query groups (frappe/database/query.py ~323), and the site's database
+// is not cheaply knowable (get_versions does not say; the System Health
+// Report does, but needs System Manager and runs every health check). With
+// a limit, ffc asks for at least aggregateProbeRows groups. Fewer than it
+// asked for is every group, sorted here whatever the site did. A full page
+// in the requested order means the site sorted (by chance, with 20 rows or
+// more, is not a practical risk). A full page out of order means the site
+// ignored the order: ffc then fetches up to aggregateFetchCap groups, sorts
+// and cuts them itself, and warns when even that was not every group.
+func runAggregate(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, doctype string, q client.AggregateQuery) (aggregateResult, error) {
+	want := q.Limit
+	if want > 0 {
+		q.Limit = max(want+1, aggregateProbeRows) // one more tells whether the limit cut groups off
+	}
+	rows, syntax, err := aggregateRows(ctx, c, cfg, doctype, q)
+	if err != nil {
+		return aggregateResult{}, err
+	}
+	res := aggregateResult{Syntax: syntax}
+	if want > 0 && len(rows) >= q.Limit && !rowsSorted(rows, q.OrderBy) {
+		q.Limit = aggregateFetchCap + 1
+		if rows, err = c.Aggregate(ctx, doctype, q, syntax); err != nil {
+			return aggregateResult{}, err
+		}
+		if len(rows) > aggregateFetchCap {
+			rows = rows[:aggregateFetchCap]
+			res.Warning = fmt.Sprintf("The site ignored the sort order (Frappe v16 on PostgreSQL does when grouping) and %s has more than %d groups: these are the top groups of %d arbitrary ones. Narrow the filters.", doctype, aggregateFetchCap, aggregateFetchCap)
+		}
+	}
+	sortAggregateRows(rows, q.OrderBy)
+	res.Rows = rows
+	if want > 0 && len(rows) > want {
+		res.Rows, res.Truncated = rows[:want], true
+	}
+	return res, nil
+}
+
+// aggregateRows picks the aggregate syntax from the site's Frappe version
 // (cached by serverInfo; cfg may be nil, the version is then unknown) and
 // runs q. When the version is unknown or the cache is stale (an upgrade
 // from v15 to v16), the site refuses the syntax tried first; the other one
@@ -296,15 +359,12 @@ type aggregateResult struct {
 // the error that is about the user's query is reported: the retry's, unless
 // the site refused the other syntax as well (then the first syntax was the
 // right one, and its error is the real one).
-func runAggregate(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, doctype string, q client.AggregateQuery) (aggregateResult, error) {
+func aggregateRows(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, doctype string, q client.AggregateQuery) ([]map[string]interface{}, client.AggregateSyntax, error) {
 	syntax, known := client.SyntaxFor(0)
 	if cfg != nil {
 		if info, _, err := serverInfo(ctx, c, cfg, false); err == nil {
 			syntax, known = client.SyntaxFor(info.FrappeMajor())
 		}
-	}
-	if q.Limit > 0 {
-		q.Limit++ // one more tells whether the limit cut groups off
 	}
 	rows, err := c.Aggregate(ctx, doctype, q, syntax)
 	if err != nil && client.SyntaxRejected(err, syntax) {
@@ -315,20 +375,80 @@ func runAggregate(ctx context.Context, c *client.FrappeClient, cfg *config.SiteC
 		rows2, err2 := c.Aggregate(ctx, doctype, q, other)
 		switch {
 		case err2 != nil && client.SyntaxRejected(err2, other):
-			return aggregateResult{}, err
+			return nil, syntax, err
 		case known && cfg != nil:
 			invalidateServerCache(cfg) // the site is not the version the cache says
 		}
 		rows, err, syntax = rows2, err2, other
 	}
-	if err != nil {
-		return aggregateResult{}, err
+	return rows, syntax, err
+}
+
+// compareAggValues orders two values of a result column as MariaDB does:
+// null first, numbers by value, then strings case-insensitively (close to
+// the utf8mb4 _ci collations; dates and datetimes compare as text).
+func compareAggValues(a, b interface{}) int {
+	switch {
+	case a == nil && b == nil:
+		return 0
+	case a == nil:
+		return -1
+	case b == nil:
+		return 1
 	}
-	res := aggregateResult{Rows: rows, Syntax: syntax}
-	if q.Limit > 0 && len(rows) >= q.Limit {
-		res.Rows, res.Truncated = rows[:q.Limit-1], true
+	fa, aNum := numeric(a)
+	fb, bNum := numeric(b)
+	switch {
+	case aNum && bNum:
+		return cmp.Compare(fa, fb)
+	case aNum:
+		return -1
+	case bNum:
+		return 1
 	}
-	return res, nil
+	sa, sb := fmt.Sprint(a), fmt.Sprint(b)
+	if c := strings.Compare(strings.ToLower(sa), strings.ToLower(sb)); c != 0 {
+		return c
+	}
+	return strings.Compare(sa, sb)
+}
+
+// compareAggRows compares two rows by order. With lenient set, a pair whose
+// deciding column holds a null compares equal: PostgreSQL puts nulls last
+// where MariaDB puts them first, and either is a sorted result.
+func compareAggRows(a, b map[string]interface{}, order []client.OrderTerm, lenient bool) int {
+	for _, o := range order {
+		va, vb := a[o.Column], b[o.Column]
+		c := compareAggValues(va, vb)
+		if c == 0 {
+			continue
+		}
+		if lenient && (va == nil || vb == nil) {
+			return 0
+		}
+		if o.Desc {
+			c = -c
+		}
+		return c
+	}
+	return 0
+}
+
+// rowsSorted reports whether the site returned rows in order, up to the
+// collation differences compareAggValues does not model (strings that sort
+// apart by accents or punctuation; such a false alarm costs one more
+// request, not a wrong result).
+func rowsSorted(rows []map[string]interface{}, order []client.OrderTerm) bool {
+	for i := 1; i < len(rows); i++ {
+		if compareAggRows(rows[i-1], rows[i], order, true) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func sortAggregateRows(rows []map[string]interface{}, order []client.OrderTerm) {
+	sort.SliceStable(rows, func(i, j int) bool { return compareAggRows(rows[i], rows[j], order, false) < 0 })
 }
 
 // groupByCountMax is the most groups get_group_by_count returns

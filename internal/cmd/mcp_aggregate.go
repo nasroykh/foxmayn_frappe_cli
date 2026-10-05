@@ -19,7 +19,7 @@ func registerAggregate(s *server.MCPServer, env *mcpEnv) {
 		return jsonParam(name, fmt.Sprintf(`Fields to %s, as an array ["grand_total"] or a comma-separated string. Each becomes the column "%s_<field>".`, what, name))
 	}
 	tool := mcp.NewTool("aggregate",
-		mcp.WithDescription(fmt.Sprintf("Count, sum, average, min and max documents of a DocType per group, computed on the server without fetching rows: totals by status, invoices per customer, the date range of a set. Returns {doctype, rows, truncated}: one row per group with the group_by fields and one column per aggregate (count, sum_<field>, avg_<field>, min_<field>, max_<field>); without group_by one row over every match. With no aggregate it counts. Fields must be plain fieldnames of the DocType (no link_field.field or child_table.field). Rows are sorted by the first aggregate, largest first, unless order_by says otherwise; limit caps the groups (default %d, at most %d) and truncated says whether more existed. ffc writes the aggregates as the site's Frappe version expects (v16 refuses SQL functions as text in list_docs fields).", defaultAggregateLimit, maxMCPAggregateLimit)),
+		mcp.WithDescription(fmt.Sprintf("Count, sum, average, min and max documents of a DocType per group, computed on the server without fetching rows: totals by status, invoices per customer, the date range of a set. Returns {doctype, rows, truncated, warning?}: one row per group with the group_by fields and one column per aggregate (count, sum_<field>, avg_<field>, min_<field>, max_<field>); without group_by one row over every match. With no aggregate it counts. Fields must be plain fieldnames of the DocType (no link_field.field or child_table.field). Rows are sorted by the first aggregate, largest first, unless order_by says otherwise; limit caps the groups (default %d, at most %d) and truncated says whether more existed (a warning field says when the rows may not be the top groups). ffc writes the aggregates as the site's Frappe version expects (v16 refuses SQL functions as text in list_docs fields).", defaultAggregateLimit, maxMCPAggregateLimit)),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(true),
 		mcp.WithString("doctype", mcp.Required(), mcp.Description("The Frappe DocType, e.g. 'Sales Invoice'")),
@@ -67,7 +67,11 @@ func registerAggregate(s *server.MCPServer, env *mcpEnv) {
 			if err != nil {
 				return nil, err
 			}
-			return map[string]interface{}{"doctype": doctype, "rows": res.Rows, "truncated": res.Truncated}, nil
+			out := map[string]interface{}{"doctype": doctype, "rows": res.Rows, "truncated": res.Truncated}
+			if res.Warning != "" {
+				out["warning"] = res.Warning
+			}
+			return out, nil
 		}, nil
 	}))
 }

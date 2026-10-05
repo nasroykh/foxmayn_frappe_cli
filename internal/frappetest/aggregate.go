@@ -32,6 +32,16 @@ func (s *Site) registerAggregate() {
 	s.methods["frappe.desk.listview.get_group_by_count"] = s.getGroupByCount
 }
 
+// Postgres makes the site behave like Frappe v16 on PostgreSQL where the
+// difference shows: a list query that groups ignores its order_by
+// (frappe/database/query.py ~323) and returns the groups in the order they
+// were first met (documents by name). Below v16 it changes nothing.
+func (s *Site) Postgres() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.postgres = true
+}
+
 // isAggregate reports whether fields hold an aggregate in either syntax.
 func isAggregate(fields []interface{}) bool {
 	for _, f := range fields {
@@ -201,9 +211,14 @@ func (s *Site) aggregateList(w http.ResponseWriter, q url.Values, doctype string
 	if len(terms) == 0 {
 		terms = []string{cols[0].alias + " asc"} // a stable order for tests
 	}
-	if err := sortRows(rows, strings.Join(terms, ", ")); err != nil {
-		writeError(w, err.(*Error))
-		return
+	s.mu.Lock()
+	ignoreOrder := s.postgres && v16 && len(groupBy) > 0
+	s.mu.Unlock()
+	if !ignoreOrder {
+		if err := sortRows(rows, strings.Join(terms, ", ")); err != nil {
+			writeError(w, err.(*Error))
+			return
+		}
 	}
 	limit := 20
 	if v := q.Get("limit_page_length"); v != "" {
