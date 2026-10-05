@@ -15,25 +15,40 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// mcpTSites writes a config with a read-only site "Prod" and a writable
-// site "dev" on two fake sites, and sets the `ffc mcp` flags for the test.
+// mcpTSites writes a config with a read-only site "Prod" (OAuth) and a
+// writable site "dev" (API key) on two fake sites, and sets the `ffc mcp`
+// flags for the test. The sites sign in differently, so a request sent with
+// the other site's credentials shows in their headers.
 func mcpTSites(t *testing.T, sites []string, all bool, site string) (prod, dev *frappetest.Site, cfgPath string) {
 	t.Helper()
 	prod, dev = frappetest.New(t), frappetest.New(t)
 	for _, s := range []*frappetest.Site{prod, dev} {
 		s.Add("ToDo", map[string]interface{}{"name": "TD-1", "description": "a"})
 	}
-	creds := fmt.Sprintf("    api_key: %q\n    api_secret: %q\n", frappetest.APIKey, frappetest.APISecret)
-	body := fmt.Sprintf("default_site: dev\nsites:\n  Prod:\n    url: %q\n%s    mcp:\n      read_only: true\n  dev:\n    url: %q\n%s",
-		prod.URL, creds, dev.URL, creds)
 	cfgPath = filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mcpTWriteConfig(t, cfgPath, fmt.Sprintf("default_site: dev\nsites:\n  Prod:\n    url: %q\n    access_token: %q\n    mcp:\n      read_only: true\n  dev:\n    url: %q\n    api_key: %q\n    api_secret: %q\n",
+		prod.URL, frappetest.Token, dev.URL, frappetest.APIKey, frappetest.APISecret))
 	prevCfg, prevSite, prevList, prevAll := configPath, siteName, mcpSiteList, mcpAllSites
 	t.Cleanup(func() { configPath, siteName, mcpSiteList, mcpAllSites = prevCfg, prevSite, prevList, prevAll })
 	configPath, siteName, mcpSiteList, mcpAllSites = cfgPath, site, sites, all
 	return prod, dev, cfgPath
+}
+
+func mcpTWriteConfig(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// mcpTAuth fails the test unless every request to s was signed with want.
+func mcpTAuth(t *testing.T, s *frappetest.Site, want string) {
+	t.Helper()
+	for _, r := range s.Requests() {
+		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, want) {
+			t.Errorf("%s %s signed with %q, want %s…", r.Method, r.Path, strings.SplitN(got, " ", 2)[0], want)
+		}
+	}
 }
 
 func mcpTStart(t *testing.T) *server.MCPServer {
@@ -90,13 +105,16 @@ func TestMCPMultiSite(t *testing.T) {
 	if err := json.Unmarshal([]byte(mcpTOK(t, s, "list_sites", nil)), &listed); err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"auth":"api_key","default":true,"name":"dev","read_only":false,"url":"` + dev.URL + `"},{"auth":"api_key","default":false,"name":"Prod","read_only":true,"url":"` + prod.URL + `"}]`
+	want := `[{"auth":"api_key","name":"dev","read_only":false,"url":"` + dev.URL + `"},{"auth":"oauth","name":"Prod","read_only":true,"url":"` + prod.URL + `"}]`
 	if b, _ := json.Marshal(listed); string(b) != want {
 		t.Errorf("list_sites = %s\nwant        %s", b, want)
 	}
-	if strings.Contains(fmt.Sprint(listed), frappetest.APISecret) {
+	if s := fmt.Sprint(listed); strings.Contains(s, frappetest.APISecret) || strings.Contains(s, frappetest.Token) {
 		t.Error("list_sites shows a secret")
 	}
+	// Each site only ever got its own credentials.
+	mcpTAuth(t, prod, "Bearer ")
+	mcpTAuth(t, dev, "token ")
 
 	// The audit log names the site of every call.
 	raw, err := os.ReadFile(filepath.Join(filepath.Dir(cfgPath), auditFileName))
@@ -116,11 +134,47 @@ func TestMCPMultiSite(t *testing.T) {
 	}
 }
 
-// A read-only policy on every served site leaves only read tools.
+// A read-only policy on every served site leaves only read tools, each
+// still taking a site.
 func TestMCPMultiSiteAllReadOnly(t *testing.T) {
-	mcpTSites(t, []string{"Prod"}, false, "")
-	if _, ok := mcpTStart(t).ListTools()["delete_doc"]; ok {
-		t.Error("delete_doc registered for a read-only site")
+	prod, dev, cfgPath := mcpTSites(t, []string{"Prod", "dev"}, false, "")
+	mcpTWriteConfig(t, cfgPath, fmt.Sprintf("sites:\n  Prod:\n    url: %q\n    access_token: %q\n    mcp: {read_only: true}\n  dev:\n    url: %q\n    access_token: %q\n    mcp: {read_only: true}\n",
+		prod.URL, frappetest.Token, dev.URL, frappetest.Token))
+	tools := mcpTStart(t).ListTools()
+	if _, ok := tools["delete_doc"]; ok {
+		t.Error("delete_doc registered when every site is read-only")
+	}
+	if _, ok := tools["get_doc"].Tool.InputSchema.Properties["site"]; !ok {
+		t.Error("get_doc takes no site")
+	}
+}
+
+// A site removed from the config after the start does not resolve to
+// another site whose name only differs in case.
+func TestMCPMultiSiteRenamedAway(t *testing.T) {
+	prod, dev, cfgPath := mcpTSites(t, []string{"Prod", "dev"}, false, "")
+	s := mcpTStart(t)
+	other := frappetest.New(t)
+	other.Add("ToDo", map[string]interface{}{"name": "TD-1"})
+	mcpTWriteConfig(t, cfgPath, fmt.Sprintf("default_site: dev\nsites:\n  PROD:\n    url: %q\n    api_key: %q\n    api_secret: %q\n  dev:\n    url: %q\n    api_key: %q\n    api_secret: %q\n",
+		other.URL, frappetest.APIKey, frappetest.APISecret, dev.URL, frappetest.APIKey, frappetest.APISecret))
+	mcpTErr(t, s, "delete_doc", map[string]interface{}{"doctype": "ToDo", "name": "TD-1", "site": "Prod"}, `site "Prod" not found`)
+	if len(other.Requests()) != 0 || len(prod.Requests()) != 0 {
+		t.Error("the call reached a site")
+	}
+}
+
+// Only the default site signs in at start: another that is down does not
+// hold up or fail the start, and its calls fail on their own.
+func TestMCPMultiSiteLazyStart(t *testing.T) {
+	_, dev, cfgPath := mcpTSites(t, []string{"dev", "down"}, false, "")
+	mcpTWriteConfig(t, cfgPath, fmt.Sprintf("default_site: dev\nsites:\n  down:\n    url: http://127.0.0.1:1\n    username: u\n    password: p\n  dev:\n    url: %q\n    api_key: %q\n    api_secret: %q\n",
+		dev.URL, frappetest.APIKey, frappetest.APISecret))
+	s := mcpTStart(t)
+	mcpTOK(t, s, "get_doc", map[string]interface{}{"doctype": "ToDo", "name": "TD-1", "site": "dev"})
+	res := callTool(t, s, "get_doc", map[string]interface{}{"doctype": "ToDo", "name": "TD-1", "site": "down"})
+	if !res.IsError {
+		t.Error("a call to the unreachable site succeeded")
 	}
 }
 

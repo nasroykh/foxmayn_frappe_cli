@@ -200,7 +200,7 @@ func authKind(s *config.SiteConfig) string {
 
 func registerListSites(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("list_sites",
-		mcp.WithDescription("List the Frappe sites this MCP server serves: name, URL, how ffc signs in, whether MCP may only read it, and which is the default. Other tools take one of these names in their site argument when the server serves several sites."),
+		mcp.WithDescription("List the Frappe sites this MCP server serves: name, URL, how ffc signs in, and whether MCP may only read it. When the server serves several sites, every other tool requires one of these names in its site argument; there is no default."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -214,10 +214,14 @@ func registerListSites(s *server.MCPServer, env *mcpEnv) {
 				if err != nil {
 					return nil, err
 				}
-				out = append(out, map[string]interface{}{
+				row := map[string]interface{}{
 					"name": site.Name, "url": site.URL, "auth": authKind(site),
-					"read_only": newMCPPolicy(site, env.flags).readOnly(), "default": i == 0,
-				})
+					"read_only": newMCPPolicy(site, env.flags).readOnly(),
+				}
+				if len(env.sites) == 1 {
+					row["default"] = i == 0 // with several, calls must name the site
+				}
+				out = append(out, row)
 			}
 			return out, nil
 		}, nil

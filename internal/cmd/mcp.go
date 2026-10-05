@@ -79,6 +79,12 @@ func newMCPEnv(sites []string) (*mcpEnv, func(), error) {
 			if err != nil {
 				return nil, fmt.Errorf("config: %w", err)
 			}
+			// Load falls back to a case-insensitive match: a served site
+			// removed or renamed since the start must not resolve to another
+			// site ("Prod" gone, "PROD" added).
+			if name != "" && site.Name != name {
+				return nil, fmt.Errorf("config: site %q not found in config", name)
+			}
 			return site, nil
 		},
 		client: get,
@@ -120,8 +126,10 @@ func cleanMCPFlags(cmd *cobra.Command) error {
 
 // startMCP builds the environment and the server with the tools the served
 // sites' policies allow. It checks the default site's credentials up front,
-// so a misconfiguration fails at start rather than on the first tool call;
-// another site that fails is reported and its calls fail until it is fixed.
+// so a misconfiguration fails at start rather than on the first tool call.
+// The other sites are only read (config and policy): signing in to each
+// could take longer than a client or the detached start waits, and a site
+// that is down must not stop the others. Their first call signs in.
 func startMCP(ctx context.Context) (*server.MCPServer, func(), error) {
 	sites, err := mcpSites()
 	if err != nil {
@@ -136,7 +144,9 @@ func startMCP(ctx context.Context) (*server.MCPServer, func(), error) {
 		site, err := env.site(ctx, name)
 		if err == nil {
 			policies = append(policies, newMCPPolicy(site, env.flags))
-			_, err = env.client(ctx, site)
+			if i == 0 {
+				_, err = env.client(ctx, site)
+			}
 		}
 		switch {
 		case err != nil && i == 0:
