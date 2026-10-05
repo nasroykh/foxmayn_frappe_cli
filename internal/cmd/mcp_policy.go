@@ -36,13 +36,24 @@ var toolActions = map[string]toolAction{
 	"submit_doc": actWrite, "cancel_doc": actWrite, "amend_doc": actWrite,
 	"copy_doc": actWrite, "rename_doc": actWrite, "apply_workflow": actWrite,
 
+	"add_comment": actWrite, "assign_to": actWrite, "remove_assignment": actWrite,
+	"add_tag": actWrite, "remove_tag": actWrite, "share_doc": actWrite, "unshare_doc": actWrite,
+
 	"call_method": actMethod,
 }
 
-// Tool sets (`ffc mcp --toolsets`).
+// Tool sets (`ffc mcp --toolsets`). Without the flag only defaultToolsets
+// are exposed: collab and admin must be asked for.
 const (
 	toolsetCore      = "core"
 	toolsetLifecycle = "lifecycle"
+	toolsetCollab    = "collab" // comments, assignments, tags
+	toolsetAdmin     = "admin"  // sharing
+)
+
+var (
+	knownToolsets   = []string{toolsetCore, toolsetLifecycle, toolsetCollab, toolsetAdmin}
+	defaultToolsets = []string{toolsetCore, toolsetLifecycle}
 )
 
 // toolSurface describes every MCP tool to the client: its tool set, its
@@ -82,6 +93,15 @@ var toolSurface = map[string]struct {
 	"rename_doc":      {toolsetLifecycle, "Rename or merge document", false},
 	"apply_workflow":  {toolsetLifecycle, "Apply workflow action", false},
 	"get_transitions": {toolsetLifecycle, "Get workflow transitions", false},
+
+	"add_comment":       {toolsetCollab, "Add comment", false},
+	"assign_to":         {toolsetCollab, "Assign document", false},
+	"remove_assignment": {toolsetCollab, "Remove assignment", false},
+	"add_tag":           {toolsetCollab, "Add tags", false},
+	"remove_tag":        {toolsetCollab, "Remove tags", false},
+
+	"share_doc":   {toolsetAdmin, "Share document", false},
+	"unshare_doc": {toolsetAdmin, "Remove document share", false},
 }
 
 // sensitiveDoctypes control users, permissions, credentials or server-side
@@ -164,10 +184,19 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 	case "call_method":
 		sc.Method = str("method")
 		sc.Doctypes = append(sc.Doctypes, methodDoctypes(args["args"])...)
+		// Only next to a named DocType: check refuses these methods
+		// without one, which an implicit DocType must not hide.
+		for _, m := range implicitMethodDoctypes {
+			if len(sc.Doctypes) > 0 && anyMatch(m.methods, methodNames(sc.Method)) {
+				sc.Doctypes = append(sc.Doctypes, m.doctypes...)
+			}
+		}
 	}
 	q := queryScope(req)
 	sc.Doctypes = append(sc.Doctypes, q.doctypes...)
 	sc.FilterFields, sc.SelectFields = q.filterFields, q.selectFields
+	// The collab tools also write a Comment, ToDo, Tag Link or DocShare.
+	sc.Doctypes = append(sc.Doctypes, collabDoctypes[tool]...)
 	for i, dt := range sc.Doctypes {
 		if text.Sanitize(dt) != dt {
 			return sc, fmt.Errorf("policy: DocType name %q contains control or invisible characters", dt)
@@ -226,6 +255,20 @@ func methodDoctypes(args interface{}) []string {
 var docMethods = []string{
 	"frappe.client.*", "frappe.desk.form.save.*", "frappe.handler.run_doc_method",
 	"frappe.model.workflow.*", "frappe.desk.form.utils.*", "frappe.desk.reportview.*",
+	"frappe.desk.form.assign_to.*", "frappe.share.*",
+	"frappe.desk.doctype.tag.tag.add_tag", "frappe.desk.doctype.tag.tag.add_tags", "frappe.desk.doctype.tag.tag.remove_tag",
+}
+
+// implicitMethodDoctypes are the DocTypes the collaboration methods write
+// besides the document their arguments name, as for the collab tools: a
+// call_method of frappe.share.add is checked against DocShare like
+// share_doc.
+var implicitMethodDoctypes = []struct{ methods, doctypes []string }{
+	{[]string{"frappe.desk.form.utils.add_comment"}, []string{"Comment"}},
+	{[]string{"frappe.desk.form.assign_to.add", "frappe.desk.form.assign_to.add_multiple", "frappe.desk.form.assign_to.remove",
+		"frappe.desk.form.assign_to.remove_multiple", "frappe.desk.form.assign_to.close"}, []string{"ToDo"}},
+	{[]string{"frappe.desk.doctype.tag.tag.add_tag", "frappe.desk.doctype.tag.tag.add_tags", "frappe.desk.doctype.tag.tag.remove_tag"}, []string{"Tag Link", "Tag"}},
+	{[]string{"frappe.share.add", "frappe.share.set_permission"}, []string{"DocShare"}},
 }
 
 // docMethodsWithoutDoctype take no DocType argument but are safe: they read

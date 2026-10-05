@@ -35,11 +35,12 @@ func mcpTPolicy(t *testing.T, cfg *config.MCPPolicy, flags config.MCPPolicy) (*s
 	sc := &config.SiteConfig{Name: "prod", MCP: cfg}
 	audit := &auditLog{path: filepath.Join(t.TempDir(), auditFileName)}
 	env := &mcpEnv{
-		sites:  []string{sc.Name},
-		site:   func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
-		client: func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
-		flags:  flags,
-		audit:  audit,
+		sites:    []string{sc.Name},
+		site:     func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
+		client:   func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
+		flags:    flags,
+		audit:    audit,
+		toolsets: knownToolsets,
 	}
 	s := server.NewMCPServer("test", "0")
 	registerTools(s, env, []mcpPolicy{newMCPPolicy(sc, flags)})

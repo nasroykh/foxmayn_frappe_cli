@@ -68,10 +68,11 @@ var argMethods = []struct {
 var mergeMethods = []string{"frappe.client.rename_doc", "frappe.model.rename_doc.update_document_title"}
 
 // needsConfirm reports whether a call destroys, cancels or merges
-// documents, or runs a workflow action.
+// documents, runs a workflow action or shares a document (which widens who
+// can see it).
 func needsConfirm(req mcp.CallToolRequest, method string) bool {
 	switch req.Params.Name {
-	case "delete_doc", "bulk_delete", "cancel_doc", "apply_workflow":
+	case "delete_doc", "bulk_delete", "cancel_doc", "apply_workflow", "share_doc":
 		return true
 	case "rename_doc":
 		return req.GetBool("merge", false) // as the tool reads it
@@ -390,12 +391,30 @@ func confirmMessage(site string, req mcp.CallToolRequest, sc toolScope) string {
 		what = fmt.Sprintf("Apply the workflow action %s to %s %s. It may submit or cancel the document.", quoted(action, 100), dt, name(0))
 	case "call_method":
 		what = fmt.Sprintf("Call %s with %s.", quoted(sc.Method, 200), methodSummary(args["args"]))
+	case "share_doc":
+		user, everyone, _ := shareTargetArgs(req)
+		who := "every user"
+		if !everyone {
+			who = "user " + quoted(user, 140)
+		}
+		return fmt.Sprintf("An AI agent asks to share %s %s on site %s with %s (%s). They will be able to open it whatever their roles allow.",
+			dt, name(0), confirmSite(site), who, shareRights(shareArgs(req)))
 	}
-	site = quoted(site, 100)
-	if site == `""` {
-		site = "(from the environment)"
+	return fmt.Sprintf("An AI agent asks to change site %s. %s This cannot be undone.", confirmSite(site), what)
+}
+
+// confirmSite shows the site a question is about.
+func confirmSite(site string) string {
+	if site = quoted(site, 100); site == `""` {
+		return "(from the environment)"
 	}
-	return fmt.Sprintf("An AI agent asks to change site %s. %s This cannot be undone.", site, what)
+	return site
+}
+
+// shareArgs reads the rights share_doc grants, as the tool does.
+func shareArgs(req mcp.CallToolRequest) client.ShareOptions {
+	return client.ShareOptions{Write: req.GetBool("write", false), Submit: req.GetBool("submit", false),
+		Share: req.GetBool("share", false), Notify: req.GetBool("notify", false)}
 }
 
 // cliEquivalent is the ffc command that does what the call asked, for a
@@ -433,6 +452,23 @@ func cliEquivalent(site string, req mcp.CallToolRequest, sc toolScope) string {
 		action, _ := args["action"].(string)
 		cmdName = "ffc workflow apply"
 		parts = append(parts, "workflow", "apply", "--doctype", q(dt), "--name", q(sc.Names[0]), "--action", q(action))
+	case "share_doc":
+		user, everyone, _ := shareTargetArgs(req)
+		parts = append(parts, "share", "--doctype", q(dt), "--name", q(sc.Names[0]))
+		if everyone {
+			parts = append(parts, "--everyone")
+		} else {
+			parts = append(parts, "--user", q(user))
+		}
+		o := shareArgs(req)
+		for _, f := range []struct {
+			on   bool
+			flag string
+		}{{o.Write, "--write"}, {o.Submit, "--submit"}, {o.Share, "--share"}, {o.Notify, "--notify"}} {
+			if f.on {
+				parts = append(parts, f.flag)
+			}
+		}
 	case "call_method":
 		parts = append(parts, "call-method", "--method", q(sc.Method))
 		if a := args["args"]; a != nil {

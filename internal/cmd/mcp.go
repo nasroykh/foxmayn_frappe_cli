@@ -262,7 +262,7 @@ func init() {
 	mcpCmd.Flags().StringSliceVar(&mcpFlags.DenyDoctypes, "deny-doctypes", nil, "Refuse these DocTypes, in addition to the config")
 	mcpCmd.Flags().StringSliceVar(&mcpFlags.AllowMethods, "allow-methods", nil, "call_method may call only these methods (narrows the config; a trailing * is a prefix)")
 	mcpCmd.Flags().StringSliceVar(&mcpFlags.DenyMethods, "deny-methods", nil, "Refuse these methods in call_method, in addition to the config")
-	mcpCmd.Flags().StringSliceVar(&mcpToolsets, "toolsets", nil, "Expose only these tool sets: core (documents, reports, bulk, call_method, whoami, check_permission) and lifecycle (submit, cancel, amend, copy, rename, workflow); default both")
+	mcpCmd.Flags().StringSliceVar(&mcpToolsets, "toolsets", nil, "Expose only these tool sets: core (documents, reports, bulk, call_method, whoami, check_permission), lifecycle (submit, cancel, amend, copy, rename, workflow), collab (comments, assignments, tags) and admin (share, unshare); default core,lifecycle")
 	mcpCmd.Flags().StringVar(&mcpFlags.Confirm, "confirm", "", "Ask the user before deleting, cancelling or merging: always (refuse when the client cannot ask) or if-supported (tightens the config)")
 	mcpCmd.Flags().IntVarP(&mcpPort, "port", "p", 0, fmt.Sprintf("Port for HTTP mode (default %d, implies HTTP transport)", defaultMCPPort))
 	rootCmd.AddCommand(mcpCmd)

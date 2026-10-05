@@ -65,7 +65,8 @@ func registerCompletions(root *cobra.Command) {
 	reg(configSetCmd, "number-format", fixedValues(nf...))
 	reg(configSetCmd, "date-format", fixedValues(df...))
 
-	reg(mcpCmd, "toolsets", commaValues(func() []string { return []string{toolsetCore, toolsetLifecycle} }))
+	reg(mcpCmd, "toolsets", commaValues(func() []string { return knownToolsets }))
+	reg(assignCmd, "priority", fixedValues("Low", "Medium", "High"))
 	reg(mcpCmd, "confirm", fixedValues("always", "if-supported"))
 	reg(mcpCmd, "sites", commaValues(func() []string { return siteNamesForCompletion() }))
 	reg(mcpCmd, "allow-tools", commaValues(func() []string {

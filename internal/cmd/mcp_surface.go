@@ -22,7 +22,7 @@ import (
 // server instructions, resources, prompts, progress notifications and the
 // fitting of large row lists into a result.
 
-// mcpToolsets is `ffc mcp --toolsets`; nil exposes every set.
+// mcpToolsets is `ffc mcp --toolsets`; nil exposes defaultToolsets.
 var mcpToolsets []string
 
 // cleanToolsets trims --toolsets and refuses an unknown or missing name.
@@ -31,12 +31,12 @@ func cleanToolsets(cmd *cobra.Command) error {
 	for _, v := range mcpToolsets {
 		switch v = strings.TrimSpace(v); v {
 		case "":
-		case toolsetCore, toolsetLifecycle:
+		case toolsetCore, toolsetLifecycle, toolsetCollab, toolsetAdmin:
 			if !contains(out, v, false) {
 				out = append(out, v)
 			}
 		default:
-			return usageErrorf("--toolsets: unknown tool set %q (known: %s, %s)", v, toolsetCore, toolsetLifecycle)
+			return usageErrorf("--toolsets: unknown tool set %q (known: %s)", v, strings.Join(knownToolsets, ", "))
 		}
 	}
 	if cmd.Flags().Changed("toolsets") && len(out) == 0 {
@@ -46,13 +46,18 @@ func cleanToolsets(cmd *cobra.Command) error {
 	return nil
 }
 
-// inToolsets reports whether tool belongs to a tool set the server exposes.
-// Siteless tools (list_sites) are always exposed.
+// inToolsets reports whether tool belongs to a tool set the server exposes
+// (defaultToolsets without --toolsets). Siteless tools (list_sites) are
+// always exposed.
 func (env *mcpEnv) inToolsets(tool string) bool {
-	if len(env.toolsets) == 0 || siteless[tool] {
+	if siteless[tool] {
 		return true
 	}
-	return contains(env.toolsets, toolSurface[tool].toolset, false)
+	sets := env.toolsets
+	if len(sets) == 0 {
+		sets = defaultToolsets
+	}
+	return contains(sets, toolSurface[tool].toolset, false)
 }
 
 // maxResultSizeKey is the tool _meta key Claude Code reads to raise its own
@@ -187,6 +192,15 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 	}
 	if has("get_transitions", "apply_workflow") {
 		line("A DocType with an active workflow cannot be submitted or cancelled directly: call get_transitions, then apply_workflow with one of its actions.")
+	}
+	if w := which("add_comment", "assign_to", "remove_assignment", "add_tag", "remove_tag"); w != "" {
+		line("Collaboration: %s. Users are User IDs (usually emails), not full names; add_comment takes plain text.", w)
+	}
+	if has("share_doc") {
+		line("share_doc gives a user or everyone access to one document beyond their roles, so the user may be asked to confirm.")
+		if has("assign_to") {
+			line("When someone should act on a document, assign_to it rather than share_doc it.")
+		}
 	}
 	line(`An error starting with "policy:" means this server's configuration refuses the call and nothing was sent; "cancelled by the user" means the user declined. Do not retry either another way.`)
 	if len(resources) > 0 {

@@ -91,7 +91,7 @@ export FFC_API_SECRET="your_secret"
 
 **MANDATORY for AI/LLM usage:** Always append `--json` (or `-j`) to every ffc command that supports it. The default table output is formatted for human reading and is not reliably parseable. JSON output is structured, complete, and easy to process.
 
-Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `delete-doc`, `count-docs`, `aggregate`, `bulk-create`, `bulk-update`, `bulk-delete`, the lifecycle and `workflow` commands, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `search`, `doc-info`, `ping`, `whoami`, `can`, `doctor`, `site list`. (`call-method` always outputs JSON regardless. MCP tools always return JSON by design.)
+Commands that support `--json`: `list-docs`, `get-doc`, `create-doc`, `update-doc`, `delete-doc`, `count-docs`, `aggregate`, `bulk-create`, `bulk-update`, `bulk-delete`, the lifecycle, `workflow` and collaboration commands, `get-schema`, `list-doctypes`, `list-reports`, `run-report`, `search`, `doc-info`, `ping`, `whoami`, `can`, `doctor`, `site list`. (`call-method` always outputs JSON regardless. MCP tools always return JSON by design.)
 
 ```bash
 # Always do this:
@@ -118,7 +118,7 @@ ffc get-doc -d "Sales Invoice" -n "SINV-0001"
 
 Commands exit non-zero on any error, declined confirmation or aborted prompt, so scripts can rely on the exit status. Data goes to stdout; spinner, warnings and errors go to stderr.
 
-**Preview writes with `--dry-run`.** Every write command (create/update/delete, bulk, lifecycle, `workflow apply`/`bulk-apply`, `call-method`, `api`) accepts `--dry-run`: it prints the request it would send (`{"dry_run":true,"requests":[{method,url,body,changes?}]}` with `--json`), sends nothing that writes, asks no confirmation and exits 0. Reads still run, so a missing document or a wrong state fails exactly like the real run. `update-doc --dry-run` adds `changes` (field → from/to). Use it before any destructive or bulk write when unsure.
+**Preview writes with `--dry-run`.** Every write command (create/update/delete, bulk, lifecycle, `workflow apply`/`bulk-apply`, collaboration, `call-method`, `api`) accepts `--dry-run`: it prints the request it would send (`{"dry_run":true,"requests":[{method,url,body,changes?}]}` with `--json`), sends nothing that writes, asks no confirmation and exits 0. Reads still run, so a missing document or a wrong state fails exactly like the real run. `update-doc --dry-run` adds `changes` (field → from/to). Use it before any destructive or bulk write when unsure.
 
 ```bash
 ffc update-doc -d ToDo -n TD-0001 --data '{"status":"Closed"}' --dry-run --json
@@ -308,6 +308,24 @@ ffc workflow bulk-apply -d "Leave Application" --file names.json --action Approv
 ffc workflow pending [-d "Leave Application"] --json                          # open Workflow Actions
 ```
 
+### Collaboration
+
+Comments, assignments, tags and shares, through the methods the desk calls (permissions, notifications and timeline apply). Users are User IDs (usually emails), not full names.
+
+```bash
+ffc comment -d Task -n TASK-0042 "Waiting for the PO" --json              # plain text, escaped; "-" = stdin; --html sends HTML (Frappe sanitises)
+ffc assign -d Task -n TASK-0042 --to jane@example.com,bob@example.com --priority High --date 2026-11-01 --json
+ffc unassign -d Task -n TASK-0042 --to bob@example.com --json
+ffc tag -d Customer -n "Acme Ltd" vip export --json                         # needs write permission; no commas in a tag
+ffc untag -d Customer -n "Acme Ltd" VIP --json                              # any case
+ffc share -d Project -n PROJ-0001 --user jane@example.com --write --yes --json   # or --everyone; read always granted
+ffc unshare -d Project -n PROJ-0001 --user jane@example.com --json
+```
+
+- Each reads the state first and reports it: `assigned`/`already_assigned`/`assignees`, `unassigned`/`not_assigned`, `added`/`already_tagged`/`tags`, `removed`/`not_tagged`, the share's rights, or `removed: false` when there was no share. A duplicate assignment or a missing tag is reported, not an error.
+- `assign` notifies each new assignee and shares the document read-only with one who cannot read it.
+- `share` again with the same user replaces that share's rights. It asks for confirmation; pass `--yes` in scripts.
+
 ---
 
 ### Schema & Introspection
@@ -479,7 +497,7 @@ ffc call-method --method "frappe.client.get_count" --args '{"doctype":"ToDo","fi
 
 #### `ffc mcp` — Start an MCP server for AI agents
 
-Exposes Frappe API operations as 28 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
+Exposes Frappe API operations as 35 MCP tools so LLMs and AI agents (Claude Desktop, Cursor, etc.) can interact with your Frappe site directly.
 
 **Three modes:**
 
@@ -512,7 +530,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `--allow-tools`, `--allow-doctypes`, `--deny-doctypes`, `--allow-methods`, `--deny-methods` | — | Narrow the site's MCP policy (never widen it) |
 | `--sites`, `--all-sites` | — | Serve several sites; every tool call then needs `site` (see `list_sites`) |
 | `--confirm` | — | `always` or `if-supported`: tighten when destructive calls ask the user |
-| `--toolsets` | — | `core` and/or `lifecycle` (default both): expose only these tool sets; `list_sites` is always there |
+| `--toolsets` | — | `core`, `lifecycle`, `collab` (comments, assignments, tags), `admin` (share) — default `core,lifecycle`; `list_sites` is always there |
 
 **Policy and audit.** A site's config entry may hold an `mcp:` block with `read_only`, `allow_tools`, `allow_doctypes`, `deny_doctypes`, `allow_methods`, `deny_methods` and `confirm`. A misspelt key is an error. MCP may read but never write the sensitive DocTypes (User, Role, DocType, DocPerm, System Settings, Server Script, …) unless the site's `allow_doctypes` lists them. `call_method` refuses `execute_code`, `generate_keys` and the Frappe Cloud app installer unless `allow_methods` lists them. With `allow_doctypes` set, `call_method` needs `allow_methods`. With `allow_doctypes` or `deny_doctypes` set, query arguments may not reach another table: filter fields must be plain fieldnames, `fields` and `order_by` may not contain `.` or a backtick (no `link.field`, `items.item_code`, `` `tabX`.`f` ``), and the DocType of a `[doctype, field, op, value]` filter is checked too. A refused call returns an error starting with `policy:` that names the setting, and sends nothing. Every tool call is logged to `~/.config/ffc/mcp-audit.jsonl` with secrets redacted and document data reduced to its keys.
 
@@ -552,6 +570,13 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 | `rename_doc`    | `ffc rename-doc`       |
 | `get_transitions` | `ffc workflow transitions` |
 | `apply_workflow`  | `ffc workflow apply`       |
+| `add_comment`     | `ffc comment` (collab)     |
+| `assign_to`       | `ffc assign` (collab)      |
+| `remove_assignment` | `ffc unassign` (collab)  |
+| `add_tag`         | `ffc tag` (collab)         |
+| `remove_tag`      | `ffc untag` (collab)       |
+| `share_doc`       | `ffc share` (admin; confirmed; needs DocShare in `allow_doctypes`) |
+| `unshare_doc`     | `ffc unshare` (admin; needs DocShare in `allow_doctypes`) |
 
 With `--read-only`, only `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `aggregate`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_doc_context` and `get_transitions` are registered.
 

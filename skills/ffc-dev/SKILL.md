@@ -66,6 +66,7 @@ internal/cmd/call_method.go   → call-method subcommand
 internal/cmd/bulk.go          → runBulk worker pool, bulkReport, parseObjects/parseNames/splitUpdates, bulkFlags
 internal/cmd/bulk_{create,update,delete}.go → bulk commands (--concurrency 1-10, --fail-fast)
 internal/cmd/{submit_doc,cancel_doc,discard_doc,amend_doc,rename_doc,restore_doc}.go → lifecycle commands
+internal/cmd/collab.go, collab_cmds.go → comment/assign/unassign/tag/untag/share/unshare (logic in collab.go, shared with MCP)
                                   (amend_doc.go also has copy-doc); refuseWorkflow in submit_doc.go
 internal/cmd/workflow.go          → workflow transitions / apply / bulk-apply (bulkFlags) / pending
 internal/cmd/dryrun.go            → addDryRun, withDryRun (trackRunStart), printPlan, fieldChanges; planAll in bulk.go
@@ -78,10 +79,12 @@ internal/cmd/mcp_audit.go         → MCP audit log mcp-audit.jsonl (0600, rotat
 internal/cmd/mcp_sites.go         → multi-site MCP: mcpSites, siteFor, list_sites, addSiteParam
 internal/cmd/mcp_confirm.go       → confirmation through MCP elicitation: needsConfirm, mcpPolicy.confirm, HMAC request state
 internal/cmd/mcp_args.go          → mcpEnv, toolHandler (parse → policy → confirm → client → call → audit), marshalResult (512 KiB cap), jsonArg/rawJSONArg/objectArg/intArg/stringsArg
-internal/cmd/mcp_tools.go         → MCP tools + handlers (28 with the lifecycle, identity, doc-context and aggregate files); registerTools(); compactReportResult
+internal/cmd/mcp_tools.go         → MCP tools + handlers (35 with the lifecycle, identity, doc-context, aggregate and collab files); registerTools(); compactReportResult
 internal/cmd/mcp_doc_context.go   → get_doc_context: parseDocContext, mcpPolicy.filterDocContext (parts from other DocTypes, hidden_by_policy), trimDocContext
 internal/cmd/mcp_identity_tools.go → whoami + check_permission read tools
 internal/cmd/mcp_lifecycle_tools.go → submit/cancel/amend/copy/rename/apply_workflow + get_transitions (docTool, docHandler)
+internal/cmd/mcp_collab_tools.go  → add_comment/assign_to/remove_assignment/add_tag/remove_tag (collab), share_doc/unshare_doc (admin);
+                                    collabDoctypes = the implicit DocType each writes (policy scope)
 internal/cmd/mcp_daemon.go        → startDetached(), runHTTPServer(), mcpStatusCmd, mcpStopCmd, state + lock files
 internal/cmd/mcp_detach_unix.go   → setSysProcAttr (Setsid=true), terminateProcess, isProcessRunning — build tag: !windows
 internal/cmd/mcp_detach_windows.go → same functions for Windows — build tag: windows
@@ -94,6 +97,7 @@ internal/client/dryrun.go         → WithDryRun(ctx, scope), DryRunError; send(
 internal/client/server.go         → ServerVersions/ServerInfo (FrappeMajor), LoggedUser, UserRoles (Has Role via get_list), HasPermission, DocPermissions, DocTypePermission/EvalDocTypePermission
 internal/client/fieldaccess.go    → ReadableFields/FieldAccess: fields the user may read (getdoctype permlevels + roles); doc-info filters version changes with it
 internal/client/aggregate.go      → Aggregate (list query with group_by; SyntaxDict for v16, SyntaxString for v15, SyntaxFor/SyntaxRejected), GroupByCount (get_group_by_count), ValidIdentifier
+internal/client/collab.go         → AddComment, Assign/Unassign/Assignees, AddTag/RemoveTag/Tags, Share/Unshare/Shares (docMethod)
 internal/client/lifecycle.go      → SubmitDoc/CancelDoc/AmendDoc/DuplicateDoc (GetDoc + clean; no-copy fields from getdoctype),
                                     RenameDoc, RestoreDeleted (returns new_name), DiscardDoc (v16), workflow methods
 internal/config/config.go         → Config/SiteConfig, Read, Load, env overrides, default paths
@@ -381,7 +385,7 @@ func registerMyTool(s *server.MCPServer, env *mcpEnv) {
 }
 ```
 
-Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`, add the tool to `toolActions` in `mcp_policy.go` (`actRead`, `actWrite` or `actMethod`; it must match the read-only annotation) and to `toolSurface` next to it (tool set `core` or `lifecycle`, a title, and `big` when its result can approach 512 KiB). `TestMCPPolicyCoversEveryTool` and `TestMCPToolSurface` fail until both are filled in. If the instructions (`mcpInstructions`) or a prompt should mention the tool, add it there, guarded by whether the tool is registered. `registerTools` drops what the site's policy does not allow (`read_only`, `allow_tools`), and `toolHandler` checks the policy on every call before any request. If the tool names DocTypes or documents in arguments other than `doctype`/`name`, teach `scopeOf` about them. If its result spans DocTypes the request does not name (global search hits, get_doc_context's linked DocTypes and its Version/Comment/File/... sections), filter them inside the toolCall with `policyFrom(ctx)` and fail when it returns false (the zero policy allows everything); report what was dropped as `hidden_by_policy`.
+Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`, add the tool to `toolActions` in `mcp_policy.go` (`actRead`, `actWrite` or `actMethod`; it must match the read-only annotation) and to `toolSurface` next to it (tool set `core`, `lifecycle`, `collab` or `admin`, a title, and `big` when its result can approach 512 KiB; `collab` and `admin` are off unless `--toolsets` names them). `TestMCPPolicyCoversEveryTool` and `TestMCPToolSurface` fail until both are filled in. If the instructions (`mcpInstructions`) or a prompt should mention the tool, add it there, guarded by whether the tool is registered. `registerTools` drops what the site's policy does not allow (`read_only`, `allow_tools`), and `toolHandler` checks the policy on every call before any request. If the tool names DocTypes or documents in arguments other than `doctype`/`name`, teach `scopeOf` about them; if it writes another DocType as a side effect (a Comment, a ToDo, a DocShare), add it to `collabDoctypes` so the DocType rules and the sensitive list apply. A tool that widens access belongs in `needsConfirm` with a `confirmMessage` and `cliEquivalent` case. If its result spans DocTypes the request does not name (global search hits, get_doc_context's linked DocTypes and its Version/Comment/File/... sections), filter them inside the toolCall with `policyFrom(ctx)` and fail when it returns false (the zero policy allows everything); report what was dropped as `hidden_by_policy`.
 
 **Argument extraction** (`mcp_args.go`): never use `req.GetString` for JSON-valued params — it returns `""` for a native object and silently drops filters. Use `jsonArg` / `rawJSONArg` / `objectArg` (accept native JSON or a JSON-encoded string), `stringsArg` (array or CSV), and `intArg` (validated integers). `req.RequireString("key")` and `req.GetString("key", "default")` are fine for plain strings.
 
