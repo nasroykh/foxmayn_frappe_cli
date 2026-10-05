@@ -601,7 +601,7 @@ The HTTP transport binds `127.0.0.1` only and requires `Authorization: Bearer <t
 
 With `--read-only`, only `list_sites`, `ping`, `whoami`, `check_permission`, `get_doc`, `list_docs`, `count_docs`, `aggregate`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_doc_context` and `get_transitions` are registered (plus `list_attachments` and `get_print_html` with the `files` tool set).
 
-The `files` tool set is off unless `--toolsets` names it. `attach_file` writes a `File`, a sensitive DocType: it is refused unless the site's config `allow_doctypes` lists `File` (and the target DocTypes, since it is an allowlist). No tool returns file bytes or PDFs: use `ffc download` / `ffc pdf`. `get_print_html` over 512 KiB drops the style, then cuts the HTML (`truncated: true`).
+The `files` tool set is off unless `--toolsets` names it. `attach_file` writes a `File`, a sensitive DocType: it is refused unless the site's config `allow_doctypes` lists `File` (and the target DocTypes, since it is an allowlist). No tool returns file bytes or PDFs: use `ffc download` / `ffc pdf`. `get_print_html` runs the DocType's `before_print` hook (app code), even on a read-only server; over 512 KiB it drops the style, then cuts the HTML (`truncated: true`).
 
 MCP tools always return JSON — no `--json` flag needed.
 

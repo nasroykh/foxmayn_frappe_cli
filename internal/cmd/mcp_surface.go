@@ -144,11 +144,15 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 			ro = append(ro, p.site)
 		}
 	}
+	hooks := ""
+	if has("get_print_html") {
+		hooks = " get_print_html still runs the DocType's before_print hook (app code), which may have side effects."
+	}
 	switch {
 	case len(ro) > 0 && len(ro) == len(policies):
-		line("Read-only: only read tools are available; nothing can be created, changed or deleted.")
+		line("Read-only: only read tools are available; nothing can be created, changed or deleted.%s", hooks)
 	case len(ro) > 0:
-		line("Read-only sites (write tools refuse them): %s.", strings.Join(ro, ", "))
+		line("Read-only sites (write tools refuse them): %s.%s", strings.Join(ro, ", "), hooks)
 	}
 	if has("whoami") {
 		line("whoami names the user ffc signs in as, its roles and the site's Frappe version.")

@@ -269,7 +269,7 @@ func TestMCPInstructions(t *testing.T) {
 
 	s, _ = newMCPFake(t, true)
 	text = mcpTInstructions(t, s)
-	if !strings.Contains(text, "Read-only: only read tools") || strings.Contains(text, "get_schema before create_doc") || strings.Contains(text, "submit_doc (0 to 1)") {
+	if !strings.Contains(text, "Read-only: only read tools") || !strings.Contains(text, "get_print_html still runs the DocType's before_print hook") || strings.Contains(text, "get_schema before create_doc") || strings.Contains(text, "submit_doc (0 to 1)") {
 		t.Errorf("read-only instructions:\n%s", text)
 	}
 
@@ -279,6 +279,9 @@ func TestMCPInstructions(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("multi-site instructions lack %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "before_print") {
+		t.Errorf("before_print named without the files tool set:\n%s", text)
 	}
 }
 

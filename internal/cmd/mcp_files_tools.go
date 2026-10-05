@@ -59,7 +59,7 @@ func registerFileTools(s *server.MCPServer, env *mcpEnv) {
 	}))
 
 	s.AddTool(docTool("get_print_html",
-		"Render a document with a print format, as HTML (frappe.www.printview.get_html_and_style): returns {html, style}, or {text} with text_only, which is the readable text without tags. Needs read access to the document. Results over 512 KiB drop the style, then cut the HTML (truncated: true). For a PDF use the CLI: ffc pdf.",
+		"Render a document with a print format, as HTML (frappe.www.printview.get_html_and_style): returns {html, style}, or {text} with text_only, which is the readable text without tags. Needs read access to the document. Rendering runs the DocType's before_print hook (app code), as printing in the desk does, so it may have side effects an app put there. Results over 512 KiB drop the style, then cut the HTML (truncated: true). For a PDF use the CLI: ffc pdf.",
 		true, false,
 		mcp.WithString("print_format", mcp.Description("Print Format (default: the DocType's default)")),
 		mcp.WithString("letterhead", mcp.Description("Letter Head (default: the default one)")),
