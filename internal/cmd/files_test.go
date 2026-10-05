@@ -184,6 +184,28 @@ func TestDownloadCommand(t *testing.T) {
 		t.Errorf("default name: exit %d %s", r.Code, r.Stderr)
 	}
 
+	// A public file gets the mode of any new file (0666 less the umask).
+	pub := filepath.Join(dir, "pub.txt")
+	if err := os.WriteFile(pub, []byte("public"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := runFFC(t, cfg, "", "upload", pub, "-d", "ToDo", "-n", "TD-1", "--public"); r.Code != 0 {
+		t.Fatalf("upload --public: %s", r.Stderr)
+	}
+	ref, err := os.OpenFile(filepath.Join(dir, "ref"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = ref.Close()
+	want, _ := os.Stat(ref.Name())
+	pubOut := filepath.Join(dir, "pub-out.txt")
+	if r := runFFC(t, cfg, "", "download", "/files/pub.txt", "-o", pubOut); r.Code != 0 {
+		t.Fatalf("public download: %s", r.Stderr)
+	}
+	if fi, _ := os.Stat(pubOut); fi.Mode().Perm() != want.Mode().Perm() {
+		t.Errorf("public file saved %v, want %v", fi.Mode().Perm(), want.Mode().Perm())
+	}
+
 	// A missing private file is Frappe's 403 page: no file is written.
 	missing := filepath.Join(dir, "missing.bin")
 	r = runFFC(t, cfg, "", "download", "/private/files/nope.bin", "-o", missing)

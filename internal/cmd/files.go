@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
@@ -218,7 +220,7 @@ Examples:
 		if resp.Status >= 400 {
 			return fileError(resp, p)
 		}
-		perm := os.FileMode(0o644)
+		perm := os.FileMode(0o666) // less the umask, like any new file
 		if strings.HasPrefix(p, "/private/") {
 			perm = 0o600
 		}
@@ -312,17 +314,16 @@ func saveDownload(resp *client.RawResponse, out string, force bool, perm os.File
 // into place: an interrupted download never leaves a partial file at path.
 // Without force an existing path is never replaced, even one created while
 // the download ran (the move is a hard link, which fails when path exists).
+// The file is created with perm less the umask (os.CreateTemp would force
+// 0600), so it is never more open than the user's other files.
 func saveAtomic(body io.Reader, dst string, force bool, perm os.FileMode) (int64, error) {
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".ffc-download-*")
+	tmp, err := createTemp(filepath.Dir(dst), perm)
 	if err != nil {
 		return 0, fmt.Errorf("creating the output file: %w", err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // no-op after a rename
 	n, err := io.Copy(tmp, body)
-	if err == nil {
-		err = tmp.Chmod(perm)
-	}
 	if err == nil {
 		err = tmp.Sync()
 	}
@@ -352,6 +353,19 @@ func saveAtomic(body io.Reader, dst string, force bool, perm os.FileMode) (int64
 		return 0, fmt.Errorf("saving to %s: %w", dst, err)
 	}
 	return n, nil
+}
+
+// createTemp is os.CreateTemp with a mode: a new hidden file in dir, created
+// exclusively with perm (less the umask).
+func createTemp(dir string, perm os.FileMode) (*os.File, error) {
+	for range 100 {
+		name := filepath.Join(dir, ".ffc-download-"+strconv.FormatUint(rand.Uint64(), 36))
+		f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, perm)
+		if !errors.Is(err, fs.ErrExist) {
+			return f, err
+		}
+	}
+	return nil, errors.New("no free temporary file name")
 }
 
 // attachments flags
