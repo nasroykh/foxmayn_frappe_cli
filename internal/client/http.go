@@ -55,16 +55,42 @@ func NewHTTPClient(timeout time.Duration) *resty.Client {
 // redirected POST/PUT/DELETE into a body-less GET, so a site configured as
 // http:// behind an https redirect used to report deletes and updates as
 // successful while the server only ever saw GETs.
+//
+// A followed redirect never leaves https for http, and a request that
+// carries credentials (Authorization or Cookie) is never redirected to
+// another host: Go copies those headers to a subdomain of the original host
+// (example.com to files.example.com), so a token would reach a server the
+// config never named.
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	orig := via[0]
 	if orig.Method != http.MethodGet && orig.Method != http.MethodHead {
-		return fmt.Errorf("site redirected %s %s to %s: update the site URL in your config (e.g. use https://)",
-			orig.Method, orig.URL.Redacted(), req.URL.Redacted())
+		return &RedirectError{fmt.Sprintf("site redirected %s %s to %s: update the site URL in your config (e.g. use https://)",
+			orig.Method, orig.URL.Redacted(), req.URL.Redacted())}
 	}
 	if len(via) >= 10 {
-		return errors.New("stopped after 10 redirects")
+		return &RedirectError{"stopped after 10 redirects"}
+	}
+	if prev := via[len(via)-1]; strings.EqualFold(prev.URL.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
+		return &RedirectError{fmt.Sprintf("refused redirect from %s to %s: it leaves https",
+			prev.URL.Redacted(), req.URL.Redacted())}
+	}
+	if (orig.Header.Get("Authorization") != "" || orig.Header.Get("Cookie") != "") && !sameHostname(orig.URL, req.URL) {
+		return &RedirectError{fmt.Sprintf("refused redirect from %s to %s: credentials are only sent to the site's host; update the site URL in your config",
+			orig.URL.Redacted(), req.URL.Redacted())}
 	}
 	return nil
+}
+
+// RedirectError is a redirect checkRedirect refused. It is never retried.
+type RedirectError struct{ msg string }
+
+func (e *RedirectError) Error() string { return e.msg }
+
+// sameHostname compares host names (case and a trailing dot ignored), not
+// ports: an http:// site redirected to https:// on the same host is fine.
+func sameHostname(a, b *url.URL) bool {
+	h := func(u *url.URL) string { return strings.ToLower(strings.TrimSuffix(u.Hostname(), ".")) }
+	return h(a) != "" && h(a) == h(b)
 }
 
 // retryableGET reports whether a failed request is worth repeating: only

@@ -213,7 +213,7 @@ func (d *doctor) checkNetwork(ctx context.Context, cfg *config.SiteConfig) bool 
 	}
 	if final := resp.RawResponse.Request.URL; !sameEndpoint(final, resp.Request.RawRequest.URL) {
 		site := strings.TrimSuffix(final.String(), pingPath)
-		d.add("net.reachable", checkFail, fmt.Sprintf("%s redirected to %s: reads follow the redirect, but writes (create, update, delete) fail with \"site redirected\"", redactedURL(cfg.URL), final.Redacted()),
+		d.add("net.reachable", checkFail, fmt.Sprintf("%s redirected to %s: reads follow it only on the same host, writes (create, update, delete) fail with \"site redirected\"", redactedURL(cfg.URL), final.Redacted()),
 			"set the site URL to "+redactedURL(strings.TrimRight(site, "/"))+" ('ffc site edit'), then run doctor again")
 		return false
 	}

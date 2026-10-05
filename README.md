@@ -319,7 +319,7 @@ The app versions are cached for 24 hours per site in `<user cache dir>/ffc/<site
 | `config.parse` | the file parses and a site resolves (values in parse errors are never printed) |
 | `config.lock` | no stale `config.yaml.lock` (warn; ffc breaks it on the next write) |
 | `net.tls` | the certificate, taken from the same request as `net.reachable` (so a proxy from the environment is honoured), verifies and is not about to end (14 days: warn); plain `http://` to a non-loopback host is a warning |
-| `net.reachable` | the URL answers `frappe.ping` with a pong and does not redirect (a redirect fails: reads follow it, writes fail with "site redirected"; the hint names the final URL) |
+| `net.reachable` | the URL answers `frappe.ping` with a pong and does not redirect (a redirect fails: reads follow it only on the same host name and never from https to http, writes fail with "site redirected"; the hint names the final URL) |
 | `net.clock` | the local clock against the server's `Date` header: over 1 minute warns, over 10 minutes fails |
 | `auth.valid` | the credentials log in; names the user |
 | `auth.oauth_token` | an OAuth site's token expiry. An expired token is reported (warn: the next command refreshes it; fail when there is no refresh token), never renewed |
