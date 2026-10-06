@@ -11,6 +11,7 @@ import (
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 )
 
 // complTSite is a fake site with DocTypes, reports and a schema that has a
@@ -144,7 +145,7 @@ func TestCompletionNeverTouchesTheSite(t *testing.T) {
 
 func mustCacheBase(t *testing.T) string {
 	t.Helper()
-	b, err := userCacheDir()
+	b, err := sitecache.UserCacheDir()
 	if err != nil {
 		t.Fatal(err)
 	}

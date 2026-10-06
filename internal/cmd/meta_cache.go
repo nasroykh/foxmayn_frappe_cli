@@ -11,10 +11,11 @@ import (
 	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 )
 
 // The local metadata cache sits next to server.json in the site's cache
-// directory (serverCacheDir): the DocType list, the report list and compact
+// directory (sitecache.Dir): the DocType list, the report list and compact
 // schemas. Shell completion reads it and never fills it; list-doctypes,
 // list-reports, get-schema and `ffc cache warm` fill it. Documents are never
 // cached.
@@ -120,7 +121,7 @@ func writeCacheFile(path string, v interface{}) error {
 }
 
 func metaCachePath(cfg *config.SiteConfig, name string) (string, error) {
-	dir, err := serverCacheDir(cfg)
+	dir, err := sitecache.Dir(cfg)
 	if err != nil {
 		return "", err
 	}
@@ -130,7 +131,7 @@ func metaCachePath(cfg *config.SiteConfig, name string) (string, error) {
 // schemaCachePath is schema/<name>.json, the DocType name made safe for a
 // path the way site names are (a DocType name may hold "/" or "..").
 func schemaCachePath(cfg *config.SiteConfig, doctype string) (string, error) {
-	return metaCachePath(cfg, filepath.Join(schemaCacheDir, cacheDirName(doctype)+".json"))
+	return metaCachePath(cfg, filepath.Join(schemaCacheDir, sitecache.DirName(doctype)+".json"))
 }
 
 func listCacheFile(kind string) (string, time.Duration) {
@@ -269,7 +270,7 @@ type cacheEntry struct {
 // cacheEntries lists the cache files of a site. A file that cannot be read
 // is listed as not fresh, so status shows what clear would remove.
 func cacheEntries(cfg *config.SiteConfig, now time.Time) []cacheEntry {
-	dir, err := serverCacheDir(cfg)
+	dir, err := sitecache.Dir(cfg)
 	if err != nil {
 		return nil
 	}

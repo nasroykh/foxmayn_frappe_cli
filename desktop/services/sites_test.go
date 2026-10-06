@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 )
 
@@ -540,5 +542,49 @@ func TestWatcherEmitsConfigChanged(t *testing.T) {
 	}
 	if err := s.ServiceShutdown(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRemoveDropsTheSiteCache(t *testing.T) {
+	base := t.TempDir()
+	old := sitecache.UserCacheDir
+	sitecache.UserCacheDir = func() (string, error) { return base, nil }
+	t.Cleanup(func() { sitecache.UserCacheDir = old })
+
+	fake := frappetest.New(t)
+	s, _, path := newSites(t)
+	store := sitesetup.Store{Path: path}
+	key := config.SiteConfig{URL: fake.URL, APIKey: frappetest.APIKey, APISecret: frappetest.APISecret}
+	if err := store.Init("gone", key); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add("kept", key); err != nil {
+		t.Fatal(err)
+	}
+	dirs := map[string]string{}
+	for _, name := range []string{"gone", "kept"} {
+		cfg := key
+		cfg.Name = name
+		dir, err := sitecache.Dir(&cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "server.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		dirs[name] = dir
+	}
+
+	if _, err := s.Remove(context.Background(), "gone"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dirs["gone"]); !os.IsNotExist(err) {
+		t.Errorf("removed site's cache survived: %v", err)
+	}
+	if _, err := os.Stat(dirs["kept"]); err != nil {
+		t.Errorf("other site's cache was dropped: %v", err)
 	}
 }
