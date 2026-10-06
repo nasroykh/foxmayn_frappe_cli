@@ -67,6 +67,10 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 		rec.Status, rec.Error, rec.cause = status, err.Error(), err
 		return mcp.NewToolResultError(err.Error())
 	}
+	jq, err := jqArg(req)
+	if err != nil {
+		return fail(auditInvalid, err)
+	}
 	if siteless[req.Params.Name] {
 		return env.runSiteless(ctx, req, parse, rec)
 	}
@@ -115,6 +119,11 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 	out, err := call(withProgress(withSite(withPolicy(ctx, policy), site), req), c)
 	if err != nil {
 		return fail(auditError, err)
+	}
+	if jq != nil {
+		if out, err = runJQ(ctx, jq, out); err != nil {
+			return fail(auditInvalid, err)
+		}
 	}
 	res := toolResult(out)
 	rec.Status = auditOK

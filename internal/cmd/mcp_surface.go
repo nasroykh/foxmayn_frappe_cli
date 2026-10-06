@@ -60,6 +60,28 @@ func (env *mcpEnv) inToolsets(tool string) bool {
 	return contains(sets, toolSurface[tool].toolset, false)
 }
 
+// listCacheTTLMs is the cache hint (SEP-2549, protocol 2026-07-28) on the
+// tool, prompt and resource lists: they are fixed for the server's lifetime
+// (tools are registered once; widening the policy needs a restart). The scope
+// is private, as the lists follow the site's policy. resources/read keeps
+// mcp-go's default, 0 (always revalidate): documents change.
+const listCacheTTLMs = int64(time.Hour / time.Millisecond)
+
+// mcpServerOptions are the options of the server ffc mcp runs.
+func mcpServerOptions() []server.ServerOption {
+	opts := []server.ServerOption{
+		server.WithToolCapabilities(false),
+		server.WithResourceCapabilities(false, false),
+		server.WithPromptCapabilities(false),
+		server.WithRecovery(),
+		server.WithResourceRecovery(),
+	}
+	for _, m := range []mcp.MCPMethod{mcp.MethodToolsList, mcp.MethodPromptsList, mcp.MethodResourcesList, mcp.MethodResourcesTemplatesList, mcp.MethodServerDiscover} {
+		opts = append(opts, server.WithMethodCacheHints(m, listCacheTTLMs, mcp.CacheScopePrivate))
+	}
+	return opts
+}
+
 // maxResultSizeKey is the tool _meta key Claude Code reads to raise its own
 // cut of a tool result, so a large JSON result is not cut mid-way.
 const maxResultSizeKey = "anthropic/maxResultSizeChars"
@@ -78,6 +100,7 @@ func describeTools(s *server.MCPServer) {
 		tool.Title, tool.Annotations.Title = info.title, info.title
 		if info.big {
 			tool.Meta = &mcp.Meta{AdditionalFields: map[string]any{maxResultSizeKey: maxToolResultBytes}}
+			addJQParam(&tool)
 		}
 		tools = append(tools, server.ServerTool{Tool: tool, Handler: t.Handler})
 	}
@@ -176,7 +199,7 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 	line("Dates are YYYY-MM-DD and datetimes YYYY-MM-DD HH:MM:SS; Check fields are 0 or 1.")
 	line(`Filters: an object {"status":"Open","docstatus":1} means equality, all conditions ANDed; a list [["grand_total",">",1000],["posting_date","between",["2026-01-01","2026-03-31"]]] takes operators =, !=, >, <, >=, <=, like (with %%), not like, in, not in, between, is ("set" or "not set"). Use fieldnames, not labels.`)
 	if has("list_docs") {
-		line("list_docs returns only name unless you pass fields: always pass fields and a limit (default 20, 0 = all) and page with start. A result too large to return comes back as {data, truncated, next_start, hint}: call again with start=next_start.")
+		line("list_docs returns only name unless you pass fields (or response_format=detailed for every field): always pass fields and a limit (default 20, 0 = all) and page with start. A result too large to return comes back as {data, truncated, next_start, hint}: call again with start=next_start. It and the other tools with large results take jq (e.g. \"[.[] | {name, status}]\"), run by the server before answering: return only the values you need.")
 	}
 	if has("count_docs") {
 		line("count_docs answers how many without fetching rows.")

@@ -164,15 +164,7 @@ func startMCP(ctx context.Context) (*server.MCPServer, func(), error) {
 			fmt.Fprintf(os.Stderr, "warning: site %q: %v\n", name, err)
 		}
 	}
-	s := server.NewMCPServer(
-		"ffc",
-		version.Version,
-		server.WithToolCapabilities(false),
-		server.WithResourceCapabilities(false, false),
-		server.WithPromptCapabilities(false),
-		server.WithRecovery(),
-		server.WithResourceRecovery(),
-	)
+	s := server.NewMCPServer("ffc", version.Version, mcpServerOptions()...)
 	registerTools(s, env, policies)
 	if len(sites) > 1 {
 		fmt.Fprintf(os.Stderr, "Serving %d sites: %s. Every tool call must name its site.\n", len(sites), strings.Join(sites, ", "))

@@ -162,6 +162,7 @@ func registerListDocs(s *server.MCPServer, env *mcpEnv) {
 		mcp.WithString("order_by",
 			mcp.Description("Sort expression, e.g. 'modified desc', 'name asc'"),
 		),
+		responseFormatOption(`without fields, concise returns each document's name only and detailed every field ("*"); with fields, both return those fields.`),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
@@ -171,6 +172,13 @@ func registerListDocs(s *server.MCPServer, env *mcpEnv) {
 		fields, err := stringsArg(req, "fields")
 		if err != nil {
 			return nil, err
+		}
+		detailed, err := detailedArg(req)
+		if err != nil {
+			return nil, err
+		}
+		if detailed && len(fields) == 0 {
+			fields = []string{"*"}
 		}
 		filters, err := rawJSONArg(req, "filters")
 		if err != nil {
@@ -347,6 +355,7 @@ func registerRunReport(s *server.MCPServer, env *mcpEnv) {
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum number of result rows to return. Default: 500. Use 0 for all rows. Rows that do not fit in 512 KiB are dropped from the end (truncated, total_rows and a hint say so): narrow the filters instead."),
 		),
+		responseFormatOption("concise drops execution metadata (timing, chart, message noise); detailed returns the report as Frappe answered it, rows still limited."),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		reportName, err := req.RequireString("report_name")
@@ -361,12 +370,19 @@ func registerRunReport(s *server.MCPServer, env *mcpEnv) {
 		if err != nil {
 			return nil, err
 		}
+		detailed, err := detailedArg(req)
+		if err != nil {
+			return nil, err
+		}
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
 			result, err := c.RunReport(ctx, reportName, filters)
 			if err != nil {
 				return nil, err
 			}
 			limitReportRows(result, limit)
+			if detailed {
+				return fitReportRows(result), nil
+			}
 			return fitReportRows(compactReportResult(result)), nil
 		}, nil
 	}))
