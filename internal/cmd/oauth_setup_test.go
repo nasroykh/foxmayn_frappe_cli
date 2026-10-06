@@ -1,10 +1,7 @@
 package cmd
 
 import (
-	"context"
-	"errors"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -12,9 +9,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 )
 
 const (
@@ -86,14 +83,14 @@ func TestSiteAddOAuthRegistersClient(t *testing.T) {
 	if uris, _ := md["redirect_uris"].([]interface{}); len(uris) != 1 || uris[0] != redirect || !strings.HasPrefix(redirect, "http://127.0.0.1:") {
 		t.Errorf("registered redirect_uris %v, login used %q", md["redirect_uris"], redirect)
 	}
-	if md["token_endpoint_auth_method"] != "none" || md["scope"] != oauthScope ||
+	if md["token_endpoint_auth_method"] != "none" || md["scope"] != sitesetup.OAuthScope ||
 		!strings.HasPrefix(md["client_name"].(string), "ffc") {
 		t.Errorf("registration = %v", md)
 	}
 	if g, _ := md["grant_types"].([]interface{}); len(g) != 2 || g[0] != "authorization_code" || g[1] != "refresh_token" {
 		t.Errorf("grant_types = %v", md["grant_types"])
 	}
-	if q.Get("client_id") != regs[0].ClientID || q.Get("scope") != oauthScope || q.Get("code_challenge_method") != "S256" {
+	if q.Get("client_id") != regs[0].ClientID || q.Get("scope") != sitesetup.OAuthScope || q.Get("code_challenge_method") != "S256" {
 		t.Errorf("authorization URL = %s", opened[0])
 	}
 
@@ -241,67 +238,6 @@ func TestOAuthSetupSanitizesSiteValues(t *testing.T) {
 		wantCode(t, r, 0)
 		if !strings.Contains(r.Stderr, "Logged in as admin@example.com") || strings.ContainsAny(r.Stdout+r.Stderr, "\x1b\x07") {
 			t.Errorf("stderr = %q", r.Stderr)
-		}
-	})
-}
-
-// resolveOAuthApp is the decision the wizard and the flags share; the
-// wizard prompts on a *noRegistrationError, so these cases are its fallback.
-func TestResolveOAuthApp(t *testing.T) {
-	ctx := context.Background()
-	const redirect = "http://127.0.0.1:53682/callback"
-
-	t.Run("manual wins", func(t *testing.T) {
-		site := frappetest.New(t)
-		app, err := resolveOAuthApp(ctx, site.URL, redirect, oauthApp{ID: "mine", Secret: "s"})
-		if err != nil || app != (oauthApp{ID: "mine", Secret: "s"}) || len(site.Requests()) != 0 {
-			t.Errorf("app %+v, err %v, %d requests", app, err, len(site.Requests()))
-		}
-	})
-	t.Run("registers once", func(t *testing.T) {
-		site := frappetest.New(t)
-		app, err := resolveOAuthApp(ctx, site.URL, redirect, oauthApp{})
-		regs := site.Registrations()
-		if err != nil || !app.Registered || len(regs) != 1 || app.ID != regs[0].ClientID || app.Secret != "" {
-			t.Errorf("app %+v, err %v, registrations %+v", app, err, regs)
-		}
-	})
-	fallback := []struct {
-		name        string
-		setup       func(*frappetest.Site)
-		unsupported bool
-		want        string
-	}{
-		{"registration off", func(s *frappetest.Site) { s.SetDynamicRegistration(false) }, true, "Enable Dynamic Client Registration"},
-		{"no metadata", func(s *frappetest.Site) { s.SetAuthServerMetadata(false) }, true, "registration may still be on"},
-		{"metadata is HTML", func(s *frappetest.Site) { s.Handle("GET "+metadataPath, frappetest.HTMLPage(http.StatusOK)) }, true, "is not metadata"},
-		{"metadata 403 (WAF)", func(s *frappetest.Site) { s.Handle("GET "+metadataPath, frappetest.HTMLPage(http.StatusForbidden)) }, true, "refused the OAuth server metadata request (HTTP 403)"},
-		{"rate limited", func(s *frappetest.Site) { s.FailRegistration(http.StatusTooManyRequests) }, false, "5 per 10 minutes"},
-		{"refused", func(s *frappetest.Site) { s.FailRegistration(http.StatusBadRequest) }, false, "refused by the test"},
-		{"metadata 502", func(s *frappetest.Site) { s.Handle("GET "+metadataPath, frappetest.HTMLPage(http.StatusBadGateway)) }, false, "could not read"},
-	}
-	for _, c := range fallback {
-		t.Run(c.name, func(t *testing.T) {
-			site := frappetest.New(t)
-			c.setup(site)
-			_, err := resolveOAuthApp(ctx, site.URL, redirect, oauthApp{})
-			var nr *noRegistrationError
-			if !errors.As(err, &nr) || nr.unsupported != c.unsupported || !strings.Contains(err.Error(), c.want) {
-				t.Fatalf("err = %v (unsupported %v)", err, nr != nil && nr.unsupported)
-			}
-			if n := len(site.RequestsTo(http.MethodPost, registerPath)); n > 1 {
-				t.Errorf("registration attempted %d times", n)
-			}
-		})
-	}
-	t.Run("unreachable", func(t *testing.T) {
-		srv := httptest.NewServer(http.NotFoundHandler())
-		srv.Close()
-		_, err := resolveOAuthApp(ctx, srv.URL, redirect, oauthApp{})
-		var nr *noRegistrationError
-		var te *client.TransportError
-		if !errors.As(err, &nr) || nr.unsupported || !errors.As(err, &te) {
-			t.Errorf("err = %v", err)
 		}
 	})
 }

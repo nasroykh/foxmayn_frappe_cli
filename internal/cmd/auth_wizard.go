@@ -170,7 +170,7 @@ func chooseAuthMethod(title string, oauth, apiKey, password bool) (string, error
 // (optional) runs once the name is known, before any credentials are verified
 // or the browser flow starts; returning an error stops the wizard. oauth is
 // the OAuth client given with --client-id (zero: register one or ask).
-func collectSite(ctx context.Context, method string, checkName func(string) error, oauth oauthApp) (string, config.SiteConfig, error) {
+func collectSite(ctx context.Context, method string, checkName func(string) error, oauth sitesetup.OAuthApp) (string, config.SiteConfig, error) {
 	switch method {
 	case authOAuth:
 		return collectOAuthSite(ctx, checkName, oauth)

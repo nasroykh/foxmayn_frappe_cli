@@ -1,4 +1,4 @@
-package cmd
+package sitesetup
 
 import (
 	"context"
@@ -14,32 +14,36 @@ import (
 )
 
 // This file holds the OAuth client decision of site setup, free of
-// prompts: the wizard (oauth_flow.go) and the non-interactive setup call it
-// and handle the fallbacks at their edge.
+// prompts: the CLI wizard and the non-interactive setup call it and handle
+// the fallbacks at their edge.
 
-// oauthScope is what ffc asks for: openid (who logged in) and all (the API).
+// OAuthScope is what ffc asks for: openid (who logged in) and all (the API).
 // A registered client gets exactly these scopes: Frappe stores the
 // registration's scope, or "all" without one (integrations/utils.py:246),
 // and refuses an authorization request for a scope the client lacks
 // (oauth.py:48).
-const oauthScope = "openid all"
+const OAuthScope = "openid all"
 
-// oauthApp is the OAuth client a login uses.
-type oauthApp struct {
+// OAuthApp is the OAuth client a login uses.
+type OAuthApp struct {
 	ID, Secret string
 	Registered bool // created by dynamic client registration in this run
 }
 
-// noRegistrationError says why no client was registered: the site does not
-// offer registration (unsupported), or the attempt failed (err).
-type noRegistrationError struct {
-	reason      string
-	hint        string
-	err         error
-	unsupported bool
+// NoRegistrationError says why no client was registered: the site does not
+// offer registration (Unsupported), or the attempt failed (the wrapped
+// error).
+type NoRegistrationError struct {
+	reason string
+	hint   string
+	err    error
+	// Unsupported: the site does not offer registration at all, so only a
+	// client created by hand can log in. Otherwise the attempt failed and
+	// may work later.
+	Unsupported bool
 }
 
-func (e *noRegistrationError) Error() string {
+func (e *NoRegistrationError) Error() string {
 	s := e.reason
 	switch {
 	case e.err != nil && s != "":
@@ -53,7 +57,7 @@ func (e *noRegistrationError) Error() string {
 	return s
 }
 
-func (e *noRegistrationError) Unwrap() error { return e.err }
+func (e *NoRegistrationError) Unwrap() error { return e.err }
 
 // rateLimitHint is shown when register_client answers 429. Frappe's
 // develop branch rate-limits it with @rate_limit(limit=5, seconds=600),
@@ -61,65 +65,65 @@ func (e *noRegistrationError) Unwrap() error { return e.err }
 // comes from the site-wide rate limit or a proxy.
 const rateLimitHint = "the site limits client registrations; recent Frappe versions allow 5 per 10 minutes from one IP address, so wait a few minutes and try again"
 
-// resolveOAuthApp returns the OAuth client for a login on siteURL whose
+// ResolveOAuthApp returns the OAuth client for a login on siteURL whose
 // callback is redirectURI. A manual client (--client-id) always wins and
 // nothing is sent. Otherwise the site's authorization server metadata is
 // read and, when it advertises a registration_endpoint, one public client
 // is registered for exactly redirectURI. When that is not possible the
-// error is a *noRegistrationError and the caller falls back (prompt, or a
+// error is a *NoRegistrationError and the caller falls back (prompt, or a
 // usage error without a terminal). A cancelled ctx returns ctx.Err().
-func resolveOAuthApp(ctx context.Context, siteURL, redirectURI string, manual oauthApp) (oauthApp, error) {
+func ResolveOAuthApp(ctx context.Context, siteURL, redirectURI string, manual OAuthApp) (OAuthApp, error) {
 	if manual.ID != "" {
 		return manual, nil
 	}
 	md, err := client.DiscoverOAuthServer(ctx, siteURL)
 	if ctx.Err() != nil {
-		return oauthApp{}, ctx.Err()
+		return OAuthApp{}, ctx.Err()
 	}
 	// Without metadata ffc does not know the registration endpoint, so it
 	// never posts to register_client blind.
 	var ae *client.APIError
 	switch {
 	case err != nil && serverUnavailable(err):
-		return oauthApp{}, &noRegistrationError{reason: "could not read the site's OAuth server metadata", err: err}
+		return OAuthApp{}, &NoRegistrationError{reason: "could not read the site's OAuth server metadata", err: err}
 	case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
 		// register_client checks only enable_dynamic_client_registration
 		// (oauth2.py:367), so registration may be on with discovery off.
-		return oauthApp{}, &noRegistrationError{unsupported: true,
+		return OAuthApp{}, &NoRegistrationError{Unsupported: true,
 			reason: `the site publishes no OAuth server metadata (Frappe v15, or "Show Auth Server Metadata" is off in OAuth Settings; ` +
 				`dynamic client registration may still be on, but ffc finds it only through the metadata)`}
 	case errors.As(err, &ae):
 		// A proxy or firewall in front of the site (a WAF's 403, a login
 		// page's 401) says nothing about the site's OAuth settings.
-		return oauthApp{}, &noRegistrationError{unsupported: true,
+		return OAuthApp{}, &NoRegistrationError{Unsupported: true,
 			reason: fmt.Sprintf("the site refused the OAuth server metadata request (HTTP %d)", ae.Status)}
 	case err != nil:
-		return oauthApp{}, &noRegistrationError{unsupported: true,
+		return OAuthApp{}, &NoRegistrationError{Unsupported: true,
 			reason: "the site's answer to the OAuth server metadata request is not metadata (a login page or a proxy in front of the site?)"}
 	case md.RegistrationEndpoint == "":
-		return oauthApp{}, registrationOff()
+		return OAuthApp{}, registrationOff()
 	}
 
-	reg, err := client.RegisterOAuthClient(ctx, siteURL, md.RegistrationEndpoint, oauthClientMetadata(redirectURI))
+	reg, err := client.RegisterOAuthClient(ctx, siteURL, md.RegistrationEndpoint, ClientMetadata(redirectURI))
 	if ctx.Err() != nil {
-		return oauthApp{}, ctx.Err()
+		return OAuthApp{}, ctx.Err()
 	}
 	if err != nil {
 		var ae *client.APIError
 		switch {
 		case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
 			// register_client raises NotFound while registration is off.
-			return oauthApp{}, registrationOff()
+			return OAuthApp{}, registrationOff()
 		case errors.As(err, &ae) && ae.Status == http.StatusTooManyRequests:
-			return oauthApp{}, &noRegistrationError{err: err, hint: rateLimitHint}
+			return OAuthApp{}, &NoRegistrationError{err: err, hint: rateLimitHint}
 		}
-		return oauthApp{}, &noRegistrationError{err: err}
+		return OAuthApp{}, &NoRegistrationError{err: err}
 	}
-	return oauthApp{ID: reg.ClientID, Secret: reg.ClientSecret, Registered: true}, nil
+	return OAuthApp{ID: reg.ClientID, Secret: reg.ClientSecret, Registered: true}, nil
 }
 
-func registrationOff() *noRegistrationError {
-	return &noRegistrationError{unsupported: true,
+func registrationOff() *NoRegistrationError {
+	return &NoRegistrationError{Unsupported: true,
 		reason: `dynamic client registration is off on the site (OAuth Settings: "Enable Dynamic Client Registration")`}
 }
 
@@ -137,19 +141,19 @@ func serverUnavailable(err error) bool {
 	return false
 }
 
-// oauthClientMetadata is the registration request: a public client (PKCE,
+// ClientMetadata is the registration request: a public client (PKCE,
 // no secret) for the one callback URI of this run. Frappe stores the URIs
 // joined by newlines but matches redirect_uri against them split on spaces
 // (oauth.py:27-40, 170-179), so a client with more than one URI could never
 // log in; the port is part of the URI, so the client is tied to it.
-func oauthClientMetadata(redirectURI string) client.OAuthClientMetadata {
+func ClientMetadata(redirectURI string) client.OAuthClientMetadata {
 	return client.OAuthClientMetadata{
 		ClientName:              oauthClientName(),
 		RedirectURIs:            []string{redirectURI},
 		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
 		TokenEndpointAuthMethod: "none",
-		Scope:                   oauthScope,
+		Scope:                   OAuthScope,
 		ClientURI:               "https://github.com/nasroykh/foxmayn_frappe_cli",
 		SoftwareID:              "foxmayn_frappe_cli",
 		SoftwareVersion:         version.Version,
@@ -168,19 +172,4 @@ func oauthClientName() string {
 		return "ffc"
 	}
 	return "ffc (" + host + ")"
-}
-
-// noInputOAuthError is the setup error without a terminal, where no client
-// ID can be asked for: a usage error when the site does not offer
-// registration, the failure (its exit code kept) when registration failed.
-func noInputOAuthError(err error) error {
-	var nr *noRegistrationError
-	if !errors.As(err, &nr) {
-		return err
-	}
-	const fix = "pass --client-id with the ID of an OAuth Client created on the site, or use --api-key"
-	if nr.unsupported {
-		return usageErrorf("%v: %s", nr, fix)
-	}
-	return fmt.Errorf("%w; %s", nr, fix)
 }

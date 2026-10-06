@@ -44,22 +44,22 @@ func (s *setupFlags) active() bool {
 }
 
 // oauthClient returns the OAuth client given with --client-id (its secret
-// from $FFC_OAUTH_CLIENT_SECRET), or the zero oauthApp. --client-id without
-// --oauth is a usage error. With --oauth but no --client-id the secret is
+// from $FFC_OAUTH_CLIENT_SECRET), or the zero sitesetup.OAuthApp.
+// --client-id without --oauth is a usage error. With --oauth but no --client-id the secret is
 // ignored (a registered or prompted client brings its own), which is said
 // on stderr.
-func (s *setupFlags) oauthClient(oauth bool) (oauthApp, error) {
+func (s *setupFlags) oauthClient(oauth bool) (sitesetup.OAuthApp, error) {
 	id := strings.TrimSpace(s.clientID)
 	if id == "" {
 		if oauth && strings.TrimSpace(os.Getenv("FFC_OAUTH_CLIENT_SECRET")) != "" {
 			fmt.Fprintln(os.Stderr, "warning: FFC_OAUTH_CLIENT_SECRET is ignored without --client-id")
 		}
-		return oauthApp{}, nil
+		return sitesetup.OAuthApp{}, nil
 	}
 	if !oauth {
-		return oauthApp{}, usageErrorf("--client-id needs --oauth")
+		return sitesetup.OAuthApp{}, usageErrorf("--client-id needs --oauth")
 	}
-	return oauthApp{ID: id, Secret: strings.TrimSpace(os.Getenv("FFC_OAUTH_CLIENT_SECRET"))}, nil
+	return sitesetup.OAuthApp{ID: id, Secret: strings.TrimSpace(os.Getenv("FFC_OAUTH_CLIENT_SECRET"))}, nil
 }
 
 // resolve validates the flags and returns the normalised site. It reads the
@@ -155,7 +155,7 @@ func readSecret(fromStdin bool, env, flagName string) (string, error) {
 
 // finishSetup completes a site from resolve: the OAuth browser login
 // (oauth), or the same credential check as the wizard.
-func finishSetup(ctx context.Context, site config.SiteConfig, oauth bool, app oauthApp) (config.SiteConfig, error) {
+func finishSetup(ctx context.Context, site config.SiteConfig, oauth bool, app sitesetup.OAuthApp) (config.SiteConfig, error) {
 	if oauth {
 		return collectOAuthSiteNoInput(ctx, site.URL, app)
 	}
