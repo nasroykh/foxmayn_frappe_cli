@@ -186,3 +186,39 @@ func TestStoreWithoutDropCache(t *testing.T) {
 		t.Fatalf("after remove: %+v, %v", cfg, err)
 	}
 }
+
+// AddOrInit writes what Init writes into a missing file, and adds to a file
+// that exists (another process may have created it since the caller looked).
+func TestAddOrInit(t *testing.T) {
+	site := config.SiteConfig{URL: "https://a.example", APIKey: "k", APISecret: "s"}
+	dir := t.TempDir()
+	initPath, bothPath := filepath.Join(dir, "init.yaml"), filepath.Join(dir, "sub", "both.yaml")
+	if err := (Store{Path: initPath}).Init("prod", site); err != nil {
+		t.Fatal(err)
+	}
+	var dropped []string
+	st := Store{Path: bothPath, DropCache: func(n string) { dropped = append(dropped, n) }}
+	if err := st.AddOrInit("prod", site); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := os.ReadFile(initPath)
+	got, _ := os.ReadFile(bothPath)
+	if string(got) != string(want) {
+		t.Errorf("missing file:\n%s\nwant (as Init):\n%s", got, want)
+	}
+
+	// The file now exists: the next site is added, the default stays.
+	if err := st.AddOrInit("staging", config.SiteConfig{URL: "https://b.example", APIKey: "k2", APISecret: "s2"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Read(bothPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultSite != "prod" || len(cfg.Sites) != 2 {
+		t.Errorf("after the second add: default %q, sites %v", cfg.DefaultSite, cfg.Sites)
+	}
+	if !reflect.DeepEqual(dropped, []string{"prod", "staging"}) {
+		t.Errorf("dropped caches = %v", dropped)
+	}
+}

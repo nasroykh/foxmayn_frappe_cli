@@ -107,6 +107,12 @@ export interface BrowserSignInRequest {
     "clientID": string;
     "clientSecret": string;
     "replace": boolean;
+
+    /**
+     * Attempt is an ID the UI picks for this sign-in; every progress event
+     * of it carries the same ID.
+     */
+    "attempt": string;
 }
 
 /**
@@ -161,7 +167,8 @@ export interface Environment {
     "ffc": FFCInfo;
 
     /**
-     * InstallCommand installs ffc by hand (the README's one-liner).
+     * InstallCommand installs ffc by hand: the README's one-liner, with the
+     * script pinned to a release tag.
      */
     "installCommand": string;
     "wsl": WSLInfo;
@@ -265,6 +272,11 @@ export interface RemoveResult {
  * SignInProgress is the payload of EventSignInProgress.
  */
 export interface SignInProgress {
+    /**
+     * Attempt is BrowserSignInRequest.Attempt of the sign-in it belongs to.
+     */
+    "attempt"?: string;
+
     /**
      * Step is one of "starting", "registering", "browser", "finishing",
      * "saving", "done".

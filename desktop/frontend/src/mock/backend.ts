@@ -40,11 +40,11 @@ const slow = params.get("slow") === "1"
 const home = os === "darwin" ? "/Users/nas" : "C:\\Users\\nas"
 const sep = os === "darwin" ? "/" : "\\"
 const configPath = [home, ".config", "ffc", "config.yaml"].join(sep)
-const ffcPath = os === "darwin" ? "/usr/local/bin/ffc" : "C:\\Users\\nas\\AppData\\Local\\Programs\\ffc\\ffc.exe"
+const ffcPath = os === "darwin" ? "/Users/nas/.local/bin/ffc" : "C:\\Users\\nas\\AppData\\Local\\Programs\\ffc\\ffc.exe"
 const installCommand =
   os === "darwin"
-    ? "curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install.sh | sh"
-    : 'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install.ps1 | iex"'
+    ? "curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/v1.11.0/install.sh | sh"
+    : 'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/v1.11.0/install.ps1 | iex"'
 
 function fail(code: AppError["code"], message: string, extra: Partial<AppError> = {}): never {
   const err = new Error(message) as Error & { cause: AppError }
@@ -271,17 +271,16 @@ export const backend: Backend = {
       const lines = [
         "Detecting platform... " + (os === "darwin" ? "darwin/arm64" : "windows/amd64"),
         "Fetching the latest release from GitHub...",
-        "Downloading ffc v1.10.0...",
-        "Verifying the release signature... OK",
-        "Verifying the SHA-256 checksum... OK",
-        "Installed ffc to " + ffcPath,
+        "Downloading ffc v1.10.0 (" + (os === "darwin" ? "ffc_1.10.0_darwin_arm64.tar.gz" : "ffc_1.10.0_windows_amd64.zip") + ")...",
+        "Verified the release signature and the SHA-256 checksum.",
+        "Installed ffc v1.10.0 to " + ffcPath,
       ]
       for (const [i, line] of lines.entries()) {
         await wait(500)
         if (signal.aborted) fail("cancelled", "The installation was cancelled.")
         if (params.get("install") === "fail" && i === 2) {
-          for (const cb of installListeners) cb("error: could not download the release: connection reset")
-          fail("failed", "The installer did not finish. Check the log for details.", { detail: "exit status 1" })
+          for (const cb of installListeners) cb("error: downloading: read tcp: connection reset by peer")
+          fail("failed", "ffc could not be installed.", { detail: "downloading: read tcp: connection reset by peer" })
         }
         for (const cb of installListeners) cb(line)
       }
@@ -389,7 +388,7 @@ export const backend: Backend = {
     if (sites.some((s) => s.name === req.name) && !req.replace)
       fail("exists", `A site called "${req.name}" already exists.`, { field: "name" })
     const emit = (ev: SignInProgress) => {
-      if (!ctl.signal.aborted) for (const cb of signInListeners) cb(ev)
+      if (!ctl.signal.aborted) for (const cb of signInListeners) cb({ ...ev, attempt: req.attempt })
     }
     const step = async (ev: SignInProgress, ms: number) => {
       emit(ev)

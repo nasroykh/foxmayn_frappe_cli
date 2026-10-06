@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
@@ -292,6 +294,21 @@ func TestCheckRefreshesExpiredOAuthToken(t *testing.T) {
 	if err != nil || res.OK || res.Code != CodeAuth {
 		t.Errorf("Check with refused refresh = %+v, %v", res, err)
 	}
+
+	// A refresh that fails for a passing reason is not an expired sign-in.
+	s.refresh = func(context.Context, string, string, string, string) (*client.OAuthTokens, error) {
+		return nil, &client.APIError{Status: http.StatusServiceUnavailable}
+	}
+	res, err = s.Check(ctx, "o")
+	if err != nil || res.OK || res.Code == CodeAuth || strings.Contains(res.Message, "expired") {
+		t.Errorf("Check with a 503 from the token endpoint = %+v, %v", res, err)
+	}
+	s.refresh = func(context.Context, string, string, string, string) (*client.OAuthTokens, error) {
+		return nil, fmt.Errorf("refreshing: %w", context.DeadlineExceeded)
+	}
+	if res, _ = s.Check(ctx, "o"); res.Code != CodeNetwork {
+		t.Errorf("Check with a timed-out refresh = %+v", res)
+	}
 }
 
 func TestCheckReportsRefusedKey(t *testing.T) {
@@ -403,6 +420,66 @@ func TestSignInCancel(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Error("a cancelled sign-in wrote the config")
+	}
+}
+
+// A second sign-in replaces the first and gets its callback port, so a
+// redirect URI registered on a hand-made client still matches.
+func TestSignInReplacedKeepsPort(t *testing.T) {
+	fake := frappetest.New(t)
+	s, h, _ := newSites(t)
+	opened := make(chan string, 2)
+	h.openURL = func(raw string) error { opened <- raw; return nil } // nobody approves
+	redirect := func(raw string) string {
+		u, _ := url.Parse(raw)
+		return u.Query().Get("redirect_uri")
+	}
+	wait := func(what string) string {
+		select {
+		case u := <-opened:
+			return u
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: the browser was never opened", what)
+		}
+		return ""
+	}
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := s.SignInWithBrowser(context.Background(), BrowserSignInRequest{Name: "p", URL: fake.URL, Attempt: "a1"})
+		first <- err
+	}()
+	uri1 := redirect(wait("first"))
+
+	second := make(chan error, 1)
+	go func() {
+		_, err := s.SignInWithBrowser(context.Background(), BrowserSignInRequest{Name: "p", URL: fake.URL, Attempt: "a2"})
+		second <- err
+	}()
+	if err := <-first; code(err) != CodeCancelled {
+		t.Errorf("replaced sign-in: %v", err)
+	}
+	uri2 := redirect(wait("second"))
+	if uri1 == "" || uri1 != uri2 {
+		t.Errorf("redirect URIs differ: %q then %q", uri1, uri2)
+	}
+	s.CancelSignIn()
+	if err := <-second; code(err) != CodeCancelled {
+		t.Errorf("second sign-in: %v", err)
+	}
+
+	// Every event names its attempt, and the second attempt's events come
+	// after the first one's browser step.
+	var seen []string
+	for _, d := range h.named(EventSignInProgress) {
+		p := d.(SignInProgress)
+		if p.Attempt != "a1" && p.Attempt != "a2" {
+			t.Errorf("event without its attempt: %+v", p)
+		}
+		seen = append(seen, p.Attempt+":"+p.Step)
+	}
+	if got := strings.Join(seen, ","); !strings.HasPrefix(got, "a1:starting,a1:registering,a1:browser,a2:starting") || !strings.HasSuffix(got, "a2:browser") {
+		t.Errorf("events = %s", got)
 	}
 }
 

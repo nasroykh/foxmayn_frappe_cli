@@ -89,10 +89,17 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
   const [progress, setProgress] = React.useState<SignInProgress | null>(null)
   const [error, setError] = React.useState<AppError | null>(null)
   const [added, setAdded] = React.useState<AddedSite | null>(null)
+  // session changes on every open and close, so a call that was started
+  // before the sheet closed cannot write into a reopened form. attempt names
+  // the browser sign-in whose progress events are shown.
+  const session = React.useRef(0)
+  const attempt = React.useRef("")
   const [isDefault, setIsDefault] = React.useState(false)
 
   // Start fresh each time the sheet opens.
   React.useEffect(() => {
+    session.current++
+    attempt.current = ""
     if (!open) return
     setStep(1)
     setURL("")
@@ -136,7 +143,13 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
     }
   }, [open, name, url])
 
-  React.useEffect(() => backend.onSignInProgress(setProgress), [])
+  React.useEffect(
+    () =>
+      backend.onSignInProgress((p) => {
+        if (p.attempt && p.attempt === attempt.current) setProgress(p)
+      }),
+    [],
+  )
 
   // Secrets live only in this form: drop them as soon as they are not needed.
   const clearSecrets = () => {
@@ -155,7 +168,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
     validation?.nameError ||
     (validation?.exists && !replace ? `A site called "${validation.name}" already exists.` : "")
   const urlError = validation?.urlError ?? ""
-  const step1OK = !!validation && validation.ok && validation.name === name && (!validation.exists || replace)
+  const step1OK = !!validation && validation.ok && validation.name === name.trim() && (!validation.exists || replace)
 
   function onURLChange(v: string) {
     setURL(v)
@@ -182,6 +195,8 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
   }
 
   async function signIn() {
+    const mine = session.current
+    const current = () => mine === session.current
     setBusy(true)
     setError(null)
     setProgress(null)
@@ -189,18 +204,21 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
       let site: AddedSite
       const base = { name, url: validation?.url || url, replace }
       if (method === "oauth") {
+        attempt.current = `${mine}-${Date.now()}`
         site = await backend.signInWithBrowser({
           ...base,
           clientID: advanced ? clientID.trim() : "",
           clientSecret: advanced && clientID.trim() ? clientSecret : "",
+          attempt: attempt.current,
         })
       } else if (method === "apikey") {
         site = await backend.addWithAPIKey({ ...base, apiKey: apiKey.trim(), apiSecret })
       } else {
         site = await backend.addWithPassword({ ...base, username: username.trim(), password })
       }
-      finish(site)
+      if (current()) finish(site)
     } catch (err) {
+      if (!current()) return
       const e = appError(err)
       if (e.code === "cancelled") {
         setStep(2)
@@ -215,7 +233,16 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
         setError(e)
       }
     } finally {
-      setBusy(false)
+      if (current()) setBusy(false)
+    }
+  }
+
+  async function reopenSignInPage() {
+    try {
+      await backend.reopenSignInPage()
+    } catch (err) {
+      const e = appError(err)
+      toast.add({ title: "Could not open the sign-in page", description: e.message, type: "error" })
     }
   }
 
@@ -563,7 +590,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                 )}
               </Button>
               {busy && progress?.step === "browser" && (
-                <Button variant="secondary" onClick={() => void backend.reopenSignInPage()}>
+                <Button variant="secondary" onClick={() => void reopenSignInPage()}>
                   <IconExternalLink data-icon="inline-start" />
                   Open the page again
                 </Button>

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -105,6 +106,9 @@ type BrowserSignInRequest struct {
 	ClientID     string `json:"clientID"`
 	ClientSecret string `json:"clientSecret"`
 	Replace      bool   `json:"replace"`
+	// Attempt is an ID the UI picks for this sign-in; every progress event
+	// of it carries the same ID.
+	Attempt string `json:"attempt"`
 }
 
 // AddedSite is the site an Add call saved.
@@ -319,17 +323,13 @@ func (s *SitesService) prepare(name, rawURL string, replace bool) (string, strin
 	return v.Name, v.URL, v.Exists, nil
 }
 
-// save stores a verified site: Init when there is no config file yet (as
-// ffc init does; the site becomes the default), Add otherwise (Add makes it
-// the default when no default is set).
+// save stores a verified site with Store.AddOrInit: a missing config file is
+// created with the site as the default (as ffc init writes it), an existing
+// one is added to (the site becomes the default when none is set). The
+// choice is made under the config lock, so a file the CLI creates meanwhile
+// is never overwritten.
 func (s *SitesService) save(name string, site config.SiteConfig, added *AddedSite) error {
-	var err error
-	if isRegularFile(s.path) {
-		err = s.store.Add(name, site)
-	} else {
-		err = s.store.Init(name, site)
-	}
-	if err != nil {
+	if err := s.store.AddOrInit(name, site); err != nil {
 		return newError(CodeFailed, "The site could not be saved to the ffc config file.", err)
 	}
 	if cfg, _, err := s.readConfig(); err == nil {
@@ -410,8 +410,19 @@ func (s *SitesService) Check(ctx context.Context, name string) (CheckResult, err
 	res := CheckResult{CheckedAt: time.Now()}
 	if site.IsOAuth() && site.IsTokenExpired() {
 		if site, err = s.refreshToken(ctx, site); err != nil {
-			res.Code = CodeAuth
-			res.Message = "Your sign-in has expired. Sign in again to keep using this site."
+			if ctx.Err() != nil {
+				return CheckResult{}, siteError("Checking the connection", ctx.Err())
+			}
+			if signInExpired(err) {
+				res.Code = CodeAuth
+				res.Message = "Your sign-in has expired. Sign in again to keep using this site."
+			} else {
+				// The network, the site or the config lock: trying again may work.
+				var e *Error
+				if errors.As(siteError("Renewing the sign-in", err), &e) {
+					res.Code, res.Message = e.Code, e.Message
+				}
+			}
 			s.remember(name, res)
 			return res, nil
 		}
@@ -433,6 +444,23 @@ func (s *SitesService) Check(ctx context.Context, name string) (CheckResult, err
 	}
 	s.remember(name, res)
 	return res, nil
+}
+
+// signInExpired reports whether a failed token refresh means the sign-in is
+// over, as the CLI's permanentRefreshError does: no refresh token, a refused
+// login, or the token endpoint refusing the grant or the client (400, 401,
+// or Frappe's 403 for a revoked refresh token). Anything else (network,
+// timeout, a 5xx, a busy config lock) may pass.
+func signInExpired(err error) bool {
+	var ae *client.APIError
+	var authErr *client.AuthError
+	switch {
+	case errors.Is(err, client.ErrNoRefreshToken), errors.As(err, &authErr):
+		return true
+	case errors.As(err, &ae):
+		return ae.Status == http.StatusBadRequest || ae.Status == http.StatusUnauthorized || ae.Status == http.StatusForbidden
+	}
+	return false
 }
 
 func (s *SitesService) remember(name string, res CheckResult) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
@@ -14,18 +15,29 @@ import (
 type signInState struct {
 	cancel  context.CancelFunc
 	authURL string
+	// done is closed once the attempt has returned and its callback server
+	// no longer holds the port.
+	done chan struct{}
 }
 
-func (s *SitesService) progress(step, msg string) {
-	s.host.Emit(EventSignInProgress, SignInProgress{Step: step, Message: msg})
+// replaceWait bounds how long a new sign-in waits for the one it replaces to
+// let go of the callback port.
+const replaceWait = 5 * time.Second
+
+func (s *SitesService) progress(attempt, step, msg string) {
+	s.host.Emit(EventSignInProgress, SignInProgress{Attempt: attempt, Step: step, Message: msg})
 }
 
 // SignInWithBrowser adds a site through the OAuth browser sign-in: it binds
 // the local callback, finds or registers the OAuth client, opens the site's
 // sign-in page in the browser, waits for the user (at most 5 minutes), and
 // saves the site with its tokens. Progress goes out as "signin:progress"
-// events. CancelSignIn, or cancelling the call, stops it. Each call is a new
-// flow, so a retry after a failure starts clean.
+// events tagged with req.Attempt, so the UI can drop events of an attempt it
+// has given up on. CancelSignIn, or cancelling the call, stops it. Each call
+// is a new flow, so a retry after a failure starts clean; a call made while
+// another sign-in runs cancels it and waits (at most replaceWait) for it to
+// close its callback server, so the new flow gets the same port and a
+// redirect URI registered on a hand-made client still matches.
 //
 // When the site cannot register a client (Frappe v15, or registration
 // turned off), the error has code "no_registration" and the redirect URI to
@@ -37,24 +49,37 @@ func (s *SitesService) SignInWithBrowser(ctx context.Context, req BrowserSignInR
 		return AddedSite{}, err
 	}
 
+	attempt := req.Attempt
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	st := &signInState{cancel: cancel}
+	st := &signInState{cancel: cancel, done: make(chan struct{})}
 	s.mu.Lock()
-	if s.signIn != nil {
-		s.signIn.cancel() // a new attempt replaces the old one
+	old := s.signIn
+	if old != nil {
+		old.cancel() // a new attempt replaces the old one
 	}
 	s.signIn = st
 	s.mu.Unlock()
+	// Registered before the flow's Close, so it runs after it: done means
+	// the port is free again.
 	defer func() {
 		s.mu.Lock()
 		if s.signIn == st {
 			s.signIn = nil
 		}
 		s.mu.Unlock()
+		close(st.done)
 	}()
 
-	s.progress("starting", "Getting ready…")
+	s.progress(attempt, "starting", "Getting ready…")
+	if old != nil {
+		select {
+		case <-old.done:
+		case <-time.After(replaceWait):
+		case <-ctx.Done():
+			return AddedSite{}, newError(CodeCancelled, "The sign-in was cancelled.", nil)
+		}
+	}
 	flow, err := s.startFlow()
 	if err != nil {
 		return AddedSite{}, newError(CodeFailed, "The sign-in could not start on this computer.", err)
@@ -66,7 +91,7 @@ func (s *SitesService) SignInWithBrowser(ctx context.Context, req BrowserSignInR
 
 	manual := sitesetup.OAuthApp{ID: strings.TrimSpace(req.ClientID), Secret: strings.TrimSpace(req.ClientSecret)}
 	if manual.ID == "" {
-		s.progress("registering", "Setting up a secure connection with your site…")
+		s.progress(attempt, "registering", "Setting up a secure connection with your site…")
 	}
 	app, err := s.resolveApp(ctx, siteURL, flow.RedirectURI(), manual)
 	var nr *sitesetup.NoRegistrationError
@@ -90,7 +115,7 @@ func (s *SitesService) SignInWithBrowser(ctx context.Context, req BrowserSignInR
 			s.mu.Lock()
 			st.authURL = authURL
 			s.mu.Unlock()
-			ev := SignInProgress{Step: "browser", Message: "Continue in your browser…", AuthURL: authURL}
+			ev := SignInProgress{Attempt: attempt, Step: "browser", Message: "Continue in your browser…", AuthURL: authURL}
 			if err := s.host.OpenURL(authURL); err != nil {
 				ev.BrowserError = text.Sanitize(err.Error())
 			}
@@ -98,7 +123,7 @@ func (s *SitesService) SignInWithBrowser(ctx context.Context, req BrowserSignInR
 			return nil
 		},
 		Step: func(title string, run func()) error {
-			s.progress("finishing", stepMessage(title))
+			s.progress(attempt, "finishing", stepMessage(title))
 			run()
 			return nil
 		},
@@ -112,12 +137,12 @@ func (s *SitesService) SignInWithBrowser(ctx context.Context, req BrowserSignInR
 		return AddedSite{}, siteError("Signing in", err)
 	}
 
-	s.progress("saving", "Saving the site…")
+	s.progress(attempt, "saving", "Saving the site…")
 	added := AddedSite{Name: name, URL: siteURL, Auth: AuthOAuth, User: user, Replaced: exists, Registered: app.Registered}
 	if err := s.save(name, site, &added); err != nil {
 		return AddedSite{}, err
 	}
-	s.progress("done", "Signed in")
+	s.progress(attempt, "done", "Signed in")
 	return added, nil
 }
 

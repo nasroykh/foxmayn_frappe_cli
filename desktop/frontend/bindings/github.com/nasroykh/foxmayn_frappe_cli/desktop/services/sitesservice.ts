@@ -103,8 +103,12 @@ export function SetDefault(name: string): $CancellablePromise<void> {
  * the local callback, finds or registers the OAuth client, opens the site's
  * sign-in page in the browser, waits for the user (at most 5 minutes), and
  * saves the site with its tokens. Progress goes out as "signin:progress"
- * events. CancelSignIn, or cancelling the call, stops it. Each call is a new
- * flow, so a retry after a failure starts clean.
+ * events tagged with req.Attempt, so the UI can drop events of an attempt it
+ * has given up on. CancelSignIn, or cancelling the call, stops it. Each call
+ * is a new flow, so a retry after a failure starts clean; a call made while
+ * another sign-in runs cancels it and waits (at most replaceWait) for it to
+ * close its callback server, so the new flow gets the same port and a
+ * redirect URI registered on a hand-made client still matches.
  * 
  * When the site cannot register a client (Frappe v15, or registration
  * turned off), the error has code "no_registration" and the redirect URI to

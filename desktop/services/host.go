@@ -37,6 +37,8 @@ type ConfigChanged struct {
 
 // SignInProgress is the payload of EventSignInProgress.
 type SignInProgress struct {
+	// Attempt is BrowserSignInRequest.Attempt of the sign-in it belongs to.
+	Attempt string `json:"attempt,omitempty"`
 	// Step is one of "starting", "registering", "browser", "finishing",
 	// "saving", "done".
 	Step string `json:"step"`
