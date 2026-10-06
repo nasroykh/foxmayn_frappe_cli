@@ -76,12 +76,26 @@ func resolveOAuthApp(ctx context.Context, siteURL, redirectURI string, manual oa
 	if ctx.Err() != nil {
 		return oauthApp{}, ctx.Err()
 	}
+	// Without metadata ffc does not know the registration endpoint, so it
+	// never posts to register_client blind.
+	var ae *client.APIError
 	switch {
 	case err != nil && serverUnavailable(err):
 		return oauthApp{}, &noRegistrationError{reason: "could not read the site's OAuth server metadata", err: err}
+	case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
+		// register_client checks only enable_dynamic_client_registration
+		// (oauth2.py:367), so registration may be on with discovery off.
+		return oauthApp{}, &noRegistrationError{unsupported: true,
+			reason: `the site publishes no OAuth server metadata (Frappe v15, or "Show Auth Server Metadata" is off in OAuth Settings; ` +
+				`dynamic client registration may still be on, but ffc finds it only through the metadata)`}
+	case errors.As(err, &ae):
+		// A proxy or firewall in front of the site (a WAF's 403, a login
+		// page's 401) says nothing about the site's OAuth settings.
+		return oauthApp{}, &noRegistrationError{unsupported: true,
+			reason: fmt.Sprintf("the site refused the OAuth server metadata request (HTTP %d)", ae.Status)}
 	case err != nil:
 		return oauthApp{}, &noRegistrationError{unsupported: true,
-			reason: `the site publishes no OAuth server metadata (Frappe v15, or "Show Auth Server Metadata" is off in OAuth Settings)`}
+			reason: "the site's answer to the OAuth server metadata request is not metadata (a login page or a proxy in front of the site?)"}
 	case md.RegistrationEndpoint == "":
 		return oauthApp{}, registrationOff()
 	}

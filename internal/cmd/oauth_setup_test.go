@@ -273,8 +273,9 @@ func TestResolveOAuthApp(t *testing.T) {
 		want        string
 	}{
 		{"registration off", func(s *frappetest.Site) { s.SetDynamicRegistration(false) }, true, "Enable Dynamic Client Registration"},
-		{"no metadata", func(s *frappetest.Site) { s.SetAuthServerMetadata(false) }, true, "Show Auth Server Metadata"},
-		{"metadata is HTML", func(s *frappetest.Site) { s.Handle("GET "+metadataPath, frappetest.HTMLPage(http.StatusOK)) }, true, "no OAuth server metadata"},
+		{"no metadata", func(s *frappetest.Site) { s.SetAuthServerMetadata(false) }, true, "registration may still be on"},
+		{"metadata is HTML", func(s *frappetest.Site) { s.Handle("GET "+metadataPath, frappetest.HTMLPage(http.StatusOK)) }, true, "is not metadata"},
+		{"metadata 403 (WAF)", func(s *frappetest.Site) { s.Handle("GET "+metadataPath, frappetest.HTMLPage(http.StatusForbidden)) }, true, "refused the OAuth server metadata request (HTTP 403)"},
 		{"rate limited", func(s *frappetest.Site) { s.FailRegistration(http.StatusTooManyRequests) }, false, "5 per 10 minutes"},
 		{"refused", func(s *frappetest.Site) { s.FailRegistration(http.StatusBadRequest) }, false, "refused by the test"},
 		{"metadata 502", func(s *frappetest.Site) { s.Handle("GET "+metadataPath, frappetest.HTMLPage(http.StatusBadGateway)) }, false, "could not read"},
