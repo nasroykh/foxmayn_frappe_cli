@@ -90,7 +90,7 @@ func (s *SitesService) SignInWithBrowser(ctx context.Context, req BrowserSignInR
 			s.mu.Lock()
 			st.authURL = authURL
 			s.mu.Unlock()
-			ev := SignInProgress{Step: "browser", Message: "Finish signing in in your browser…", AuthURL: authURL}
+			ev := SignInProgress{Step: "browser", Message: "Continue in your browser…", AuthURL: authURL}
 			if err := s.host.OpenURL(authURL); err != nil {
 				ev.BrowserError = text.Sanitize(err.Error())
 			}

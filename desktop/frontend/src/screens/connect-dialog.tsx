@@ -91,7 +91,7 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
 
   const clientItems = list.map((a) => ({ value: a.id, label: a.detected ? a.name : `${a.name} (not found)` }))
   const siteItems = [
-    { value: FOLLOW, label: defaultSite ? `Follow the default site (now ${defaultSite})` : "Follow the default site" },
+    { value: FOLLOW, label: defaultSite ? `Default site (${defaultSite})` : "Default site" },
     ...siteList.map((s) => ({ value: s.name, label: s.name })),
   ]
 

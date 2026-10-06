@@ -197,7 +197,9 @@ internal/text/               → Sanitize: strips C0/C1 controls (terminal escap
 internal/relsig/             → Ed25519 sign/verify of checksums.txt (domain-separated); ReleaseKeys in keys.go
 tools/relsign/               → keygen / sign / verify for the release key (run by GoReleaser, not shipped)
 internal/version/            → Build-time version variables (ldflags)
-desktop/                     → desktop app (Wails v3 + React 19 + shadcn/ui), its own Go module nested under the ffc module path; scaffold only (desktop/README.md)
+desktop/                     → Foxmayn Frappe Desktop (Wails v3 + React 19 + shadcn/ui on Base UI), its own Go module nested under the ffc module path;
+                                services/ (AppService, SitesService, AssistantsService over sitesetup/mcpinstall), frontend/src
+                                (lib/backend.ts over the bindings, screens/), `npm run dev:mock` browser preview; Windows and macOS only (desktop/README.md)
 ```
 
 ## Testing

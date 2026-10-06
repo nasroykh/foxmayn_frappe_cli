@@ -246,7 +246,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
 
   return (
     <Sheet open={open} onOpenChange={(o) => (o ? onOpenChange(true) : close())}>
-      <SheetContent className="w-full gap-0 sm:max-w-md">
+      <SheetContent className="w-full gap-0 data-[side=right]:sm:max-w-md">
         <SheetHeader className="border-b">
           <SheetTitle>Add a site</SheetTitle>
           <SheetDescription>Connect a Frappe or ERPNext site to this computer.</SheetDescription>

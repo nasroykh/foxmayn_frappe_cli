@@ -410,7 +410,7 @@ export const backend: Backend = {
     await step(
       {
         step: "browser",
-        message: "Finish signing in in your browser…",
+        message: "Continue in your browser…",
         authURL: `${url}/api/method/frappe.integrations.oauth2.authorize?client_id=4f1c2a&response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback`,
       },
       3500,
