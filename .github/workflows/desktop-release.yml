@@ -1,0 +1,347 @@
+name: Desktop release
+
+# Foxmayn Frappe Desktop releases. A `desktop-v*` tag publishes; a pull request
+# touching this file or desktop/build/**, and a manual run, build and package
+# the same way (dry run: workflow artifacts only, never a release).
+#
+# This is not the CLI release (release.yml): that one triggers on `v*`, which a
+# `desktop-v*` tag does not match, and takes its previous tag from `v*` tags only.
+on:
+  push:
+    tags:
+      - "desktop-v*"
+  pull_request:
+    paths:
+      - ".github/workflows/desktop-release.yml"
+      - "desktop/build/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  APP_NAME: foxmayn-frappe-desktop
+
+jobs:
+  # Version from the tag (desktop-v0.1.0 -> 0.1.0, desktop-v0.1.0-rc1 -> 0.1.0-rc1),
+  # 0.0.0-dev for a dry run. Everything below takes it from here.
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      core: ${{ steps.v.outputs.core }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - name: Resolve version
+        id: v
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ] && [[ "$GITHUB_REF" == refs/tags/desktop-v* ]]; then
+            version="${GITHUB_REF_NAME#desktop-v}"
+            publish=true
+          else
+            version="0.0.0-dev"
+            publish=false
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$version' is not X.Y.Z or X.Y.Z-suffix"
+            exit 1
+          fi
+          # Windows version resources and the manifest need numbers only.
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "core=${version%%-*}" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "version=$version publish=$publish"
+
+  windows:
+    needs: meta
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      CORE: ${{ needs.meta.outputs.core }}
+      # UNVERIFIED: signing has never run (no certificate yet).
+      WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: desktop/frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: desktop/frontend
+        run: npm run build
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Install wails3
+        run: go install "github.com/wailsapp/wails/v3/cmd/wails3@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)"
+
+      # config.yml is the source: update build-assets rewrites Info.plist,
+      # info.json, the manifest and wails_tools.nsh from it. Those take numbers
+      # only (X.Y.Z), so the suffix of a prerelease lives in AppVersion
+      # (ldflags, APP_VERSION below) and in info.json's ProductVersion string.
+      - name: Stamp version
+        run: |
+          sed -i.bak -E "s/^(  version: )\"[^\"]*\"/\1\"$CORE\"/" build/config.yml
+          (cd build && wails3 update build-assets -name "$APP_NAME" -binaryname "$APP_NAME" -config config.yml -dir .)
+          sed -i.bak -E "s/(\"file_version\": *)\"[^\"]*\"/\1\"$CORE.0\"/; s/(\"ProductVersion\": *)\"[^\"]*\"/\1\"$VERSION\"/" build/windows/info.json
+          find build -name '*.bak' -delete
+          grep -n "version" build/config.yml | head -3
+          grep -n "version\|Version" build/windows/info.json
+          grep -q "\"file_version\": \"$CORE.0\"" build/windows/info.json
+          grep -q "INFO_PRODUCTVERSION \"$CORE\"" build/windows/nsis/wails_tools.nsh
+
+      # windows-latest may or may not ship NSIS.
+      - name: Ensure makensis
+        run: |
+          if ! command -v makensis >/dev/null 2>&1; then
+            choco install nsis --version=3.11 -y --no-progress
+            echo 'C:\Program Files (x86)\NSIS' >> "$GITHUB_PATH"
+            export PATH="$PATH:/c/Program Files (x86)/NSIS"
+          fi
+          command -v makensis
+          makensis -VERSION
+
+      # Per-user installer (no admin): INSTALL_SCOPE=user.
+      - name: Package (NSIS, per-user)
+        env:
+          APP_VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          wails3 package INSTALL_SCOPE=user
+          ls -l bin
+          grep -a -q -F "$VERSION" "bin/$APP_NAME.exe"
+
+      # UNVERIFIED. Signs the installer only: the Taskfile's package step
+      # rebuilds the exe, so a signed exe would not survive into the installer.
+      - name: Sign installer
+        if: env.WINDOWS_CERTIFICATE_PFX_BASE64 != ''
+        run: |
+          echo "$WINDOWS_CERTIFICATE_PFX_BASE64" | base64 -d > "$RUNNER_TEMP/cert.pfx"
+          wails3 tool sign --input "bin/$APP_NAME-amd64-installer.exe" --certificate "$RUNNER_TEMP/cert.pfx" --password "$WINDOWS_CERTIFICATE_PASSWORD" --timestamp http://timestamp.digicert.com
+          rm -f "$RUNNER_TEMP/cert.pfx"
+
+      - name: Name the installer
+        run: |
+          mkdir -p ../dist
+          cp "bin/$APP_NAME-amd64-installer.exe" "../dist/$APP_NAME-$VERSION-windows-amd64-setup.exe"
+          ls -l ../dist
+
+      - name: Bindings and lockfile are current
+        run: git diff --exit-code -- frontend/bindings frontend/package-lock.json
+
+      - name: Upload installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-windows
+          path: dist/*-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  macos:
+    needs: meta
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      CORE: ${{ needs.meta.outputs.core }}
+      # UNVERIFIED: signing and notarization have never run (no Apple account yet).
+      APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: desktop/frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: desktop/frontend
+        run: npm run build
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Install wails3
+        run: go install "github.com/wailsapp/wails/v3/cmd/wails3@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)"
+
+      # See the windows job: Info.plist takes numbers only, so it gets X.Y.Z.
+      - name: Stamp version
+        run: |
+          sed -i.bak -E "s/^(  version: )\"[^\"]*\"/\1\"$CORE\"/" build/config.yml
+          (cd build && wails3 update build-assets -name "$APP_NAME" -binaryname "$APP_NAME" -config config.yml -dir .)
+          find build -name '*.bak' -delete
+          grep -n "version" build/config.yml | head -3
+          grep -n -A1 "CFBundleShortVersionString\|CFBundleVersion" build/darwin/Info.plist
+          grep -q "<string>$CORE</string>" build/darwin/Info.plist
+
+      # arm64 + amd64 binaries joined with lipo, bundled and ad-hoc signed.
+      - name: Package universal .app
+        env:
+          APP_VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          wails3 task darwin:package:universal
+          lipo -info "bin/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+          grep -a -q -F "$VERSION" "bin/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+
+      # UNVERIFIED. Developer ID signature and notarization through the wails3
+      # signer, with a throwaway keychain. Runs only when every secret exists.
+      - name: Sign and notarize
+        if: env.APPLE_CERTIFICATE_P12_BASE64 != '' && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_PASSWORD != ''
+        run: |
+          kc="$RUNNER_TEMP/ffc-signing.keychain-db"
+          kcpw="$(uuidgen)"
+          echo "$APPLE_CERTIFICATE_P12_BASE64" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kcpw" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kcpw" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" login.keychain
+          identity="$(security find-identity -v -p codesigning "$kc" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)"
+          test -n "$identity"
+          xcrun notarytool store-credentials ffc-notary --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --keychain "$kc"
+          wails3 tool sign --input "bin/$APP_NAME.app" --identity "$identity" --keychain-profile ffc-notary --notarize
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security delete-keychain "$kc"
+
+      - name: Create .dmg
+        run: |
+          wails3 task darwin:create:dmg
+          ls -l bin
+          mkdir -p ../dist
+          dmgs=(bin/*.dmg)
+          test "${#dmgs[@]}" -eq 1
+          cp "${dmgs[0]}" "../dist/$APP_NAME-$VERSION-macos-universal.dmg"
+          ls -l ../dist
+
+      - name: Bindings and lockfile are current
+        run: git diff --exit-code -- frontend/bindings frontend/package-lock.json
+
+      - name: Upload dmg
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-macos
+          path: dist/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [meta, windows, macos]
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # create the release
+      id-token: write     # OIDC token for build-provenance attestation
+      attestations: write # publish the provenance attestation
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Ed25519 seed that signs checksums.txt (tools/relsign), as in release.yml.
+      FFC_RELEASE_SIGNING_KEY: ${{ secrets.FFC_RELEASE_SIGNING_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Download packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: desktop-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums and signature
+        run: |
+          cd dist
+          sha256sum "$APP_NAME-$VERSION-windows-amd64-setup.exe" "$APP_NAME-$VERSION-macos-universal.dmg" > checksums.txt
+          cd ..
+          cat dist/checksums.txt
+          go run ./tools/relsign sign dist/checksums.txt dist/checksums.txt.sig
+          go run ./tools/relsign verify dist/checksums.txt dist/checksums.txt.sig
+          ls -l dist
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*-setup.exe
+            dist/*.dmg
+            dist/checksums.txt
+            dist/checksums.txt.sig
+
+      # Never GitHub's latest: install.sh, install.ps1 and ffc <= v1.11.0 read
+      # releases/latest. 0.x and any suffix is a prerelease.
+      - name: Create release
+        run: |
+          notes="desktop/release-notes/$VERSION.md"
+          if [ ! -f "$notes" ]; then
+            notes="$RUNNER_TEMP/notes.md"
+            cat > "$notes" <<'EOF'
+          Unsigned beta of Foxmayn Frappe Desktop. Not an official Frappe product.
+
+          Windows: run the `-setup.exe`. If SmartScreen blocks it, choose "More info", then "Run anyway".
+
+          macOS: open the `.dmg` and drag the app to Applications. On the first launch, right-click the app and choose "Open", or go to System Settings > Privacy & Security and choose "Open Anyway".
+
+          Verify a download against `checksums.txt` (its signature is `checksums.txt.sig`).
+          EOF
+          fi
+          flags=(--latest=false)
+          if [[ "$VERSION" == 0.* || "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" "${flags[@]}" --verify-tag \
+            --title "Foxmayn Frappe Desktop $VERSION" --notes-file "$notes" \
+            "dist/$APP_NAME-$VERSION-windows-amd64-setup.exe" \
+            "dist/$APP_NAME-$VERSION-macos-universal.dmg" \
+            dist/checksums.txt dist/checksums.txt.sig

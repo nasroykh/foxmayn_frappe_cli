@@ -49,6 +49,9 @@ GitHub Actions will cross-compile for linux/darwin/windows × amd64/arm64, creat
 
 **Backup key.** `ReleaseKeys` also holds an offline backup key (second entry) whose private half is not in CI. If the CI key is lost or leaked, switch `FFC_RELEASE_SIGNING_KEY` to the backup key (released binaries since v1.6.3 already trust it), remove the compromised key from `ReleaseKeys` and install.sh in that release, and generate a new offline backup.
 
+**Desktop release.** Tag `desktop-vX.Y.Z` (not `v*`, so release.yml and GoReleaser ignore it) after writing `desktop/release-notes/X.Y.Z.md` (a default unsigned-beta text is used when it is missing). It is always `--latest=false` (install scripts and ffc <= v1.11.0 read releases/latest), and a prerelease for 0.x or a `-` suffix.
+Builds are unsigned until the secrets exist (APPLE_CERTIFICATE_P12_BASE64, APPLE_CERTIFICATE_PASSWORD, APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD; WINDOWS_CERTIFICATE_PFX_BASE64, WINDOWS_CERTIFICATE_PASSWORD); those signing steps have never run.
+
 End users install with:
 
 ```bash
@@ -64,6 +67,7 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 - `.github/workflows/release.yml` — triggers on `v*` tags; runs `go mod tidy -diff`, vet and tests, then GoReleaser and a build-provenance attestation. Actions are pinned to commit SHAs.
 - `.github/workflows/ci.yml` — gofmt, tidy check, vet, race tests, staticcheck, govulncheck, vet and tests on windows-latest (no -race), and a cross-build on every push/PR
 - `.github/workflows/desktop.yml` — desktop/ on windows-latest and macos-latest when desktop/, internal/ or go.mod change: npm ci, tsc + vite build, `go mod tidy -diff`, vet, tests, `wails3 build` (CLI version from desktop/go.mod), committed bindings and lockfile unchanged, govulncheck (macOS)
+- `.github/workflows/desktop-release.yml` — `desktop-v*` tags publish; a PR touching the file or desktop/build/**, and a manual run, are dry runs (artifacts only). Windows per-user NSIS installer and universal macOS dmg (version stamped through `wails3 update build-assets` plus the `APP_VERSION` ldflags in the windows/darwin Taskfiles), then checksums.txt signed with relsign, provenance attestation and a prerelease with `--latest=false`
 - `install.sh` — Linux/macOS: detects OS/arch, downloads tarball, verifies SHA256, installs to `/usr/local/bin` or `~/.local/bin`
 - `install.ps1` — Windows: detects arch, downloads zip, verifies SHA256, installs to `%LOCALAPPDATA%\Programs\ffc`, adds to user PATH
 
