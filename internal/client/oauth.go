@@ -133,6 +133,9 @@ type OAuthServerMetadata struct {
 // *TransportError when the site cannot be reached, a parse error for an
 // HTML page.
 func DiscoverOAuthServer(ctx context.Context, siteURL string) (*OAuthServerMetadata, error) {
+	// The first request of an OAuth setup: warn about plain HTTP here,
+	// before registration and the browser login send anything.
+	warnIfInsecure(siteURL)
 	resp, err := newResty(siteURL).R().SetContext(ctx).SetHeader("Accept", "application/json").Get(oauthMetadataPath)
 	if err != nil {
 		return nil, requestError(err)

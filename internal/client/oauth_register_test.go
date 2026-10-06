@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -80,6 +82,26 @@ func TestDiscoverOAuthServerMissing(t *testing.T) {
 	s.Handle("GET /.well-known/oauth-authorization-server", frappetest.HTMLPage(http.StatusOK))
 	if _, err := DiscoverOAuthServer(context.Background(), s.URL); err == nil {
 		t.Fatal("HTML page: want an error")
+	}
+}
+
+// Discovery is the first request of an OAuth setup, so it warns about a
+// plain-HTTP remote site before anything else is sent.
+func TestDiscoverOAuthServerWarnsInsecure(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr := os.Stderr
+	os.Stderr = w
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // nothing needs to go out: the warning comes first
+	_, discoverErr := DiscoverOAuthServer(ctx, "http://discover-insecure.example.com")
+	os.Stderr = stderr
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	if discoverErr == nil || !strings.Contains(string(out), "warning: http://discover-insecure.example.com uses plain HTTP") {
+		t.Errorf("err %v, stderr %q", discoverErr, out)
 	}
 }
 
