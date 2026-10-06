@@ -13,8 +13,10 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/release"
 )
 
-// AppVersion is the desktop app's version (build/config.yml info.version).
-var AppVersion = "0.1.0"
+// AppVersion is the desktop app's version. Release builds set it with ldflags
+// (desktop-release.yml via APP_VERSION); a local build stays 0.0.0-dev and
+// never gets an update offer.
+var AppVersion = "0.0.0-dev"
 
 // Environment describes the machine the app runs on.
 type Environment struct {
