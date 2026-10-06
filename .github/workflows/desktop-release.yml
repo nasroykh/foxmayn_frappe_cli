@@ -22,6 +22,8 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   APP_NAME: foxmayn-frappe-desktop
+  # macOS bundle name (desktop/build/darwin/Taskfile.yml BUNDLE_NAME).
+  BUNDLE_NAME: Foxmayn Frappe Desktop
 
 jobs:
   # Version from the tag (desktop-v0.1.0 -> 0.1.0, desktop-v0.1.0-rc1 -> 0.1.0-rc1),
@@ -227,8 +229,8 @@ jobs:
           APP_VERSION: ${{ needs.meta.outputs.version }}
         run: |
           wails3 task darwin:package:universal
-          lipo -info "bin/$APP_NAME.app/Contents/MacOS/$APP_NAME"
-          grep -a -q -F "$VERSION" "bin/$APP_NAME.app/Contents/MacOS/$APP_NAME"
+          lipo -info "bin/$BUNDLE_NAME.app/Contents/MacOS/$APP_NAME"
+          grep -a -q -F "$VERSION" "bin/$BUNDLE_NAME.app/Contents/MacOS/$APP_NAME"
 
       # UNVERIFIED. Developer ID signature and notarization through the wails3
       # signer, with a throwaway keychain. Runs only when every secret exists.
@@ -247,7 +249,7 @@ jobs:
           identity="$(security find-identity -v -p codesigning "$kc" | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -1)"
           test -n "$identity"
           xcrun notarytool store-credentials ffc-notary --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --keychain "$kc"
-          wails3 tool sign --input "bin/$APP_NAME.app" --identity "$identity" --keychain-profile ffc-notary --notarize
+          wails3 tool sign --input "bin/$BUNDLE_NAME.app" --identity "$identity" --keychain-profile ffc-notary --notarize
           rm -f "$RUNNER_TEMP/cert.p12"
           security delete-keychain "$kc"
 
@@ -333,7 +335,7 @@ jobs:
 
           Windows: run the `-setup.exe`. If SmartScreen blocks it, choose "More info", then "Run anyway".
 
-          macOS: open the `.dmg` and drag the app to Applications. macOS blocks the first launch: open it once, then go to System Settings > Privacy & Security and choose "Open Anyway" (on macOS 14 and older, right-click the app and choose "Open"). If macOS says the app "is damaged", run `xattr -dr com.apple.quarantine "/Applications/foxmayn-frappe-desktop.app"`.
+          macOS: open the `.dmg` and drag the app to Applications. macOS blocks the first launch: open it once, then go to System Settings > Privacy & Security and choose "Open Anyway" (on macOS 14 and older, right-click the app and choose "Open"). If macOS says the app "is damaged", run `xattr -dr com.apple.quarantine "/Applications/Foxmayn Frappe Desktop.app"`.
 
           Verify a download against `checksums.txt` (its signature is `checksums.txt.sig`).
           EOF
