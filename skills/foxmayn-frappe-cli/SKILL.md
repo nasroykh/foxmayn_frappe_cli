@@ -382,7 +382,7 @@ ffc list-doctypes --module "Accounts" --json
 
 #### Shell completion and `ffc cache`
 
-`ffc completion bash|zsh|fish|powershell` prints a completion script. Tab completes site names, DocTypes (`-d`), fields (`--fields`, comma-separated), report names (`run-report -n`) and enum flags (`--output`, `--perm`, `--number-format`, `--date-format`, `mcp --toolsets/--confirm`). It reads only the config and a local cache, never the site; with no fresh cache it offers nothing. Document names are never completed or cached.
+`ffc completion bash|zsh|fish|powershell` prints a completion script. Tab completes site names, DocTypes (`-d`), fields (`--fields`, comma-separated), report names (`run-report -n`) and enum flags (`--output`, `--perm`, `--number-format`, `--date-format`, `mcp --toolsets/--confirm`, `mcp install --client`). It reads only the config and a local cache, never the site; with no fresh cache it offers nothing. Document names are never completed or cached.
 
 ```bash
 ffc cache warm                                   # DocType + report lists (24 h)
@@ -524,6 +524,12 @@ Exposes Frappe API operations as 38 MCP tools so LLMs and AI agents (Claude Desk
 ffc mcp --site mysite
 ```
 
+**Add ffc to an AI client** (user-level config, so every project sees it):
+```bash
+ffc mcp install --client claude-code|claude-desktop|cursor|vscode|codex [--site NAME] [--read-only] [--name frappe] [--print] [--yes]
+```
+The entry runs ffc by its absolute path with `mcp` (plus `--site NAME`, pinned to the exact config name, when given; without it the server follows `ffc site use`) and `--read-only` when set; a non-default config (`--config` or `FFC_CONFIG`) is added as `--config <absolute path>`. It shows a unified diff (claude-code: the `claude mcp add-json --scope user …` command it runs; `~/.claude.json` is never edited), asks unless `--yes` (required without a terminal), backs the old file up to `<file>.ffc-<YYYYMMDD-HHMMSS>.bak` and writes atomically. `--print` prints the diff or command on stdout and writes nothing. Files: claude-desktop `%APPDATA%\Claude\claude_desktop_config.json` / `~/Library/Application Support/Claude/…` / `~/.config/Claude/…`; cursor `~/.cursor/mcp.json`; vscode `<config dir>/Code/User/mcp.json` (key `servers`; inferred path); codex `~/.codex/config.toml` or `$CODEX_HOME/config.toml`. Comments and formatting are kept; an unparsable file, or Codex `mcp_servers` as an inline table or dotted keys, is refused and left untouched. Same entry already there: "already up to date", exit 0. Bad `--client`/`--name`/`--site`: exit 2. `--json`: `{client, name, path, backup, changed, applied, server, command}`. ChatGPT is not supported (remote servers only).
+
 **HTTP foreground** — useful for testing with the MCP Inspector:
 ```bash
 ffc mcp --port 8765 --site mysite
@@ -618,7 +624,7 @@ MCP tools always return JSON — no `--json` flag needed.
 - Bulk tools take at most 200 items per call.
 - JSON-valued arguments (`filters`, `fields`, `data`, `args`, …) may be passed as native JSON or as a JSON-encoded string.
 
-**Example Claude Desktop config** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+**Example Claude Desktop config** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS; `ffc mcp install --client claude-desktop --site mysite` writes it with ffc's absolute path):
 ```json
 {
   "mcpServers": {
