@@ -593,3 +593,11 @@ func TestCollabFakeShares(t *testing.T) {
 		t.Errorf("%d ToDos", s.Count("ToDo"))
 	}
 }
+
+// TestStoredUserIDs checks that results name users as the site stores them.
+func TestStoredUserIDs(t *testing.T) {
+	got := stored([]string{"Administrator", "jane@example.com"}, []string{"administrator", "JANE@example.com", "bob@example.com"})
+	if want := []string{"Administrator", "jane@example.com", "bob@example.com"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("stored = %v, want %v", got, want)
+	}
+}
