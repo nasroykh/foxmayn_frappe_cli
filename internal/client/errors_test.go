@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"testing"
 )
@@ -16,5 +17,10 @@ func TestTransportErrorTimeout(t *testing.T) {
 	}
 	if err := (&TransportError{Err: errors.New("connection refused")}).Error(); strings.Contains(err, "--timeout") {
 		t.Errorf("not a timeout: %s", err)
+	}
+	// A connect timeout is not governed by --timeout.
+	dial := &net.OpError{Op: "dial", Net: "tcp", Err: context.DeadlineExceeded}
+	if err := (&TransportError{Err: dial}).Error(); strings.Contains(err, "--timeout") || !strings.Contains(err, "could not connect") {
+		t.Errorf("dial timeout: %s", err)
 	}
 }

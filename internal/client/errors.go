@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 )
 
 // The error types below let callers tell failures apart (the CLI maps them
@@ -30,8 +31,17 @@ type TransportError struct {
 }
 
 func (e *TransportError) Error() string {
-	var ne net.Error
-	if errors.Is(e.Err, context.DeadlineExceeded) || errors.As(e.Err, &ne) && ne.Timeout() {
+	var (
+		ne net.Error
+		op *net.OpError
+	)
+	timeout := errors.Is(e.Err, context.DeadlineExceeded) || errors.As(e.Err, &ne) && ne.Timeout()
+	switch {
+	case timeout && (errors.As(e.Err, &op) && op.Op == "dial" || strings.Contains(e.Err.Error(), "TLS handshake timeout")):
+		// Connecting has its own fixed timeouts, which --timeout does not
+		// change.
+		return "HTTP request failed: could not connect to the site in time: " + e.Err.Error()
+	case timeout:
 		// A slow site (a PDF, a heavy report) is the usual cause; the raw
 		// error only says "context deadline exceeded".
 		return "HTTP request failed: the site did not answer in time (raise --timeout for slow requests): " + e.Err.Error()
