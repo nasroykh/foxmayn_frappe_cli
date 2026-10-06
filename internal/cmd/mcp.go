@@ -199,6 +199,9 @@ To run in the background as an HTTP server:
 
 The HTTP endpoint is http://127.0.0.1:<port>/mcp (Streamable HTTP transport, loopback only).
 
+To add ffc to Claude Code, Claude Desktop, Cursor, VS Code or Codex:
+  ffc mcp install --client <client> [--site mysite] [--read-only]
+
 All tools use the same authentication and site config as other ffc commands.
 `,
 	RunE: runMCP,
