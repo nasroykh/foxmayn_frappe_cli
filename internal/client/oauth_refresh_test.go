@@ -135,6 +135,27 @@ func TestOAuthRefreshFailure(t *testing.T) {
 	}
 }
 
+func TestOAuthRevokedRefreshTokenRemembered(t *testing.T) {
+	// An administrator revoked the login: the access token is refused and
+	// the refresh is a 403 PermissionError. That is definitive, so later
+	// requests do not refresh again.
+	s := frappetest.New(t)
+	c, calls := newOAuthClient(t, s)
+	if err := RevokeOAuthToken(context.Background(), s.URL, frappetest.OAuthClientID, "", frappetest.RefreshToken, "refresh_token"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		_, err := c.GetList(context.Background(), "ToDo", ListOptions{})
+		var e *APIError
+		if !errors.As(err, &e) || e.Status != http.StatusUnauthorized || !strings.Contains(e.Message, "refreshing it failed") {
+			t.Fatalf("request %d: err = %v", i, err)
+		}
+	}
+	if n := len(s.RequestsTo("POST", "/api/method/frappe.integrations.oauth2.get_token")); calls.Load() != 1 || n != 1 {
+		t.Errorf("refresher calls %d, token requests %d; want 1, 1", calls.Load(), n)
+	}
+}
+
 func TestOAuthNoRefreshWhenTokenValid(t *testing.T) {
 	// A method that raises AuthenticationError itself ran: the token is
 	// fine, so nothing is refreshed and the call is not repeated.

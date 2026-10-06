@@ -29,7 +29,7 @@ ffc init --apikey     # API key + secret (best for scripts/CI); verified against
 ffc init --password   # username/email + password; session cookie, no 2FA support
 ```
 
-OAuth: create an OAuth Client on Frappe first (Integrations > OAuth Client). The wizard prints the redirect URI to register: `http://127.0.0.1:<port>/callback` (not `localhost`). Expired access tokens are refreshed automatically when a command runs.
+OAuth: on Frappe v16 with dynamic client registration enabled (OAuth Settings, on by default) ffc registers its own public OAuth Client; nothing to set up. Otherwise (v15, or registration off) the wizard says why and asks for the ID of an OAuth Client you create (Integrations > OAuth Client) with the redirect URI it prints, `http://127.0.0.1:<port>/callback` (not `localhost`). `--client-id ID` uses a given client and never registers. `--oauth --name N --url U` skips the prompts (the browser login remains; without registration it needs `--client-id`, else exit 2). Expired access tokens are refreshed automatically when a command runs.
 
 Config file: `~/.config/ffc/config.yaml`
 
@@ -53,7 +53,7 @@ Generate API keys on the Frappe site: **User > API Access > Generate Keys**. OAu
 ffc site list               # name, URL, auth method, default (`--json`: default is true/false)
 ffc site add                # menu to choose auth method (or --oauth / --apikey / --password)
 ffc site use [name]         # set default site (menu if name omitted)
-ffc site remove [name]      # remove a site (menu if name omitted)
+ffc site remove [name]      # remove a site (menu if name omitted); revokes an OAuth site's current token first, best effort
 ```
 
 ### Managing Config from the Terminal
@@ -86,6 +86,7 @@ export FFC_API_SECRET="your_secret"
 - `FFC_URL` only applies together with that pair (stored credentials are never sent to another host). Set alone with a URL different from the site's, it is an error.
 - With no config file at all, the three variables alone define the site.
 - `FFC_NO_UPDATE_CHECK=1` disables the daily background update check.
+- `FFC_OAUTH_CLIENT_SECRET` is the secret of the OAuth Client given with `--client-id` (OAuth setup only); without `--client-id` it is ignored with a warning.
 
 ## IMPORTANT: Always Use --json / -j
 

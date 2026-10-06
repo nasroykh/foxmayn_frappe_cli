@@ -20,6 +20,7 @@ type setupFlags struct {
 	name, url, apiKey, username   string
 	apiSecretStdin, passwordStdin bool
 	force                         bool
+	clientID                      string // --client-id (OAuth, wizard and flags alike)
 }
 
 func (s *setupFlags) register(cmd *cobra.Command) {
@@ -31,21 +32,53 @@ func (s *setupFlags) register(cmd *cobra.Command) {
 	f.StringVar(&s.username, "username", "", "Username/email; the password comes from --password-stdin or $FFC_PASSWORD")
 	f.BoolVar(&s.passwordStdin, "password-stdin", false, "Read the password from stdin (one line)")
 	f.BoolVar(&s.force, "force", false, "Replace an existing site/config without asking")
+	f.StringVar(&s.clientID, "client-id", "", "OAuth: use this OAuth Client instead of registering one (secret, if any, from $FFC_OAUTH_CLIENT_SECRET)")
 }
 
 // active reports whether any non-interactive setup flag was given.
+// --client-id alone is not one: it also applies to the OAuth wizard.
 func (s *setupFlags) active() bool {
 	return s.name != "" || s.url != "" || s.apiKey != "" || s.username != "" ||
 		s.apiSecretStdin || s.passwordStdin
 }
 
+// oauthClient returns the OAuth client given with --client-id (its secret
+// from $FFC_OAUTH_CLIENT_SECRET), or the zero oauthApp. --client-id without
+// --oauth is a usage error. With --oauth but no --client-id the secret is
+// ignored (a registered or prompted client brings its own), which is said
+// on stderr.
+func (s *setupFlags) oauthClient(oauth bool) (oauthApp, error) {
+	id := strings.TrimSpace(s.clientID)
+	if id == "" {
+		if oauth && strings.TrimSpace(os.Getenv("FFC_OAUTH_CLIENT_SECRET")) != "" {
+			fmt.Fprintln(os.Stderr, "warning: FFC_OAUTH_CLIENT_SECRET is ignored without --client-id")
+		}
+		return oauthApp{}, nil
+	}
+	if !oauth {
+		return oauthApp{}, usageErrorf("--client-id needs --oauth")
+	}
+	return oauthApp{ID: id, Secret: strings.TrimSpace(os.Getenv("FFC_OAUTH_CLIENT_SECRET"))}, nil
+}
+
 // resolve validates the flags and returns the normalised site. It reads the
 // secret from stdin or the environment, but does not touch the network.
-// oauth/apikey/passwordFlag are the wizard method flags.
+// oauth/apikey/passwordFlag are the wizard method flags. With oauth the site
+// has only its URL: finish runs the browser login.
 func (s *setupFlags) resolve(oauth, apikey, passwordFlag bool) (string, config.SiteConfig, error) {
 	switch {
+	case oauth && (s.apiKey != "" || s.username != "" || s.apiSecretStdin || s.passwordStdin):
+		return "", config.SiteConfig{}, usageErrorf("--oauth cannot be combined with --api-key/--username: pick one credential set")
+	case oauth && s.name == "":
+		return "", config.SiteConfig{}, usageErrorf("missing --name")
+	case oauth && s.url == "":
+		return "", config.SiteConfig{}, usageErrorf("missing --url")
 	case oauth:
-		return "", config.SiteConfig{}, usageErrorf("--oauth is interactive and cannot be combined with --name/--url/--api-key/--username")
+		name, siteURL, err := siteNameAndURL(s.name, s.url)
+		if err != nil {
+			return "", config.SiteConfig{}, &usageError{err}
+		}
+		return name, config.SiteConfig{URL: siteURL}, nil
 	case s.apiKey != "" && s.username != "":
 		return "", config.SiteConfig{}, usageErrorf("--api-key and --username are mutually exclusive: pick one credential set")
 	case s.apiSecretStdin && s.passwordStdin:
@@ -117,6 +150,15 @@ func readSecret(fromStdin bool, env, flagName string) (string, error) {
 		return v, nil
 	}
 	return "", usageErrorf("missing secret: pass %s or set $%s", flagName, env)
+}
+
+// finishSetup completes a site from resolve: the OAuth browser login
+// (oauth), or the same credential check as the wizard.
+func finishSetup(ctx context.Context, site config.SiteConfig, oauth bool, app oauthApp) (config.SiteConfig, error) {
+	if oauth {
+		return collectOAuthSiteNoInput(ctx, site.URL, app)
+	}
+	return site, verifySite(ctx, site)
 }
 
 // verifySite checks the credentials of site against its URL: the same calls

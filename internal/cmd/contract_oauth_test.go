@@ -107,6 +107,165 @@ func TestContractOAuthExpiry(t *testing.T) {
 	}
 }
 
+// TestContractOAuthRevoke pins what site remove relies on: revoke_token
+// (oauth2.py:188) with the client_id and token_type_hint=refresh_token in a
+// form body and no Authorization header answers 200 and revokes the whole
+// OAuth Bearer Token record (the refresh token no longer refreshes: 403
+// PermissionError; the access token no longer authenticates: 401); an
+// unknown token is a 200 too, an unknown client_id a 403 PermissionError,
+// a missing token a 400, and revoking by the access token revokes the
+// record's refresh token as well. The fake answers the same.
+func TestContractOAuthRevoke(t *testing.T) {
+	sc := contractSite(t)
+	ctx := contractCtx(t)
+	admin, err := client.New(ctx, sc)
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	t.Cleanup(admin.CloseQuietly)
+	teardownContractOAuth(t, admin)
+	t.Cleanup(func() { teardownContractOAuth(t, admin) })
+
+	oc, err := admin.CreateDoc(ctx, "OAuth Client", map[string]interface{}{
+		"app_name": contractOAuthApp, "scopes": "all openid", "skip_authorization": 1,
+		"default_redirect_uri": "http://127.0.0.1/callback", "redirect_uris": "http://127.0.0.1/callback",
+		"grant_type": "Authorization Code", "response_type": "Code",
+	})
+	if err != nil {
+		t.Fatalf("OAuth Client: %v", err)
+	}
+	clientID := fmt.Sprint(oc["name"])
+	access, refresh := contractRandom(t), contractRandom(t)
+	if _, err := admin.CreateDoc(ctx, "OAuth Bearer Token", map[string]interface{}{
+		"client": clientID, "user": "Administrator", "scopes": "all openid", "status": "Active",
+		"access_token": access, "refresh_token": refresh, "expires_in": 3600,
+	}); err != nil {
+		t.Fatalf("OAuth Bearer Token: %v", err)
+	}
+	if _, err := client.GetOAuthUser(ctx, sc.URL, access); err != nil {
+		t.Fatalf("access token before revoke: %v", err)
+	}
+
+	fake := frappetest.New(t)
+	sites := []struct{ name, url, clientID, access, refresh string }{
+		{"real", sc.URL, clientID, access, refresh},
+		{"fake", fake.URL, frappetest.OAuthClientID, frappetest.Token, frappetest.RefreshToken},
+	}
+	for _, s := range sites {
+		if err := client.RevokeOAuthToken(ctx, s.url, s.clientID, "", s.refresh, "refresh_token"); err != nil {
+			t.Fatalf("%s: revoke: %v", s.name, err)
+		}
+		// Not oauthlib's invalid_grant: validate_refresh_token's get_doc
+		// raises DoesNotExistError, which reaches Guest as PermissionError.
+		_, err := client.RefreshOAuthToken(ctx, s.url, s.clientID, "", s.refresh)
+		var e *client.APIError
+		if !errors.As(err, &e) || e.Status != http.StatusForbidden || e.ExcType != "PermissionError" {
+			t.Errorf("%s: refresh after revoke: %v", s.name, err)
+		}
+		if _, err := client.GetOAuthUser(ctx, s.url, s.access); !errors.As(err, &e) || e.Status != http.StatusUnauthorized {
+			t.Errorf("%s: access token after revoke: %v", s.name, err)
+		}
+		if err := client.RevokeOAuthToken(ctx, s.url, s.clientID, "", contractRandom(t), "refresh_token"); err != nil {
+			t.Errorf("%s: revoking an unknown token: %v", s.name, err)
+		}
+		// An unknown client_id: authenticate_client's get_doc raises
+		// DoesNotExistError, which revoke_token does not catch.
+		err = client.RevokeOAuthToken(ctx, s.url, "ffc-no-such-client", "", contractRandom(t), "refresh_token")
+		if !errors.As(err, &e) || e.Status != http.StatusForbidden || e.ExcType != "PermissionError" {
+			t.Errorf("%s: unknown client: %v", s.name, err)
+		}
+		// No token: oauthlib answers invalid_request itself (400).
+		if err := client.RevokeOAuthToken(ctx, s.url, s.clientID, "", "", "refresh_token"); !errors.As(err, &e) || e.Status != http.StatusBadRequest {
+			t.Errorf("%s: empty token: %v", s.name, err)
+		}
+	}
+	tok, err := admin.GetDoc(ctx, "OAuth Bearer Token", access)
+	if err != nil || tok["status"] != "Revoked" {
+		t.Errorf("bearer token status = %v (%v), want Revoked", tok["status"], err)
+	}
+
+	// Revoking by the access token revokes the record too: its refresh
+	// token is then refused like a revoked one.
+	access2, refresh2 := contractRandom(t), contractRandom(t)
+	if _, err := admin.CreateDoc(ctx, "OAuth Bearer Token", map[string]interface{}{
+		"client": clientID, "user": "Administrator", "scopes": "all openid", "status": "Active",
+		"access_token": access2, "refresh_token": refresh2, "expires_in": 3600,
+	}); err != nil {
+		t.Fatalf("OAuth Bearer Token: %v", err)
+	}
+	fakeTokens, err := client.ExchangeOAuthCode(ctx, fake.URL, frappetest.OAuthClientID, "", frappetest.AuthCode, "http://127.0.0.1/callback", "v")
+	if err != nil {
+		t.Fatalf("fake code exchange: %v", err)
+	}
+	sites[0].access, sites[0].refresh = access2, refresh2
+	sites[1].access, sites[1].refresh = fakeTokens.AccessToken, fakeTokens.RefreshToken
+	for _, s := range sites {
+		if err := client.RevokeOAuthToken(ctx, s.url, s.clientID, "", s.access, "access_token"); err != nil {
+			t.Fatalf("%s: revoke access token: %v", s.name, err)
+		}
+		_, err := client.RefreshOAuthToken(ctx, s.url, s.clientID, "", s.refresh)
+		var e *client.APIError
+		if !errors.As(err, &e) || e.Status != http.StatusForbidden || e.ExcType != "PermissionError" {
+			t.Errorf("%s: refresh after access-token revoke: %v", s.name, err)
+		}
+	}
+}
+
+// TestContractOAuthRegistration pins dynamic client registration (Frappe
+// v16, oauth2.py:324-434, integrations/utils.py:206-274): the metadata
+// advertises register_client only while enabled, and a public client
+// registered for a loopback redirect URI gets no secret, exactly that URI
+// (pydantic must not rewrite it: Frappe compares redirect_uri as a string),
+// the requested scopes and no skip_authorization. It skips where
+// registration is not offered (v15, or disabled in OAuth Settings). Each
+// run registers one client (newer Frappe allows 5 per 10 minutes per IP).
+func TestContractOAuthRegistration(t *testing.T) {
+	sc := contractSite(t)
+	ctx := contractCtx(t)
+	md, err := client.DiscoverOAuthServer(ctx, sc.URL)
+	if err != nil || md.RegistrationEndpoint == "" {
+		t.Skipf("the site offers no dynamic client registration (metadata: %v)", err)
+	}
+	admin, err := client.New(ctx, sc)
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	t.Cleanup(admin.CloseQuietly)
+	teardownContractOAuth(t, admin)
+	t.Cleanup(func() { teardownContractOAuth(t, admin) })
+
+	const redirect = "http://127.0.0.1:53682/callback"
+	req := oauthClientMetadata(redirect)
+	req.ClientName = contractOAuthApp // so teardown removes it
+	reg, err := client.RegisterOAuthClient(ctx, sc.URL, md.RegistrationEndpoint, req)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if reg.ClientSecret != "" {
+		t.Error("a public client got a client_secret")
+	}
+	doc, err := admin.GetDoc(ctx, "OAuth Client", reg.ClientID)
+	if err != nil {
+		t.Fatalf("registered client: %v", err)
+	}
+	if doc["redirect_uris"] != redirect || doc["default_redirect_uri"] != redirect || doc["scopes"] != oauthScope ||
+		doc["token_endpoint_auth_method"] != "None" || fmt.Sprint(doc["skip_authorization"]) != "0" {
+		t.Errorf("registered client = redirect %v / %v, scopes %v, auth %v, skip %v", doc["redirect_uris"],
+			doc["default_redirect_uri"], doc["scopes"], doc["token_endpoint_auth_method"], doc["skip_authorization"])
+	}
+
+	// The fake registers the same way.
+	fake := frappetest.New(t)
+	fmd, err := client.DiscoverOAuthServer(ctx, fake.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freg, err := client.RegisterOAuthClient(ctx, fake.URL, fmd.RegistrationEndpoint, req)
+	if err != nil || freg.ClientSecret != "" {
+		t.Errorf("fake: %+v, %v", freg, err)
+	}
+}
+
 func contractRandom(t *testing.T) string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
