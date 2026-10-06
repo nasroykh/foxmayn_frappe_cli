@@ -217,6 +217,7 @@ Env vars:
 - `FFC_API_KEY` + `FFC_API_SECRET` — only honoured as a pair; they then replace every stored credential of the selected site.
 - `FFC_URL` — applies only together with that pair (never redirects stored credentials to another host); `FFC_URL` alone that differs from the site URL is an error, so a script aimed at another host never runs against the stored one. With no config file at the default path, the three env vars alone define the site.
 - `FFC_NO_UPDATE_CHECK=1` — disables the background update check.
+- `FFC_OAUTH_CLIENT_SECRET` — secret of the OAuth Client given with `--client-id` (setup only, `setupFlags.oauthClient`; stored as `oauth_client_secret`); ignored with a warning without `--client-id`.
 
 ## Common Pitfalls
 

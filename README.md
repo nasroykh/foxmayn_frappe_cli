@@ -173,6 +173,7 @@ ffc config set --number-format us --date-format dd/mm/yyyy
 | `FFC_API_KEY` + `FFC_API_SECRET` | Set together, they replace every stored credential of the selected site (one alone is ignored with a warning). |
 | `FFC_URL`             | Site URL. Only applied together with `FFC_API_KEY` + `FFC_API_SECRET`, so stored credentials are never sent to another host; set alone to a different URL it is an error. |
 | `FFC_NO_UPDATE_CHECK` | Set to any value to disable the daily background update check. |
+| `FFC_OAUTH_CLIENT_SECRET` | Client secret for the OAuth Client given with `--client-id` (`init --oauth`, `site add --oauth`); saved with the site. Ignored, with a warning, without `--client-id`. |
 
 When no config file exists at the default path, `ffc` builds the site from `FFC_URL`, `FFC_API_KEY` and `FFC_API_SECRET` alone.
 

@@ -86,6 +86,7 @@ export FFC_API_SECRET="your_secret"
 - `FFC_URL` only applies together with that pair (stored credentials are never sent to another host). Set alone with a URL different from the site's, it is an error.
 - With no config file at all, the three variables alone define the site.
 - `FFC_NO_UPDATE_CHECK=1` disables the daily background update check.
+- `FFC_OAUTH_CLIENT_SECRET` is the secret of the OAuth Client given with `--client-id` (OAuth setup only); without `--client-id` it is ignored with a warning.
 
 ## IMPORTANT: Always Use --json / -j
 
