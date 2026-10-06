@@ -6,6 +6,7 @@ import (
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/services"
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 // The built frontend (frontend/dist) is embedded into the binary.
@@ -39,14 +40,23 @@ func main() {
 	})
 	host.App = app
 
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "Foxmayn Frappe Desktop",
-		Width:            1100,
-		Height:           720,
-		MinWidth:         900,
-		MinHeight:        600,
-		BackgroundColour: application.NewRGB(255, 255, 255),
-		URL:              "/",
+	// The window opens once the app runs, when the system theme can be read,
+	// so its background matches the page and a dark system shows no white
+	// flash before the page paints.
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		bg := application.NewRGB(255, 255, 255)
+		if app.Env.IsDarkMode() {
+			bg = application.NewRGB(9, 9, 11) // --background in dark mode (zinc-950)
+		}
+		app.Window.NewWithOptions(application.WebviewWindowOptions{
+			Title:            "Foxmayn Frappe Desktop",
+			Width:            1100,
+			Height:           720,
+			MinWidth:         900,
+			MinHeight:        600,
+			BackgroundColour: bg,
+			URL:              "/",
+		})
 	})
 
 	if err := app.Run(); err != nil {

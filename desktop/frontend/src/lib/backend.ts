@@ -8,8 +8,9 @@ import {
 } from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services"
 import type { Backend, Cancellable } from "@/lib/backend-types"
 
+// A new promise (never p itself), so setting cancel on it leaves p untouched.
 function cancellable<T>(p: Promise<T> & { cancel(): unknown }): Cancellable<T> {
-  const out = Promise.resolve(p) as Cancellable<T>
+  const out = p.then((x) => x) as Cancellable<T>
   out.cancel = () => {
     void p.cancel()
   }

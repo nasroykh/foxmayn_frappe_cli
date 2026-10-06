@@ -1,5 +1,5 @@
 import * as React from "react"
-import { IconAlertTriangle, IconDownload, IconRefresh } from "@tabler/icons-react"
+import { IconAlertTriangle, IconChevronDown, IconDownload, IconRefresh } from "@tabler/icons-react"
 
 import { useApp } from "@/app/app-context"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -33,6 +33,7 @@ export function Details({ children, label = "Technical details" }: { children: R
   return (
     <Collapsible>
       <CollapsibleTrigger render={<Button variant="link" size="xs" className="text-muted-foreground h-auto px-0" />}>
+        <IconChevronDown data-icon="inline-start" className="transition-transform in-aria-expanded:rotate-180" />
         {label}
       </CollapsibleTrigger>
       <CollapsibleContent>
