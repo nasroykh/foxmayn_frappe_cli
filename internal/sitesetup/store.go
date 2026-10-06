@@ -52,6 +52,23 @@ func (s Store) Add(name string, site config.SiteConfig) error {
 	return err
 }
 
+// AddOrInit is Add that also starts a missing config file: the file is
+// created holding this site as the default, as Init writes it. Deciding
+// between the two happens inside one config.Edit, under the lock, so a file
+// another process creates meanwhile is added to, never overwritten.
+func (s Store) AddOrInit(name string, site config.SiteConfig) error {
+	err := config.Edit(s.Path, func(f *config.File) error {
+		if len(f.SiteNames()) == 0 && f.Get("default_site") == "" {
+			f.Set("default_site", name) // first, as Init orders the keys
+		}
+		return f.PutSite(name, site)
+	})
+	if err == nil {
+		s.dropCache(name)
+	}
+	return err
+}
+
 // Rename renames a site, keeping its position and comments; default_site
 // follows it.
 func (s Store) Rename(oldName, newName string) error {

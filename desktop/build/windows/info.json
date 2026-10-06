@@ -6,10 +6,10 @@
 		"0000": {
 			"ProductVersion": "0.1.0",
 			"CompanyName": "Foxmayn",
-			"FileDescription": "A foxmayn_frappe_cli_ui application",
-			"LegalCopyright": "© 2026, Foxmayn",
-			"ProductName": "My Product",
-			"Comments": "This is a comment"
+			"FileDescription": "Connect your Frappe sites to AI assistants",
+			"LegalCopyright": "(c) 2026 Foxmayn",
+			"ProductName": "Foxmayn Frappe Desktop",
+			"Comments": "Not an official Frappe product."
 		}
 	}
 }

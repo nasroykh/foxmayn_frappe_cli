@@ -5,10 +5,16 @@
 // @ts-ignore: Unused imports
 import type { Events } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import type * as services$0 from "../../../../nasroykh/foxmayn_frappe_cli/desktop/services/models.js";
+
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
-            "time": string;
+            "config:changed": services$0.ConfigChanged;
+            "installer:log": services$0.InstallerLine;
+            "signin:progress": services$0.SignInProgress;
         }
     }
 }
