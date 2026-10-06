@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 	"github.com/spf13/cobra"
 )
@@ -396,7 +397,7 @@ var siteUseCmd = &cobra.Command{
 // siteStore writes sites to the config at path and drops the local cache of
 // a site whose entry changed.
 func siteStore(path string) sitesetup.Store {
-	return sitesetup.Store{Path: path, DropCache: dropSiteCache}
+	return sitesetup.Store{Path: path, DropCache: sitecache.Drop}
 }
 
 // siteArg returns the site named in args (which must exist) or, without an

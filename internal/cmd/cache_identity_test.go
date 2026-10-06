@@ -8,6 +8,7 @@ import (
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 )
 
 // TestCacheIsPerCredential: what one login cached is never served to
@@ -29,7 +30,7 @@ func TestCacheIsPerCredential(t *testing.T) {
 	}
 	seen := map[string]string{}
 	for label, cfg := range cfgs {
-		dir, err := serverCacheDir(cfg)
+		dir, err := sitecache.Dir(cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +55,7 @@ func TestCacheIsPerCredential(t *testing.T) {
 	// A refreshed OAuth token is the same identity.
 	refreshed := *cfgs["oauth"]
 	refreshed.AccessToken, refreshed.RefreshToken = "new-token", "new-refresh"
-	if a, b := credentialID(cfgs["oauth"]), credentialID(&refreshed); a != b {
+	if a, b := sitecache.CredentialID(cfgs["oauth"]), sitecache.CredentialID(&refreshed); a != b {
 		t.Errorf("token refresh changed the cache identity: %s → %s", a, b)
 	}
 }
@@ -107,7 +108,7 @@ func TestSiteCommandsDropTheCache(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		root, _ := siteCacheRoot(&config.SiteConfig{Name: name})
+		root, _ := sitecache.Root(&config.SiteConfig{Name: name})
 		return root
 	}
 	gone := func(what, root string) {

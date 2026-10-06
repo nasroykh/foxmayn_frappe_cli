@@ -9,6 +9,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -29,7 +30,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	userCacheDir = func() (string, error) { return cache, nil }
+	sitecache.UserCacheDir = func() (string, error) { return cache, nil }
 	code := m.Run()
 	_ = os.RemoveAll(cache)
 	os.Exit(code)

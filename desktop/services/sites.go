@@ -13,6 +13,7 @@ import (
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -160,15 +161,13 @@ type SitesService struct {
 	watchCancel context.CancelFunc
 }
 
-// NewSitesService manages the sites of the config file at path. The local
-// ffc cache is not dropped on changes (Store.DropCache stays nil): its
-// entries are bound to the site URL and credential, so a changed site never
-// reads another's cache.
+// NewSitesService manages the sites of the config file at path. A removed,
+// renamed, re-URLed or replaced site loses its local ffc cache, as in the CLI.
 func NewSitesService(host Host, path string) *SitesService {
 	return &SitesService{
 		host:       host,
 		path:       path,
-		store:      sitesetup.Store{Path: path},
+		store:      sitesetup.Store{Path: path, DropCache: sitecache.Drop},
 		verify:     sitesetup.Verify,
 		revoke:     sitesetup.RevokeToken,
 		refresh:    client.RefreshOAuthToken,

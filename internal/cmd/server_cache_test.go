@@ -7,22 +7,22 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 )
 
 // cacheTEnv points the user cache directory at a fresh directory.
 func cacheTEnv(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	old := userCacheDir
-	userCacheDir = func() (string, error) { return dir, nil }
-	t.Cleanup(func() { userCacheDir = old })
+	old := sitecache.UserCacheDir
+	sitecache.UserCacheDir = func() (string, error) { return dir, nil }
+	t.Cleanup(func() { sitecache.UserCacheDir = old })
 	return dir
 }
 
@@ -39,50 +39,6 @@ func cacheTSite(t *testing.T) (*frappetest.Site, *config.SiteConfig, *client.Fra
 
 func versionCalls(s *frappetest.Site) int {
 	return len(s.RequestsTo("GET", "/api/method/frappe.utils.change_log.get_versions"))
-}
-
-func TestCacheDirNameIsSafe(t *testing.T) {
-	seen := map[string]string{}
-	for _, name := range []string{
-		"prod", "Prod", "erp.example.com", "a/b", "a_b", "a\\b", "../../etc/passwd", "..", ".", "", ".hidden",
-		"site with spaces", "päivä", "a:b", strings.Repeat("x", 500), "nul\x00byte", "C:\\Users\\x",
-	} {
-		got := cacheDirName(name)
-		if strings.ContainsAny(got, `/\:`+"\x00") || got == "." || got == ".." || strings.HasPrefix(got, ".") || got == "" {
-			t.Errorf("cacheDirName(%q) = %q is not a safe path element", name, got)
-		}
-		if len(got) > 60 {
-			t.Errorf("cacheDirName(%q) is %d bytes long", name, len(got))
-		}
-		if other, dup := seen[got]; dup {
-			t.Errorf("%q and %q share the directory %q", name, other, got)
-		}
-		seen[got] = name
-		if cacheDirName(name) != got {
-			t.Errorf("cacheDirName(%q) is not stable", name)
-		}
-	}
-}
-
-func TestServerCacheStaysInsideTheCacheDir(t *testing.T) {
-	base := cacheTEnv(t)
-	for _, name := range []string{"../../escape", "/abs/path", "a/../../b"} {
-		dir, err := serverCacheDir(&config.SiteConfig{Name: name, URL: "http://x"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		rel, err := filepath.Rel(filepath.Join(base, "ffc"), dir)
-		parts := strings.Split(rel, string(filepath.Separator))
-		if err != nil || len(parts) != 2 || parts[0] == ".." || parts[1] != "none" {
-			t.Errorf("site %q gives %s, not ffc/<site>/<credential>", name, dir)
-		}
-	}
-	// A site with no name (FFC_* variables) is keyed by its URL.
-	a, _ := serverCacheDir(&config.SiteConfig{URL: "http://a"})
-	b, _ := serverCacheDir(&config.SiteConfig{URL: "http://b"})
-	if a == b {
-		t.Error("two unnamed sites must not share a cache")
-	}
 }
 
 func TestServerCacheWriteAndPermissions(t *testing.T) {

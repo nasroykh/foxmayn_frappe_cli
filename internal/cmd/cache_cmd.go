@@ -12,6 +12,7 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 
 	"github.com/spf13/cobra"
 )
@@ -45,7 +46,7 @@ var cacheStatusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		dir, err := serverCacheDir(cfg)
+		dir, err := sitecache.Dir(cfg)
 		if err != nil {
 			return err
 		}
@@ -91,7 +92,7 @@ var cacheClearCmd = &cobra.Command{
 		var dir, label string
 		var cfg *config.SiteConfig
 		if ccAllSites {
-			base, err := userCacheDir()
+			base, err := sitecache.UserCacheDir()
 			if err != nil {
 				return fmt.Errorf("cache: %w", err)
 			}
@@ -105,7 +106,7 @@ var cacheClearCmd = &cobra.Command{
 				return err
 			}
 			// Every credential's cache of the site.
-			if dir, err = siteCacheRoot(cfg); err != nil {
+			if dir, err = sitecache.Root(cfg); err != nil {
 				return fmt.Errorf("cache: %w", err)
 			}
 			label = cacheSiteLabel(cfg)

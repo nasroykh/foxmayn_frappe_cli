@@ -12,6 +12,7 @@ import (
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 )
 
 func metaTSite() *config.SiteConfig {
@@ -112,7 +113,7 @@ func TestSchemaCacheRoundTripAndPermissions(t *testing.T) {
 		t.Error("an expired schema must be ignored")
 	}
 	path, _ := schemaCachePath(cfg, "A/../B")
-	dir, _ := serverCacheDir(cfg)
+	dir, _ := sitecache.Dir(cfg)
 	if filepath.Dir(filepath.Dir(path)) != dir {
 		t.Errorf("schema path %s escapes %s/schema", path, dir)
 	}
@@ -163,7 +164,7 @@ func TestSchemaCacheEvictsOldest(t *testing.T) {
 	if err := writeSchemaCache(cfg, "Newest", map[string]interface{}{"name": "Newest"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	dir, _ := serverCacheDir(cfg)
+	dir, _ := sitecache.Dir(cfg)
 	entries, _ := os.ReadDir(filepath.Join(dir, schemaCacheDir))
 	if len(entries) != maxSchemaCacheFiles {
 		t.Fatalf("%d schema files, want %d", len(entries), maxSchemaCacheFiles)

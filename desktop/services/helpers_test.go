@@ -3,12 +3,27 @@ package services
 import (
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 )
+
+// TestMain keeps the tests out of the developer's ffc cache: removing or
+// renaming a site drops its cache directory.
+func TestMain(m *testing.M) {
+	cache, err := os.MkdirTemp("", "ffc-desktop-test-cache")
+	if err != nil {
+		panic(err)
+	}
+	sitecache.UserCacheDir = func() (string, error) { return cache, nil }
+	code := m.Run()
+	_ = os.RemoveAll(cache)
+	os.Exit(code)
+}
 
 type event struct {
 	name string
