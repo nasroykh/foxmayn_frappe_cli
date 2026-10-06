@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tailscale/hujson"
 )
 
 // testEnv lays out a home directory for goos under a temp dir.
@@ -95,12 +97,12 @@ func TestConfigPaths(t *testing.T) {
 }
 
 func TestValidName(t *testing.T) {
-	for _, ok := range []string{"frappe", "Frappe_Prod-2", strings.Repeat("a", 64)} {
+	for _, ok := range []string{"frappe", "Frappe_Prod-2", "_x", "x-", strings.Repeat("a", 64)} {
 		if err := ValidName(ok); err != nil {
 			t.Errorf("%q: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "a b", "a.b", "a/b", `a"b`, "é", strings.Repeat("a", 65), "a\n"} {
+	for _, bad := range []string{"", "-x", "--help", "a b", "a.b", "a/b", `a"b`, "é", strings.Repeat("a", 65), "a\n"} {
 		if err := ValidName(bad); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%q: want ErrInvalid, got %v", bad, err)
 		}
@@ -651,7 +653,7 @@ func TestClaudeCode(t *testing.T) {
 		if c.ToolFound() || len(c.CommandLines()) != 1 {
 			t.Fatal("tool found")
 		}
-		if _, err := c.Apply(); !errors.Is(err, ErrClaudeNotFound) || len(f.calls) != 0 {
+		if _, err := c.Apply(); !errors.Is(err, ErrClaudeNotFound) || !strings.Contains(err.Error(), "claude mcp add-json") || len(f.calls) != 0 {
 			t.Fatalf("err %v calls %q", err, f.calls)
 		}
 	})
@@ -662,7 +664,10 @@ func TestClaudeCode(t *testing.T) {
 		if got := c.CommandLines()[0]; got != `claude mcp add-json --scope user frappe '{"type":"stdio","command":"C:\\Program Files\\ffc\\ffc.exe","args":["mcp"]}'` {
 			t.Fatalf("line %s", got)
 		}
-		if _, err := c.Apply(); err == nil || !strings.Contains(err.Error(), "batch file") || len(f.calls) != 0 {
+		if err := c.Check(); !errors.Is(err, ErrClaudeBatch) || !strings.Contains(err.Error(), "claude mcp add-json --scope user frappe '") {
+			t.Fatalf("Check: %v", err)
+		}
+		if _, err := c.Apply(); !errors.Is(err, ErrClaudeBatch) || !strings.Contains(err.Error(), "batch file") || len(f.calls) != 0 {
 			t.Fatalf("err %v", err)
 		}
 	})
@@ -682,5 +687,143 @@ func TestShellQuote(t *testing.T) {
 		if got := shellQuote(tc.goos, tc.in); got != tc.want {
 			t.Errorf("%s %q: %s, want %s", tc.goos, tc.in, got, tc.want)
 		}
+	}
+}
+
+// entryOf parses a JSONC result and returns <top>.<name>.
+func entryOf(t *testing.T, doc []byte, top, name string) map[string]interface{} {
+	t.Helper()
+	v, err := hujson.Standardize(append([]byte{}, doc...))
+	if err != nil {
+		t.Fatalf("result does not parse: %v\n%s", err, doc)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(v, &m); err != nil {
+		t.Fatalf("%v\n%s", err, doc)
+	}
+	servers, _ := m[top].(map[string]interface{})
+	e, _ := servers[name].(map[string]interface{})
+	return e
+}
+
+func TestJSONBlockCommentBeforeClosingBrace(t *testing.T) {
+	srv := Server{Name: "frappe", Command: "/x", Args: []string{"mcp"}}
+	for name, tc := range map[string]struct{ old, keep string }{
+		"in the servers object": {"{\n  \"mcpServers\": {\n    \"a\": {\"command\": \"a\"} /* note\n    end */ }\n}\n", "/* note\n    end */"},
+		"at the top level":      {"{\n  \"x\": 1 /* a\n b */}", "/* a\n b */"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := testEnv(t, "linux")
+			path, _ := ConfigPath(Cursor, env)
+			writeFile(t, path, tc.old)
+			c := mustPlan(t, Cursor, srv, env)
+			e := entryOf(t, c.New, "mcpServers", "frappe")
+			if e == nil || e["command"] != "/x" {
+				t.Fatalf("entry missing:\n%s", c.New)
+			}
+			if !strings.Contains(string(c.New), tc.keep) {
+				t.Fatalf("comment changed:\n%s", c.New)
+			}
+			if _, err := c.Apply(); err != nil {
+				t.Fatal(err)
+			}
+			if c2 := mustPlan(t, Cursor, srv, env); c2.Changed() {
+				t.Fatalf("rerun changes again:\n%s", c2.Diff())
+			}
+		})
+	}
+}
+
+func TestJSONResultCheck(t *testing.T) {
+	entry := jsonEntry{Type: "stdio", Command: "/x", Args: []string{"mcp"}}
+	good := `{"mcpServers": {"frappe": {"type": "stdio", "command": "/x", "args": ["mcp"]}}}`
+	if err := checkJSONResult([]byte(good), "mcpServers", "frappe", entry, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{
+		`{"mcpServers": {}}`,
+		`{"mcpServers": {/* "frappe": {} */}}`,
+		`{"mcpServers": {"frappe": {"command": "/y"}}}`,
+		`{"mcpServers": {"frappe": {"type": "stdio", "command": "/x", "args": ["mcp"],}}}`, // no longer strict
+	} {
+		if err := checkJSONResult([]byte(bad), "mcpServers", "frappe", entry, true); err == nil {
+			t.Errorf("accepted %s", bad)
+		}
+	}
+}
+
+func TestJSONKeepsCRLF(t *testing.T) {
+	env := testEnv(t, "windows")
+	path, _ := ConfigPath(VSCode, env)
+	for _, old := range []string{
+		"{\r\n\t\"servers\": {\r\n\t\t\"a\": {\"command\": \"a\"} // c\r\n\t}\r\n}\r\n",
+		"{\r\n\t\"inputs\": []\r\n}\r\n",
+		"{\r\n\t\"servers\": {\r\n\t\t\"frappe\": {\"command\": \"old\"}\r\n\t}\r\n}\r\n",
+		" \r\n",
+	} {
+		writeFile(t, path, old)
+		c := mustPlan(t, VSCode, testSrv, env)
+		if strings.Count(string(c.New), "\n") != strings.Count(string(c.New), "\r\n") || !strings.Contains(string(c.New), "\r\n") {
+			t.Errorf("mixed line endings for %q:\n%q", old, c.New)
+		}
+		if e := entryOf(t, c.New, "servers", "frappe"); e == nil || e["type"] != "stdio" {
+			t.Errorf("entry missing for %q:\n%s", old, c.New)
+		}
+	}
+}
+
+func TestApplyReadOnly(t *testing.T) {
+	env := testEnv(t, "linux")
+	path, _ := ConfigPath(Cursor, env)
+	writeFile(t, path, "{}")
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	if fi, _ := os.Stat(path); fi.Mode().Perm()&0o200 != 0 {
+		t.Skip("cannot make the file read-only here")
+	}
+	c := mustPlan(t, Cursor, testSrv, env)
+	if err := c.Check(); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("Check: %v", err)
+	}
+	if _, err := c.Apply(); !errors.Is(err, ErrReadOnly) || !strings.Contains(err.Error(), path) {
+		t.Fatalf("Apply: %v", err)
+	}
+	if m, _ := filepath.Glob(path + ".ffc-*.bak"); len(m) != 0 {
+		t.Fatalf("backup left behind: %v", m)
+	}
+	if b, _ := os.ReadFile(path); string(b) != "{}" {
+		t.Fatal("file changed")
+	}
+}
+
+func TestClaudeCodeRemovedThenAddFails(t *testing.T) {
+	srv := Server{Name: "frappe", Command: "/usr/local/bin/ffc", Args: []string{"mcp"}}
+	env, f := claudeEnv(t, "linux", "/bin/claude")
+	writeFile(t, filepath.Join(env.Home, ".claude.json"), `{"mcpServers": {"frappe": {"command": "npx"}}}`)
+	f.fail = func(args []string) ([]byte, error) {
+		if args[1] == "add-json" {
+			return []byte("Invalid configuration"), errors.New("exit status 1")
+		}
+		return nil, nil
+	}
+	c := mustPlan(t, ClaudeCode, srv, env)
+	if err := c.Check(); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	_, err := c.Apply()
+	if err == nil {
+		t.Fatal("no error")
+	}
+	msg := err.Error()
+	want := `claude mcp add-json --scope user frappe '{"type":"stdio","command":"/usr/local/bin/ffc","args":["mcp"]}'`
+	for _, s := range []string{"Invalid configuration", `The old "frappe" entry was removed and the new one was not added`, want} {
+		if !strings.Contains(msg, s) {
+			t.Errorf("message misses %q:\n%s", s, msg)
+		}
+	}
+	if len(f.calls) != 2 || f.calls[0][2] != "remove" {
+		t.Errorf("calls %q", f.calls)
 	}
 }

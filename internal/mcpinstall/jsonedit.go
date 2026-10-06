@@ -24,17 +24,21 @@ var utf8BOM = []byte("\xEF\xBB\xBF")
 // editJSON sets <topKey>.<name> to entry in a JSON or JSONC document and
 // returns the new document. Comments, key order and the formatting of
 // everything else are kept byte for byte; the entry is written in the
-// file's indentation. An existing entry that already equals entry (in
-// value, whatever its formatting) is left as it is. old nil or blank is an
-// empty document.
+// file's indentation and line ending. An existing entry that already equals
+// entry (in value, whatever its formatting) is left as it is. old nil or
+// blank is an empty document.
 func editJSON(old []byte, topKey, name string, entry jsonEntry) (out []byte, replaced bool, err error) {
 	if entry.Args == nil {
 		entry.Args = []string{}
 	}
 	bom := bytes.HasPrefix(old, utf8BOM)
 	src := bytes.TrimPrefix(old, utf8BOM)
+	eol := "\n"
+	if bytes.Contains(src, []byte("\r\n")) {
+		eol = "\r\n"
+	}
 	if len(bytes.TrimSpace(src)) == 0 {
-		doc, err := freshJSON(topKey, name, entry)
+		doc, err := freshJSON(topKey, name, entry, eol)
 		return doc, false, err
 	}
 	v, err := hujson.Parse(src)
@@ -55,12 +59,12 @@ func editJSON(old []byte, topKey, name string, entry jsonEntry) (out []byte, rep
 	if top == nil {
 		ind := memberIndent(root, "", unit)
 		inner := ind + unit
-		body, err := marshalIndent(entry, inner, unit)
+		body, err := marshalIndent(entry, inner, unit, eol)
 		if err != nil {
 			return nil, false, err
 		}
-		text := "{\n" + inner + quoteJSON(name) + ": " + string(body) + "\n" + ind + "}"
-		if err := appendMember(root, topKey, text, ind, ""); err != nil {
+		text := "{" + eol + inner + quoteJSON(name) + ": " + string(body) + eol + ind + "}"
+		if err := appendMember(root, topKey, text, ind, "", eol); err != nil {
 			return nil, false, err
 		}
 	} else {
@@ -75,11 +79,11 @@ func editJSON(old []byte, topKey, name string, entry jsonEntry) (out []byte, rep
 		}
 		if m == nil {
 			ind := memberIndent(servers, topInd, unit)
-			body, err := marshalIndent(entry, ind, unit)
+			body, err := marshalIndent(entry, ind, unit, eol)
 			if err != nil {
 				return nil, false, err
 			}
-			if err := appendMember(servers, name, string(body), ind, topInd); err != nil {
+			if err := appendMember(servers, name, string(body), ind, topInd, eol); err != nil {
 				return nil, false, err
 			}
 		} else {
@@ -92,7 +96,7 @@ func editJSON(old []byte, topKey, name string, entry jsonEntry) (out []byte, rep
 				return old, true, nil
 			}
 			ind := lineIndent(m.Name.BeforeExtra, topInd+unit)
-			body, err := marshalIndent(entry, ind, unit)
+			body, err := marshalIndent(entry, ind, unit, eol)
 			if err != nil {
 				return nil, false, err
 			}
@@ -105,11 +109,8 @@ func editJSON(old []byte, topKey, name string, entry jsonEntry) (out []byte, rep
 	}
 
 	out = v.Pack()
-	// The result must parse, and a strict JSON file must stay strict (Claude
-	// Desktop and Cursor read plain JSON).
-	check, err := hujson.Parse(out)
-	if err != nil || (standard && !check.IsStandard()) {
-		return nil, false, fmt.Errorf("internal error: the edited file would not be valid JSON (%v)", err)
+	if err := checkJSONResult(out, topKey, name, entry, standard); err != nil {
+		return nil, false, err
 	}
 	if bom {
 		out = append(append([]byte{}, utf8BOM...), out...)
@@ -117,15 +118,51 @@ func editJSON(old []byte, topKey, name string, entry jsonEntry) (out []byte, rep
 	return out, replaced, nil
 }
 
+// checkJSONResult proves the edit before anything is written: the result
+// parses, a strict JSON file stays strict (Claude Desktop and Cursor read
+// plain JSON), and <topKey>.<name> is there once with the entry's value.
+func checkJSONResult(out []byte, topKey, name string, entry jsonEntry, standard bool) error {
+	fail := func(why string) error {
+		return fmt.Errorf("could not edit the file safely: the result %s; add the entry by hand", why)
+	}
+	v, err := hujson.Parse(out)
+	if err != nil {
+		return fail("would not be valid JSON (" + err.Error() + ")")
+	}
+	if standard && !v.IsStandard() {
+		return fail("would no longer be strict JSON")
+	}
+	root, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return fail("would have no top-level object")
+	}
+	top, err := uniqueMember(root, topKey)
+	if err != nil || top == nil {
+		return fail(fmt.Sprintf("would not hold %q", topKey))
+	}
+	servers, ok := top.Value.Value.(*hujson.Object)
+	if !ok {
+		return fail(fmt.Sprintf("would not hold %q as an object", topKey))
+	}
+	m, err := uniqueMember(servers, name)
+	if err != nil || m == nil {
+		return fail(fmt.Sprintf("would not hold the %q entry", name))
+	}
+	if same, err := sameJSON(m.Value, entry); err != nil || !same {
+		return fail(fmt.Sprintf("would hold a different %q entry", name))
+	}
+	return nil
+}
+
 // freshJSON is a new document holding only the entry.
-func freshJSON(topKey, name string, entry jsonEntry) ([]byte, error) {
+func freshJSON(topKey, name string, entry jsonEntry, eol string) ([]byte, error) {
 	const unit = "  "
-	body, err := marshalIndent(entry, unit+unit, unit)
+	body, err := marshalIndent(entry, unit+unit, unit, eol)
 	if err != nil {
 		return nil, err
 	}
-	return []byte("{\n" + unit + quoteJSON(topKey) + ": {\n" + unit + unit + quoteJSON(name) + ": " +
-		string(body) + "\n" + unit + "}\n}\n"), nil
+	return []byte("{" + eol + unit + quoteJSON(topKey) + ": {" + eol + unit + unit + quoteJSON(name) + ": " +
+		string(body) + eol + unit + "}" + eol + "}" + eol), nil
 }
 
 // uniqueMember returns the member named name, nil if there is none, and
@@ -149,20 +186,20 @@ func uniqueMember(obj *hujson.Object, name string) (*hujson.ObjectMember, error)
 // line at indent ind; parentInd is the indentation of obj's closing brace.
 // A comment after the old last member stays on that member's line, and a
 // trailing comma is kept when the old last member had one.
-func appendMember(obj *hujson.Object, name, valueText, ind, parentInd string) error {
+func appendMember(obj *hujson.Object, name, valueText, ind, parentInd, eol string) error {
 	val, err := hujson.Parse([]byte(valueText))
 	if err != nil {
 		return fmt.Errorf("internal error: %w", err)
 	}
 	after := []byte(obj.AfterExtra)
 	var head, tail []byte
-	if i := bytes.LastIndexByte(after, '\n'); i >= 0 {
+	if i := lastLineBreak(after); i >= 0 {
 		head, tail = after[:i], after[i:]
 	} else {
-		head, tail = after, []byte("\n"+parentInd)
+		head, tail = after, []byte(eol+parentInd)
 	}
 	head = bytes.TrimRight(head, " \t\r")
-	before := append(append([]byte{}, head...), '\n')
+	before := append(append([]byte{}, head...), eol...)
 	before = append(before, ind...)
 
 	member := hujson.ObjectMember{
@@ -175,6 +212,36 @@ func appendMember(obj *hujson.Object, name, valueText, ind, parentInd string) er
 	obj.Members = append(obj.Members, member)
 	obj.AfterExtra = hujson.Extra(tail)
 	return nil
+}
+
+// lastLineBreak returns the index of the last line break ("\r\n" or "\n")
+// in extra that is not inside a block comment, or -1. A newline inside
+// /* ... */ belongs to the comment: splitting there would put the new member
+// inside it.
+func lastLineBreak(extra []byte) int {
+	last := -1
+	for i := 0; i < len(extra); i++ {
+		switch {
+		case bytes.HasPrefix(extra[i:], []byte("/*")):
+			end := bytes.Index(extra[i+2:], []byte("*/"))
+			if end < 0 {
+				return last // not valid HuJSON; checkJSONResult refuses the result
+			}
+			i += 2 + end + 1 // on the closing '/'
+		case bytes.HasPrefix(extra[i:], []byte("//")):
+			end := bytes.IndexByte(extra[i:], '\n')
+			if end < 0 {
+				return last
+			}
+			i += end - 1 // the newline ending the comment is a line break
+		case extra[i] == '\n':
+			last = i
+			if i > 0 && extra[i-1] == '\r' {
+				last = i - 1
+			}
+		}
+	}
+	return last
 }
 
 // indentUnit guesses one level of indentation from the first member of the
@@ -234,8 +301,8 @@ func sameJSON(v hujson.Value, entry jsonEntry) (bool, error) {
 }
 
 // marshalIndent is json.MarshalIndent without HTML escaping and without
-// the trailing newline.
-func marshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
+// the trailing newline, with eol as the line ending.
+func marshalIndent(v interface{}, prefix, indent, eol string) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
@@ -243,10 +310,16 @@ func marshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
 	if err := enc.Encode(v); err != nil {
 		return nil, err
 	}
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+	b := bytes.TrimRight(buf.Bytes(), "\n")
+	if eol != "\n" {
+		// encoding/json escapes newlines in strings: every raw one is a
+		// line break.
+		b = bytes.ReplaceAll(b, []byte("\n"), []byte(eol))
+	}
+	return b, nil
 }
 
 func quoteJSON(s string) string {
-	b, _ := marshalIndent(s, "", "")
+	b, _ := marshalIndent(s, "", "", "\n")
 	return string(b)
 }

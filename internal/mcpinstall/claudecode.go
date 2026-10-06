@@ -40,7 +40,7 @@ func planClaudeCode(srv Server, env Env) (*Change, error) {
 	if entry.Args == nil {
 		entry.Args = []string{}
 	}
-	js, err := marshalIndent(entry, "", "")
+	js, err := marshalIndent(entry, "", "", "\n")
 	if err != nil {
 		return nil, err
 	}
@@ -128,16 +128,37 @@ func sameClaudeEntry(raw json.RawMessage, want jsonEntry) bool {
 	return true
 }
 
-func (c *Change) applyClaudeCode() error {
+// checkTool tells whether Apply can run the claude CLI. Its errors carry
+// the commands to run by hand, since a caller may not have printed them.
+func (c *Change) checkTool() error {
 	if c.tool == "" {
-		return ErrClaudeNotFound
+		return fmt.Errorf("%w; install Claude Code, or add the server yourself with:\n  %s",
+			ErrClaudeNotFound, strings.Join(c.CommandLines(), "\n  "))
 	}
 	if c.env.GOOS == "windows" {
 		switch strings.ToLower(filepath.Ext(c.tool)) {
 		case ".cmd", ".bat":
 			// cmd.exe would re-parse the JSON argument (quotes, %, ^, &).
-			return fmt.Errorf("the claude CLI is a batch file (%s), which cannot be given a JSON argument safely; run the command shown above yourself", c.tool)
+			return fmt.Errorf("%w: the claude CLI is a batch file (%s), which cannot be given a JSON argument safely; run this yourself (PowerShell 7):\n  %s",
+				ErrClaudeBatch, c.tool, strings.Join(c.CommandLines(), "\n  "))
 		}
+	}
+	return nil
+}
+
+// addJSONLine is the add-json command, quoted for the user's shell.
+func (c *Change) addJSONLine() string {
+	for _, argv := range c.Commands {
+		if argv[2] == "add-json" {
+			return shellJoin(c.env.GOOS, argv)
+		}
+	}
+	return ""
+}
+
+func (c *Change) applyClaudeCode() error {
+	if err := c.checkTool(); err != nil {
+		return err
 	}
 	if c.env.Run == nil {
 		return fmt.Errorf("internal error: no command runner")
@@ -168,7 +189,8 @@ func (c *Change) applyClaudeCode() error {
 			}
 		}
 		if removed {
-			return fmt.Errorf("%w (the old %q entry was removed: run the add-json command above to add it)", err, c.Name)
+			return fmt.Errorf("%w\nThe old %q entry was removed and the new one was not added. Add it with:\n  %s",
+				err, c.Name, c.addJSONLine())
 		}
 		return err
 	}

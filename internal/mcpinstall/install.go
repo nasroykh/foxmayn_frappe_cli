@@ -68,6 +68,13 @@ func invalidf(format string, a ...interface{}) error {
 // CLI is not on PATH. Change.Commands still holds what to run by hand.
 var ErrClaudeNotFound = errors.New("the claude CLI is not on PATH")
 
+// ErrClaudeBatch is returned for claude-code when claude is a Windows
+// .cmd/.bat shim, which ffc does not run (cmd.exe re-parses arguments).
+var ErrClaudeBatch = errors.New("cannot run the claude CLI")
+
+// ErrReadOnly is returned when the config file is read-only.
+var ErrReadOnly = errors.New("the config file is read-only")
+
 // Server is the MCP server entry to install.
 type Server struct {
 	Name    string   // entry name, see ValidName
@@ -179,6 +186,36 @@ func (c *Change) CommandLines() []string {
 	return out
 }
 
+// Check reports whether Apply can make the change, so a caller can stop
+// before asking the user: for claude-code that the claude CLI can be run
+// (ErrClaudeNotFound, ErrClaudeBatch; the message holds the commands to run
+// by hand), for a config file that it is not read-only (ErrReadOnly).
+func (c *Change) Check() error {
+	if !c.Changed() {
+		return nil
+	}
+	if c.Client == ClaudeCode {
+		return c.checkTool()
+	}
+	return checkWritable(c.Path)
+}
+
+// checkWritable refuses an existing file without the owner write bit
+// (on Windows, the read-only attribute), whose rename would fail.
+func checkWritable(path string) error {
+	fi, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("checking %s: %w", path, err)
+	}
+	if fi.Mode().Perm()&0o200 == 0 {
+		return fmt.Errorf("%w: %s; make it writable and run the command again", ErrReadOnly, path)
+	}
+	return nil
+}
+
 // Apply makes the change. For a config file it re-reads the file and
 // refuses if it changed since Plan, copies it to
 // <path>.ffc-<YYYYMMDD-HHMMSS>.bak (never over an existing file), creates
@@ -198,6 +235,9 @@ func (c *Change) Apply() (backup string, err error) {
 	}
 	if exists != (c.Old != nil) || !bytes.Equal(cur, c.Old) {
 		return "", fmt.Errorf("%s changed since it was read; run the command again", c.Path)
+	}
+	if err := checkWritable(c.Path); err != nil {
+		return "", err // before the backup: nothing is left behind
 	}
 	mode := fs.FileMode(0o600)
 	if c.Old != nil {
@@ -247,13 +287,15 @@ func writeBackup(path string, data []byte, t time.Time) (string, error) {
 	return "", fmt.Errorf("backing up %s: too many backups named %s*.bak", path, base)
 }
 
-var namePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+var namePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$`)
 
 // ValidName checks an entry name: 1 to 64 ASCII letters, digits, '_' or
-// '-', which every client accepts as a key and Codex as a bare TOML key.
+// '-', not starting with '-' (it is a positional argument of the claude
+// CLI, which would read it as an option). Every client accepts it as a key
+// and Codex as a bare TOML key.
 func ValidName(name string) error {
 	if !namePattern.MatchString(name) {
-		return invalidf("server name %q: use 1 to 64 letters, digits, '_' or '-'", name)
+		return invalidf("server name %q: use 1 to 64 letters, digits, '_' or '-', not starting with '-'", name)
 	}
 	return nil
 }
