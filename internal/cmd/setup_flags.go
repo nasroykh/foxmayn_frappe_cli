@@ -44,10 +44,15 @@ func (s *setupFlags) active() bool {
 
 // oauthClient returns the OAuth client given with --client-id (its secret
 // from $FFC_OAUTH_CLIENT_SECRET), or the zero oauthApp. --client-id without
-// --oauth is a usage error.
+// --oauth is a usage error. With --oauth but no --client-id the secret is
+// ignored (a registered or prompted client brings its own), which is said
+// on stderr.
 func (s *setupFlags) oauthClient(oauth bool) (oauthApp, error) {
 	id := strings.TrimSpace(s.clientID)
 	if id == "" {
+		if oauth && strings.TrimSpace(os.Getenv("FFC_OAUTH_CLIENT_SECRET")) != "" {
+			fmt.Fprintln(os.Stderr, "warning: FFC_OAUTH_CLIENT_SECRET is ignored without --client-id")
+		}
 		return oauthApp{}, nil
 	}
 	if !oauth {

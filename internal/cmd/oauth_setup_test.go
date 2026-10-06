@@ -317,9 +317,81 @@ func TestOAuthSetupDebugHidesSecrets(t *testing.T) {
 	if !strings.Contains(r.Stderr, registerPath) || !strings.Contains(r.Stderr, "get_token") {
 		t.Fatalf("trace misses the requests:\n%s", r.Stderr)
 	}
-	for _, secret := range append(codeTokens, frappetest.AuthCode) {
+	exchange := site.RequestsTo(http.MethodPost, "/api/method/frappe.integrations.oauth2.get_token")
+	if len(exchange) != 1 {
+		t.Fatalf("token requests = %d", len(exchange))
+	}
+	form, _ := url.ParseQuery(exchange[0].Body)
+	verifier := form.Get("code_verifier")
+	if len(verifier) < 43 {
+		t.Fatalf("code_verifier %d characters", len(verifier))
+	}
+	for _, secret := range append(codeTokens, frappetest.AuthCode, verifier) {
 		if strings.Contains(r.Stdout+r.Stderr, secret) {
 			t.Errorf("output shows %q", secret)
 		}
+	}
+}
+
+// A hand-made confidential client: --client-id with its secret from
+// FFC_OAUTH_CLIENT_SECRET. The secret goes to the token endpoint and into the
+// config, never to the output, --debug=body included.
+func TestOAuthClientSecretFromEnv(t *testing.T) {
+	const secret = "confidential-client-secret-1234"
+	t.Setenv("FFC_OAUTH_CLIENT_SECRET", secret)
+	site := frappetest.New(t)
+	cfg := fakeConfig(t, site, "apikey")
+	stubBrowser(t)
+
+	r := runFFC(t, cfg, "", "--debug=body", "site", "add", "--oauth", "--client-id", frappetest.OAuthClientID, "--name", "conf", "--url", site.URL)
+	wantCode(t, r, 0)
+	exchange := site.RequestsTo(http.MethodPost, "/api/method/frappe.integrations.oauth2.get_token")
+	if len(exchange) != 1 {
+		t.Fatalf("token requests = %d", len(exchange))
+	}
+	if form, _ := url.ParseQuery(exchange[0].Body); form.Get("client_secret") != secret || form.Get("client_id") != frappetest.OAuthClientID {
+		t.Errorf("token form client_id %q, client_secret sent %v", form.Get("client_id"), form.Get("client_secret") == secret)
+	}
+	saved, err := config.Load("conf", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.OAuthClientSecret != secret || saved.OAuthClientID != frappetest.OAuthClientID {
+		t.Errorf("saved client %q, secret saved %v", saved.OAuthClientID, saved.OAuthClientSecret == secret)
+	}
+	if !strings.Contains(r.Stderr, "get_token") {
+		t.Fatalf("trace misses the token request:\n%s", r.Stderr)
+	}
+	if strings.Contains(r.Stdout+r.Stderr, secret) {
+		t.Error("output shows the client secret")
+	}
+	if strings.Contains(r.Stderr, "FFC_OAUTH_CLIENT_SECRET is ignored") {
+		t.Error("warned although --client-id was given")
+	}
+}
+
+// Without --client-id the secret has no client to go with: it is ignored,
+// with a warning, and the registered public client is used.
+func TestOAuthClientSecretWithoutClientIDWarns(t *testing.T) {
+	t.Setenv("FFC_OAUTH_CLIENT_SECRET", "unused-secret")
+	site := frappetest.New(t)
+	cfg := fakeConfig(t, site, "apikey")
+	stubBrowser(t)
+
+	r := runFFC(t, cfg, "", "site", "add", "--oauth", "--name", "reg", "--url", site.URL)
+	wantCode(t, r, 0)
+	if !strings.Contains(r.Stderr, "warning: FFC_OAUTH_CLIENT_SECRET is ignored without --client-id") {
+		t.Errorf("stderr = %q", r.Stderr)
+	}
+	saved, err := config.Load("reg", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.OAuthClientSecret != "" || len(site.Registrations()) != 1 {
+		t.Errorf("secret saved %v, registrations %d", saved.OAuthClientSecret != "", len(site.Registrations()))
+	}
+	form, _ := url.ParseQuery(site.RequestsTo(http.MethodPost, "/api/method/frappe.integrations.oauth2.get_token")[0].Body)
+	if form.Has("client_secret") {
+		t.Error("the ignored secret was sent")
 	}
 }
