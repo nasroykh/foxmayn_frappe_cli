@@ -29,17 +29,26 @@ Use --apikey   to go directly to the API key / secret flow.
 Use --password to go directly to the username/email + password flow.
 
 API keys can be generated at: User → API Access → Generate Keys.
-OAuth clients can be created at: Integrations → OAuth Client → New.
+
+OAuth needs no setup on Frappe v16 when dynamic client registration is on
+(OAuth Settings → Enable Dynamic Client Registration): ffc registers a public
+OAuth Client for itself. Otherwise the wizard asks for the ID of an OAuth
+Client you create (Integrations → OAuth Client → New). --client-id uses a
+given client and never registers one; its secret, if any, comes from
+FFC_OAUTH_CLIENT_SECRET.
 
 Non-interactive (no terminal needed): pass --name, --url and one credential set.
 The secret is never a flag value: pipe it with --api-secret-stdin /
 --password-stdin, or set FFC_API_SECRET / FFC_PASSWORD. The credentials are
 checked against the site before the config is written. An existing config is
-replaced only with --force. OAuth is always interactive.
+replaced only with --force. --oauth with --name and --url skips the prompts
+but still logs in through the browser.
 
 Examples:
   ffc init
   ffc init --oauth
+  ffc init --oauth --name prod --url https://erp.example.com
+  ffc init --oauth --client-id 1a2b3c4d5e
   echo "$SECRET" | ffc init --name prod --url https://erp.example.com --api-key KEY --api-secret-stdin
   FFC_API_SECRET="$SECRET" ffc init --name prod --url erp.example.com --api-key KEY --force
   echo "$PW" | ffc init --name dev --url http://localhost:8000 --username admin --password-stdin
@@ -50,6 +59,10 @@ Examples:
 			return err
 		}
 
+		oauthClient, err := initSetup.oauthClient(initOAuth)
+		if err != nil {
+			return err
+		}
 		setup := initSetup.active()
 		var name string
 		var site config.SiteConfig
@@ -79,7 +92,7 @@ Examples:
 		}
 
 		if setup {
-			if err := verifySite(cmd.Context(), site); err != nil {
+			if site, err = finishSetup(cmd.Context(), site, initOAuth, oauthClient); err != nil {
 				return err
 			}
 		} else {
@@ -87,7 +100,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			if name, site, err = collectSite(cmd.Context(), method, nil); err != nil {
+			if name, site, err = collectSite(cmd.Context(), method, nil, oauthClient); err != nil {
 				return err
 			}
 		}

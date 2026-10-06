@@ -231,11 +231,12 @@ func chooseAuthMethod(title string, oauth, apiKey, password bool) (string, error
 
 // collectSite runs the wizard for method and returns the new site. checkName
 // (optional) runs once the name is known, before any credentials are verified
-// or the browser flow starts; returning an error stops the wizard.
-func collectSite(ctx context.Context, method string, checkName func(string) error) (string, config.SiteConfig, error) {
+// or the browser flow starts; returning an error stops the wizard. oauth is
+// the OAuth client given with --client-id (zero: register one or ask).
+func collectSite(ctx context.Context, method string, checkName func(string) error, oauth oauthApp) (string, config.SiteConfig, error) {
 	switch method {
 	case authOAuth:
-		return collectOAuthSite(ctx, checkName)
+		return collectOAuthSite(ctx, checkName, oauth)
 	case authPassword:
 		return collectPasswordSite(ctx, checkName)
 	case authAPIKey:

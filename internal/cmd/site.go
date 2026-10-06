@@ -115,14 +115,22 @@ Use --oauth    to use the OAuth 2.0 browser flow (Authorization Code + PKCE).
 Use --apikey   to use the API key / secret flow.
 Use --password to use username/email + password (session cookie) login.
 
+OAuth needs no setup on Frappe v16 when dynamic client registration is on
+(OAuth Settings → Enable Dynamic Client Registration): ffc registers a public
+OAuth Client for itself. Otherwise the wizard asks for the ID of an OAuth
+Client you create. --client-id uses a given client and never registers one;
+its secret, if any, comes from FFC_OAUTH_CLIENT_SECRET.
+
 Non-interactive (no terminal needed): pass --name, --url and one credential set.
 The secret is never a flag value: pipe it with --api-secret-stdin /
 --password-stdin, or set FFC_API_SECRET / FFC_PASSWORD. The credentials are
 checked against the site before it is saved. Replacing an existing site needs
---force. OAuth is always interactive.
+--force. --oauth with --name and --url skips the prompts but still logs in
+through the browser.
 
 Examples:
   ffc site add
+  ffc site add --oauth --name prod --url https://erp.example.com
   echo "$SECRET" | ffc site add --name prod --url https://erp.example.com --api-key KEY --api-secret-stdin
   echo "$PW" | ffc site add --name dev --url http://localhost:8000 --username admin --password-stdin --force
   FFC_API_SECRET="$SECRET" ffc site add --name prod --url erp.example.com --api-key KEY
@@ -137,6 +145,10 @@ Examples:
 		if err != nil {
 			return err
 		}
+		oauthClient, err := saSetup.oauthClient(saOAuth)
+		if err != nil {
+			return err
+		}
 
 		if saSetup.active() {
 			name, site, err := saSetup.resolve(saOAuth, saAPIKey, saPassword)
@@ -146,7 +158,7 @@ Examples:
 			if _, exists := cfg.Sites[name]; exists && !saSetup.force {
 				return usageErrorf("site %q already exists: pass --force to replace it", name)
 			}
-			if err := verifySite(cmd.Context(), site); err != nil {
+			if site, err = finishSetup(cmd.Context(), site, saOAuth, oauthClient); err != nil {
 				return err
 			}
 			if err := addSiteToConfig(cfgPath, name, site); err != nil {
@@ -177,7 +189,7 @@ Examples:
 			}
 			return nil
 		}
-		name, site, err := collectSite(cmd.Context(), method, confirmOverwrite)
+		name, site, err := collectSite(cmd.Context(), method, confirmOverwrite, oauthClient)
 		if err != nil {
 			return err
 		}

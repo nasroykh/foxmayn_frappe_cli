@@ -40,6 +40,10 @@ func generateCodeChallenge(verifier string) string {
 
 // ─── Browser ─────────────────────────────────────────────────────────────────
 
+// openBrowserFn opens the authorization URL; tests replace it with a
+// function that delivers the callback themselves.
+var openBrowserFn = openBrowser
+
 func openBrowser(rawURL string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -223,8 +227,10 @@ func (cs *callbackServer) wait(ctx context.Context) (string, error) {
 // ─── OAuth wizard ────────────────────────────────────────────────────────────
 
 // collectOAuthSite runs the OAuth Authorization Code + PKCE flow and returns
-// the new site with its tokens. See collectSite for checkName.
-func collectOAuthSite(ctx context.Context, checkName func(string) error) (string, config.SiteConfig, error) {
+// the new site with its tokens. See collectSite for checkName. manual is the
+// client given with --client-id; without one, ffc registers a client when
+// the site offers dynamic registration and asks for one otherwise.
+func collectOAuthSite(ctx context.Context, checkName func(string) error, manual oauthApp) (string, config.SiteConfig, error) {
 	var name, rawURL string
 	if err := runForm(huh.NewGroup(siteNameInput(&name), siteURLInput(&rawURL))); err != nil {
 		return "", config.SiteConfig{}, err
@@ -239,27 +245,77 @@ func collectOAuthSite(ctx context.Context, checkName func(string) error) (string
 		}
 	}
 
-	// Start the callback server before showing the instructions so the port
-	// is guaranteed held when Frappe redirects back.
+	// Start the callback server before registering or showing the
+	// instructions: the redirect URI names its port.
 	cs, err := startCallbackServer()
 	if err != nil {
 		return "", config.SiteConfig{}, err
 	}
 	defer cs.close()
-	redirectURI := cs.redirectURI()
 
+	app, err := setUpOAuthApp(ctx, siteURL, cs, manual)
+	var nr *noRegistrationError
+	switch {
+	case errors.As(err, &nr):
+		if app, err = promptOAuthApp(siteURL, cs.redirectURI(), nr); err != nil {
+			return "", config.SiteConfig{}, err
+		}
+	case err != nil:
+		return "", config.SiteConfig{}, err
+	}
+
+	tokens, user, err := oauthLogin(ctx, siteURL, cs, app)
+	if err != nil {
+		return "", config.SiteConfig{}, err
+	}
+
+	clientLine := app.ID
+	if app.Registered {
+		clientLine += " (registered by ffc)"
+	}
+	if _, err := reviewSite(fmt.Sprintf(
+		"Site name:  %s\nSite URL:   %s\nClient ID:  %s\nLogged in:  %s",
+		siteName, siteURL, clientLine, orDefault(user, "(unknown)"),
+	), false); err != nil {
+		return "", config.SiteConfig{}, err
+	}
+	return siteName, oauthSiteConfig(siteURL, app, tokens), nil
+}
+
+// setUpOAuthApp runs resolveOAuthApp under a spinner and reports a
+// registration. A *noRegistrationError leaves the fallback to the caller.
+func setUpOAuthApp(ctx context.Context, siteURL string, cs *callbackServer, manual oauthApp) (oauthApp, error) {
+	var app oauthApp
+	var resolveErr error
+	if err := runSpinner("Setting up the OAuth client...", func() {
+		app, resolveErr = resolveOAuthApp(ctx, siteURL, cs.redirectURI(), manual)
+	}); err != nil || ctx.Err() != nil {
+		return oauthApp{}, errAborted
+	}
+	if resolveErr == nil && app.Registered {
+		fmt.Fprintf(os.Stderr, "✓ Registered OAuth client %s on %s.\n", app.ID, siteURL)
+	}
+	return app, resolveErr
+}
+
+// promptOAuthApp explains why no client was registered and asks for the
+// one the user creates by hand.
+func promptOAuthApp(siteURL, redirectURI string, why *noRegistrationError) (oauthApp, error) {
 	fmt.Fprintf(os.Stderr, `
+No OAuth client was registered automatically: %v.
+Create one by hand (or run again with --apikey to use an API key instead).
+
 OAuth Client setup (one-time, on your Frappe site)
 ──────────────────────────────────────────────────
 1. Go to: %s/app/oauth-client/new-oauth-client-1
 2. Fill in:
      App Name:      ffc (or any name)
      Grant Type:    Authorization Code
-     Scopes:        openid all
+     Scopes:        %s
      Redirect URIs: %s
 3. Save → copy the Client ID (and Client Secret if using Confidential type).
 
-`, siteURL, redirectURI)
+`, why, siteURL, oauthScope, redirectURI)
 
 	var clientID, clientSecret string
 	if err := runForm(huh.NewGroup(
@@ -274,20 +330,50 @@ OAuth Client setup (one-time, on your Frappe site)
 			EchoMode(huh.EchoModePassword).
 			Value(&clientSecret),
 	)); err != nil {
-		return "", config.SiteConfig{}, err
+		return oauthApp{}, err
 	}
-	clientID = strings.TrimSpace(clientID)
-	clientSecret = strings.TrimSpace(clientSecret)
+	return oauthApp{ID: strings.TrimSpace(clientID), Secret: strings.TrimSpace(clientSecret)}, nil
+}
 
+// collectOAuthSiteNoInput is the OAuth flow of the non-interactive setup
+// (--oauth with --name and --url): no prompt and no review, but the browser
+// login still needs a person. Without --client-id the site must offer
+// dynamic client registration.
+func collectOAuthSiteNoInput(ctx context.Context, siteURL string, manual oauthApp) (config.SiteConfig, error) {
+	cs, err := startCallbackServer()
+	if err != nil {
+		return config.SiteConfig{}, err
+	}
+	defer cs.close()
+
+	app, err := setUpOAuthApp(ctx, siteURL, cs, manual)
+	if err != nil {
+		return config.SiteConfig{}, noInputOAuthError(err)
+	}
+	tokens, user, err := oauthLogin(ctx, siteURL, cs, app)
+	if err != nil {
+		return config.SiteConfig{}, err
+	}
+	if user != "" {
+		fmt.Fprintf(os.Stderr, "✓ Logged in as %s.\n", user)
+	}
+	return oauthSiteConfig(siteURL, app, tokens), nil
+}
+
+// oauthLogin sends the user to the site's authorization page, waits for the
+// callback on cs and exchanges the code (PKCE). user is "" when the site
+// does not say who logged in.
+func oauthLogin(ctx context.Context, siteURL string, cs *callbackServer, app oauthApp) (*client.OAuthTokens, string, error) {
 	verifier, err := generateCodeVerifier()
 	if err != nil {
-		return "", config.SiteConfig{}, fmt.Errorf("generating PKCE verifier: %w", err)
+		return nil, "", fmt.Errorf("generating PKCE verifier: %w", err)
 	}
+	redirectURI := cs.redirectURI()
 	params := url.Values{
 		"response_type":         {"code"},
-		"client_id":             {clientID},
+		"client_id":             {app.ID},
 		"redirect_uri":          {redirectURI},
-		"scope":                 {"openid all"},
+		"scope":                 {oauthScope},
 		"code_challenge":        {generateCodeChallenge(verifier)},
 		"code_challenge_method": {"S256"},
 		"state":                 {cs.state}, // CSRF protection (M6)
@@ -296,7 +382,7 @@ OAuth Client setup (one-time, on your Frappe site)
 
 	fmt.Fprintf(os.Stderr, "\nOpening browser for authorization...\n")
 	fmt.Fprintf(os.Stderr, "If the browser doesn't open automatically, visit:\n  %s\n\n", authURL)
-	if err := openBrowser(authURL); err != nil {
+	if err := openBrowserFn(authURL); err != nil {
 		fmt.Fprintf(os.Stderr, "(Could not open browser: %v)\n\n", err)
 	}
 	fmt.Fprintf(os.Stderr, "Waiting for authorization (timeout: %s)...\n", oauthCallbackTimeout)
@@ -304,42 +390,39 @@ OAuth Client setup (one-time, on your Frappe site)
 	code, err := cs.wait(ctx)
 	if err != nil {
 		if errors.Is(err, errAborted) {
-			return "", config.SiteConfig{}, err
+			return nil, "", err
 		}
-		return "", config.SiteConfig{}, fmt.Errorf("authorization: %w", err)
+		return nil, "", fmt.Errorf("authorization: %w", err)
 	}
 
 	var tokens *client.OAuthTokens
 	var exchangeErr error
 	if err := runSpinner("Exchanging authorization code for tokens...", func() {
-		tokens, exchangeErr = client.ExchangeOAuthCode(ctx, siteURL, clientID, clientSecret, code, redirectURI, verifier)
+		tokens, exchangeErr = client.ExchangeOAuthCode(ctx, siteURL, app.ID, app.Secret, code, redirectURI, verifier)
 	}); err != nil || ctx.Err() != nil {
-		return "", config.SiteConfig{}, errAborted
+		return nil, "", errAborted
 	}
 	if exchangeErr != nil {
-		return "", config.SiteConfig{}, fmt.Errorf("token exchange: %w", exchangeErr)
+		return nil, "", fmt.Errorf("token exchange: %w", exchangeErr)
 	}
 
 	var user string
 	if err := runSpinner("Fetching user info...", func() {
 		user, _ = client.GetOAuthUser(ctx, siteURL, tokens.AccessToken)
 	}); err != nil || ctx.Err() != nil {
-		return "", config.SiteConfig{}, errAborted
+		return nil, "", errAborted
 	}
+	return tokens, user, nil
+}
 
-	if _, err := reviewSite(fmt.Sprintf(
-		"Site name:  %s\nSite URL:   %s\nClient ID:  %s\nLogged in:  %s",
-		siteName, siteURL, clientID, orDefault(user, "(unknown)"),
-	), false); err != nil {
-		return "", config.SiteConfig{}, err
-	}
-
-	return siteName, config.SiteConfig{
+// oauthSiteConfig is the site entry for a finished login.
+func oauthSiteConfig(siteURL string, app oauthApp, tokens *client.OAuthTokens) config.SiteConfig {
+	return config.SiteConfig{
 		URL:               siteURL,
-		OAuthClientID:     clientID,
-		OAuthClientSecret: clientSecret,
+		OAuthClientID:     app.ID,
+		OAuthClientSecret: app.Secret,
 		AccessToken:       tokens.AccessToken,
 		RefreshToken:      tokens.RefreshToken,
 		TokenExpiry:       tokens.ExpiresAt,
-	}, nil
+	}
 }
