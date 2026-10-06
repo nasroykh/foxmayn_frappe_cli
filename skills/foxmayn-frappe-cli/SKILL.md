@@ -53,7 +53,7 @@ Generate API keys on the Frappe site: **User > API Access > Generate Keys**. OAu
 ffc site list               # name, URL, auth method, default (`--json`: default is true/false)
 ffc site add                # menu to choose auth method (or --oauth / --apikey / --password)
 ffc site use [name]         # set default site (menu if name omitted)
-ffc site remove [name]      # remove a site (menu if name omitted); revokes an OAuth site's token first, best effort
+ffc site remove [name]      # remove a site (menu if name omitted); revokes an OAuth site's current token first, best effort
 ```
 
 ### Managing Config from the Terminal

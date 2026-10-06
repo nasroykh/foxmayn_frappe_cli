@@ -211,9 +211,11 @@ var siteRemoveCmd = &cobra.Command{
 	Long: `Remove a site from your config. Without --yes a confirmation is asked; with
 no terminal that is a usage error (exit 2) and the config is left unchanged.
 
-An OAuth site's token is revoked on the server first (refresh and access
-token). That is best effort: if the server cannot be reached or refuses, a
-warning is printed and the site is removed anyway.
+An OAuth site's current token is revoked on the server first (its refresh
+and access token). Refresh tokens issued earlier for the same login stay
+valid until an administrator revokes them: Frappe keeps every refresh in a
+new OAuth Bearer Token record. Revoking is best effort: if the server cannot
+be reached or refuses, a warning is printed and the site is removed anyway.
 
 Examples:
   ffc site remove staging
@@ -272,7 +274,8 @@ Examples:
 			fmt.Fprintf(os.Stderr, "warning: could not revoke the OAuth token on the server: %v\n"+
 				"  It stays valid until it expires or an administrator revokes it (OAuth Bearer Token list).\n", revokeErr)
 		case revoked:
-			fmt.Fprintln(os.Stderr, "  Its OAuth token was revoked on the server.")
+			fmt.Fprintln(os.Stderr, "  Its current OAuth token was revoked on the server; refresh tokens issued earlier"+
+				" for this login stay valid until an administrator revokes them.")
 		}
 		if wasDefault {
 			if newDefault != "" {

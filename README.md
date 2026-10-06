@@ -148,7 +148,7 @@ FFC_API_SECRET="$SECRET" ffc site add --name prod --url erp.example.com --api-ke
 ffc site add --oauth --name prod --url https://erp.example.com   # no prompts, still a browser login
 ```
 
-`ffc site remove` revokes an OAuth site's token on the server first (`frappe.integrations.oauth2.revoke_token`: the refresh token and the access token issued with it). That is best effort and bounded to 10 seconds: when the site cannot be reached or refuses, a warning is printed and the site is removed anyway. The OAuth Client itself (registered or hand-made) stays on the site; an administrator can delete it.
+`ffc site remove` revokes an OAuth site's current token on the server first (`frappe.integrations.oauth2.revoke_token`: the stored refresh token and the access token issued with it). Frappe saves each refresh as a new OAuth Bearer Token record and leaves the earlier ones active, so refresh tokens issued earlier for the same login stay valid until an administrator revokes them (OAuth Bearer Token list). That is best effort and bounded to 10 seconds: when the site cannot be reached or refuses, a warning is printed and the site is removed anyway. The OAuth Client itself (registered or hand-made) stays on the site; an administrator can delete it.
 
 **Settings Management (`ffc config`)**
 
@@ -289,7 +289,7 @@ With `--json`, an error is printed on stderr as one JSON object, and stdout carr
     *   `ffc site list` — show all configured sites (name, URL, auth method, default; in `--json`, `default` is a boolean)
     *   `ffc site add [--oauth|--apikey|--password]` — add a new site interactively (`--oauth` registers an OAuth client on Frappe v16 when the site allows it; `--client-id` uses a given one)
     *   `ffc site use [name]` — set the default site (shows selection menu if name omitted)
-    *   `ffc site remove [name] [--yes]` — remove a site (shows selection menu if name omitted); an OAuth site's token is revoked on the server first, best effort
+    *   `ffc site remove [name] [--yes]` — remove a site (shows selection menu if name omitted); an OAuth site's current token is revoked on the server first, best effort (earlier refresh tokens of the login stay valid)
     *   `ffc site rename OLD NEW` / `ffc site edit NAME --url URL` — rename a site / change its URL
 *   **`config`**: Interactive TUI to tweak settings, or non-interactive via subcommands:
     *   `ffc config get [--json|--yaml]` — print all settings

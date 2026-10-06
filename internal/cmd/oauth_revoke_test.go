@@ -33,7 +33,8 @@ func TestSiteRemoveRevokesToken(t *testing.T) {
 	if _, ok := mustRead(t, cfg).Sites["t"]; ok {
 		t.Error("site still in the config")
 	}
-	if !strings.Contains(r.Stderr, "revoked") || strings.Contains(r.Stderr+r.Stdout, frappetest.RefreshToken) {
+	if !strings.Contains(r.Stderr, "current OAuth token was revoked") || !strings.Contains(r.Stderr, "issued earlier") ||
+		strings.Contains(r.Stderr+r.Stdout, frappetest.RefreshToken) {
 		t.Errorf("stderr = %q", r.Stderr)
 	}
 
