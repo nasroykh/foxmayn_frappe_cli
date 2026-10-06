@@ -35,7 +35,7 @@ Linux is not supported yet.
    - If macOS says the app "is damaged and can't be opened", remove the download quarantine flag:
 
      ```bash
-     xattr -dr com.apple.quarantine "/Applications/foxmayn-frappe-desktop.app"
+     xattr -dr com.apple.quarantine "/Applications/Foxmayn Frappe Desktop.app"
      ```
 
 **Uninstall:** quit the app and move it from Applications to the Bin.

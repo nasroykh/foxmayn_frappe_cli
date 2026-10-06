@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -107,21 +109,25 @@ type ApplyResult struct {
 // through internal/mcpinstall (the same code as "ffc mcp install").
 type AssistantsService struct {
 	configPath string
-	ffc        *FFCLocator
-	env        func() (mcpinstall.Env, error)
-	dirExists  func(string) bool
-	planRemove func(client, name string, env mcpinstall.Env) (*mcpinstall.Change, error)
+	// defaultConfig is the CLI's default config path; a different
+	// configPath is written into each entry as --config.
+	defaultConfig func() (string, error)
+	ffc           *FFCLocator
+	env           func() (mcpinstall.Env, error)
+	dirExists     func(string) bool
+	planRemove    func(client, name string, env mcpinstall.Env) (*mcpinstall.Change, error)
 }
 
 // NewAssistantsService builds the service. configPath is the ffc config
 // whose sites can be pinned.
 func NewAssistantsService(configPath string, ffc *FFCLocator) *AssistantsService {
 	return &AssistantsService{
-		configPath: configPath,
-		ffc:        ffc,
-		env:        desktopEnv,
-		dirExists:  isDir,
-		planRemove: mcpinstall.PlanRemove,
+		configPath:    configPath,
+		defaultConfig: config.DefaultConfigPath,
+		ffc:           ffc,
+		env:           desktopEnv,
+		dirExists:     isDir,
+		planRemove:    mcpinstall.PlanRemove,
 	}
 }
 
@@ -148,8 +154,11 @@ func desktopEnv() (mcpinstall.Env, error) {
 }
 
 // server is the entry for req, run by the ffc binary at exe.
-func server(exe string, site string, readOnly bool) mcpinstall.Server {
+func server(exe, configArg, site string, readOnly bool) mcpinstall.Server {
 	args := []string{"mcp"}
+	if configArg != "" {
+		args = append(args, "--config", configArg)
+	}
 	if site != "" {
 		args = append(args, "--site", site)
 	}
@@ -157,6 +166,26 @@ func server(exe string, site string, readOnly bool) mcpinstall.Server {
 		args = append(args, "--read-only")
 	}
 	return mcpinstall.Server{Name: mcpinstall.DefaultName, Command: exe, Args: args}
+}
+
+// configArg is the --config value for the entries: the app's config path
+// when it is not the CLI's default (FFC_CONFIG), else "" so the server
+// follows the default, as "ffc mcp install" does.
+func (s *AssistantsService) configArg() string {
+	def, err := s.defaultConfig()
+	if err == nil && samePath(s.configPath, def) {
+		return ""
+	}
+	return s.configPath
+}
+
+// samePath compares two absolute paths, ignoring case on Windows.
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func (s *AssistantsService) siteNames() []string {
@@ -216,7 +245,7 @@ func (s *AssistantsService) status(id string, env mcpinstall.Env, ffc FFCInfo, s
 		}{n, true})
 	}
 	for i, c := range candidates {
-		ch, err := mcpinstall.Plan(id, server(exe, c.site, c.readOnly), env)
+		ch, err := mcpinstall.Plan(id, server(exe, s.configArg(), c.site, c.readOnly), env)
 		if err != nil {
 			a.Status, a.Error = StatusError, text.Sanitize(err.Error())
 			return a
@@ -272,7 +301,7 @@ func (s *AssistantsService) plan(req ConnectRequest) (*mcpinstall.Change, mcpins
 	if err != nil {
 		return nil, mcpinstall.Server{}, newError(CodeFailed, "Your user folders could not be found.", err)
 	}
-	srv := server(ffc.Path, req.Site, req.ReadOnly)
+	srv := server(ffc.Path, s.configArg(), req.Site, req.ReadOnly)
 	ch, err := mcpinstall.Plan(req.Client, srv, env)
 	if err != nil {
 		return nil, srv, newError(CodeFailed, "The assistant's settings file could not be read, so it was left as it is.", err)

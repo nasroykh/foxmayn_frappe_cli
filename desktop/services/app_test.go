@@ -220,3 +220,20 @@ func TestWSLDetect(t *testing.T) {
 		t.Errorf("macOS = %+v", info)
 	}
 }
+
+func TestConfigPathFromEnv(t *testing.T) {
+	def := func() (string, error) { return "/home/u/.config/ffc/config.yaml", nil }
+	got, err := configPathFrom(func(string) string { return "" }, def)
+	if err != nil || got != "/home/u/.config/ffc/config.yaml" {
+		t.Errorf("no env: %q, %v", got, err)
+	}
+	got, err = configPathFrom(func(k string) string {
+		if k == "FFC_CONFIG" {
+			return "work.yaml"
+		}
+		return ""
+	}, def)
+	if err != nil || !filepath.IsAbs(got) || filepath.Base(got) != "work.yaml" {
+		t.Errorf("FFC_CONFIG: %q, %v", got, err)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -79,6 +80,20 @@ func NewFFCLocator() *FFCLocator {
 // DefaultConfigPath is the config file the ffc CLI uses by default.
 func DefaultConfigPath() (string, error) {
 	return config.DefaultConfigPath()
+}
+
+// ConfigPath is the config file the app manages: $FFC_CONFIG (made
+// absolute) when set, as the CLI reads it, else the CLI's default. A macOS
+// app started from Finder does not see variables set in a shell profile.
+func ConfigPath() (string, error) {
+	return configPathFrom(os.Getenv, DefaultConfigPath)
+}
+
+func configPathFrom(getenv func(string) string, def func() (string, error)) (string, error) {
+	if v := strings.TrimSpace(getenv("FFC_CONFIG")); v != "" {
+		return filepath.Abs(v)
+	}
+	return def()
 }
 
 // Environment returns the app and ffc versions, the config path and the

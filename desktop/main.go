@@ -15,7 +15,7 @@ import (
 var assets embed.FS
 
 func main() {
-	configPath, err := services.DefaultConfigPath()
+	configPath, err := services.ConfigPath()
 	if err != nil {
 		log.Fatalf("finding the ffc config path: %v", err)
 	}

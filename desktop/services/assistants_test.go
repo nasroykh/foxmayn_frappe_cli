@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -47,6 +48,7 @@ func newAssistants(t *testing.T, ffcFound bool) (*AssistantsService, mcpinstall.
 	}
 	loc.version = func(string) (string, error) { return "v1.10.0", nil }
 	s := NewAssistantsService(cfgPath, loc)
+	s.defaultConfig = func() (string, error) { return cfgPath, nil }
 	s.env = func() (mcpinstall.Env, error) { return env, nil }
 	return s, env, ran
 }
@@ -296,5 +298,34 @@ func TestDisconnectClaudeCode(t *testing.T) {
 	}
 	if len(*ran) != 1 || (*ran)[0][0] != claude || strings.Join((*ran)[0][1:], " ") != "mcp remove --scope user frappe" {
 		t.Errorf("ran = %q", *ran)
+	}
+}
+
+// A config other than the CLI's default (FFC_CONFIG) goes into each entry as
+// --config, and an entry with it still reads as connected.
+func TestAssistantsPinNonDefaultConfig(t *testing.T) {
+	s, env, _ := newAssistants(t, true)
+	s.defaultConfig = func() (string, error) { return filepath.Join(env.Home, ".config", "ffc", "config.yaml"), nil }
+	if _, err := s.Connect(ConnectRequest{Client: mcpinstall.Cursor, Site: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(env.Home, ".cursor", "mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := json.Marshal([]string{"mcp", "--config", s.configPath, "--site", "prod"})
+	var got struct {
+		MCPServers map[string]struct {
+			Args []string `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := json.Marshal(got.MCPServers["frappe"].Args); string(g) != string(want) {
+		t.Errorf("args = %s, want %s", g, want)
+	}
+	if a := find(mustList(t, s), mcpinstall.Cursor); a.Status != StatusConnected || a.Site != "prod" {
+		t.Errorf("cursor = %+v", a)
 	}
 }

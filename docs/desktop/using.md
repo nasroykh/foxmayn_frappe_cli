@@ -85,7 +85,9 @@ The app finds an existing ffc on PATH or where the install scripts put it. To up
 | ffc helper | Installed version and path, **Install ffc** / **Install again**, **Look again**, **Open folder**. |
 | About | Version, **Check for updates**, **Source code**, **Report a problem**. |
 
-Number and date formats are CLI settings: `ffc config`. The app always uses `~/.config/ffc/config.yaml`; it does not read `FFC_CONFIG`.
+Number and date formats are CLI settings: `ffc config`.
+
+The app uses `~/.config/ffc/config.yaml`, or the file `FFC_CONFIG` names, as the CLI does. With another file, assistant connections get `--config <path>` so `ffc mcp` reads the same file. On macOS an app opened from Finder or the Dock does not see variables set in a shell profile: run `launchctl setenv FFC_CONFIG /path/to/config.yaml` (until the next login), or start the app from a terminal with `open -a "Foxmayn Frappe Desktop"`.
 
 ## Updates
 
