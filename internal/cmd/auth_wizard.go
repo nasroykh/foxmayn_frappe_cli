@@ -4,15 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/huh"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 )
 
 // errAborted is returned when the user cancels or declines a prompt. It is an
@@ -62,55 +61,6 @@ func confirmPrompt(title, description string) (bool, error) {
 
 // ─── Validation ──────────────────────────────────────────────────────────────
 
-// validateSiteName rejects names that would be awkward to pass as --site or
-// that could smuggle terminal escape sequences into later output.
-func validateSiteName(s string) error {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return errors.New("site name cannot be empty")
-	}
-	if !utf8.ValidString(s) {
-		return errors.New("site name must be valid UTF-8")
-	}
-	for _, r := range s {
-		switch {
-		case unicode.IsSpace(r):
-			return errors.New("site name must not contain whitespace")
-		case unicode.IsControl(r):
-			return errors.New("site name must not contain control characters")
-		}
-	}
-	return nil
-}
-
-// normalizeSiteURL turns user input into a site base URL: scheme://host[:port].
-// A bare host gets https://. Paths, queries and fragments are dropped because
-// every API call is built from the site root.
-func normalizeSiteURL(raw string) (string, error) {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return "", errors.New("URL cannot be empty")
-	}
-	if !strings.Contains(s, "://") {
-		s = "https://" + s
-	}
-	u, err := url.Parse(s)
-	if err != nil {
-		return "", fmt.Errorf("invalid URL: %w", err)
-	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return "", fmt.Errorf("unsupported URL scheme %q (use http or https)", u.Scheme)
-	}
-	if u.Hostname() == "" {
-		return "", errors.New("URL must include a host")
-	}
-	if u.User != nil {
-		return "", errors.New("URL must not contain credentials")
-	}
-	return scheme + "://" + u.Host, nil
-}
-
 func nonEmpty(what string) func(string) error {
 	return func(s string) error {
 		if strings.TrimSpace(s) == "" {
@@ -127,7 +77,7 @@ func siteNameInput(v *string) *huh.Input {
 		Title("Site name").
 		Description("A short identifier, e.g. dev or production").
 		Placeholder("dev").
-		Validate(validateSiteName).
+		Validate(sitesetup.ValidateName).
 		Value(v)
 }
 
@@ -137,23 +87,10 @@ func siteURLInput(v *string) *huh.Input {
 		Description("Base URL of your Frappe site (https:// added if you omit the scheme)").
 		Placeholder("mysite.example.com").
 		Validate(func(s string) error {
-			_, err := normalizeSiteURL(s)
+			_, err := sitesetup.NormalizeURL(s)
 			return err
 		}).
 		Value(v)
-}
-
-// siteNameAndURL validates and normalizes the values of the two shared inputs.
-func siteNameAndURL(name, rawURL string) (string, string, error) {
-	name = strings.TrimSpace(name)
-	if err := validateSiteName(name); err != nil {
-		return "", "", err
-	}
-	siteURL, err := normalizeSiteURL(rawURL)
-	if err != nil {
-		return "", "", err
-	}
-	return name, siteURL, nil
 }
 
 // checkNameOnce wraps a site-name check (e.g. "overwrite existing site?") so
@@ -233,7 +170,7 @@ func chooseAuthMethod(title string, oauth, apiKey, password bool) (string, error
 // (optional) runs once the name is known, before any credentials are verified
 // or the browser flow starts; returning an error stops the wizard. oauth is
 // the OAuth client given with --client-id (zero: register one or ask).
-func collectSite(ctx context.Context, method string, checkName func(string) error, oauth oauthApp) (string, config.SiteConfig, error) {
+func collectSite(ctx context.Context, method string, checkName func(string) error, oauth sitesetup.OAuthApp) (string, config.SiteConfig, error) {
 	switch method {
 	case authOAuth:
 		return collectOAuthSite(ctx, checkName, oauth)
@@ -270,7 +207,7 @@ func collectAPIKeySite(ctx context.Context, checkName func(string) error) (strin
 		if err != nil {
 			return "", config.SiteConfig{}, err
 		}
-		siteName, siteURL, err := siteNameAndURL(name, rawURL)
+		siteName, siteURL, err := sitesetup.NameAndURL(name, rawURL)
 		if err != nil {
 			return "", config.SiteConfig{}, err
 		}
@@ -286,7 +223,7 @@ func collectAPIKeySite(ctx context.Context, checkName func(string) error) (strin
 		var user string
 		var verifyErr error
 		if err := runSpinner("Verifying credentials...", func() {
-			user, verifyErr = verifyAPIKey(ctx, site)
+			user, verifyErr = sitesetup.Verify(ctx, site)
 		}); err != nil || ctx.Err() != nil {
 			return "", config.SiteConfig{}, errAborted
 		}
@@ -306,33 +243,6 @@ func collectAPIKeySite(ctx context.Context, checkName func(string) error) (strin
 			return siteName, site, nil
 		}
 	}
-}
-
-// verifyAPIKey checks the key/secret with an authenticated call (frappe.ping
-// is guest-accessible, so it would not prove the credentials work) and returns
-// the user they belong to.
-func verifyAPIKey(ctx context.Context, site config.SiteConfig) (string, error) {
-	c, err := client.New(ctx, &site)
-	if err != nil {
-		return "", err
-	}
-	msg, err := c.CallMethod(ctx, "frappe.auth.get_logged_user", nil, true)
-	if err != nil {
-		return "", fmt.Errorf("verifying API key: %w", err)
-	}
-	user, _ := msg.(string)
-	return user, nil
-}
-
-// verifyPassword proves the username and password by logging in. The check
-// only proves the password, so its session is ended again.
-func verifyPassword(ctx context.Context, site config.SiteConfig) error {
-	sid, err := client.LoginPassword(ctx, site.URL, site.Username, site.Password)
-	if err != nil {
-		return err
-	}
-	_ = client.Logout(ctx, site.URL, sid)
-	return nil
 }
 
 // ─── Username / password ─────────────────────────────────────────────────────
@@ -364,7 +274,7 @@ func collectPasswordSite(ctx context.Context, checkName func(string) error) (str
 		if err != nil {
 			return "", config.SiteConfig{}, err
 		}
-		siteName, siteURL, err := siteNameAndURL(name, rawURL)
+		siteName, siteURL, err := sitesetup.NameAndURL(name, rawURL)
 		if err != nil {
 			return "", config.SiteConfig{}, err
 		}
@@ -376,7 +286,7 @@ func collectPasswordSite(ctx context.Context, checkName func(string) error) (str
 
 		var loginErr error
 		if err := runSpinner("Verifying credentials...", func() {
-			loginErr = verifyPassword(ctx, site)
+			_, loginErr = sitesetup.Verify(ctx, site)
 		}); err != nil || ctx.Err() != nil {
 			return "", config.SiteConfig{}, errAborted
 		}
@@ -399,30 +309,6 @@ func collectPasswordSite(ctx context.Context, checkName func(string) error) (str
 }
 
 // ─── Persisting ──────────────────────────────────────────────────────────────
-
-// writeInitConfig replaces the config at path with one holding only this site.
-func writeInitConfig(path, name string, site config.SiteConfig) error {
-	err := config.Overwrite(path, func(f *config.File) error {
-		f.Set("default_site", name)
-		return f.PutSite(name, site)
-	})
-	if err == nil {
-		dropSiteCache(name) // a cache under this name belongs to an earlier site
-	}
-	return err
-}
-
-// addSiteToConfig adds or replaces one site, keeping the rest of the file.
-// A replaced site's cache (another login, maybe another server) is dropped.
-func addSiteToConfig(path, name string, site config.SiteConfig) error {
-	err := config.Edit(path, func(f *config.File) error {
-		return f.PutSite(name, site)
-	})
-	if err == nil {
-		dropSiteCache(name)
-	}
-	return err
-}
 
 // printSiteSaved prints the post-write hints shared by init and site add.
 func printSiteSaved(name string, site config.SiteConfig) {

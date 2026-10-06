@@ -132,7 +132,7 @@ func TestSiteCommandsDropTheCache(t *testing.T) {
 	gone("site remove", root)
 
 	root = fill("again")
-	if err := addSiteToConfig(cfgPath, "again", config.SiteConfig{URL: s.URL, APIKey: "k2", APISecret: "s2"}); err != nil {
+	if err := siteStore(cfgPath).Add("again", config.SiteConfig{URL: s.URL, APIKey: "k2", APISecret: "s2"}); err != nil {
 		t.Fatal(err)
 	}
 	gone("site add", root)

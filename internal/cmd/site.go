@@ -5,10 +5,12 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +25,10 @@ var (
 	srYes bool
 	seURL string
 )
+
+// revokeTimeout bounds the revocation in site remove. It runs before the
+// config lock is taken, and removal never waits longer than this for it.
+var revokeTimeout = 10 * time.Second
 
 // ─── ffc site ────────────────────────────────────────────────────────────────
 
@@ -161,7 +167,7 @@ Examples:
 			if site, err = finishSetup(cmd.Context(), site, saOAuth, oauthClient); err != nil {
 				return err
 			}
-			if err := addSiteToConfig(cfgPath, name, site); err != nil {
+			if err := siteStore(cfgPath).Add(name, site); err != nil {
 				return fmt.Errorf("saving site: %w", err)
 			}
 			fmt.Fprintf(os.Stderr, "\n✓ Site %q added to %s\n", name, cfgPath)
@@ -193,7 +199,7 @@ Examples:
 		if err != nil {
 			return err
 		}
-		if err := addSiteToConfig(cfgPath, name, site); err != nil {
+		if err := siteStore(cfgPath).Add(name, site); err != nil {
 			return fmt.Errorf("saving site: %w", err)
 		}
 
@@ -248,26 +254,17 @@ Examples:
 		var revokeErr error
 		if site := cfg.Sites[name]; site.RefreshToken != "" || site.AccessToken != "" {
 			if err := runSpinner("Revoking the OAuth token...", func() {
-				revoked, revokeErr = revokeSiteToken(cmd.Context(), site)
+				revoked, revokeErr = sitesetup.RevokeToken(cmd.Context(), site, revokeTimeout)
 			}); err != nil || cmd.Context().Err() != nil {
 				return errAborted
 			}
 		}
 
-		var wasDefault bool
-		var newDefault string
-		if err := config.Edit(cfgPath, func(f *config.File) error {
-			wasDefault = f.Get("default_site") == name
-			if err := f.RemoveSite(name); err != nil {
-				return err
-			}
-			newDefault = f.Get("default_site")
-			return nil
-		}); err != nil {
+		removed, err := siteStore(cfgPath).Remove(name)
+		if err != nil {
 			return err
 		}
 
-		dropSiteCache(name)
 		fmt.Fprintf(os.Stderr, "✓ Site %q removed.\n", name)
 		switch {
 		case revokeErr != nil:
@@ -277,9 +274,9 @@ Examples:
 			fmt.Fprintln(os.Stderr, "  Its current OAuth token was revoked on the server; refresh tokens issued earlier"+
 				" for this login stay valid until an administrator revokes them.")
 		}
-		if wasDefault {
-			if newDefault != "" {
-				fmt.Fprintf(os.Stderr, "  It was your default site — default is now %q.\n", newDefault)
+		if removed.WasDefault {
+			if removed.NewDefault != "" {
+				fmt.Fprintf(os.Stderr, "  It was your default site — default is now %q.\n", removed.NewDefault)
 			} else {
 				fmt.Fprintln(os.Stderr, "  It was your default site; no sites remain.")
 			}
@@ -302,22 +299,16 @@ Examples:
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		oldName, newName := args[0], strings.TrimSpace(args[1])
-		if err := validateSiteName(newName); err != nil {
+		if err := sitesetup.ValidateName(newName); err != nil {
 			return &usageError{err}
 		}
 		cfgPath, err := resolveCfgPath()
 		if err != nil {
 			return err
 		}
-		if err := config.Edit(cfgPath, func(f *config.File) error {
-			return f.RenameSite(oldName, newName)
-		}); err != nil {
+		if err := siteStore(cfgPath).Rename(oldName, newName); err != nil {
 			return err
 		}
-		// The old name's cache is gone with it; a cache left under the new
-		// name by an earlier site of that name is not this site's.
-		dropSiteCache(oldName)
-		dropSiteCache(newName)
 		fmt.Fprintf(os.Stderr, "✓ Site %q renamed to %q.\n", oldName, newName)
 		return nil
 	},
@@ -340,7 +331,7 @@ Examples:
 		if !cmd.Flags().Changed("url") {
 			return usageErrorf("nothing to change: pass --url")
 		}
-		newURL, err := normalizeSiteURL(seURL)
+		newURL, err := sitesetup.NormalizeURL(seURL)
 		if err != nil {
 			return &usageError{err}
 		}
@@ -365,12 +356,9 @@ Examples:
 		if err := verifySite(cmd.Context(), site); err != nil {
 			return err
 		}
-		if err := config.Edit(cfgPath, func(f *config.File) error {
-			return f.SetSiteURL(name, newURL)
-		}); err != nil {
+		if err := siteStore(cfgPath).SetURL(name, newURL); err != nil {
 			return err
 		}
-		dropSiteCache(name) // another server: its lists and schemas differ
 		fmt.Fprintf(os.Stderr, "✓ Site %q now points at %s.\n", name, newURL)
 		return nil
 	},
@@ -395,7 +383,7 @@ var siteUseCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := setConfigValues(cfgPath, []configValue{{"default_site", name}}); err != nil {
+		if err := siteStore(cfgPath).SetDefault(name); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "✓ Default site set to %q.\n", name)
@@ -404,6 +392,12 @@ var siteUseCmd = &cobra.Command{
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
+
+// siteStore writes sites to the config at path and drops the local cache of
+// a site whose entry changed.
+func siteStore(path string) sitesetup.Store {
+	return sitesetup.Store{Path: path, DropCache: dropSiteCache}
+}
 
 // siteArg returns the site named in args (which must exist) or, without an
 // argument, lets the user pick one.

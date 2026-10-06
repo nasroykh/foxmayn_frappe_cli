@@ -104,7 +104,7 @@ Examples:
 				return err
 			}
 		}
-		if err := writeInitConfig(cfgPath, name, site); err != nil {
+		if err := siteStore(cfgPath).Init(name, site); err != nil {
 			return err
 		}
 

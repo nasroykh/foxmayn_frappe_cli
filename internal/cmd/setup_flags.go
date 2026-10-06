@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 	"github.com/spf13/cobra"
 )
 
@@ -43,22 +44,22 @@ func (s *setupFlags) active() bool {
 }
 
 // oauthClient returns the OAuth client given with --client-id (its secret
-// from $FFC_OAUTH_CLIENT_SECRET), or the zero oauthApp. --client-id without
-// --oauth is a usage error. With --oauth but no --client-id the secret is
+// from $FFC_OAUTH_CLIENT_SECRET), or the zero sitesetup.OAuthApp.
+// --client-id without --oauth is a usage error. With --oauth but no --client-id the secret is
 // ignored (a registered or prompted client brings its own), which is said
 // on stderr.
-func (s *setupFlags) oauthClient(oauth bool) (oauthApp, error) {
+func (s *setupFlags) oauthClient(oauth bool) (sitesetup.OAuthApp, error) {
 	id := strings.TrimSpace(s.clientID)
 	if id == "" {
 		if oauth && strings.TrimSpace(os.Getenv("FFC_OAUTH_CLIENT_SECRET")) != "" {
 			fmt.Fprintln(os.Stderr, "warning: FFC_OAUTH_CLIENT_SECRET is ignored without --client-id")
 		}
-		return oauthApp{}, nil
+		return sitesetup.OAuthApp{}, nil
 	}
 	if !oauth {
-		return oauthApp{}, usageErrorf("--client-id needs --oauth")
+		return sitesetup.OAuthApp{}, usageErrorf("--client-id needs --oauth")
 	}
-	return oauthApp{ID: id, Secret: strings.TrimSpace(os.Getenv("FFC_OAUTH_CLIENT_SECRET"))}, nil
+	return sitesetup.OAuthApp{ID: id, Secret: strings.TrimSpace(os.Getenv("FFC_OAUTH_CLIENT_SECRET"))}, nil
 }
 
 // resolve validates the flags and returns the normalised site. It reads the
@@ -74,7 +75,7 @@ func (s *setupFlags) resolve(oauth, apikey, passwordFlag bool) (string, config.S
 	case oauth && s.url == "":
 		return "", config.SiteConfig{}, usageErrorf("missing --url")
 	case oauth:
-		name, siteURL, err := siteNameAndURL(s.name, s.url)
+		name, siteURL, err := sitesetup.NameAndURL(s.name, s.url)
 		if err != nil {
 			return "", config.SiteConfig{}, &usageError{err}
 		}
@@ -97,7 +98,7 @@ func (s *setupFlags) resolve(oauth, apikey, passwordFlag bool) (string, config.S
 		return "", config.SiteConfig{}, usageErrorf("missing credentials: pass --api-key (secret via --api-secret-stdin or $FFC_API_SECRET) or --username (password via --password-stdin or $FFC_PASSWORD)")
 	}
 
-	name, siteURL, err := siteNameAndURL(s.name, s.url)
+	name, siteURL, err := sitesetup.NameAndURL(s.name, s.url)
 	if err != nil {
 		return "", config.SiteConfig{}, &usageError{err}
 	}
@@ -154,32 +155,28 @@ func readSecret(fromStdin bool, env, flagName string) (string, error) {
 
 // finishSetup completes a site from resolve: the OAuth browser login
 // (oauth), or the same credential check as the wizard.
-func finishSetup(ctx context.Context, site config.SiteConfig, oauth bool, app oauthApp) (config.SiteConfig, error) {
+func finishSetup(ctx context.Context, site config.SiteConfig, oauth bool, app sitesetup.OAuthApp) (config.SiteConfig, error) {
 	if oauth {
 		return collectOAuthSiteNoInput(ctx, site.URL, app)
 	}
 	return site, verifySite(ctx, site)
 }
 
-// verifySite checks the credentials of site against its URL: the same calls
-// the wizard makes (an authenticated call for key/token, a login plus logout
-// for a password).
+// verifySite checks the credentials of site against its URL under a
+// spinner: the same check as the wizard (sitesetup.Verify).
 func verifySite(ctx context.Context, site config.SiteConfig) error {
 	var verifyErr error
 	err := runSpinner("Verifying credentials...", func() {
-		if site.IsOAuth() || site.APIKey != "" && site.APISecret != "" {
-			_, verifyErr = verifyAPIKey(ctx, site)
-		} else if site.IsSessionAuth() {
-			verifyErr = verifyPassword(ctx, site)
-		} else {
-			verifyErr = usageErrorf("site has no credentials to verify")
-		}
+		_, verifyErr = sitesetup.Verify(ctx, site)
 	})
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	if err != nil {
 		return errAborted
+	}
+	if errors.Is(verifyErr, sitesetup.ErrNoCredentials) {
+		return &usageError{verifyErr}
 	}
 	return verifyErr
 }

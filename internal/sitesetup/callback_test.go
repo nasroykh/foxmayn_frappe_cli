@@ -1,4 +1,4 @@
-package cmd
+package sitesetup
 
 import (
 	"context"
@@ -64,7 +64,7 @@ func TestCallbackServerRejectsStateMismatch(t *testing.T) {
 	if got := getStatus(t, callbackURL(cs, url.Values{"code": {"good"}, "state": {cs.state}})); got != http.StatusOK {
 		t.Errorf("valid callback: status %d, want 200", got)
 	}
-	code, err := cs.wait(context.Background())
+	code, err := cs.wait(context.Background(), defaultCallbackTimeout)
 	if err != nil || code != "good" {
 		t.Fatalf("wait = (%q, %v), want (good, nil)", code, err)
 	}
@@ -110,7 +110,7 @@ func TestCallbackServerDuplicateCallbacksDoNotHang(t *testing.T) {
 	}
 
 	start := time.Now()
-	code, err := cs.wait(context.Background())
+	code, err := cs.wait(context.Background(), defaultCallbackTimeout)
 	if err != nil || !strings.HasPrefix(code, "c") {
 		t.Fatalf("wait = (%q, %v)", code, err)
 	}
@@ -128,7 +128,7 @@ func TestCallbackServerErrorAndCancel(t *testing.T) {
 	if got := getStatus(t, callbackURL(cs, q)); got != http.StatusBadRequest {
 		t.Errorf("error callback: status %d, want 400", got)
 	}
-	if _, err := cs.wait(context.Background()); err == nil || !strings.Contains(err.Error(), "access_denied") {
+	if _, err := cs.wait(context.Background(), defaultCallbackTimeout); err == nil || !strings.Contains(err.Error(), "access_denied") {
 		t.Errorf("wait err = %v, want authorization denied", err)
 	}
 
@@ -138,22 +138,18 @@ func TestCallbackServerErrorAndCancel(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := cs2.wait(ctx); !errors.Is(err, errAborted) {
-		t.Errorf("cancelled wait err = %v, want errAborted", err)
+	if _, err := cs2.wait(ctx, defaultCallbackTimeout); !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled wait err = %v, want context.Canceled", err)
 	}
 	cs2.close() // second close must be a no-op
 }
 
 func TestCallbackServerTimeout(t *testing.T) {
-	old := oauthCallbackTimeout
-	oauthCallbackTimeout = 50 * time.Millisecond
-	defer func() { oauthCallbackTimeout = old }()
-
 	cs, err := startCallbackServer()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cs.wait(context.Background()); err == nil || !strings.Contains(err.Error(), "timed out") {
+	if _, err := cs.wait(context.Background(), 50*time.Millisecond); err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("wait err = %v, want timeout", err)
 	}
 }

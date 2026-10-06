@@ -34,12 +34,11 @@ cmd/ffc/main.go               → calls cmd.Execute()
 internal/cmd/root.go          → root cobra command, global flags (--site, --config, --json, --quiet, --timeout)
 internal/cmd/site_client.go   → loadSite = loadSiteConfig (no network) + refreshSite (OAuth refresh under the config lock), newClient — the ONLY way a command/MCP tool gets a site client
 internal/cmd/helpers.go       → callSite[T] (client + spinner), runSpinner, confirm, readInput ("-" = stdin), parseObject, splitCSV, filterKeys/selectKeys, listLimit, docName, validateFiltersJSON
-internal/cmd/auth_wizard.go   → shared auth wizard (API key / password / OAuth) for init and site add; runForm (Esc/Ctrl+C → errAborted), validateSiteName, normalizeSiteURL, writeInitConfig, addSiteToConfig
+internal/cmd/auth_wizard.go   → shared auth wizard (API key / password / OAuth) for init and site add; runForm (Esc/Ctrl+C → errAborted)
 internal/cmd/init.go          → init subcommand (--oauth / --apikey / --password)
-internal/cmd/oauth_flow.go    → OAuth PKCE: callbackServer (127.0.0.1, single-use), collectOAuthSite, collectOAuthSiteNoInput, oauthLogin
-internal/cmd/oauth_setup.go   → prompt-free OAuth client choice (resolveOAuthApp: --client-id, RFC 7591 registration, fallback)
-internal/cmd/oauth_revoke.go  → revokeSiteToken (site remove; best effort, revokeTimeout)
-internal/cmd/site.go          → site list / add / remove / use
+internal/cmd/oauth_wizard.go  → OAuth prompts/spinners/messages: collectOAuthSite, collectOAuthSiteNoInput, oauthLogin (sitesetup.LoginHooks)
+internal/cmd/site.go          → site list / add / remove / rename / edit / use; siteStore, revokeTimeout
+internal/sitesetup/           → prompt-free site setup: ValidateName, NormalizeURL, Verify, ResolveOAuthApp, OAuthFlow (callback server, PKCE, Login), Store (config writes), RevokeToken
 internal/cmd/config_cmd.go    → config TUI, config get, config set; escQuitKeyMap, resolveCfgPath
 internal/cmd/ping.go          → ping subcommand (also names the user)
 internal/cmd/whoami.go        → whoami subcommand, buildWhoami (shared with the MCP tool), authMethod
@@ -343,13 +342,13 @@ if errors.Is(err, huh.ErrUserAborted) {
 
 `escQuitKeyMap()` is defined in `config_cmd.go` and is available to all files in the `cmd` package — call it directly from any command file.
 
-## Auth Wizard and OAuth (auth_wizard.go, oauth_flow.go)
+## Auth Wizard and OAuth (auth_wizard.go, oauth_wizard.go, internal/sitesetup)
 
-`init` and `site add` share one wizard: `chooseAuthMethod` → `collectSite` → `collectAPIKeySite` / `collectPasswordSite` / `collectOAuthSite`. API keys and passwords are verified against the site before saving. Persist with `writeInitConfig` (`config.Overwrite`) or `addSiteToConfig` (`config.Edit`) — never write the file another way.
+`init` and `site add` share one wizard: `chooseAuthMethod` → `collectSite` → `collectAPIKeySite` / `collectPasswordSite` / `collectOAuthSite`. API keys and passwords are verified against the site before saving. Persist with `siteStore(path).Init` (`config.Overwrite`) or `.Add`/`.Rename`/`.SetURL`/`.Remove`/`.SetDefault` (`config.Edit`; `sitesetup.Store`, which drops the site cache through `DropCache`) — never write the file another way. The logic lives in `internal/sitesetup` (no huh or cobra, never prompts or exits; `internal/client` may still warn on stderr: plain-HTTP warning, `--debug` trace); `internal/cmd` keeps the forms, spinners, messages and error classes.
 
-OAuth PKCE: the `callbackServer` binds `127.0.0.1` (redirect URI `http://127.0.0.1:<port>/callback`, not `localhost`) before the form opens, accepts exactly one result, answers duplicates with 409 and is always closed on abort.
+OAuth PKCE: the `callbackServer` (`sitesetup.StartOAuthFlow`) binds `127.0.0.1` (redirect URI `http://127.0.0.1:<port>/callback`, not `localhost`) before the form opens, accepts exactly one result, answers duplicates with 409 and is always closed on abort.
 
-OAuth client (oauth_setup.go and oauth_revoke.go, prompt-free): `resolveOAuthApp` takes `--client-id` as is; otherwise it reads `/.well-known/oauth-authorization-server` and, when it has `registration_endpoint` (Frappe v16 with dynamic client registration on), registers one public client (`token_endpoint_auth_method: none`, exactly this run's redirect URI, scope `openid all`, grant types authorization_code + refresh_token) and never twice per run. Anything else is a `*noRegistrationError`: the wizard prints why and prompts for a client ID (`promptOAuthApp`); the non-interactive setup (`--oauth --name --url`, `collectOAuthSiteNoInput`) turns it into a usage error naming `--client-id` (`noInputOAuthError`; a failed registration keeps its own exit code). `site remove` calls `revokeSiteToken` (refresh token, `client_id` in the form, no Authorization, `revokeTimeout` 10 s) before the config lock and only warns on failure. Frappe details and file:line in CLAUDE.md (T3.7). `IsOAuth()` is true only if `AccessToken != ""`; `IsSessionAuth()` needs both `Username` and `Password`. `client.LoginPassword` does not support Frappe 2FA. Do not persist a `sid` to config.
+OAuth client (sitesetup/oauth_client.go and revoke.go, prompt-free): `sitesetup.ResolveOAuthApp` takes `--client-id` as is; otherwise it reads `/.well-known/oauth-authorization-server` and, when it has `registration_endpoint` (Frappe v16 with dynamic client registration on), registers one public client (`token_endpoint_auth_method: none`, exactly this run's redirect URI, scope `openid all`, grant types authorization_code + refresh_token) and never twice per run. Anything else is a `*sitesetup.NoRegistrationError`: the wizard prints why and prompts for a client ID (`promptOAuthApp`); the non-interactive setup (`--oauth --name --url`, `collectOAuthSiteNoInput`) turns it into a usage error naming `--client-id` (`noInputOAuthError`; a failed registration keeps its own exit code). `site remove` calls `sitesetup.RevokeToken` (refresh token, `client_id` in the form, no Authorization, `revokeTimeout` 10 s) before the config lock and only warns on failure. Frappe details and file:line in CLAUDE.md (T3.7). `IsOAuth()` is true only if `AccessToken != ""`; `IsSessionAuth()` needs both `Username` and `Password`. `client.LoginPassword` does not support Frappe 2FA. Do not persist a `sid` to config.
 
 ## MCP Server Pattern
 

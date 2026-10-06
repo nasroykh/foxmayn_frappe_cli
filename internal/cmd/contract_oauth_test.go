@@ -15,6 +15,7 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 )
 
 // contractOAuthApp is the app_name of the fixture OAuth Client; teardown
@@ -235,7 +236,7 @@ func TestContractOAuthRegistration(t *testing.T) {
 	t.Cleanup(func() { teardownContractOAuth(t, admin) })
 
 	const redirect = "http://127.0.0.1:53682/callback"
-	req := oauthClientMetadata(redirect)
+	req := sitesetup.ClientMetadata(redirect)
 	req.ClientName = contractOAuthApp // so teardown removes it
 	reg, err := client.RegisterOAuthClient(ctx, sc.URL, md.RegistrationEndpoint, req)
 	if err != nil {
@@ -248,7 +249,7 @@ func TestContractOAuthRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("registered client: %v", err)
 	}
-	if doc["redirect_uris"] != redirect || doc["default_redirect_uri"] != redirect || doc["scopes"] != oauthScope ||
+	if doc["redirect_uris"] != redirect || doc["default_redirect_uri"] != redirect || doc["scopes"] != sitesetup.OAuthScope ||
 		doc["token_endpoint_auth_method"] != "None" || fmt.Sprint(doc["skip_authorization"]) != "0" {
 		t.Errorf("registered client = redirect %v / %v, scopes %v, auth %v, skip %v", doc["redirect_uris"],
 			doc["default_redirect_uri"], doc["scopes"], doc["token_endpoint_auth_method"], doc["skip_authorization"])

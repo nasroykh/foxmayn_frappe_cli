@@ -857,10 +857,8 @@ foxmayn_frappe_cli/
 │   │   ├── helpers.go        # callSite, spinner, confirm, input parsing
 │   │   ├── auth_wizard.go    # Shared API key / password / OAuth wizard for init and site add
 │   │   ├── init.go           # init
-│   │   ├── oauth_flow.go     # OAuth PKCE callback server and flow
-│   │   ├── oauth_setup.go    # OAuth client choice (registration, fallback), no prompts
-│   │   ├── oauth_revoke.go   # token revocation for site remove
-│   │   ├── site.go           # site list/add/remove/use
+│   │   ├── oauth_wizard.go   # OAuth prompts, spinners and messages around internal/sitesetup
+│   │   ├── site.go           # site list/add/remove/rename/edit/use
 │   │   ├── config_cmd.go     # Interactive settings menu, config get/set
 │   │   ├── whoami.go, can.go, doctor.go, server_cache.go  # identity, permissions, health; version cache
 │   │   ├── meta_cache.go, cache_cmd.go, completion.go  # DocType/report/schema cache, ffc cache, shell completion
@@ -889,6 +887,8 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_daemon.go     # detached server, status/stop, state file
 │   │   ├── mcp_install.go    # mcp install: flags, diff, confirmation (logic in internal/mcpinstall)
 │   │   └── mcp_detach_unix.go / mcp_detach_windows.go  # platform process handling
+│   ├── sitesetup/            # Prompt-free site setup: name/URL checks, credential check, OAuth flow
+│   │                         # (callback server, client registration, PKCE), config writes, token revocation
 │   ├── client/
 │   │   ├── http.go           # Transport policy: timeout, body cap, redirects, retries
 │   │   ├── client.go         # Frappe REST API client (Bearer, token and session auth)
