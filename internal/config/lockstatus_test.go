@@ -41,7 +41,12 @@ func TestLockStatus(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skip("symlinks unavailable")
 	}
-	if l := LockStatus(link); l.Path != target+".lock" {
-		t.Errorf("symlink: lock path %s, want %s", l.Path, target+".lock")
+	// Resolving also expands Windows 8.3 short names, so compare resolved paths.
+	real, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := LockStatus(link); l.Path != real+".lock" {
+		t.Errorf("symlink: lock path %s, want %s", l.Path, real+".lock")
 	}
 }

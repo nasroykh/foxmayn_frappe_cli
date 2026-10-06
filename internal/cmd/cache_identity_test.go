@@ -63,7 +63,9 @@ func TestCacheIsPerCredential(t *testing.T) {
 // named by its URL (password hidden), not by an empty name.
 func TestCacheCommandsEnvOnlySite(t *testing.T) {
 	cacheTEnv(t)
-	t.Setenv("HOME", t.TempDir()) // no config file at the default path
+	home := t.TempDir() // no config file at the default path
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	s := complTSite(t)
 	url := strings.Replace(s.URL, "http://", "http://u:hunter2@", 1)

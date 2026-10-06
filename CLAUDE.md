@@ -61,7 +61,7 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 **Key files:**
 - `.goreleaser.yaml` — build matrix, archive naming, checksum config
 - `.github/workflows/release.yml` — triggers on `v*` tags; runs `go mod tidy -diff`, vet and tests, then GoReleaser and a build-provenance attestation. Actions are pinned to commit SHAs.
-- `.github/workflows/ci.yml` — gofmt, tidy check, vet, race tests, staticcheck, govulncheck and a cross-build on every push/PR
+- `.github/workflows/ci.yml` — gofmt, tidy check, vet, race tests, staticcheck, govulncheck, vet and tests on windows-latest (no -race), and a cross-build on every push/PR
 - `install.sh` — Linux/macOS: detects OS/arch, downloads tarball, verifies SHA256, installs to `/usr/local/bin` or `~/.local/bin`
 - `install.ps1` — Windows: detects arch, downloads zip, verifies SHA256, installs to `%LOCALAPPDATA%\Programs\ffc`, adds to user PATH
 

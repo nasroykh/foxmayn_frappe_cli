@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -171,7 +172,7 @@ func TestDownloadCommand(t *testing.T) {
 	if r.Code != 0 || !bytes.Equal(got, content) {
 		t.Fatalf("exit %d %s; got %q", r.Code, r.Stderr, got)
 	}
-	if fi, _ := os.Stat(out); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(out); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("private file saved %v", fi.Mode().Perm())
 	}
 	// An existing file is kept without --force, replaced with it.
