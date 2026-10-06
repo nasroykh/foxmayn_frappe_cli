@@ -768,6 +768,8 @@ Available MCP tools (38): `list_sites`, `ping`, `whoami`, `check_permission`, `g
 
 Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`), except rows: `list_docs` then returns the rows that fit as `{"data": [...], "truncated": true, "next_start": N, "hint": "..."}` (call again with `start: N` for the rest; a list that fits is still a plain array), and `run_report` drops rows from the end and adds `truncated`, `total_rows` and a `hint` saying how many were dropped. Tools whose result can be large tell the client the cap (`_meta` `anthropic/maxResultSizeChars`), so Claude Code does not cut the JSON. `run_report` returns at most 500 rows unless `limit` is given; bulk tools take at most 200 items per call.
 
+The read tools among them also take `jq`, a jq filter the server runs on the result before returning it (`"[.[] | {name, status}]"`, `".data | length"`). The output is JSON: one output as is, none or several as an array, under the same 512 KiB cap. The filter runs in a separate process that sees only the result (no environment, no input, no modules) and is stopped after 5 s or 256 MiB, so a runaway query cannot take the server down. `list_docs` and `run_report` take `response_format`: `concise` (default) is the answer they always gave; `detailed` returns every field (`list_docs` without `fields`) or the report as Frappe returns it. For clients on protocol 2026-07-28, the tool, prompt and resource lists carry a one-hour private cache hint (they are fixed while the server runs); resource reads always revalidate.
+
 **Example Claude Desktop config:**
 ```json
 {

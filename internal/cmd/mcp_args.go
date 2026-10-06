@@ -68,6 +68,9 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 		return mcp.NewToolResultError(err.Error())
 	}
 	if siteless[req.Params.Name] {
+		if _, err := jqArg(req); err != nil {
+			return fail(auditInvalid, err)
+		}
 		return env.runSiteless(ctx, req, parse, rec)
 	}
 	// The site is read first only so every audit line names it; a bad
@@ -83,6 +86,10 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 	call, err := parse(req)
 	if err == nil {
 		err = nameErr
+	}
+	var jq string
+	if err == nil {
+		jq, err = jqArg(req)
 	}
 	if err != nil {
 		return fail(auditInvalid, err)
@@ -116,7 +123,17 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 	if err != nil {
 		return fail(auditError, err)
 	}
-	res := toolResult(out)
+	var res *mcp.CallToolResult
+	if jq != "" {
+		// The read succeeded; only the filter can fail now.
+		raw, err := runJQ(ctx, jq, out)
+		if err != nil {
+			return fail(auditError, err)
+		}
+		res = marshalResult(raw)
+	} else {
+		res = toolResult(out)
+	}
 	rec.Status = auditOK
 	if res.IsError {
 		rec.Status = auditError // the result was too large to return

@@ -149,7 +149,7 @@ func assignUsers(ctx context.Context, c *client.FrappeClient, doctype, name stri
 			return nil, err
 		}
 	}
-	return map[string]interface{}{"doctype": doctype, "name": name, "assigned": added, "already_assigned": already, "assignees": after}, nil
+	return map[string]interface{}{"doctype": doctype, "name": name, "assigned": stored(after, added), "already_assigned": stored(before, already), "assignees": after}, nil
 }
 
 // unassignUsers cancels the assignments of users; users who are not
@@ -165,7 +165,7 @@ func unassignUsers(ctx context.Context, c *client.FrappeClient, doctype, name st
 			missing = append(missing, u)
 			continue
 		}
-		if err := c.Unassign(ctx, doctype, name, u); err != nil {
+		if err := c.Unassign(ctx, doctype, name, stored(before, []string{u})[0]); err != nil {
 			return nil, err
 		}
 		removed = append(removed, u)
@@ -176,7 +176,24 @@ func unassignUsers(ctx context.Context, c *client.FrappeClient, doctype, name st
 			return nil, err
 		}
 	}
-	return map[string]interface{}{"doctype": doctype, "name": name, "unassigned": removed, "not_assigned": missing, "assignees": after}, nil
+	return map[string]interface{}{"doctype": doctype, "name": name, "unassigned": stored(before, removed), "not_assigned": missing, "assignees": after}, nil
+}
+
+// stored replaces each user ID with the spelling the site stores in ids
+// (User IDs compare case-insensitively), so results name the same users
+// as assignees.
+func stored(ids, users []string) []string {
+	out := make([]string, len(users))
+	for i, u := range users {
+		out[i] = u
+		for _, id := range ids {
+			if strings.EqualFold(id, u) {
+				out[i] = id
+				break
+			}
+		}
+	}
+	return out
 }
 
 // tagDoc adds tags; one the document has (same case, as Frappe compares)

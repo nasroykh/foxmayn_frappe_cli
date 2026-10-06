@@ -76,7 +76,8 @@ internal/cmd/update.go            → update subcommand: size-limited download, 
 internal/cmd/update_check.go      → background update check; owns rootCmd.PersistentPreRunE + state file
 internal/cmd/mcp.go               → mcp subcommand: stdio/HTTP/detach routing, --detach/--port/--read-only + policy flags, newMCPEnv, startMCP
 internal/cmd/mcp_policy.go        → per-site MCP policy: toolActions, toolSurface (tool set, title, large-result hint), scopeOf, mcpPolicy.check, sensitive DocTypes, denied methods
-internal/cmd/mcp_surface.go       → --toolsets, describeTools (titles, _meta), mcpInstructions, resources (served by the tool handlers), prompts, notifyProgress, fitListRows/fitReportRows
+internal/cmd/mcp_jq.go            → jq parameter of the big read tools (jqArg, runJQ in a child process: jqChild, 5 s / 256 MiB), response_format (detailedArg)
+internal/cmd/mcp_surface.go       → --toolsets, describeTools (titles, _meta, jq), mcpServerOptions (cache hints), mcpInstructions, resources (served by the tool handlers), prompts, notifyProgress, fitListRows/fitReportRows
 internal/cmd/mcp_audit.go         → MCP audit log mcp-audit.jsonl (0600, rotated at 10 MiB)
 internal/cmd/mcp_sites.go         → multi-site MCP: mcpSites, siteFor, list_sites, addSiteParam
 internal/cmd/mcp_confirm.go       → confirmation through MCP elicitation: needsConfirm, mcpPolicy.confirm, HMAC request state
