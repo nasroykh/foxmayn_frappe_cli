@@ -128,7 +128,7 @@ func TestFakeOAuthRevoke(t *testing.T) {
 	const revoke = "/api/method/frappe.integrations.oauth2.revoke_token"
 	rev := func(v url.Values) resp { return fkDo(t, s, "POST", revoke, v.Encode(), form) }
 
-	if r := rev(url.Values{"client_id": {"nope"}, "token": {frappetest.RefreshToken}, "token_type_hint": {"refresh_token"}}); r.Status != 404 {
+	if r := rev(url.Values{"client_id": {"nope"}, "token": {frappetest.RefreshToken}, "token_type_hint": {"refresh_token"}}); r.Status != 403 || r.Body["exc_type"] != "PermissionError" {
 		t.Fatalf("unknown client: %d %s", r.Status, r.Raw)
 	}
 	if r := rev(url.Values{"client_id": {frappetest.OAuthClientID}}); r.Status != 400 {
@@ -158,5 +158,24 @@ func TestFakeOAuthRevoke(t *testing.T) {
 	}
 	if n := len(s.Revoked()); n != 1 {
 		t.Errorf("revoked %d tokens, want 1", n)
+	}
+
+	// Revoking by the access token marks the same record Revoked
+	// (oauth.py:273, the record is named by its access token), so its
+	// refresh token is refused like a revoked one.
+	code := url.Values{"grant_type": {"authorization_code"}, "client_id": {frappetest.OAuthClientID}, "code": {frappetest.AuthCode},
+		"code_verifier": {"v"}, "redirect_uri": {"http://127.0.0.1:1/callback"}}
+	issued := fkDo(t, s, "POST", "/api/method/frappe.integrations.oauth2.get_token", code.Encode(), form)
+	access, _ := issued.Body["access_token"].(string)
+	refresh, _ := issued.Body["refresh_token"].(string)
+	if issued.Status != 200 || access == "" || refresh == "" {
+		t.Fatalf("code exchange: %d %s", issued.Status, issued.Raw)
+	}
+	if r := rev(url.Values{"client_id": {frappetest.OAuthClientID}, "token": {access}, "token_type_hint": {"access_token"}}); r.Status != 200 {
+		t.Fatalf("revoke access token: %d %s", r.Status, r.Raw)
+	}
+	grant.Set("refresh_token", refresh)
+	if r := fkDo(t, s, "POST", "/api/method/frappe.integrations.oauth2.get_token", grant.Encode(), form); r.Status != 403 || r.Body["exc_type"] != "PermissionError" {
+		t.Errorf("refresh after access-token revoke: %d %s", r.Status, r.Raw)
 	}
 }

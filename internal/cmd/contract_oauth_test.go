@@ -112,7 +112,9 @@ func TestContractOAuthExpiry(t *testing.T) {
 // form body and no Authorization header answers 200 and revokes the whole
 // OAuth Bearer Token record (the refresh token no longer refreshes: 403
 // PermissionError; the access token no longer authenticates: 401); an
-// unknown token is a 200 too. The fake answers the same.
+// unknown token is a 200 too, an unknown client_id a 403 PermissionError,
+// a missing token a 400, and revoking by the access token revokes the
+// record's refresh token as well. The fake answers the same.
 func TestContractOAuthRevoke(t *testing.T) {
 	sc := contractSite(t)
 	ctx := contractCtx(t)
@@ -166,10 +168,46 @@ func TestContractOAuthRevoke(t *testing.T) {
 		if err := client.RevokeOAuthToken(ctx, s.url, s.clientID, "", contractRandom(t), "refresh_token"); err != nil {
 			t.Errorf("%s: revoking an unknown token: %v", s.name, err)
 		}
+		// An unknown client_id: authenticate_client's get_doc raises
+		// DoesNotExistError, which revoke_token does not catch.
+		err = client.RevokeOAuthToken(ctx, s.url, "ffc-no-such-client", "", contractRandom(t), "refresh_token")
+		if !errors.As(err, &e) || e.Status != http.StatusForbidden || e.ExcType != "PermissionError" {
+			t.Errorf("%s: unknown client: %v", s.name, err)
+		}
+		// No token: oauthlib answers invalid_request itself (400).
+		if err := client.RevokeOAuthToken(ctx, s.url, s.clientID, "", "", "refresh_token"); !errors.As(err, &e) || e.Status != http.StatusBadRequest {
+			t.Errorf("%s: empty token: %v", s.name, err)
+		}
 	}
 	tok, err := admin.GetDoc(ctx, "OAuth Bearer Token", access)
 	if err != nil || tok["status"] != "Revoked" {
 		t.Errorf("bearer token status = %v (%v), want Revoked", tok["status"], err)
+	}
+
+	// Revoking by the access token revokes the record too: its refresh
+	// token is then refused like a revoked one.
+	access2, refresh2 := contractRandom(t), contractRandom(t)
+	if _, err := admin.CreateDoc(ctx, "OAuth Bearer Token", map[string]interface{}{
+		"client": clientID, "user": "Administrator", "scopes": "all openid", "status": "Active",
+		"access_token": access2, "refresh_token": refresh2, "expires_in": 3600,
+	}); err != nil {
+		t.Fatalf("OAuth Bearer Token: %v", err)
+	}
+	fakeTokens, err := client.ExchangeOAuthCode(ctx, fake.URL, frappetest.OAuthClientID, "", frappetest.AuthCode, "http://127.0.0.1/callback", "v")
+	if err != nil {
+		t.Fatalf("fake code exchange: %v", err)
+	}
+	sites[0].access, sites[0].refresh = access2, refresh2
+	sites[1].access, sites[1].refresh = fakeTokens.AccessToken, fakeTokens.RefreshToken
+	for _, s := range sites {
+		if err := client.RevokeOAuthToken(ctx, s.url, s.clientID, "", s.access, "access_token"); err != nil {
+			t.Fatalf("%s: revoke access token: %v", s.name, err)
+		}
+		_, err := client.RefreshOAuthToken(ctx, s.url, s.clientID, "", s.refresh)
+		var e *client.APIError
+		if !errors.As(err, &e) || e.Status != http.StatusForbidden || e.ExcType != "PermissionError" {
+			t.Errorf("%s: refresh after access-token revoke: %v", s.name, err)
+		}
 	}
 }
 

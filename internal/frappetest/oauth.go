@@ -57,7 +57,8 @@ type oauthState struct {
 	noRegistration bool
 	failRegister   int
 	registrations  []Registration
-	revoked        []string
+	revoked        []string        // tokens revoke_token was given, in order
+	deadRefresh    map[string]bool // refresh tokens of revoked records
 }
 
 func newOAuthState() oauthState {
@@ -65,6 +66,8 @@ func newOAuthState() oauthState {
 		tokens:  map[string]*bearerToken{Token: {left: -1}},
 		refresh: map[string]string{RefreshToken: Token},
 		clients: map[string][]string{OAuthClientID: nil},
+
+		deadRefresh: map[string]bool{},
 	}
 }
 
@@ -214,7 +217,7 @@ func (s *Site) token(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 	rt, _ := args["refresh_token"].(string)
-	if contains(s.oauth.revoked, rt) {
+	if s.oauth.deadRefresh[rt] {
 		// validate_refresh_token's get_doc finds no Active record and raises
 		// DoesNotExistError, which is no OAuth2Error, so it leaves get_token
 		// and the app turns it into a PermissionError for Guest
@@ -377,11 +380,14 @@ func secureRedirect(raw string) bool {
 
 // revokeToken answers revoke_token like Frappe (oauth2.py:188 with oauthlib's
 // RevocationEndpoint and OAuthWebRequestValidator, oauth.py:93-127,263):
-// POST only, a missing token is 400, the client comes from client_id (an
-// unknown one is a DoesNotExistError, 404) or, without one, from the access
-// token named by token; a refresh token revokes its record (the access
-// token too), anything else is taken as an access token, and an unknown
-// token is still a 200. The body is always {}.
+// POST only, a missing token is 400 (oauthlib catches its own
+// InvalidRequestError, so status is set), the client comes from client_id
+// (an unknown one is a DoesNotExistError, which reaches Guest as a 403
+// PermissionError) or, without one, from the access token named by token
+// (not checked against the source: the fake answers 404); a refresh token
+// revokes its record (the access token too), anything else is taken as an
+// access token and revokes its record (its refresh token too), and an
+// unknown token is still a 200. The body is always {}.
 func (s *Site) revokeToken(w http.ResponseWriter, r *http.Request, body []byte) {
 	if r.Method != http.MethodPost {
 		writeError(w, Permission("Not permitted"))
@@ -399,7 +405,10 @@ func (s *Site) revokeToken(w http.ResponseWriter, r *http.Request, body []byte) 
 	}
 	if clientID != "" {
 		if _, ok := s.oauth.clients[clientID]; !ok {
-			writeError(w, NotFound("OAuth Client "+clientID+" not found"))
+			// authenticate_client's get_doc raises DoesNotExistError, which
+			// revoke_token does not catch (oauth2.py:198); the app turns it into
+			// a PermissionError for Guest (permissions.py:926).
+			writeError(w, Permission("User Guest does not have doctype access via role permission for document OAuth Client"))
 			return
 		}
 	} else if _, ok := s.oauth.tokens[token]; !ok {
@@ -409,6 +418,7 @@ func (s *Site) revokeToken(w http.ResponseWriter, r *http.Request, body []byte) 
 	if hint == "refresh_token" {
 		if access, ok := s.oauth.refresh[token]; ok {
 			delete(s.oauth.refresh, token)
+			s.oauth.deadRefresh[token] = true
 			if b := s.oauth.tokens[access]; b != nil {
 				b.expired = true
 			}
@@ -419,6 +429,7 @@ func (s *Site) revokeToken(w http.ResponseWriter, r *http.Request, body []byte) 
 		for rt, access := range s.oauth.refresh {
 			if access == token {
 				delete(s.oauth.refresh, rt)
+				s.oauth.deadRefresh[rt] = true
 			}
 		}
 		s.oauth.revoked = append(s.oauth.revoked, token)
