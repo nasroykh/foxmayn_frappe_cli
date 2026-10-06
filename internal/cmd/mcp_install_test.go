@@ -19,6 +19,7 @@ import (
 type installT struct {
 	home, exe  string
 	claudePath string
+	goos       string // overrides the OS the claude CLI is run on
 	calls      [][]string
 }
 
@@ -38,6 +39,9 @@ func newInstallT(t *testing.T) *installT {
 	mcpInstallExecutable = func() (string, error) { return it.exe, nil }
 	mcpInstallEnv = func() (mcpinstall.Env, error) {
 		env, err := mcpinstall.DefaultEnv()
+		if it.goos != "" {
+			env.GOOS = it.goos
+		}
 		env.LookPath = func(name string) (string, error) {
 			if it.claudePath == "" || name != "claude" {
 				return "", exec.ErrNotFound
@@ -57,6 +61,24 @@ func (it *installT) cursorPath() string { return filepath.Join(it.home, ".cursor
 
 func installConfig(t *testing.T) string {
 	return fakeConfig(t, &frappetest.Site{URL: "http://127.0.0.1:1"}, "apikey")
+}
+
+// defaultConfig writes the test config at the default path
+// (~/.config/ffc/config.yaml), which is never added to the entry.
+func (it *installT) defaultConfig(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(installConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(it.home, ".config", "ffc", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 func TestMCPInstallPrintWritesNothing(t *testing.T) {
@@ -93,7 +115,7 @@ func TestMCPInstallYesWritesWithBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	// --site T matches the site "t" case-insensitively; the exact name is
-	// pinned.
+	// pinned. The config is not the default one, so it is pinned too.
 	r := runFFC(t, cfg, "", "mcp", "install", "--client", "cursor", "--site", "T", "--read-only", "--yes")
 	if r.Code != 0 {
 		t.Fatalf("code %d: %v\n%s", r.Code, r.Err, r.Stderr)
@@ -111,7 +133,7 @@ func TestMCPInstallYesWritesWithBackup(t *testing.T) {
 		t.Fatalf("%v\n%s", err, got)
 	}
 	e := doc.MCPServers["frappe"]
-	if e.Type != "stdio" || e.Command != it.exe || strings.Join(e.Args, " ") != "mcp --site t --read-only" {
+	if e.Type != "stdio" || e.Command != it.exe || strings.Join(e.Args, " ") != "mcp --config "+cfg+" --site t --read-only" {
 		t.Fatalf("entry %+v", e)
 	}
 	if !strings.Contains(string(got), "// mine") {
@@ -165,7 +187,7 @@ func TestMCPInstallUsageErrors(t *testing.T) {
 
 func TestMCPInstallJSON(t *testing.T) {
 	it := newInstallT(t)
-	cfg := installConfig(t)
+	cfg := it.defaultConfig(t)
 	t.Setenv("CODEX_HOME", filepath.Join(it.home, "codex"))
 	path := filepath.Join(it.home, "codex", "config.toml")
 
@@ -211,7 +233,7 @@ func TestMCPInstallJSON(t *testing.T) {
 
 func TestMCPInstallClaudeCode(t *testing.T) {
 	it := newInstallT(t)
-	cfg := installConfig(t)
+	cfg := it.defaultConfig(t)
 
 	// Not on PATH: --print still shows the command; a real run is a usage
 	// error that prints it.
@@ -264,5 +286,73 @@ func TestIsGoRunBuild(t *testing.T) {
 	}
 	if isGoRunBuild(filepath.Join(tmp, "go-build1", "ffc"), "") {
 		t.Error("empty temp dir matched")
+	}
+}
+
+func TestMCPInstallConfigPath(t *testing.T) {
+	it := newInstallT(t)
+	alt := installConfig(t)
+	args := func() string {
+		t.Helper()
+		b, err := os.ReadFile(it.cursorPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			MCPServers map[string]struct{ Args []string } `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Remove(it.cursorPath())
+		return strings.Join(doc.MCPServers["frappe"].Args, " ")
+	}
+
+	// FFC_CONFIG counts like --config.
+	t.Setenv("FFC_CONFIG", alt)
+	r := runFFC(t, "", "", "mcp", "install", "--client", "cursor", "--site", "other", "--yes")
+	if r.Code != 0 {
+		t.Fatalf("code %d: %s", r.Code, r.Stderr)
+	}
+	if got := args(); got != "mcp --config "+alt+" --site other" {
+		t.Fatalf("args %q", got)
+	}
+
+	// A relative --config is made absolute.
+	wd, _ := os.Getwd()
+	rel, err := filepath.Rel(wd, alt)
+	if err != nil {
+		t.Skip("config not reachable by a relative path:", err)
+	}
+	t.Setenv("FFC_CONFIG", "")
+	r = runFFC(t, rel, "", "mcp", "install", "--client", "cursor", "--yes")
+	if r.Code != 0 {
+		t.Fatalf("code %d: %s", r.Code, r.Stderr)
+	}
+	if got := args(); got != "mcp --config "+alt {
+		t.Fatalf("args %q", got)
+	}
+
+	// The default config is not written.
+	def := it.defaultConfig(t)
+	r = runFFC(t, def, "", "mcp", "install", "--client", "cursor", "--yes")
+	if r.Code != 0 {
+		t.Fatalf("code %d: %s", r.Code, r.Stderr)
+	}
+	if got := args(); got != "mcp" {
+		t.Fatalf("args %q", got)
+	}
+}
+
+func TestMCPInstallClaudeBatchRefusedBeforePrompt(t *testing.T) {
+	it := newInstallT(t)
+	cfg := it.defaultConfig(t)
+	it.goos = "windows"
+	it.claudePath = filepath.Join(it.home, "npm", "claude.cmd")
+	// No --yes and no terminal: the refusal must come before the question.
+	r := runFFC(t, cfg, "", "--json", "mcp", "install", "--client", "claude-code")
+	if r.Code != 2 || !strings.Contains(r.Stderr, "batch file") || !strings.Contains(r.Stderr, "claude mcp add-json --scope user frappe '") ||
+		strings.Contains(r.Stderr, "pass --yes") || len(it.calls) != 0 {
+		t.Fatalf("code %d calls %q\n%s", r.Code, it.calls, r.Stderr)
 	}
 }

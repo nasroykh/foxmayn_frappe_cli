@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/mcpinstall"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
@@ -40,7 +42,9 @@ user-level config, so every project sees it.
 
 The entry runs this ffc binary by its absolute path with "mcp", plus
 "--site NAME" when --site is given (otherwise the server follows
-'ffc site use') and "--read-only" when set. The default entry name, frappe,
+'ffc site use') and "--read-only" when set. A config file other than the
+default (--config or FFC_CONFIG) is added as "--config <absolute path>".
+The default entry name, frappe,
 is the one the old Node installer used, so its entry is replaced.
 
   claude-code     runs: claude mcp add-json --scope user <name> '<json>'
@@ -97,6 +101,18 @@ func runMCPInstall(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	args := []string{"mcp"}
+	// A config other than the default one (--config or FFC_CONFIG) goes into
+	// the entry: the server would otherwise read the default config, where
+	// the site may be missing or be another site of the same name.
+	if configPath != "" {
+		abs, err := filepath.Abs(configPath)
+		if err != nil {
+			return &usageError{fmt.Errorf("--config %q: %w", configPath, err)}
+		}
+		if def, err := config.DefaultConfigPath(); err != nil || !samePath(abs, def) {
+			args = append(args, "--config", abs)
+		}
+	}
 	// Only an explicit --site is pinned (FFC_SITE is not): without it the
 	// server follows 'ffc site use'.
 	if cmd.Flags().Changed("site") {
@@ -157,9 +173,13 @@ func runMCPInstall(cmd *cobra.Command, _ []string) error {
 		}
 		return nil
 	}
-	if ch.Client == mcpinstall.ClaudeCode && !ch.ToolFound() {
-		return usageErrorf("the claude CLI is not on PATH: install Claude Code, or add the server yourself with:\n  %s",
-			strings.Join(ch.CommandLines(), "\n  "))
+	// Refuse what Apply would refuse before asking: claude missing or a
+	// batch shim, a read-only file.
+	if err := ch.Check(); err != nil {
+		if errors.Is(err, mcpinstall.ErrClaudeNotFound) || errors.Is(err, mcpinstall.ErrClaudeBatch) {
+			return &usageError{err}
+		}
+		return fmt.Errorf("mcp install: %w", err)
 	}
 	if !miYes {
 		prompt := fmt.Sprintf("Write %s?", ch.Path)
@@ -231,6 +251,15 @@ func installedExecutable() (string, error) {
 		return "", usageErrorf("%s is a temporary 'go run' build; install ffc first (see the README) and run 'ffc mcp install' with the installed binary", exe)
 	}
 	return exe, nil
+}
+
+// samePath compares two cleaned absolute paths, ignoring case on Windows.
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 // isGoRunBuild reports whether exe looks like a go run build: a go-build
