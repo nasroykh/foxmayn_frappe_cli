@@ -25,7 +25,7 @@ Build and extend the ffc CLI — a Go tool for interacting with Frappe ERP sites
 | Forms & prompts  | huh v1.0.0     | `github.com/charmbracelet/huh`                            |
 | Spinner          | huh/spinner    | `github.com/charmbracelet/huh/spinner`                    |
 | MCP server       | mcp-go v1.1.1  | `github.com/mark3labs/mcp-go/mcp` + `.../server`          |
-| JSONC editing    | hujson         | `github.com/tailscale/hujson` (mcp install only)          |
+| JSONC editing    | hujson         | `github.com/tailscale/hujson` (mcp install/uninstall)     |
 
 ## Project Layout
 
@@ -95,7 +95,8 @@ internal/cmd/mcp_daemon.go        → startDetached(), runHTTPServer(), mcpStatu
 internal/cmd/mcp_detach_unix.go   → setSysProcAttr (Setsid=true), terminateProcess, isProcessRunning — build tag: !windows
 internal/cmd/mcp_detach_windows.go → same functions for Windows — build tag: windows
 internal/cmd/mcp_install.go       → ffc mcp install: flags, --site pinned to SiteConfig.Name, installedExecutable (go run refused), plan/confirm/apply
-internal/mcpinstall/              → Plan/Apply for claude-code (claude CLI; ~/.claude.json only read), claude-desktop, cursor, vscode (hujson tree edit),
+internal/cmd/mcp_uninstall.go     → ffc mcp uninstall: the same flow over PlanRemove ("nothing to remove" exits 0)
+internal/mcpinstall/              → Plan/PlanRemove/Apply for claude-code (claude CLI; ~/.claude.json only read), claude-desktop, cursor, vscode (hujson tree edit),
                                     codex (config.toml edited as text, unsafe forms refused); backup + atomic write; UnifiedDiff
 internal/client/http.go           → newResty (timeout, 128 MiB body cap, no cookie jar, silent logger, GET-only redirects), retry policy, NewHTTPClient, requestError
 internal/client/client.go         → FrappeClient; New() picks auth; single do() request path; session relogin; Close(); GetDoc, GetList, …
@@ -420,7 +421,7 @@ Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`
 
 ### Installing into AI clients (`mcp_install.go`, `internal/mcpinstall`)
 
-- `internal/mcpinstall` stays prompt-free and cobra-free (a desktop app will call it): `Plan(client, Server, Env)` returns a `Change` (Path, Old/New bytes, or claude `Commands`), the caller shows `Diff()`/`CommandLines()`, asks, then `Apply()`.
+- `internal/mcpinstall` stays prompt-free and cobra-free (a desktop app will call it): `Plan(client, Server, Env)` returns a `Change` (Path, Old/New bytes, or claude `Commands`), the caller shows `Diff()`/`CommandLines()`, asks, then `Apply()`. `PlanRemove(client, name, Env)` returns the same `Change` for removing an entry (`Replaces` = present; nothing to do = `Changed()` false), used by `ffc mcp uninstall`.
 - Never write `~/.claude.json`; never `Format()` a hujson tree (it reformats the whole file); never round-trip config.toml through a TOML decoder; never replace a file that does not parse.
 - Tests build an `Env` over a temp dir per GOOS; cmd tests set HOME/USERPROFILE/APPDATA/XDG_CONFIG_HOME and swap `mcpInstallEnv` (fake LookPath/Run, never the real `claude`) and `mcpInstallExecutable`.
 
