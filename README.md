@@ -511,7 +511,7 @@ ffc completion fish > ~/.config/fish/completions/ffc.fish
 ffc completion powershell | Out-String | Invoke-Expression
 ```
 
-Tab completes site names (`--site`, `site use/remove/rename/edit`, `config set --default-site`, `mcp --sites`), DocTypes (`-d/--doctype` on every command, `cache warm --doctypes`, `mcp --allow-doctypes/--deny-doctypes`), fields (`--fields`: the last item of the comma-separated list), report names (`run-report -n`) and fixed values (`--output`, `--number-format`, `--date-format`, `can --perm`, `mcp --toolsets/--confirm/--allow-tools`, `--debug`). Document names (`-n/--name`) are never completed.
+Tab completes site names (`--site`, `site use/remove/rename/edit`, `config set --default-site`, `mcp --sites`), DocTypes (`-d/--doctype` on every command, `cache warm --doctypes`, `mcp --allow-doctypes/--deny-doctypes`), fields (`--fields`: the last item of the comma-separated list), report names (`run-report -n`) and fixed values (`--output`, `--number-format`, `--date-format`, `can --perm`, `mcp --toolsets/--confirm/--allow-tools`, `mcp install --client`, `--debug`). Document names (`-n/--name`) are never completed.
 
 Completion reads only the config file and the local cache. It never sends a request, never signs in and never writes the cache; with no fresh cache entry it offers nothing. The cache lives in `<user cache dir>/ffc/<site>-<hash>/<credential>/` (`~/.cache/ffc` on Linux; directories 0700, files 0600, written atomically), bound to the site URL (a changed URL ignores it) and to the login: `<credential>` is a hash of the API key, username or OAuth client id (never a secret), so another login on the same site, `FFC_API_KEY` on a named site included, never sees what one login cached. A site defined only by `FFC_*` variables is keyed by its URL with any password removed. `site remove`, `site rename`, `site edit` and `site add`/`init` over an existing name delete that site's cache:
 
@@ -658,6 +658,48 @@ ffc run-report -n "General Ledger" --filters '{"company":"Acme","from_date":"202
 ffc mcp --site mysite
 ```
 
+#### Add ffc to an AI client: `ffc mcp install`
+
+`ffc mcp install` adds (or replaces) the stdio server entry that runs ffc in a client's **user-level** config, so every project sees it:
+
+```bash
+ffc mcp install --client claude-desktop                 # follows 'ffc site use'
+ffc mcp install --client cursor --site prod --read-only
+ffc mcp install --client codex --print                  # show the change, write nothing
+ffc mcp install --client vscode --name frappe-prod --site prod --yes
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--client` | — | Required: `claude-code`, `claude-desktop`, `cursor`, `vscode` or `codex` |
+| `--site` | — | Pin the entry to this site (`--site <exact config name>` in its args). Without it no site is written and the server uses the default site, so `ffc site use` switches it. `FFC_SITE` is not pinned |
+| `--read-only` | off | Add `--read-only` to the entry (only read tools) |
+| `--name` | `frappe` | Entry name (1-64 letters, digits, `_`, `-`). `frappe` is the name the old Node installer (`foxmayn_frappe_mcp`) used, so its entry is replaced, not duplicated |
+| `--print` | off | Print the diff (or the claude command) on stdout and change nothing |
+| `-y`, `--yes` | off | Write without asking (needed without a terminal) |
+
+The entry runs **this ffc binary by its absolute path** (symlinks resolved), with `mcp` and the flags above, so it does not depend on the client's `PATH`. A temporary `go run` build is refused: install ffc first. After `ffc update` the path stays the same.
+
+| Client | File that is edited | Format |
+|---|---|---|
+| `claude-code` | none: runs `claude mcp add-json --scope user <name> '<json>'` | Claude Code keeps user servers in `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when set) and rewrites that file itself, so ffc only reads it (to see whether the entry exists or is current) and lets the `claude` CLI change it. An existing entry is removed first (`claude mcp remove --scope user <name>`). Needs `claude` on `PATH`; otherwise the command to run is printed (exit 2). No diff, no backup |
+| `claude-desktop` | Windows `%APPDATA%\Claude\claude_desktop_config.json`, macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Linux `$XDG_CONFIG_HOME/Claude/claude_desktop_config.json` or `~/.config/Claude/…` (Linux builds are unofficial) | `mcpServers.<name>` = `{command, args}`. Fully quit and restart Claude Desktop afterwards |
+| `cursor` | `~/.cursor/mcp.json` (Windows: `%USERPROFILE%\.cursor\mcp.json`, inferred from the docs' `~`) | `mcpServers.<name>` = `{type: "stdio", command, args}`. Restart Cursor |
+| `vscode` | `mcp.json` next to the user `settings.json`: Windows `%APPDATA%\Code\User\mcp.json`, macOS `~/Library/Application Support/Code/User/mcp.json`, Linux `~/.config/Code/User/mcp.json` (inferred from the settings.json location; default profile only, `settings.json` is never touched) | `servers.<name>` (not `mcpServers`) = `{type: "stdio", command, args}`; JSONC (comments, trailing commas) |
+| `codex` | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` when `CODEX_HOME` is set | `[mcp_servers.<name>]` with `command` and `args` |
+
+How the file is changed:
+
+- **Diff and confirmation.** The target path and a unified diff are shown on stderr, then ffc asks (`--yes` skips the question; without a terminal it fails with "pass --yes"). Nothing changes when the entry is already up to date ("already up to date", exit 0).
+- **Backup.** An existing file is copied to `<file>.ffc-<YYYYMMDD-HHMMSS>.bak` (never over an existing backup), then the new content is written atomically (temp file and rename) with the file's mode kept (0600 for a new file; missing directories are created 0700). If the file changed between reading and writing, nothing is written.
+- **Only the entry changes.** JSON and JSONC files keep their comments, key order and formatting; the entry is written in the file's indentation. Codex's TOML is edited as text, so comments stay: the `[mcp_servers.<name>]` table and its sub-tables (`[mcp_servers.<name>.env]`, …) are replaced, or a new table is appended. The whole entry is replaced, so keys of an old entry such as `env` are dropped (they show in the diff).
+- **Refusals.** A file that does not parse is refused and left untouched (an empty file counts as `{}`); so is a duplicated key, a non-object `mcpServers`/`servers`, and in Codex's file `mcp_servers` written as an inline table (`mcp_servers = {…}`), with dotted keys (`mcp_servers.x.command = …`), as keys under `[mcp_servers]` or as `[[mcp_servers…]]`. Move such an entry to a `[mcp_servers.<name>]` table, or edit the file by hand.
+- With `--json` the result is `{client, name, path, backup, changed, applied, server, command}` (`server` is the entry's argv, `command` the claude CLI invocations for claude-code; `applied` is false for `--print` and when nothing changed).
+
+ChatGPT is not supported: it connects only to remote MCP servers, and `ffc mcp` is a local stdio or loopback server.
+
+Not verified: the Cursor path on Windows and the VS Code paths are inferred, not quoted from their docs; Claude Desktop installed from the Microsoft Store may keep its config under `%LOCALAPPDATA%\Packages\…` instead of `%APPDATA%`; `CODEX_HOME` was checked against the Codex CLI (0.160) but is not in the Codex docs. On Windows the printed claude command is quoted for PowerShell 7 (Windows PowerShell 5.1 drops the inner double quotes), and ffc does not run `claude` when it is a `.cmd`/`.bat` shim (npm install), since cmd.exe would re-parse the JSON: run the printed command yourself.
+
 **HTTP mode** — foreground, useful for testing with the MCP Inspector:
 ```bash
 ffc mcp --port 8765 --site mysite
@@ -770,7 +812,7 @@ Limits: a tool result over 512 KiB is refused with a hint to narrow it (`limit`,
 
 The read tools among them also take `jq`, a jq filter the server runs on the result before returning it (`"[.[] | {name, status}]"`, `".data | length"`). The output is JSON: one output as is, none or several as an array, under the same 512 KiB cap. The filter runs in a separate process that sees only the result (no environment, no input, no modules) and is stopped after 5 s or 256 MiB, so a runaway query cannot take the server down. `list_docs` and `run_report` take `response_format`: `concise` (default) is the answer they always gave; `detailed` returns every field (`list_docs` without `fields`) or the report as Frappe returns it. For clients on protocol 2026-07-28, the tool, prompt and resource lists carry a one-hour private cache hint (they are fixed while the server runs); resource reads always revalidate.
 
-**Example Claude Desktop config:**
+**Example Claude Desktop config** (`ffc mcp install --client claude-desktop --site mysite` writes this, with the absolute path of ffc as `command`):
 ```json
 {
   "mcpServers": {
@@ -824,6 +866,7 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_collab_tools.go     # comment/assign/tag (collab) and share (admin) tools
 │   │   ├── mcp_completion.go # completion/complete for resource templates and prompts (cache only)
 │   │   ├── mcp_daemon.go     # detached server, status/stop, state file
+│   │   ├── mcp_install.go    # mcp install: flags, diff, confirmation (logic in internal/mcpinstall)
 │   │   └── mcp_detach_unix.go / mcp_detach_windows.go  # platform process handling
 │   ├── client/
 │   │   ├── http.go           # Transport policy: timeout, body cap, redirects, retries
@@ -838,6 +881,7 @@ foxmayn_frappe_cli/
 │   │   ├── config.go         # Config loading and env overrides
 │   │   ├── file.go           # Locked, atomic, comment-preserving config edits
 │   │   └── format.go         # Number/date formatting
+│   ├── mcpinstall/           # AI client MCP config edits (JSON/JSONC via hujson, Codex TOML as text, claude CLI)
 │   ├── output/output.go      # Table (lipgloss) and JSON formatters
 │   ├── relsig/               # Ed25519 signing of checksums.txt; release public keys (keys.go)
 │   ├── text/text.go          # Strips terminal control characters from server data

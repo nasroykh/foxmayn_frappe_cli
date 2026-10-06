@@ -25,6 +25,7 @@ Build and extend the ffc CLI — a Go tool for interacting with Frappe ERP sites
 | Forms & prompts  | huh v1.0.0     | `github.com/charmbracelet/huh`                            |
 | Spinner          | huh/spinner    | `github.com/charmbracelet/huh/spinner`                    |
 | MCP server       | mcp-go v1.1.1  | `github.com/mark3labs/mcp-go/mcp` + `.../server`          |
+| JSONC editing    | hujson         | `github.com/tailscale/hujson` (mcp install only)          |
 
 ## Project Layout
 
@@ -92,6 +93,9 @@ internal/cmd/mcp_collab_tools.go  → add_comment/assign_to/remove_assignment/ad
 internal/cmd/mcp_daemon.go        → startDetached(), runHTTPServer(), mcpStatusCmd, mcpStopCmd, state + lock files
 internal/cmd/mcp_detach_unix.go   → setSysProcAttr (Setsid=true), terminateProcess, isProcessRunning — build tag: !windows
 internal/cmd/mcp_detach_windows.go → same functions for Windows — build tag: windows
+internal/cmd/mcp_install.go       → ffc mcp install: flags, --site pinned to SiteConfig.Name, installedExecutable (go run refused), plan/confirm/apply
+internal/mcpinstall/              → Plan/Apply for claude-code (claude CLI; ~/.claude.json only read), claude-desktop, cursor, vscode (hujson tree edit),
+                                    codex (config.toml edited as text, unsafe forms refused); backup + atomic write; UnifiedDiff
 internal/client/http.go           → newResty (timeout, 128 MiB body cap, no cookie jar, silent logger, GET-only redirects), retry policy, NewHTTPClient, requestError
 internal/client/client.go         → FrappeClient; New() picks auth; single do() request path; session relogin; Close(); GetDoc, GetList, …
 internal/client/oauth.go          → ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser (all take ctx)
@@ -410,6 +414,12 @@ Then call `registerMyTool(s, env)` inside `registerAllTools()` in `mcp_tools.go`
 - `ffc mcp stop` verifies the PID via health check before terminating (`terminateProcess`); `--force` stops a PID that is alive but not health-confirmed
 - Long-lived clients: `newMCPEnv` caches one client while the site credentials are unchanged; every call reads the site again (`loadSiteConfig`, so policy and credential edits apply at once) and `refreshSite` refreshes an expired OAuth token; the client (`newSiteClient`) also refreshes on a 401 in the middle of a call, and a token changed in the config (by it or another process) rebuilds the cached client
 - Platform-specific process handling (`setSysProcAttr`, `terminateProcess`, `isProcessRunning`) is isolated in `mcp_detach_unix.go` (`!windows`) and `mcp_detach_windows.go`. **Keep `syscall` / `x/sys/windows` fields out of untagged files** — they won't compile cross-platform.
+
+### Installing into AI clients (`mcp_install.go`, `internal/mcpinstall`)
+
+- `internal/mcpinstall` stays prompt-free and cobra-free (a desktop app will call it): `Plan(client, Server, Env)` returns a `Change` (Path, Old/New bytes, or claude `Commands`), the caller shows `Diff()`/`CommandLines()`, asks, then `Apply()`.
+- Never write `~/.claude.json`; never `Format()` a hujson tree (it reformats the whole file); never round-trip config.toml through a TOML decoder; never replace a file that does not parse.
+- Tests build an `Env` over a temp dir per GOOS; cmd tests set HOME/USERPROFILE/APPDATA/XDG_CONFIG_HOME and swap `mcpInstallEnv` (fake LookPath/Run, never the real `claude`) and `mcpInstallExecutable`.
 
 ### Update check skip
 
