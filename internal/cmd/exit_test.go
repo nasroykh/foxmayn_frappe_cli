@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
 )
@@ -247,7 +248,15 @@ func TestEnvSelection(t *testing.T) {
 		}
 	})
 	t.Run("FFC_TIMEOUT applies", func(t *testing.T) {
-		t.Setenv("FFC_TIMEOUT", "1ns")
+		// A server slower than the timeout: a 1ns timeout alone could pass on
+		// Windows, where the clock may not advance during a loopback request.
+		s.Handle("GET /api/resource/ToDo/a", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+		}))
+		t.Setenv("FFC_TIMEOUT", "50ms")
 		t.Setenv("FFC_SITE", "other")
 		if r := runFFC(t, cfg, "", "get-doc", "-d", "ToDo", "-n", "a"); r.Code != exitNetwork {
 			t.Errorf("exit code = %d, want %d (%v)", r.Code, exitNetwork, r.Err)

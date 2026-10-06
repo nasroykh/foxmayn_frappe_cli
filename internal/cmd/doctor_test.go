@@ -318,7 +318,13 @@ func TestDoctorLock(t *testing.T) {
 	}
 	checks, r = doctorTRun(t, cfg)
 	c := doctorTWant(t, checks, "config.lock", "warn")
-	if !strings.Contains(c["hint"].(string), lock) {
+	// The hint names the resolved path: on Windows that expands 8.3 short
+	// names (RUNNER~1) in the temp directory.
+	resolved, err := filepath.EvalSymlinks(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(c["hint"].(string), resolved) {
 		t.Errorf("hint %q must name the lock file", c["hint"])
 	}
 	if _, err := os.Stat(lock); err != nil || r.Code != 0 {
