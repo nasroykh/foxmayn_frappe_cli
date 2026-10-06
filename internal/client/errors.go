@@ -1,5 +1,11 @@
 package client
 
+import (
+	"context"
+	"errors"
+	"net"
+)
+
 // The error types below let callers tell failures apart (the CLI maps them
 // to exit codes) without parsing messages. Their Error() text is what users
 // see; keep it stable.
@@ -23,7 +29,15 @@ type TransportError struct {
 	Err error
 }
 
-func (e *TransportError) Error() string { return "HTTP request failed: " + e.Err.Error() }
+func (e *TransportError) Error() string {
+	var ne net.Error
+	if errors.Is(e.Err, context.DeadlineExceeded) || errors.As(e.Err, &ne) && ne.Timeout() {
+		// A slow site (a PDF, a heavy report) is the usual cause; the raw
+		// error only says "context deadline exceeded".
+		return "HTTP request failed: the site did not answer in time (raise --timeout for slow requests): " + e.Err.Error()
+	}
+	return "HTTP request failed: " + e.Err.Error()
+}
 func (e *TransportError) Unwrap() error { return e.Err }
 
 // AuthError is a username/password login that did not produce a session:
