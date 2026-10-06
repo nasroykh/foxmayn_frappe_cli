@@ -51,5 +51,5 @@ The UI runs in a normal browser against a fake backend (`src/mock/backend.ts`) w
 
 ## Notes
 
-- The root CI does not build this module yet: `go test ./...` and `go vet ./...` at the repository root skip nested modules (root `gofmt -l .` does check its Go files).
-- Before the first desktop release: `ffc update` reads GitHub `releases/latest`, so publish desktop releases with `make_latest: false` or make `update.go` accept only `v*` tags.
+- `go test ./...` and `go vet ./...` at the repository root skip nested modules; `.github/workflows/desktop.yml` vets, tests and builds this module on Windows and macOS (root `gofmt -l .` does check its Go files).
+- Releases: push a `desktop-v<version>` tag (`.github/workflows/desktop-release.yml`; notes in `release-notes/<version>.md`). They are prereleases on 0.x and never GitHub's latest, because the install scripts and ffc up to v1.11.0 read `releases/latest`.

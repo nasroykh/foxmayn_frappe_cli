@@ -333,7 +333,7 @@ jobs:
 
           Windows: run the `-setup.exe`. If SmartScreen blocks it, choose "More info", then "Run anyway".
 
-          macOS: open the `.dmg` and drag the app to Applications. On the first launch, right-click the app and choose "Open", or go to System Settings > Privacy & Security and choose "Open Anyway".
+          macOS: open the `.dmg` and drag the app to Applications. macOS blocks the first launch: open it once, then go to System Settings > Privacy & Security and choose "Open Anyway" (on macOS 14 and older, right-click the app and choose "Open"). If macOS says the app "is damaged", run `xattr -dr com.apple.quarantine "/Applications/foxmayn-frappe-desktop.app"`.
 
           Verify a download against `checksums.txt` (its signature is `checksums.txt.sig`).
           EOF
