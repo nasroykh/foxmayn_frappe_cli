@@ -211,6 +211,10 @@ var siteRemoveCmd = &cobra.Command{
 	Long: `Remove a site from your config. Without --yes a confirmation is asked; with
 no terminal that is a usage error (exit 2) and the config is left unchanged.
 
+An OAuth site's token is revoked on the server first (refresh and access
+token). That is best effort: if the server cannot be reached or refuses, a
+warning is printed and the site is removed anyway.
+
 Examples:
   ffc site remove staging
   ffc site remove staging --yes
@@ -236,6 +240,18 @@ Examples:
 			}
 		}
 
+		// Best effort, before the config lock: a failure never stops the
+		// removal, and revokeTimeout bounds the wait.
+		var revoked bool
+		var revokeErr error
+		if site := cfg.Sites[name]; site.RefreshToken != "" || site.AccessToken != "" {
+			if err := runSpinner("Revoking the OAuth token...", func() {
+				revoked, revokeErr = revokeSiteToken(cmd.Context(), site)
+			}); err != nil || cmd.Context().Err() != nil {
+				return errAborted
+			}
+		}
+
 		var wasDefault bool
 		var newDefault string
 		if err := config.Edit(cfgPath, func(f *config.File) error {
@@ -251,6 +267,13 @@ Examples:
 
 		dropSiteCache(name)
 		fmt.Fprintf(os.Stderr, "✓ Site %q removed.\n", name)
+		switch {
+		case revokeErr != nil:
+			fmt.Fprintf(os.Stderr, "warning: could not revoke the OAuth token on the server: %v\n"+
+				"  It stays valid until it expires or an administrator revokes it (OAuth Bearer Token list).\n", revokeErr)
+		case revoked:
+			fmt.Fprintln(os.Stderr, "  Its OAuth token was revoked on the server.")
+		}
 		if wasDefault {
 			if newDefault != "" {
 				fmt.Fprintf(os.Stderr, "  It was your default site — default is now %q.\n", newDefault)
