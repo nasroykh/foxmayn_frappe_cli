@@ -310,30 +310,6 @@ func collectPasswordSite(ctx context.Context, checkName func(string) error) (str
 
 // ─── Persisting ──────────────────────────────────────────────────────────────
 
-// writeInitConfig replaces the config at path with one holding only this site.
-func writeInitConfig(path, name string, site config.SiteConfig) error {
-	err := config.Overwrite(path, func(f *config.File) error {
-		f.Set("default_site", name)
-		return f.PutSite(name, site)
-	})
-	if err == nil {
-		dropSiteCache(name) // a cache under this name belongs to an earlier site
-	}
-	return err
-}
-
-// addSiteToConfig adds or replaces one site, keeping the rest of the file.
-// A replaced site's cache (another login, maybe another server) is dropped.
-func addSiteToConfig(path, name string, site config.SiteConfig) error {
-	err := config.Edit(path, func(f *config.File) error {
-		return f.PutSite(name, site)
-	})
-	if err == nil {
-		dropSiteCache(name)
-	}
-	return err
-}
-
 // printSiteSaved prints the post-write hints shared by init and site add.
 func printSiteSaved(name string, site config.SiteConfig) {
 	if site.IsSessionAuth() {
