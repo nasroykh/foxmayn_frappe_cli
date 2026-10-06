@@ -139,7 +139,7 @@ func TestRegisterOAuthClientRefusesBadClientID(t *testing.T) {
 		"newline": "abc\ndef",
 		"spaces":  " abc",
 		"long":    strings.Repeat("a", 141),
-		"unicode": "ab‮cd",
+		"unicode": "ab\u202ecd",
 	} {
 		b, _ := json.Marshal(map[string]string{"client_id": id})
 		body := string(b)
@@ -149,7 +149,7 @@ func TestRegisterOAuthClientRefusesBadClientID(t *testing.T) {
 			_, _ = w.Write([]byte(body))
 		}))
 		_, err := RegisterOAuthClient(context.Background(), s.URL, registerPath, testClientMetadata())
-		if err == nil || !strings.Contains(err.Error(), "invalid client_id") || strings.ContainsAny(err.Error(), "\x1b\n‮") {
+		if err == nil || !strings.Contains(err.Error(), "invalid client_id") || strings.ContainsAny(err.Error(), "\x1b\n\u202e") {
 			t.Errorf("%s: err = %v", name, err)
 		}
 	}
