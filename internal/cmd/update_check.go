@@ -1,14 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/release"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -73,15 +74,11 @@ func startBackgroundFetch(path string, state updateCheckState) {
 	updateCheckDone = make(chan struct{})
 	go func() {
 		defer close(updateCheckDone)
-		var release githubRelease
-		resp, err := client.NewHTTPClient(10*time.Second).R().
-			SetResult(&release).
-			SetHeader("Accept", "application/vnd.github+json").
-			Get(githubReleasesAPI)
-		if err != nil || resp.StatusCode() != 200 || release.TagName == "" {
+		rel, err := release.Latest(context.Background(), release.LatestURL, 10*time.Second)
+		if err != nil {
 			return
 		}
-		state.Latest = release.TagName
+		state.Latest = rel.TagName
 		writeUpdateState(path, state)
 	}()
 }

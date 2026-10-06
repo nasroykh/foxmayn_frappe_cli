@@ -1,15 +1,8 @@
 package cmd
 
 import (
-	"archive/tar"
-	"archive/zip"
-	"bytes"
-	"compress/gzip"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,9 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/relsig"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/release"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -40,24 +32,6 @@ var (
 	upCheckOnly bool
 	upYes       bool
 )
-
-const (
-	// maxArchiveBytes caps the downloaded archive; maxBinaryBytes caps one
-	// extracted file, so a hostile or corrupt archive cannot exhaust memory (D20).
-	maxArchiveBytes   = 200 << 20
-	maxBinaryBytes    = 200 << 20
-	maxChecksumsBytes = 1 << 20
-)
-
-const githubReleasesAPI = "https://api.github.com/repos/nasroykh/foxmayn_frappe_cli/releases/latest"
-
-type githubRelease struct {
-	TagName string `json:"tag_name"`
-	Assets  []struct {
-		Name               string `json:"name"`
-		BrowserDownloadURL string `json:"browser_download_url"`
-	} `json:"assets"`
-}
 
 var updateCmd = &cobra.Command{
 	Use:   "update",
@@ -127,21 +101,10 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	current := version.Version
 
 	// Fetch latest release from GitHub.
-	var release githubRelease
+	var rel *release.Release
 	var fetchErr error
 	if err := runSpinner("Checking for updates…", func() {
-		resp, err := client.NewHTTPClient(30*time.Second).R().
-			SetContext(ctx).
-			SetResult(&release).
-			SetHeader("Accept", "application/vnd.github+json").
-			Get(githubReleasesAPI)
-		if err != nil {
-			fetchErr = fmt.Errorf("fetching release info: %w", err)
-			return
-		}
-		if resp.StatusCode() != 200 {
-			fetchErr = fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode())
-		}
+		rel, fetchErr = release.Latest(ctx, release.LatestURL, 30*time.Second)
 	}); err != nil {
 		return err
 	}
@@ -149,11 +112,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 		return fetchErr
 	}
 
-	latest := release.TagName // e.g. "v0.2.0"
-	if latest == "" {
-		return fmt.Errorf("no releases found on GitHub")
-	}
-
+	latest := rel.TagName // e.g. "v0.2.0"
 	kind := classifyUpdate(current, latest)
 	switch kind {
 	case kindUpToDate:
@@ -173,20 +132,9 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 	// Find the matching release asset for this OS/arch, plus the checksums
 	// file and its signature.
-	target := releaseAssetName(latest)
-	var downloadURL, checksumsURL, sigURL string
-	for _, a := range release.Assets {
-		switch a.Name {
-		case target:
-			downloadURL = a.BrowserDownloadURL
-		case "checksums.txt":
-			checksumsURL = a.BrowserDownloadURL
-		case relsig.SignatureName:
-			sigURL = a.BrowserDownloadURL
-		}
-	}
-	if downloadURL == "" {
-		return fmt.Errorf("no asset found for %s/%s (expected %q)", runtime.GOOS, runtime.GOARCH, target)
+	target, err := rel.Target(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return err
 	}
 
 	// Confirm before downloading. --yes also confirms a downgrade; the notice
@@ -205,7 +153,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	// Download archive and replace binary.
 	var installErr error
 	if err := runSpinner(fmt.Sprintf("Downloading ffc %s…", latest), func() {
-		installErr = downloadAndInstall(ctx, downloadURL, checksumsURL, sigURL, target)
+		installErr = downloadAndInstall(ctx, target)
 	}); err != nil {
 		return err
 	}
@@ -220,100 +168,18 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// fetchLimited GETs url and returns at most max bytes, failing when the body is
-// larger. The context cancels the transfer on Ctrl+C (D18, D20).
-func fetchLimited(ctx context.Context, url string, timeout time.Duration, max int64) ([]byte, error) {
-	resp, err := client.NewHTTPClient(timeout).R().
-		SetContext(ctx).
-		SetDoNotParseResponse(true).
-		Get(url)
+// downloadAndInstall fetches and verifies the release archive (signed
+// checksums.txt, then SHA-256) and replaces the running binary.
+func downloadAndInstall(ctx context.Context, target release.Target) error {
+	binData, err := release.Download(ctx, target)
 	if err != nil {
-		return nil, err
-	}
-	defer resp.RawBody().Close()
-	if resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode())
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.RawBody(), max+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > max {
-		return nil, fmt.Errorf("response exceeds %d MB limit", max>>20)
-	}
-	return data, nil
-}
-
-// downloadAndInstall fetches the release archive, verifies its SHA-256 against
-// the release's signed checksums.txt, and replaces the running binary.
-func downloadAndInstall(ctx context.Context, downloadURL, checksumsURL, sigURL, assetName string) error {
-	archive, err := fetchLimited(ctx, downloadURL, 5*time.Minute, maxArchiveBytes)
-	if err != nil {
-		return fmt.Errorf("downloading: %w", err)
-	}
-
-	// Verify the download against the published checksum before trusting it —
-	// TLS alone doesn't protect against a compromised release (H1), and the
-	// signature keeps someone who can replace release assets from also
-	// replacing checksums.txt (D19).
-	if err := verifyChecksum(ctx, archive, checksumsURL, sigURL, assetName); err != nil {
 		return err
 	}
-
-	binName := runningBinaryName()
-	var binData []byte
-	if runtime.GOOS == "windows" {
-		binData, err = extractFromZip(archive, binName)
-	} else {
-		binData, err = extractFromTarGz(archive, binName)
-	}
-	if err != nil {
-		return fmt.Errorf("extracting binary: %w", err)
-	}
-
 	// Do not touch the installed binary once the user has interrupted.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return replaceBinary(binData)
-}
-
-// verifyChecksum checks the release's checksums.txt against its Ed25519
-// signature (relsig.ReleaseKeys), then compares the SHA-256 of archive with the
-// entry for assetName (H1, D19). The archive name carries the version, so a
-// signed checksums.txt from an older release cannot vouch for this one.
-func verifyChecksum(ctx context.Context, archive []byte, checksumsURL, sigURL, assetName string) error {
-	if checksumsURL == "" {
-		return fmt.Errorf("release has no checksums.txt — refusing to install an unverified binary")
-	}
-	if sigURL == "" {
-		return fmt.Errorf("release has no %s — refusing to install an unverified binary", relsig.SignatureName)
-	}
-	body, err := fetchLimited(ctx, checksumsURL, 30*time.Second, maxChecksumsBytes)
-	if err != nil {
-		return fmt.Errorf("fetching checksums: %w", err)
-	}
-	sig, err := fetchLimited(ctx, sigURL, 30*time.Second, relsig.MaxSignatureBytes)
-	if err != nil {
-		return fmt.Errorf("fetching checksums signature: %w", err)
-	}
-	if err := relsig.Verify(relsig.ReleaseKeys, body, sig); err != nil {
-		return fmt.Errorf("checksums.txt signature check failed — refusing to install: %w", err)
-	}
-
-	sum := sha256.Sum256(archive)
-	got := hex.EncodeToString(sum[:])
-	for _, line := range strings.Split(string(body), "\n") {
-		// checksums.txt lines are "<hex-sha256>  <filename>".
-		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[1] == assetName {
-			if !strings.EqualFold(fields[0], got) {
-				return fmt.Errorf("checksum mismatch for %s:\n  expected %s\n  got      %s", assetName, fields[0], got)
-			}
-			return nil
-		}
-	}
-	return fmt.Errorf("no checksum entry for %s in checksums.txt", assetName)
 }
 
 // replaceBinary writes newData to a temp file then atomically swaps it with
@@ -401,84 +267,6 @@ func cleanupStaleOld(current string) {
 	for _, m := range matches {
 		os.Remove(m)
 	}
-}
-
-// readBinaryEntry reads one archive entry, rejecting empty or oversized data so
-// a corrupt archive can never replace ffc with a 0-byte or huge file (D20).
-func readBinaryEntry(r io.Reader, name string) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(r, maxBinaryBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > maxBinaryBytes {
-		return nil, fmt.Errorf("%q exceeds %d MB limit", name, maxBinaryBytes>>20)
-	}
-	if len(data) == 0 {
-		return nil, fmt.Errorf("%q in archive is empty", name)
-	}
-	return data, nil
-}
-
-// releaseAssetName returns the GoReleaser archive filename for the current
-// platform. GoReleaser strips the leading "v" from the tag for .Version.
-//
-// Example: "v0.2.0" → "ffc_0.2.0_linux_amd64.tar.gz"
-func releaseAssetName(tagVersion string) string {
-	ver := strings.TrimPrefix(tagVersion, "v")
-	ext := "tar.gz"
-	if runtime.GOOS == "windows" {
-		ext = "zip"
-	}
-	return fmt.Sprintf("ffc_%s_%s_%s.%s", ver, runtime.GOOS, runtime.GOARCH, ext)
-}
-
-// runningBinaryName returns the expected binary filename inside the archive.
-func runningBinaryName() string {
-	if runtime.GOOS == "windows" {
-		return "ffc.exe"
-	}
-	return "ffc"
-}
-
-func extractFromTarGz(data []byte, name string) ([]byte, error) {
-	gr, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil, fmt.Errorf("decompressing gzip: %w", err)
-	}
-	defer gr.Close()
-
-	tr := tar.NewReader(gr)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("reading tar: %w", err)
-		}
-		if hdr.Typeflag == tar.TypeReg && filepath.Base(hdr.Name) == name {
-			return readBinaryEntry(tr, name)
-		}
-	}
-	return nil, fmt.Errorf("%q not found in archive", name)
-}
-
-func extractFromZip(data []byte, name string) ([]byte, error) {
-	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return nil, fmt.Errorf("opening zip: %w", err)
-	}
-	for _, f := range r.File {
-		if f.Mode().IsRegular() && filepath.Base(f.Name) == name {
-			rc, err := f.Open()
-			if err != nil {
-				return nil, err
-			}
-			defer rc.Close()
-			return readBinaryEntry(rc, name)
-		}
-	}
-	return nil, fmt.Errorf("%q not found in zip", name)
 }
 
 // newerThan reports whether latest is a higher semver than current.

@@ -1,4 +1,4 @@
-package cmd
+package release
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/relsig"
 )
 
-func TestVerifyChecksumSignature(t *testing.T) {
+func TestVerifySignature(t *testing.T) {
 	pub, seed, err := relsig.GenerateKey()
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestVerifyChecksumSignature(t *testing.T) {
 			if tt.noSig {
 				sigURL = ""
 			}
-			err := verifyChecksum(context.Background(), tt.archive, srv.URL+"/checksums.txt", sigURL, asset)
+			err := Verify(context.Background(), tt.archive, srv.URL+"/checksums.txt", sigURL, asset)
 			switch {
 			case tt.wantErr == "" && err != nil:
 				t.Fatalf("unexpected error: %v", err)
