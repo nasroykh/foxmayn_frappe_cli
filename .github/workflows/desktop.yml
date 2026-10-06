@@ -1,0 +1,88 @@
+name: Desktop
+
+# The desktop app (desktop/) is its own Go module, so the root CI skips it.
+# It imports internal/, so changes there run this workflow too.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/desktop.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/desktop.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: desktop/frontend
+        run: npm ci
+
+      # tsc + vite; go vet and go test need frontend/dist for the embed.
+      - name: Build frontend
+        working-directory: desktop/frontend
+        run: npm run build
+
+      # macOS only: the Windows checkout has CRLF go.sum (autocrlf), which
+      # tidy -diff reports as a change on every line.
+      - name: go.mod is tidy
+        if: runner.os == 'macOS'
+        run: go mod tidy -diff
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      # The Wails CLI at the version desktop/go.mod requires.
+      - name: Install wails3
+        run: go install "github.com/wailsapp/wails/v3/cmd/wails3@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)"
+
+      - name: wails3 build
+        run: wails3 build
+
+      # wails3 build regenerates the bindings and runs npm install: the
+      # committed ones must already match.
+      - name: Bindings and lockfile are current
+        run: git diff --exit-code -- frontend/bindings frontend/package-lock.json
+
+      - name: govulncheck
+        if: runner.os == 'macOS'
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
