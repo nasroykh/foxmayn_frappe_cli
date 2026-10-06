@@ -211,6 +211,8 @@ func TestCompletionSitesAndEnums(t *testing.T) {
 		{[]string{"mcp", "--confirm", ""}, []string{"always", "if-supported"}},
 		{[]string{"mcp", "--sites", "t,"}, []string{"t,other"}},
 		{[]string{"mcp", "--allow-tools", "get_s"}, []string{"get_schema"}},
+		{[]string{"mcp", "install", "--client", "c"}, []string{"claude-code", "claude-desktop", "cursor", "codex"}},
+		{[]string{"mcp", "uninstall", "--client", "c"}, []string{"claude-code", "claude-desktop", "cursor", "codex"}},
 	} {
 		vals, _ := complT(t, cfg, c.args...)
 		complTEq(t, vals, c.want...)

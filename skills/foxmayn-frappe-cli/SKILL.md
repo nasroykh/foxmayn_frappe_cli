@@ -383,7 +383,7 @@ ffc list-doctypes --module "Accounts" --json
 
 #### Shell completion and `ffc cache`
 
-`ffc completion bash|zsh|fish|powershell` prints a completion script. Tab completes site names, DocTypes (`-d`), fields (`--fields`, comma-separated), report names (`run-report -n`) and enum flags (`--output`, `--perm`, `--number-format`, `--date-format`, `mcp --toolsets/--confirm`, `mcp install --client`). It reads only the config and a local cache, never the site; with no fresh cache it offers nothing. Document names are never completed or cached.
+`ffc completion bash|zsh|fish|powershell` prints a completion script. Tab completes site names, DocTypes (`-d`), fields (`--fields`, comma-separated), report names (`run-report -n`) and enum flags (`--output`, `--perm`, `--number-format`, `--date-format`, `mcp --toolsets/--confirm`, `mcp install/uninstall --client`). It reads only the config and a local cache, never the site; with no fresh cache it offers nothing. Document names are never completed or cached.
 
 ```bash
 ffc cache warm                                   # DocType + report lists (24 h)
@@ -530,6 +530,12 @@ ffc mcp --site mysite
 ffc mcp install --client claude-code|claude-desktop|cursor|vscode|codex [--site NAME] [--read-only] [--name frappe] [--print] [--yes]
 ```
 The entry runs ffc by its absolute path with `mcp` (plus `--site NAME`, pinned to the exact config name, when given; without it the server follows `ffc site use`) and `--read-only` when set; a non-default config (`--config` or `FFC_CONFIG`) is added as `--config <absolute path>`. It shows a unified diff (claude-code: the `claude mcp add-json --scope user …` command it runs; `~/.claude.json` is never edited), asks unless `--yes` (required without a terminal), backs the old file up to `<file>.ffc-<YYYYMMDD-HHMMSS>.bak` and writes atomically. `--print` prints the diff or command on stdout and writes nothing. Files: claude-desktop `%APPDATA%\Claude\claude_desktop_config.json` / `~/Library/Application Support/Claude/…` / `~/.config/Claude/…`; cursor `~/.cursor/mcp.json`; vscode `<config dir>/Code/User/mcp.json` (key `servers`; inferred path); codex `~/.codex/config.toml` or `$CODEX_HOME/config.toml`. Comments and formatting are kept; an unparsable file, or Codex `mcp_servers` as an inline table or dotted keys, is refused and left untouched. Same entry already there: "already up to date", exit 0. Bad `--client`/`--name`/`--site`: exit 2. `--json`: `{client, name, path, backup, changed, applied, server, command}`. ChatGPT is not supported (remote servers only).
+
+**Remove it again:**
+```bash
+ffc mcp uninstall --client claude-code|claude-desktop|cursor|vscode|codex [--name frappe] [--print] [--yes]
+```
+Same files, diff, confirmation, backup and refusals; only the `<name>` entry goes (other servers, comments on other lines and formatting stay; a comment on the entry's own lines goes with it; an emptied `mcpServers`/`servers` stays `{}`; Codex: the `[mcp_servers.<name>]` table and its sub-tables). claude-code runs `claude mcp remove --scope user <name>` (a `.cmd` shim is fine here); if claude says there was no such entry, nothing was removed and `changed` is false. No such entry or no file: "nothing to remove", exit 0. `--json`: `{client, name, path, backup, changed, applied, command}`.
 
 **HTTP foreground** — useful for testing with the MCP Inspector:
 ```bash

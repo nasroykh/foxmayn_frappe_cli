@@ -70,6 +70,7 @@ func registerCompletions(root *cobra.Command) {
 	reg(assignCmd, "priority", fixedValues("Low", "Medium", "High"))
 	reg(mcpCmd, "confirm", fixedValues("always", "if-supported"))
 	reg(mcpInstallCmd, "client", fixedValues(mcpinstall.Clients...))
+	reg(mcpUninstallCmd, "client", fixedValues(mcpinstall.Clients...))
 	reg(mcpCmd, "sites", commaValues(func() []string { return siteNamesForCompletion() }))
 	reg(mcpCmd, "allow-tools", commaValues(func() []string {
 		names := make([]string, 0, len(toolActions))

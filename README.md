@@ -530,7 +530,7 @@ ffc completion fish > ~/.config/fish/completions/ffc.fish
 ffc completion powershell | Out-String | Invoke-Expression
 ```
 
-Tab completes site names (`--site`, `site use/remove/rename/edit`, `config set --default-site`, `mcp --sites`), DocTypes (`-d/--doctype` on every command, `cache warm --doctypes`, `mcp --allow-doctypes/--deny-doctypes`), fields (`--fields`: the last item of the comma-separated list), report names (`run-report -n`) and fixed values (`--output`, `--number-format`, `--date-format`, `can --perm`, `mcp --toolsets/--confirm/--allow-tools`, `mcp install --client`, `--debug`). Document names (`-n/--name`) are never completed.
+Tab completes site names (`--site`, `site use/remove/rename/edit`, `config set --default-site`, `mcp --sites`), DocTypes (`-d/--doctype` on every command, `cache warm --doctypes`, `mcp --allow-doctypes/--deny-doctypes`), fields (`--fields`: the last item of the comma-separated list), report names (`run-report -n`) and fixed values (`--output`, `--number-format`, `--date-format`, `can --perm`, `mcp --toolsets/--confirm/--allow-tools`, `mcp install/uninstall --client`, `--debug`). Document names (`-n/--name`) are never completed.
 
 Completion reads only the config file and the local cache. It never sends a request, never signs in and never writes the cache; with no fresh cache entry it offers nothing. The cache lives in `<user cache dir>/ffc/<site>-<hash>/<credential>/` (`~/.cache/ffc` on Linux; directories 0700, files 0600, written atomically), bound to the site URL (a changed URL ignores it) and to the login: `<credential>` is a hash of the API key, username or OAuth client id (never a secret), so another login on the same site, `FFC_API_KEY` on a named site included, never sees what one login cached. A site defined only by `FFC_*` variables is keyed by its URL with any password removed. `site remove`, `site rename`, `site edit` and `site add`/`init` over an existing name delete that site's cache:
 
@@ -717,7 +717,17 @@ How the file is changed:
 
 ChatGPT is not supported: it connects only to remote MCP servers, and `ffc mcp` is a local stdio or loopback server.
 
-Not verified: the Cursor path on Windows and the VS Code paths are inferred, not quoted from their docs; Claude Desktop installed from the Microsoft Store may keep its config under `%LOCALAPPDATA%\Packages\…` instead of `%APPDATA%`; `CODEX_HOME` was checked against the Codex CLI (0.160) but is not in the Codex docs. On Windows the printed claude command is quoted for PowerShell 7 (Windows PowerShell 5.1 drops the inner double quotes), and ffc does not run `claude` when it is a `.cmd`/`.bat` shim (npm install), since cmd.exe would re-parse the JSON: run the printed command yourself.
+**Removing the entry: `ffc mcp uninstall`.** The reverse, with the same files, diff, confirmation, backup and refusals:
+
+```bash
+ffc mcp uninstall --client claude-desktop
+ffc mcp uninstall --client codex --print              # show the change, write nothing
+ffc mcp uninstall --client vscode --name frappe-prod --yes
+```
+
+It takes `--client`, `--name` (default `frappe`), `--print` and `-y/--yes`. Only the `<name>` entry goes: other servers, comments on other lines (a comment line right above the entry included), key order and formatting stay; a comment on the entry's own lines goes with it, except a block comment that runs onto another line, which stays. Comma-after and comma-first layouts and the trailing-comma style are kept, a comment before the next member on the same line stays with it, and an `mcpServers`/`servers` object left empty stays as `{}` (`null` counts as no entry). ffc re-reads the result and refuses to write it unless every other member and every comment outside the entry's lines is still there. In Codex's file the `[mcp_servers.<name>]` table and its sub-tables are removed, with no double blank line left behind. For `claude-code` it runs `claude mcp remove --scope user <name>` when `~/.claude.json` shows the entry (also through a `.cmd`/`.bat` shim: there is no JSON argument); when that file cannot be read it runs it anyway, and claude's "No MCP server named …" answer (English text of claude 2.1.291) means there was nothing to remove: "nothing was removed", and `changed`/`applied` are false. When there is no such entry (or no file) nothing changes: "nothing to remove", exit 0. With `--json` the result is `{client, name, path, backup, changed, applied, command}`.
+
+Not verified: the Cursor path on Windows and the VS Code paths are inferred, not quoted from their docs; Claude Desktop installed from the Microsoft Store may keep its config under `%LOCALAPPDATA%\Packages\…` instead of `%APPDATA%`; `CODEX_HOME` was checked against the Codex CLI (0.160) but is not in the Codex docs. On Windows the printed claude command is quoted for PowerShell 7 (Windows PowerShell 5.1 drops the inner double quotes), and `ffc mcp install` does not run `claude` when it is a `.cmd`/`.bat` shim (npm install), since cmd.exe would re-parse the JSON: run the printed command yourself (`ffc mcp uninstall` runs the shim, its arguments being plain words).
 
 **HTTP mode** — foreground, useful for testing with the MCP Inspector:
 ```bash
@@ -886,6 +896,7 @@ foxmayn_frappe_cli/
 │   │   ├── mcp_completion.go # completion/complete for resource templates and prompts (cache only)
 │   │   ├── mcp_daemon.go     # detached server, status/stop, state file
 │   │   ├── mcp_install.go    # mcp install: flags, diff, confirmation (logic in internal/mcpinstall)
+│   │   ├── mcp_uninstall.go  # mcp uninstall: the same, removing the entry (mcpinstall.PlanRemove)
 │   │   └── mcp_detach_unix.go / mcp_detach_windows.go  # platform process handling
 │   ├── sitesetup/            # Prompt-free site setup: name/URL checks, credential check, OAuth flow
 │   │                         # (callback server, client registration, PKCE), config writes, token revocation
@@ -902,7 +913,7 @@ foxmayn_frappe_cli/
 │   │   ├── config.go         # Config loading and env overrides
 │   │   ├── file.go           # Locked, atomic, comment-preserving config edits
 │   │   └── format.go         # Number/date formatting
-│   ├── mcpinstall/           # AI client MCP config edits (JSON/JSONC via hujson, Codex TOML as text, claude CLI)
+│   ├── mcpinstall/           # AI client MCP config edits, add and remove (JSON/JSONC via hujson, Codex TOML as text, claude CLI)
 │   ├── output/output.go      # Table (lipgloss) and JSON formatters
 │   ├── relsig/               # Ed25519 signing of checksums.txt; release public keys (keys.go)
 │   ├── text/text.go          # Strips terminal control characters from server data
