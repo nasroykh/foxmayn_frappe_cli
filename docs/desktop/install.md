@@ -16,8 +16,6 @@ Desktop releases are on the project's [Releases page](https://github.com/nasroyk
 
 Linux is not supported yet.
 
-> As of 2026-10-06 no desktop release has been published yet. Until one is, build the app from source: [Development: desktop app](../development/desktop.md).
-
 ## Windows
 
 1. Run `foxmayn-frappe-desktop-<version>-windows-amd64-setup.exe`.

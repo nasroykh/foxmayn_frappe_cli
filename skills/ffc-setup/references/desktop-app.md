@@ -23,5 +23,3 @@ Stored secrets never reach the app's web view.
 Desktop releases are published on the project's GitHub releases page (github.com/nasroykh/foxmayn_frappe_cli/releases) under tags `desktop-v<version>`, as prereleases for 0.x, never marked "Latest" (the "Latest" release is always the CLI). Files: `foxmayn-frappe-desktop-<version>-windows-amd64-setup.exe` (per-user installer, no administrator rights) and `foxmayn-frappe-desktop-<version>-macos-universal.dmg`, plus `checksums.txt` and its signature `checksums.txt.sig`.
 
 Builds are unsigned for now: Windows SmartScreen needs "More info" then "Run anyway"; macOS needs "Open Anyway" in System Settings > Privacy & Security after the first blocked launch. The release notes of each version give the exact steps.
-
-UNVERIFIED: no desktop release had been published when this was written (2026-10-06); the workflow exists, so check the releases page before sending a link.
