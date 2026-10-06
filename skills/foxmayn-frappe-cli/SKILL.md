@@ -535,7 +535,7 @@ The entry runs ffc by its absolute path with `mcp` (plus `--site NAME`, pinned t
 ```bash
 ffc mcp uninstall --client claude-code|claude-desktop|cursor|vscode|codex [--name frappe] [--print] [--yes]
 ```
-Same files, diff, confirmation, backup and refusals; only the `<name>` entry goes (other servers, comments on their own lines and formatting stay; an emptied `mcpServers`/`servers` stays `{}`; Codex: the `[mcp_servers.<name>]` table and its sub-tables). claude-code runs `claude mcp remove --scope user <name>`. No such entry or no file: "nothing to remove", exit 0. `--json`: `{client, name, path, backup, changed, applied, command}`.
+Same files, diff, confirmation, backup and refusals; only the `<name>` entry goes (other servers, comments on other lines and formatting stay; a comment on the entry's own lines goes with it; an emptied `mcpServers`/`servers` stays `{}`; Codex: the `[mcp_servers.<name>]` table and its sub-tables). claude-code runs `claude mcp remove --scope user <name>` (a `.cmd` shim is fine here); if claude says there was no such entry, nothing was removed and `changed` is false. No such entry or no file: "nothing to remove", exit 0. `--json`: `{client, name, path, backup, changed, applied, command}`.
 
 **HTTP foreground** — useful for testing with the MCP Inspector:
 ```bash

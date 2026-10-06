@@ -147,12 +147,20 @@ func runMCPUninstall(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("mcp uninstall: %w", err)
 	}
 	res.Backup, res.Applied = backup, true
+	if ch.Absent {
+		// claude had no such entry after all: nothing changed.
+		res.Changed, res.Applied = false, false
+	}
 	if !human {
 		return printResult(res)
 	}
-	if ch.Client == mcpinstall.ClaudeCode {
+	switch {
+	case ch.Absent:
+		output.PrintSuccess(fmt.Sprintf("Claude Code's user config has no %q entry; nothing was removed", ch.Name))
+		return nil
+	case ch.Client == mcpinstall.ClaudeCode:
 		output.PrintSuccess(fmt.Sprintf("Removed %q from Claude Code's user config", ch.Name))
-	} else {
+	default:
 		output.PrintSuccess(fmt.Sprintf("Removed the %q entry from %s", ch.Name, ch.Path))
 	}
 	if backup != "" {

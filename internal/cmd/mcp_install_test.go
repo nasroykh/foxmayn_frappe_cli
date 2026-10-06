@@ -21,6 +21,7 @@ type installT struct {
 	claudePath string
 	goos       string // overrides the OS the claude CLI is run on
 	calls      [][]string
+	run        func(args []string) ([]byte, error) // the claude call's result; nil = success
 }
 
 func newInstallT(t *testing.T) *installT {
@@ -50,6 +51,9 @@ func newInstallT(t *testing.T) *installT {
 		}
 		env.Run = func(name string, args ...string) ([]byte, error) {
 			it.calls = append(it.calls, append([]string{name}, args...))
+			if it.run != nil {
+				return it.run(args)
+			}
 			return nil, nil
 		}
 		return env, err

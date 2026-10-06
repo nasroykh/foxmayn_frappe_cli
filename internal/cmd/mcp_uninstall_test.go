@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -242,7 +243,31 @@ func TestMCPUninstallClaudeCode(t *testing.T) {
 	}
 }
 
-func TestMCPUninstallClaudeBatchRefusedBeforePrompt(t *testing.T) {
+// A remove has no JSON argument, so a .cmd shim is run.
+func TestMCPUninstallClaudeBatchShim(t *testing.T) {
+	it := newInstallT(t)
+	cfg := installConfig(t)
+	if err := os.MkdirAll(it.home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(it.home, ".claude.json"), []byte(`{"mcpServers": {"frappe": {}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	it.goos = "windows"
+	it.claudePath = filepath.Join(it.home, "npm", "claude.cmd")
+	r := runFFC(t, cfg, "", "mcp", "uninstall", "--client", "claude-code")
+	if r.Code != 2 || !strings.Contains(r.Stderr, "pass --yes") || len(it.calls) != 0 {
+		t.Fatalf("no terminal: code %d calls %q\n%s", r.Code, it.calls, r.Stderr)
+	}
+	r = runFFC(t, cfg, "", "mcp", "uninstall", "--client", "claude-code", "--yes")
+	if r.Code != 0 || len(it.calls) != 1 || it.calls[0][0] != it.claudePath || strings.Join(it.calls[0][1:], " ") != "mcp remove --scope user frappe" {
+		t.Fatalf("code %d calls %q\n%s", r.Code, it.calls, r.Stderr)
+	}
+}
+
+// State file unreadable and claude says there is no such entry: nothing
+// changed, and the result says so.
+func TestMCPUninstallClaudeAbsent(t *testing.T) {
 	it := newInstallT(t)
 	cfg := installConfig(t)
 	if err := os.MkdirAll(it.home, 0o700); err != nil {
@@ -251,11 +276,31 @@ func TestMCPUninstallClaudeBatchRefusedBeforePrompt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(it.home, ".claude.json"), []byte(`{not json`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	it.goos = "windows"
-	it.claudePath = filepath.Join(it.home, "npm", "claude.cmd")
-	r := runFFC(t, cfg, "", "--json", "mcp", "uninstall", "--client", "claude-code")
-	if r.Code != 2 || !strings.Contains(r.Stderr, "batch file") || !strings.Contains(r.Stderr, "claude mcp remove --scope user frappe") ||
-		strings.Contains(r.Stderr, "pass --yes") || len(it.calls) != 0 {
+	it.claudePath = filepath.Join(it.home, "bin", "claude")
+	it.run = func([]string) ([]byte, error) {
+		return []byte(`No MCP server named "frappe" in user scope`), errors.New("exit status 1")
+	}
+	r := runFFC(t, cfg, "", "mcp", "uninstall", "--client", "claude-code", "--yes")
+	if r.Code != 0 || len(it.calls) != 1 || !strings.Contains(r.Stderr, `no "frappe" entry; nothing was removed`) || strings.Contains(r.Stderr, "Removed") {
 		t.Fatalf("code %d calls %q\n%s", r.Code, it.calls, r.Stderr)
+	}
+	if !strings.Contains(r.Stderr, "could not be read") {
+		t.Errorf("plan does not say the state file was unreadable:\n%s", r.Stderr)
+	}
+
+	r = runFFC(t, cfg, "", "--json", "mcp", "uninstall", "--client", "claude-code", "--yes")
+	var res map[string]interface{}
+	if err := json.Unmarshal([]byte(r.Stdout), &res); err != nil || r.Code != 0 {
+		t.Fatalf("code %d %v: %s\n%s", r.Code, err, r.Stdout, r.Stderr)
+	}
+	if res["changed"] != false || res["applied"] != false {
+		t.Fatalf("result %v", res)
+	}
+
+	// Another failure is an error.
+	it.run = func([]string) ([]byte, error) { return []byte("Invalid configuration"), errors.New("exit status 1") }
+	r = runFFC(t, cfg, "", "mcp", "uninstall", "--client", "claude-code", "--yes")
+	if r.Code == 0 || !strings.Contains(r.Stderr, "Invalid configuration") {
+		t.Fatalf("code %d\n%s", r.Code, r.Stderr)
 	}
 }
