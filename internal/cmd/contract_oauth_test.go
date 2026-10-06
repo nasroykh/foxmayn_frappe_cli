@@ -110,9 +110,9 @@ func TestContractOAuthExpiry(t *testing.T) {
 // TestContractOAuthRevoke pins what site remove relies on: revoke_token
 // (oauth2.py:188) with the client_id and token_type_hint=refresh_token in a
 // form body and no Authorization header answers 200 and revokes the whole
-// OAuth Bearer Token record (the refresh token no longer refreshes, the
-// access token no longer authenticates); an unknown token is a 200 too. The
-// fake answers the same.
+// OAuth Bearer Token record (the refresh token no longer refreshes: 403
+// PermissionError; the access token no longer authenticates: 401); an
+// unknown token is a 200 too. The fake answers the same.
 func TestContractOAuthRevoke(t *testing.T) {
 	sc := contractSite(t)
 	ctx := contractCtx(t)
@@ -153,9 +153,11 @@ func TestContractOAuthRevoke(t *testing.T) {
 		if err := client.RevokeOAuthToken(ctx, s.url, s.clientID, "", s.refresh, "refresh_token"); err != nil {
 			t.Fatalf("%s: revoke: %v", s.name, err)
 		}
+		// Not oauthlib's invalid_grant: validate_refresh_token's get_doc
+		// raises DoesNotExistError, which reaches Guest as PermissionError.
 		_, err := client.RefreshOAuthToken(ctx, s.url, s.clientID, "", s.refresh)
 		var e *client.APIError
-		if !errors.As(err, &e) || e.Status != http.StatusBadRequest {
+		if !errors.As(err, &e) || e.Status != http.StatusForbidden || e.ExcType != "PermissionError" {
 			t.Errorf("%s: refresh after revoke: %v", s.name, err)
 		}
 		if _, err := client.GetOAuthUser(ctx, s.url, s.access); !errors.As(err, &e) || e.Status != http.StatusUnauthorized {

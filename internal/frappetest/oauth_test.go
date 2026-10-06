@@ -144,7 +144,7 @@ func TestFakeOAuthRevoke(t *testing.T) {
 	// The record is revoked: its refresh token no longer refreshes and its
 	// access token no longer authenticates.
 	grant := url.Values{"grant_type": {"refresh_token"}, "client_id": {frappetest.OAuthClientID}, "refresh_token": {frappetest.RefreshToken}}
-	if r := fkDo(t, s, "POST", "/api/method/frappe.integrations.oauth2.get_token", grant.Encode(), form); r.Status != 400 || r.Body["error"] != "invalid_grant" {
+	if r := fkDo(t, s, "POST", "/api/method/frappe.integrations.oauth2.get_token", grant.Encode(), form); r.Status != 403 || r.Body["exc_type"] != "PermissionError" {
 		t.Errorf("refresh after revoke: %d %s", r.Status, r.Raw)
 	}
 	if r := fkDo(t, s, "GET", "/api/method/frappe.auth.get_logged_user", "", func(r *http.Request) {

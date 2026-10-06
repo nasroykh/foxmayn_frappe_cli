@@ -174,7 +174,8 @@ func (s *Site) issue(access, refresh string) map[string]interface{} {
 // token answers the OAuth token endpoint like Frappe's get_token: errors are
 // oauthlib's {"error": …} with HTTP 400 (401 for an unknown client). As in
 // Frappe, a refresh issues a new refresh token and leaves the old one
-// active. The authorization_code grant takes AuthCode for any known client,
+// active; a revoked refresh token is a 403 PermissionError (pinned by
+// TestContractOAuthRevoke). The authorization_code grant takes AuthCode for any known client,
 // with a redirect_uri the client registered and a code_verifier (PKCE).
 func (s *Site) token(w http.ResponseWriter, r *http.Request, body []byte) {
 	if r.Method != http.MethodPost {
@@ -213,6 +214,14 @@ func (s *Site) token(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 	rt, _ := args["refresh_token"].(string)
+	if contains(s.oauth.revoked, rt) {
+		// validate_refresh_token's get_doc finds no Active record and raises
+		// DoesNotExistError, which is no OAuth2Error, so it leaves get_token
+		// and the app turns it into a PermissionError for Guest
+		// (permissions.py:926, handle_does_not_exist_error).
+		writeError(w, Permission("User Guest does not have doctype access via role permission for document OAuth Bearer Token"))
+		return
+	}
 	if _, ok := s.oauth.refresh[rt]; s.oauth.failRefresh || !ok {
 		oauthErr(http.StatusBadRequest, "invalid_grant")
 		return
