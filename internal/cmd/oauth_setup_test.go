@@ -209,6 +209,42 @@ func TestOAuthSetupRegistrationFails(t *testing.T) {
 	}
 }
 
+// A site cannot reach the terminal through what it names: a client_id with
+// control characters is refused, and the user name is printed sanitised.
+func TestOAuthSetupSanitizesSiteValues(t *testing.T) {
+	const esc = "\x1b]0;pwned\x07"
+	t.Run("client_id", func(t *testing.T) {
+		site := frappetest.New(t)
+		site.Handle("POST "+registerPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"client_id":"abc\u001b]0;pwned\u0007"}`))
+		}))
+		cfg := fakeConfig(t, site, "apikey")
+		browser := stubBrowser(t)
+		r := runFFC(t, cfg, "", "site", "add", "--oauth", "--name", "reg", "--url", site.URL)
+		if r.Err == nil || !strings.Contains(r.Stderr, "invalid client_id") || strings.ContainsAny(r.Stdout+r.Stderr, "\x1b\x07") {
+			t.Errorf("err %v, stderr %q", r.Err, r.Stderr)
+		}
+		if len(browser.opened()) != 0 {
+			t.Error("browser opened with an invalid client")
+		}
+	})
+	t.Run("user", func(t *testing.T) {
+		site := frappetest.New(t)
+		site.HandleMethod("frappe.auth.get_logged_user", func(*http.Request, map[string]interface{}) (interface{}, error) {
+			return "admin@example.com" + esc, nil
+		})
+		cfg := fakeConfig(t, site, "apikey")
+		stubBrowser(t)
+		r := runFFC(t, cfg, "", "site", "add", "--oauth", "--name", "reg", "--url", site.URL)
+		wantCode(t, r, 0)
+		if !strings.Contains(r.Stderr, "Logged in as admin@example.com") || strings.ContainsAny(r.Stdout+r.Stderr, "\x1b\x07") {
+			t.Errorf("stderr = %q", r.Stderr)
+		}
+	})
+}
+
 // resolveOAuthApp is the decision the wizard and the flags share; the
 // wizard prompts on a *noRegistrationError, so these cases are its fallback.
 func TestResolveOAuthApp(t *testing.T) {

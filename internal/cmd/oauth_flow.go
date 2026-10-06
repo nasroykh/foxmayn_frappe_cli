@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 )
 
 // ─── PKCE ────────────────────────────────────────────────────────────────────
@@ -269,7 +270,7 @@ func collectOAuthSite(ctx context.Context, checkName func(string) error, manual 
 		return "", config.SiteConfig{}, err
 	}
 
-	clientLine := app.ID
+	clientLine := text.Sanitize(app.ID)
 	if app.Registered {
 		clientLine += " (registered by ffc)"
 	}
@@ -293,7 +294,7 @@ func setUpOAuthApp(ctx context.Context, siteURL string, cs *callbackServer, manu
 		return oauthApp{}, errAborted
 	}
 	if resolveErr == nil && app.Registered {
-		fmt.Fprintf(os.Stderr, "✓ Registered OAuth client %s on %s.\n", app.ID, siteURL)
+		fmt.Fprintf(os.Stderr, "✓ Registered OAuth client %s on %s.\n", text.Sanitize(app.ID), siteURL)
 	}
 	return app, resolveErr
 }
@@ -412,7 +413,8 @@ func oauthLogin(ctx context.Context, siteURL string, cs *callbackServer, app oau
 	}); err != nil || ctx.Err() != nil {
 		return nil, "", errAborted
 	}
-	return tokens, user, nil
+	// The site chose the name: no terminal escapes from it.
+	return tokens, text.Sanitize(user), nil
 }
 
 // oauthSiteConfig is the site entry for a finished login.

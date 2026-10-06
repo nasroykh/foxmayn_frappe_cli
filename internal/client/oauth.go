@@ -203,7 +203,29 @@ func RegisterOAuthClient(ctx context.Context, siteURL, endpoint string, md OAuth
 	if reg.ClientID == "" {
 		return nil, fmt.Errorf("registering an OAuth client: no client_id in the server response")
 	}
+	if !validClientID(reg.ClientID) {
+		return nil, fmt.Errorf("registering an OAuth client: the server returned an invalid client_id")
+	}
 	return &reg, nil
+}
+
+// maxClientIDLen is the length of a Frappe document name (the OAuth Client's
+// name is its client_id; Frappe generates a 10-character hash).
+const maxClientIDLen = 140
+
+// validClientID reports whether id is an RFC 6749 client_id (visible ASCII,
+// %x20-7E) without edge spaces and at most maxClientIDLen long. ffc stores
+// and prints it, so a site cannot hand it terminal escapes or a huge value.
+func validClientID(id string) bool {
+	if id == "" || len(id) > maxClientIDLen || strings.TrimSpace(id) != id {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		if id[i] < 0x20 || id[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 // sitePathOf returns the path (and query) of endpoint, which must be on the

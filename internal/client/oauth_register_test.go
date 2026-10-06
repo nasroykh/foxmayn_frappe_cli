@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -106,6 +107,32 @@ func TestRegisterOAuthClientErrors(t *testing.T) {
 	// Every attempt was a single POST: registration is never retried.
 	if n := len(s.RequestsTo(http.MethodPost, registerPath)); n != 3 {
 		t.Errorf("register requests = %d, want 3", n)
+	}
+}
+
+func TestRegisterOAuthClientRefusesBadClientID(t *testing.T) {
+	s := frappetest.New(t)
+	for name, id := range map[string]string{
+		"escape":  "abc\x1b]0;pwned\x07",
+		"newline": "abc\ndef",
+		"spaces":  " abc",
+		"long":    strings.Repeat("a", 141),
+		"unicode": "ab‮cd",
+	} {
+		b, _ := json.Marshal(map[string]string{"client_id": id})
+		body := string(b)
+		s.Handle("POST "+registerPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(body))
+		}))
+		_, err := RegisterOAuthClient(context.Background(), s.URL, registerPath, testClientMetadata())
+		if err == nil || !strings.Contains(err.Error(), "invalid client_id") || strings.ContainsAny(err.Error(), "\x1b\n‮") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	if !validClientID(strings.Repeat("a", 140)) || !validClientID("3f2a9c81bd") {
+		t.Error("valid IDs refused")
 	}
 }
 
