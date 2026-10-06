@@ -104,7 +104,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	var rel *release.Release
 	var fetchErr error
 	if err := runSpinner("Checking for updates…", func() {
-		rel, fetchErr = release.Latest(ctx, release.LatestURL, 30*time.Second)
+		rel, fetchErr = release.Latest(ctx, release.ReleasesURL, 30*time.Second)
 	}); err != nil {
 		return err
 	}

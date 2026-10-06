@@ -78,8 +78,17 @@ func fakeRelease(t *testing.T, bin []byte, signed bool) (*httptest.Server, map[s
 			for name := range files {
 				rel.Assets = append(rel.Assets, Asset{Name: name[1:], BrowserDownloadURL: "http://" + r.Host + name})
 			}
+			// Newest first, as GitHub lists them: a desktop release, a
+			// draft and a prerelease come before the ffc release.
+			rels := []Release{
+				{TagName: "desktop-v0.2.0"},
+				{TagName: "v3.1.0", Draft: true},
+				{TagName: "v3.1.0-rc1", Prerelease: true},
+				rel,
+				{TagName: "v2.9.0"},
+			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(rel)
+			_ = json.NewEncoder(w).Encode(rels)
 			return
 		}
 		b, ok := files[r.URL.Path]
@@ -148,7 +157,12 @@ func TestLatestErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/empty" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		if r.URL.Path == "/desktop-only" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"tag_name":"desktop-v0.1.0"},{"tag_name":"vnext"}]`))
 			return
 		}
 		http.Error(w, "rate limited", http.StatusForbidden)
@@ -157,7 +171,9 @@ func TestLatestErrors(t *testing.T) {
 	if _, err := Latest(context.Background(), srv.URL+"/x", 5*time.Second); err == nil || !strings.Contains(err.Error(), "HTTP 403") {
 		t.Errorf("403: %v", err)
 	}
-	if _, err := Latest(context.Background(), srv.URL+"/empty", 5*time.Second); err == nil || !strings.Contains(err.Error(), "no releases") {
-		t.Errorf("empty: %v", err)
+	for _, path := range []string{"/empty", "/desktop-only"} {
+		if _, err := Latest(context.Background(), srv.URL+path, 5*time.Second); err == nil || !strings.Contains(err.Error(), "no ffc release") {
+			t.Errorf("%s: %v", path, err)
+		}
 	}
 }

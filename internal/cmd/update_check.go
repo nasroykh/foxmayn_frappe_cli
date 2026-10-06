@@ -74,7 +74,7 @@ func startBackgroundFetch(path string, state updateCheckState) {
 	updateCheckDone = make(chan struct{})
 	go func() {
 		defer close(updateCheckDone)
-		rel, err := release.Latest(context.Background(), release.LatestURL, 10*time.Second)
+		rel, err := release.Latest(context.Background(), release.ReleasesURL, 10*time.Second)
 		if err != nil {
 			return
 		}
