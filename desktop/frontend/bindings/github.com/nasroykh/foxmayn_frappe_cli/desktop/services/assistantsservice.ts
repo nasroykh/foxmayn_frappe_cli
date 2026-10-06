@@ -25,7 +25,9 @@ export function Connect(req: $models.ConnectRequest): $CancellablePromise<$model
 }
 
 /**
- * Disconnect removes the entry from the client's config.
+ * Disconnect removes the entry from the client's config (mcpinstall.PlanRemove,
+ * the CLI's "ffc mcp uninstall"). Without an entry nothing changes and
+ * Changed is false.
  */
 export function Disconnect(client: string): $CancellablePromise<$models.ApplyResult> {
     return $Call.ByID(3816555414, client);

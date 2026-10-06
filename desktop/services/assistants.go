@@ -121,7 +121,7 @@ func NewAssistantsService(configPath string, ffc *FFCLocator) *AssistantsService
 		ffc:        ffc,
 		env:        desktopEnv,
 		dirExists:  isDir,
-		planRemove: planRemove,
+		planRemove: mcpinstall.PlanRemove,
 	}
 }
 
@@ -351,6 +351,9 @@ func apply(ch *mcpinstall.Change) (ApplyResult, error) {
 		return ApplyResult{}, newError(CodeFailed, "The assistant's settings could not be changed.", err)
 	}
 	res.Backup = backup
+	// A claude-code removal whose state file was unreadable: claude said
+	// there was no such entry, so nothing was connected.
+	res.Changed = !ch.Absent
 	return res, nil
 }
 
@@ -360,10 +363,14 @@ func (s *AssistantsService) PreviewDisconnect(client string) (Preview, error) {
 	if err != nil {
 		return Preview{}, err
 	}
-	return preview(ch, mcpinstall.Server{}), nil
+	p := preview(ch, mcpinstall.Server{})
+	p.CreatesFile = false // a removal never creates a file
+	return p, nil
 }
 
-// Disconnect removes the entry from the client's config.
+// Disconnect removes the entry from the client's config (mcpinstall.PlanRemove,
+// the CLI's "ffc mcp uninstall"). Without an entry nothing changes and
+// Changed is false.
 func (s *AssistantsService) Disconnect(client string) (ApplyResult, error) {
 	ch, err := s.removal(client)
 	if err != nil {

@@ -52,7 +52,11 @@ export function DisconnectDialog({ assistant, onClose }: { assistant: Assistant 
     try {
       const res = await backend.disconnect(kept.id)
       await reloadAssistants()
-      toast.add({ title: `${kept.name} is disconnected`, description: res.hint, type: "success" })
+      toast.add(
+        res.changed
+          ? { title: `${kept.name} is disconnected`, description: res.hint, type: "success" }
+          : { title: `${kept.name} was not connected`, description: "There was nothing to remove.", type: "info" },
+      )
       onClose()
     } catch (err) {
       const e = appError(err)

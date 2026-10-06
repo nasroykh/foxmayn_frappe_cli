@@ -240,3 +240,61 @@ func TestDisconnectUsesPlanRemove(t *testing.T) {
 		t.Errorf("planRemove got %q", asked)
 	}
 }
+
+func TestDisconnectRemovesTheEntry(t *testing.T) {
+	s, env, _ := newAssistants(t, true)
+	for _, id := range []string{mcpinstall.Cursor, mcpinstall.Codex, mcpinstall.VSCode} {
+		if _, err := s.Connect(ConnectRequest{Client: id, Site: "prod"}); err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		p, err := s.PreviewDisconnect(id)
+		if err != nil || !p.Changed || !p.Replaces || !p.CanApply || p.CreatesFile || p.Diff == "" {
+			t.Fatalf("%s preview = %+v, %v", id, p, err)
+		}
+		res, err := s.Disconnect(id)
+		if err != nil || !res.Changed || res.Backup == "" || res.Hint == "" {
+			t.Fatalf("%s disconnect = %+v, %v", id, res, err)
+		}
+		if a := find(mustList(t, s), id); a.Status != StatusNotConnected {
+			t.Errorf("%s after = %+v", id, a)
+		}
+		// Nothing left to remove: no change, no error.
+		if res, err := s.Disconnect(id); err != nil || res.Changed {
+			t.Errorf("%s again = %+v, %v", id, res, err)
+		}
+	}
+	b, _ := os.ReadFile(filepath.Join(env.Home, ".codex", "config.toml"))
+	if strings.Contains(string(b), "mcp_servers.frappe") {
+		t.Errorf("codex config still has the entry: %s", b)
+	}
+}
+
+func TestDisconnectClaudeCode(t *testing.T) {
+	s, env, ran := newAssistants(t, true)
+	claude := filepath.Join(env.Home, "bin", "claude.exe")
+	env.LookPath = func(name string) (string, error) {
+		if name == "claude" {
+			return claude, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	s.env = func() (mcpinstall.Env, error) { return env, nil }
+	// The state file shows the entry, so the remove command is planned.
+	state := `{"mcpServers":{"frappe":{"type":"stdio","command":"C:\\ffc.exe","args":["mcp"]}}}`
+	if err := os.MkdirAll(env.Home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(env.Home, ".claude.json"), []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.PreviewDisconnect(mcpinstall.ClaudeCode)
+	if err != nil || !p.Changed || len(p.Commands) != 1 || !strings.Contains(p.Commands[0], "mcp remove --scope user frappe") {
+		t.Fatalf("preview = %+v, %v", p, err)
+	}
+	if _, err := s.Disconnect(mcpinstall.ClaudeCode); err != nil {
+		t.Fatal(err)
+	}
+	if len(*ran) != 1 || (*ran)[0][0] != claude || strings.Join((*ran)[0][1:], " ") != "mcp remove --scope user frappe" {
+		t.Errorf("ran = %q", *ran)
+	}
+}
