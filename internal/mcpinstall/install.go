@@ -149,6 +149,10 @@ type Change struct {
 	Replaces bool
 	// Hint tells the user how to make the client pick the change up.
 	Hint string
+	// Absent is set by Apply of a claude-code PlanRemove whose state file
+	// could not be read, when claude answered that there was no such
+	// entry: the command ran and nothing changed.
+	Absent bool
 
 	env    Env
 	mode   fs.FileMode // of the existing file

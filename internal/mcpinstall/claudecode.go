@@ -95,8 +95,10 @@ func planClaudeCodeRemove(name string, env Env) *Change {
 }
 
 // claudeNoServer reports whether claude's output says the server does not
-// exist in that scope (claude 2.1.291: `No MCP server named "x" in user
-// scope`, exit status 1).
+// exist in that scope. This matches English text: claude 2.1.291 prints
+// `No MCP server named "x" in user scope` with exit status 1 (checked
+// against a throwaway CLAUDE_CONFIG_DIR). If a later claude words it
+// otherwise, the failure is reported as an error, never taken as success.
 func claudeNoServer(out []byte) bool {
 	s := strings.ToLower(string(out))
 	return strings.Contains(s, "no mcp server named") || strings.Contains(s, "no mcp server found")
@@ -164,20 +166,22 @@ func sameClaudeEntry(raw json.RawMessage, want jsonEntry) bool {
 // checkTool tells whether Apply can run the claude CLI. Its errors carry
 // the commands to run by hand, since a caller may not have printed them.
 func (c *Change) checkTool() error {
-	verb, why := "add", "which cannot be given a JSON argument safely"
+	verb := "add"
 	if c.remove {
-		verb, why = "remove", "which ffc does not run"
+		verb = "remove"
 	}
 	if c.tool == "" {
 		return fmt.Errorf("%w; install Claude Code, or %s the server yourself with:\n  %s",
 			ErrClaudeNotFound, verb, strings.Join(c.CommandLines(), "\n  "))
 	}
-	if c.env.GOOS == "windows" {
+	if c.env.GOOS == "windows" && !c.remove {
+		// A remove is safe through a batch file: its arguments are fixed
+		// words and a name ValidName limits to [A-Za-z0-9_-].
 		switch strings.ToLower(filepath.Ext(c.tool)) {
 		case ".cmd", ".bat":
 			// cmd.exe would re-parse the JSON argument (quotes, %, ^, &).
-			return fmt.Errorf("%w: the claude CLI is a batch file (%s), %s; run this yourself (PowerShell 7):\n  %s",
-				ErrClaudeBatch, c.tool, why, strings.Join(c.CommandLines(), "\n  "))
+			return fmt.Errorf("%w: the claude CLI is a batch file (%s), which cannot be given a JSON argument safely; run this yourself (PowerShell 7):\n  %s",
+				ErrClaudeBatch, c.tool, strings.Join(c.CommandLines(), "\n  "))
 		}
 	}
 	return nil
@@ -215,7 +219,8 @@ func (c *Change) applyClaudeCode() error {
 			continue
 		}
 		if c.absentOK && argv[2] == "remove" && claudeNoServer(out) {
-			continue // already absent: what the state file could not tell
+			c.Absent = true // already absent: what the state file could not tell
+			continue
 		}
 		if c.retryOnExists && argv[2] == "add-json" && bytes.Contains(out, []byte("already exists")) {
 			// The entry exists although the state file did not show it.

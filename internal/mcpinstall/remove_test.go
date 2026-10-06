@@ -1,6 +1,7 @@
 package mcpinstall
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -156,6 +157,99 @@ func TestRemoveJSON(t *testing.T) {
 			in:   `{"mcpServers": {"frappe": {}}}`,
 			want: `{"mcpServers": {}}`,
 		},
+		"a block comment spanning lines after the comma stays": {
+			in: `{
+  "mcpServers": {
+    "frappe": {"command": "a"}, /* note about
+       other */
+    "other": {"command": "b"}
+  }
+}
+`,
+			want: `{
+  "mcpServers": {
+    /* note about
+       other */
+    "other": {"command": "b"}
+  }
+}
+`,
+		},
+		"a block comment spanning lines before the name stays": {
+			in: `{
+  "mcpServers": {
+    "a": 1,
+    /* about
+       a */ "frappe": 2,
+    "b": 3
+  }
+}
+`,
+			want: `{
+  "mcpServers": {
+    "a": 1,
+    /* about
+       a */
+    "b": 3
+  }
+}
+`,
+		},
+		"one line, the next member keeps its comment": {
+			in:   `{"mcpServers": {"frappe": {"command": "a"}, /* keep: other */ "other": {"command": "b"}}}`,
+			want: `{"mcpServers": {/* keep: other */ "other": {"command": "b"}}}`,
+		},
+		"comma-first, middle": {
+			in: `{
+  "mcpServers": {
+    "a": 1
+    , "frappe": 2
+    // about b
+    , "b": 3
+  }
+}
+`,
+			want: `{
+  "mcpServers": {
+    "a": 1
+    // about b
+    , "b": 3
+  }
+}
+`,
+		},
+		"comma-first, last": {
+			in: `{
+  "mcpServers": {
+    "a": 1
+    , "frappe": 2
+  }
+}
+`,
+			want: `{
+  "mcpServers": {
+    "a": 1
+  }
+}
+`,
+		},
+		"comma-first, first": {
+			in: `{
+  "mcpServers": {
+    "frappe": 1 // own
+    // about b
+    , "b": 2
+  }
+}
+`,
+			want: `{
+  "mcpServers": {
+    // about b
+    "b": 2
+  }
+}
+`,
+		},
 		"next member on the same line takes its place": {
 			in: `{
   "mcpServers": {
@@ -186,6 +280,41 @@ func TestRemoveJSON(t *testing.T) {
 	}
 }
 
+// Every member of every layout can be removed: the result check passes and
+// the other members stay.
+func TestRemoveJSONEveryMember(t *testing.T) {
+	layouts := []string{
+		"{\"mcpServers\": {\"a\": 1, \"b\": {\"x\": [1, 2]}, \"c\": \"s\"}}",
+		"{\n  \"mcpServers\": {\n    \"a\": 1, // a\n    /* b */ \"b\": {\n      \"x\": 2 // in b\n    },\n    // c\n    \"c\": 3\n  }\n}\n",
+		"{\n\t\"mcpServers\": {\n\t\t\"a\": 1,\n\t\t\"b\": 2,\n\t\t\"c\": 3,\n\t},\n}\n",
+		"{\n  \"mcpServers\": {\n    \"a\": 1\n    , \"b\": 2 // b\n    , \"c\": 3\n  }\n}\n",
+		"{\"mcpServers\": {\n  \"a\": 1, \"b\": 2,\n  \"c\": 3}}",
+		"{\"mcpServers\": { /* x\n */ \"a\": 1, /* y\n */ \"b\": 2 /* z\n */, \"c\": 3 /* w\n */ }}",
+	}
+	for _, layout := range layouts {
+		for _, conv := range []func(string) string{func(s string) string { return s }, crlf} {
+			in := conv(layout)
+			for _, name := range []string{"a", "b", "c"} {
+				out, found, err := removeJSON([]byte(in), "mcpServers", name)
+				if err != nil || !found {
+					t.Errorf("%q without %s: %v", in, name, err)
+					continue
+				}
+				for _, other := range []string{"a", "b", "c"} {
+					v, _ := hujson.Standardize(append([]byte{}, out...))
+					var doc map[string]map[string]interface{}
+					if err := json.Unmarshal(v, &doc); err != nil {
+						t.Fatalf("%q: %v", out, err)
+					}
+					if _, ok := doc["mcpServers"][other]; ok == (other == name) {
+						t.Errorf("%q without %s: %s present %v", in, name, other, ok)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestRemoveJSONKeepsStrictAndBOM(t *testing.T) {
 	in := "\xEF\xBB\xBF{\"mcpServers\": {\"a\": {}, \"frappe\": {}}}\n"
 	out, found, err := removeJSON([]byte(in), "mcpServers", "frappe")
@@ -195,6 +324,13 @@ func TestRemoveJSONKeepsStrictAndBOM(t *testing.T) {
 	v, err := hujson.Parse(out[3:])
 	if err != nil || !v.IsStandard() {
 		t.Fatalf("not strict JSON: %v", err)
+	}
+
+	// Comma-first, last member, CRLF and BOM: no line of blanks is left.
+	in = "\xEF\xBB\xBF{\r\n  \"mcpServers\": {\r\n    \"a\": 1\r\n    , \"frappe\": 2\r\n  }\r\n}\r\n"
+	out, found, err = removeJSON([]byte(in), "mcpServers", "frappe")
+	if want := "\xEF\xBB\xBF{\r\n  \"mcpServers\": {\r\n    \"a\": 1\r\n  }\r\n}\r\n"; err != nil || !found || string(out) != want {
+		t.Fatalf("%q %v %v", out, found, err)
 	}
 }
 
@@ -206,6 +342,8 @@ func TestRemoveJSONAbsent(t *testing.T) {
 		`{"mcpServers": {}}`,
 		"{\n  // c\n  \"mcpServers\": {\"a\": {}}\n}\n",
 		`{"servers": {"frappe": {}}}`, // another client's key
+		`{"mcpServers": null}`,
+		"{\n  \"mcpServers\": null // none yet\n}\n",
 	} {
 		out, found, err := removeJSON([]byte(in), "mcpServers", "frappe")
 		if err != nil || found || string(out) != in {
@@ -247,6 +385,29 @@ func TestCheckRemoveResult(t *testing.T) {
 	}
 	if err := checkRemoveResult(src, []byte(`{"mcpServers": {"a": {"command": "a"}}, "x": 1}`), "mcpServers", "frappe", true); err != nil {
 		t.Fatal(err)
+	}
+
+	// Comments: those on the entry's own lines may go, every other one must
+	// stay, and none may appear.
+	src = []byte("{\n  // top\n  \"mcpServers\": {\n    \"a\": 1, // about a\n    // above\n    \"frappe\": 2 /* own */, // own too\n    /* spans\n       lines */\n    \"b\": 3\n  }\n}\n")
+	good := "{\n  // top\n  \"mcpServers\": {\n    \"a\": 1, // about a\n    // above\n    /* spans\n       lines */\n    \"b\": 3\n  }\n}\n"
+	if err := checkRemoveResult(src, []byte(good), "mcpServers", "frappe", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ out, want string }{
+		{strings.Replace(good, " // about a", "", 1), `lose the comment "// about a"`},
+		{strings.Replace(good, "    // above\n", "", 1), `lose the comment "// above"`},
+		{strings.Replace(good, "  // top\n", "", 1), `lose the comment "// top"`},
+		{strings.Replace(good, "    /* spans\n       lines */\n", "", 1), "lose the comment"},
+		{strings.Replace(good, "\"b\": 3", "\"b\": 3 // new", 1), "not there"},
+	} {
+		if err := checkRemoveResult(src, []byte(tc.out), "mcpServers", "frappe", false); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%q: err %v, want %q", tc.out, err, tc.want)
+		}
+	}
+	// The real removal of that entry passes the check.
+	if out, found, err := removeJSON(src, "mcpServers", "frappe"); err != nil || !found || string(out) != good {
+		t.Fatalf("%q %v %v", out, found, err)
 	}
 }
 
@@ -619,11 +780,20 @@ func TestPlanRemoveClaudeCode(t *testing.T) {
 			return []byte(`No MCP server named "frappe" in user scope`), errors.New("exit status 1")
 		}
 		c := mustPlanRemove(t, ClaudeCode, "frappe", env)
-		if !c.Changed() || c.Replaces || len(c.Commands) != 1 {
+		if !c.Changed() || c.Replaces || c.Absent || len(c.Commands) != 1 {
 			t.Fatalf("change: %+v", c)
 		}
-		if _, err := c.Apply(); err != nil || len(f.calls) != 1 {
-			t.Fatal(err, f.calls)
+		if _, err := c.Apply(); err != nil || len(f.calls) != 1 || !c.Absent {
+			t.Fatal(err, f.calls, c.Absent)
+		}
+	})
+
+	t.Run("unreadable state: removed", func(t *testing.T) {
+		env, f := claudeEnv(t, "linux", "/bin/claude")
+		state(t, env, `{not json`)
+		c := mustPlanRemove(t, ClaudeCode, "frappe", env)
+		if _, err := c.Apply(); err != nil || len(f.calls) != 1 || c.Absent {
+			t.Fatal(err, f.calls, c.Absent)
 		}
 	})
 
@@ -665,15 +835,23 @@ func TestPlanRemoveClaudeCode(t *testing.T) {
 		}
 	})
 
-	t.Run("windows batch file", func(t *testing.T) {
-		env, f := claudeEnv(t, "windows", `C:\npm\claude.cmd`)
-		state(t, env, `{"mcpServers": {"frappe": {}}}`)
-		c := mustPlanRemove(t, ClaudeCode, "frappe", env)
-		if err := c.Check(); !errors.Is(err, ErrClaudeBatch) || !strings.Contains(err.Error(), "claude mcp remove --scope user frappe") {
-			t.Fatalf("Check: %v", err)
+	t.Run("windows batch file is run", func(t *testing.T) {
+		// No JSON argument, and the name is [A-Za-z0-9_-]: safe for cmd.exe.
+		for _, tool := range []string{`C:\npm\claude.cmd`, `C:\npm\claude.BAT`} {
+			env, f := claudeEnv(t, "windows", tool)
+			state(t, env, `{"mcpServers": {"frappe": {}}}`)
+			c := mustPlanRemove(t, ClaudeCode, "frappe", env)
+			if err := c.Check(); err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+			if _, err := c.Apply(); err != nil || len(f.calls) != 1 || strings.Join(f.calls[0], " ") != tool+" mcp remove --scope user frappe" {
+				t.Fatal(err, f.calls)
+			}
 		}
-		if _, err := c.Apply(); !errors.Is(err, ErrClaudeBatch) || len(f.calls) != 0 {
-			t.Fatal(err, f.calls)
+		// Install still refuses it.
+		env, _ := claudeEnv(t, "windows", `C:\npm\claude.cmd`)
+		if err := mustPlan(t, ClaudeCode, testSrv, env).Check(); !errors.Is(err, ErrClaudeBatch) {
+			t.Fatalf("install Check: %v", err)
 		}
 	})
 
