@@ -223,14 +223,18 @@ var (
 
 // permanentRefreshError reports whether a refresh failure will not go away
 // by trying again: the token endpoint refused the grant or the client
-// (oauthlib answers 400 invalid_grant or 401 invalid_client), there is no
-// refresh token, or the new token is refused as well. A 5xx, a network
-// error, a timeout or a busy config lock is transient and not remembered,
-// so a long-lived client (the MCP server) recovers once the cause is gone.
+// (oauthlib answers 400 invalid_grant or 401 invalid_client; Frappe answers
+// a revoked refresh token with 403 PermissionError, because
+// validate_refresh_token's get_doc raises DoesNotExistError and
+// handle_does_not_exist_error, permissions.py:926, turns it into a
+// PermissionError for Guest), there is no refresh token, or the new token
+// is refused as well. A 5xx, a network error, a timeout or a busy config
+// lock is transient and not remembered, so a long-lived client (the MCP
+// server) recovers once the cause is gone.
 func permanentRefreshError(err error) bool {
 	var e *APIError
 	if errors.As(err, &e) {
-		return e.Status == http.StatusBadRequest || e.Status == http.StatusUnauthorized
+		return e.Status == http.StatusBadRequest || e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden
 	}
 	return errors.Is(err, ErrNoRefreshToken) || errors.Is(err, errNoNewToken) || errors.Is(err, errRefreshRefused)
 }
