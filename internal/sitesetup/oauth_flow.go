@@ -154,7 +154,7 @@ func startCallbackServer() (*callbackServer, error) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, `<html><body style="font-family:sans-serif;padding:2rem;text-align:center">
 <h2>&#10003; Authorization successful</h2>
-<p>You can close this tab and return to the terminal.</p>
+<p>You can close this tab and return to ffc.</p>
 </body></html>`)
 	})
 
@@ -203,13 +203,25 @@ func (cs *callbackServer) wait(ctx context.Context, timeout time.Duration) (stri
 // server on 127.0.0.1, bound by StartOAuthFlow so its redirect URI is
 // known before an OAuth client is chosen or registered (ResolveOAuthApp).
 // Close it when done; Login closes it too.
+//
+// A flow is good for one Login: the server accepts one callback and is
+// closed when Login returns. A second Login, or a Login after Close,
+// returns ErrFlowUsed at once; to retry (say, after the browser could not
+// be opened), start a new flow.
 type OAuthFlow struct {
 	// Timeout bounds how long Login waits for the browser redirect
 	// (5 minutes unless changed before Login).
 	Timeout time.Duration
 
 	cs *callbackServer
+
+	mu   sync.Mutex
+	used bool // Login started or Close called
 }
+
+// ErrFlowUsed is Login's answer on an OAuthFlow that already ran a login or
+// was closed.
+var ErrFlowUsed = errors.New("OAuth flow already used; start a new one")
 
 // StartOAuthFlow binds the callback server and starts serving.
 func StartOAuthFlow() (*OAuthFlow, error) {
@@ -224,14 +236,27 @@ func StartOAuthFlow() (*OAuthFlow, error) {
 // http://127.0.0.1:<port>/callback.
 func (f *OAuthFlow) RedirectURI() string { return f.cs.redirectURI() }
 
-// Close stops the callback server. Safe to call more than once.
-func (f *OAuthFlow) Close() { f.cs.close() }
+// Close stops the callback server. Safe to call more than once; the flow
+// cannot be used for a login afterwards.
+func (f *OAuthFlow) Close() {
+	f.take()
+	f.cs.close()
+}
+
+// take marks the flow used and reports whether it was still unused.
+func (f *OAuthFlow) take() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fresh := !f.used
+	f.used = true
+	return fresh
+}
 
 // LoginHooks are the points where Login hands over to its caller.
 type LoginHooks struct {
-	// OpenBrowser gets the authorization URL, to open in a browser (and
-	// show, in case that fails). Login waits for the redirect once it
-	// returns nil; an error ends the login with that error.
+	// OpenBrowser (required) gets the authorization URL, to open in a
+	// browser (and show, in case that fails). Login waits for the redirect
+	// once it returns nil; an error ends the login with that error.
 	OpenBrowser func(authURL string) error
 	// Step, when set, runs each network call after the redirect (the code
 	// exchange, then the user lookup); title says what it does. An error it
@@ -244,8 +269,16 @@ type LoginHooks struct {
 // code (PKCE) and asks who logged in. It returns the site entry for siteURL
 // with app and the tokens, and the user ("" when the site does not say;
 // stripped of terminal controls, the site chose it). A cancelled ctx
-// returns ctx.Err(). The callback server is closed on return.
+// returns ctx.Err(). The callback server is closed on return, so a flow
+// logs in once (see OAuthFlow). A nil h.OpenBrowser is an error and leaves
+// the flow unused.
 func (f *OAuthFlow) Login(ctx context.Context, siteURL string, app OAuthApp, h LoginHooks) (config.SiteConfig, string, error) {
+	if h.OpenBrowser == nil {
+		return config.SiteConfig{}, "", errors.New("sitesetup: LoginHooks.OpenBrowser is nil")
+	}
+	if !f.take() {
+		return config.SiteConfig{}, "", ErrFlowUsed
+	}
 	defer f.Close()
 	step := h.Step
 	if step == nil {

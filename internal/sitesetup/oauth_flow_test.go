@@ -3,6 +3,7 @@ package sitesetup
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -127,6 +128,68 @@ func TestOAuthLoginWithoutStepSanitizesUser(t *testing.T) {
 	_, user, err := flow.Login(context.Background(), site.URL, OAuthApp{ID: frappetest.OAuthClientID}, LoginHooks{OpenBrowser: approve(t, &opened)})
 	if err != nil || user != "admin@example.com]0;pwned" {
 		t.Errorf("Login = %q, %v", user, err)
+	}
+}
+
+// A flow logs in once. A retry on the same flow (a desktop "Retry" after
+// the browser failed to open) must fail at once, not wait the whole
+// Timeout for a redirect to a server that is gone; so must a Login after
+// Close. A nil OpenBrowser is refused without using the flow up.
+func TestOAuthFlowIsOneShot(t *testing.T) {
+	site := frappetest.New(t)
+	app := OAuthApp{ID: frappetest.OAuthClientID}
+	ctx := context.Background()
+
+	flow, err := StartOAuthFlow()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer flow.Close()
+	flow.Timeout = 10 * time.Second
+
+	if _, _, err := flow.Login(ctx, site.URL, app, LoginHooks{}); err == nil || !strings.Contains(err.Error(), "OpenBrowser") {
+		t.Fatalf("nil OpenBrowser: err = %v", err)
+	}
+
+	boom := errors.New("no browser")
+	if _, _, err := flow.Login(ctx, site.URL, app, LoginHooks{OpenBrowser: func(string) error { return boom }}); !errors.Is(err, boom) {
+		t.Fatalf("first Login (after the nil-hook refusal): err = %v, want the browser error", err)
+	}
+
+	opened := 0
+	start := time.Now()
+	_, _, err = flow.Login(ctx, site.URL, app, LoginHooks{OpenBrowser: func(string) error { opened++; return nil }})
+	if !errors.Is(err, ErrFlowUsed) || opened != 0 || time.Since(start) > time.Second {
+		t.Errorf("second Login: err %v, browser opened %d times, took %s", err, opened, time.Since(start))
+	}
+
+	closed, err := StartOAuthFlow()
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed.Close()
+	if _, _, err := closed.Login(ctx, site.URL, app, LoginHooks{OpenBrowser: func(string) error { opened++; return nil }}); !errors.Is(err, ErrFlowUsed) || opened != 0 {
+		t.Errorf("Login after Close: err %v, browser opened %d times", err, opened)
+	}
+}
+
+// The page the browser shows after a good callback names ffc, not the
+// terminal: a desktop app serves it too.
+func TestCallbackSuccessPage(t *testing.T) {
+	cs, err := startCallbackServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.close()
+	resp, err := http.Get(cs.redirectURI() + "?" + url.Values{"code": {"c"}, "state": {cs.state}}.Encode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "You can close this tab and return to ffc.") ||
+		strings.Contains(string(body), "terminal") {
+		t.Errorf("status %d, body %s", resp.StatusCode, body)
 	}
 }
 
