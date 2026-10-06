@@ -1,10 +1,11 @@
-// Package mcpinstall adds or replaces the stdio MCP server entry that runs
-// ffc in an AI client's user-level configuration.
+// Package mcpinstall adds, replaces or removes the stdio MCP server entry
+// that runs ffc in an AI client's user-level configuration.
 //
-// It never prompts and does not depend on cobra, so the CLI (ffc mcp install)
-// and other front ends share it. Plan reads the client's config file and
-// computes the new content; the caller shows the diff, asks, and calls Apply,
-// which backs the old file up and writes the new one atomically.
+// It never prompts and does not depend on cobra, so the CLI (ffc mcp install,
+// ffc mcp uninstall) and other front ends share it. Plan (or PlanRemove)
+// reads the client's config file and computes the new content; the caller
+// shows the diff, asks, and calls Apply, which backs the old file up and
+// writes the new one atomically.
 //
 // Config files are edited as text: JSON and JSONC through a syntax tree that
 // keeps comments, key order and formatting (hujson), Codex's TOML line by
@@ -143,16 +144,19 @@ type Change struct {
 	// "claude"; nil when the entry is already up to date.
 	Commands [][]string
 	// Replaces is true when an entry with this name exists (as far as ffc
-	// could tell for claude-code).
+	// could tell for claude-code). For PlanRemove it means the entry to
+	// remove is present.
 	Replaces bool
 	// Hint tells the user how to make the client pick the change up.
 	Hint string
 
-	env  Env
-	mode fs.FileMode // of the existing file
+	env    Env
+	mode   fs.FileMode // of the existing file
+	remove bool        // planned by PlanRemove
 	// claude-code
 	tool          string // resolved claude CLI, "" when not found
 	retryOnExists bool   // add-json may meet an entry ffc could not see
+	absentOK      bool   // remove: claude saying there is no such server is success
 }
 
 // Changed reports whether Apply would write or run anything.
@@ -160,7 +164,10 @@ func (c *Change) Changed() bool {
 	if c.Client == ClaudeCode {
 		return len(c.Commands) > 0
 	}
-	return c.Old == nil || !bytes.Equal(c.Old, c.New)
+	if c.Old == nil {
+		return !c.remove // a missing file has no entry to remove
+	}
+	return !bytes.Equal(c.Old, c.New)
 }
 
 // Diff is a unified diff from the current file to the new one ("" for
@@ -359,6 +366,63 @@ func Plan(client string, srv Server, env Env) (*Change, error) {
 	}
 	c.Replaces = replaced
 	return c, nil
+}
+
+// PlanRemove computes the change that removes the entry name from client's
+// user config, the reverse of Plan. Without such an entry nothing changes
+// (Changed is false, New equals Old); Replaces tells whether it is present.
+// For claude-code the remove command is planned when the state file shows
+// the entry or cannot be read; in the second case claude answering that
+// there is no such server counts as success.
+func PlanRemove(client, name string, env Env) (*Change, error) {
+	if err := ValidName(name); err != nil {
+		return nil, err
+	}
+	if client == ClaudeCode {
+		return planClaudeCodeRemove(name, env), nil
+	}
+	path, err := ConfigPath(client, env)
+	if err != nil {
+		return nil, err
+	}
+	path, err = resolveLink(path)
+	if err != nil {
+		return nil, err
+	}
+	old, exists, mode, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+	c := &Change{Client: client, Name: name, Path: path, env: env, mode: mode, Hint: removeHints[client], remove: true}
+	if !exists {
+		return c, nil
+	}
+	c.Old = old
+	if c.Old == nil {
+		c.Old = []byte{}
+	}
+	var found bool
+	switch client {
+	case ClaudeDesktop, Cursor:
+		c.New, found, err = removeJSON(c.Old, "mcpServers", name)
+	case VSCode:
+		c.New, found, err = removeJSON(c.Old, "servers", name)
+	case Codex:
+		c.New, found, err = removeTOML(c.Old, name)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w; the file was left untouched", path, err)
+	}
+	c.Replaces = found
+	return c, nil
+}
+
+var removeHints = map[string]string{
+	ClaudeCode:    "Start a new Claude Code session (or run /mcp) for the change to take effect.",
+	ClaudeDesktop: "Fully quit Claude Desktop (also from the tray or menu bar) and start it again.",
+	Cursor:        "Restart Cursor to drop the server.",
+	VSCode:        "Reload VS Code to stop the server.",
+	Codex:         "Start a new Codex session for the change to take effect.",
 }
 
 var hints = map[string]string{

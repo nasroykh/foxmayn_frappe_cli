@@ -17,9 +17,9 @@ import (
 //
 // The entry is the table [mcp_servers.<name>] and its sub-tables
 // ([mcp_servers.<name>.env], ...). They are replaced by one new table at the
-// place of the first, or a new table is appended. mcp_servers written in any
-// other form (an inline table, dotted keys, keys under [mcp_servers], an
-// array of tables) is refused.
+// place of the first, or a new table is appended; removeTOML deletes them.
+// mcp_servers written in any other form (an inline table, dotted keys, keys
+// under [mcp_servers], an array of tables) is refused.
 
 const tomlServersKey = "mcp_servers"
 
@@ -58,30 +58,9 @@ func editTOML(old []byte, srv Server) (out []byte, replaced bool, err error) {
 		return nil, false, err
 	}
 
-	// The tables of the entry: header line index to the end of the table.
-	type span struct{ start, end int }
-	var spans []span
-	mains := 0
-	for i, l := range info {
-		h := l.header
-		if l.kind != tomlHeader || len(h) < 2 || h[0] != tomlServersKey || h[1] != srv.Name {
-			continue
-		}
-		if len(h) == 2 {
-			mains++
-		}
-		end := i + 1
-		for end < len(info) && info[end].kind != tomlHeader {
-			end++
-		}
-		// Blank and comment lines right before the next header belong to it.
-		for end > i+1 && info[end-1].kind == tomlBlank {
-			end--
-		}
-		spans = append(spans, span{i, end})
-	}
-	if mains > 1 {
-		return nil, false, fmt.Errorf("[%s.%s] appears more than once", tomlServersKey, srv.Name)
+	spans, err := tomlEntrySpans(info, srv.Name)
+	if err != nil {
+		return nil, false, err
 	}
 
 	// New lines take the file's line ending; kept lines keep their own.
@@ -137,6 +116,127 @@ func editTOML(old []byte, srv Server) (out []byte, replaced bool, err error) {
 		b.WriteByte('\n')
 	}
 	return []byte(b.String()), replaced, nil
+}
+
+// tomlSpan is one table of an entry: its header line and the end of the
+// table (exclusive).
+type tomlSpan struct{ start, end int }
+
+// tomlEntrySpans finds the tables of the entry name: [mcp_servers.<name>]
+// and its sub-tables, in file order. The main table may appear only once.
+func tomlEntrySpans(info []tomlLine, name string) ([]tomlSpan, error) {
+	var spans []tomlSpan
+	mains := 0
+	for i, l := range info {
+		h := l.header
+		if l.kind != tomlHeader || len(h) < 2 || h[0] != tomlServersKey || h[1] != name {
+			continue
+		}
+		if len(h) == 2 {
+			mains++
+		}
+		end := i + 1
+		for end < len(info) && info[end].kind != tomlHeader {
+			end++
+		}
+		// Blank and comment lines right before the next header belong to it.
+		for end > i+1 && info[end-1].kind == tomlBlank {
+			end--
+		}
+		spans = append(spans, tomlSpan{i, end})
+	}
+	if mains > 1 {
+		return nil, fmt.Errorf("[%s.%s] appears more than once", tomlServersKey, name)
+	}
+	return spans, nil
+}
+
+// removeTOML removes the entry name ([mcp_servers.<name>] and its
+// sub-tables) from a Codex config.toml, with the scanner and refusals of
+// editTOML. Every other line is kept as it is; a blank line left next to
+// another by the removal is dropped, and so are blank lines left at the
+// start or end of the file. found is false (and out is old) when there is no
+// such entry.
+func removeTOML(old []byte, name string) (out []byte, found bool, err error) {
+	bom := bytes.HasPrefix(old, utf8BOM)
+	src := string(bytes.TrimPrefix(old, utf8BOM))
+	if !utf8.ValidString(src) {
+		return nil, false, errors.New("not valid UTF-8, so not valid TOML")
+	}
+	var lines []string
+	if src != "" {
+		lines = strings.Split(strings.TrimSuffix(src, "\n"), "\n")
+	}
+	info, err := scanTOML(lines)
+	if err != nil {
+		return nil, false, err
+	}
+	spans, err := tomlEntrySpans(info, name)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(spans) == 0 {
+		return old, false, nil
+	}
+
+	blank := func(s string) bool { return strings.TrimSpace(s) == "" }
+	var res []string
+	// keep appends kept lines; right after a removal, blank lines that would
+	// follow a blank line or start the file are skipped.
+	keep := func(chunk []string, afterCut bool) {
+		for afterCut && len(chunk) > 0 && blank(chunk[0]) && (len(res) == 0 || blank(res[len(res)-1])) {
+			chunk = chunk[1:]
+		}
+		res = append(res, chunk...)
+	}
+	next := 0
+	for k, s := range spans {
+		// Blank and comment lines between two tables of the entry go with
+		// them, as in editTOML.
+		between := k > 0
+		for j := next; j < s.start && between; j++ {
+			between = info[j].kind == tomlBlank
+		}
+		if !between {
+			keep(lines[next:s.start], k > 0)
+		}
+		next = s.end
+	}
+	tail := lines[next:]
+	for len(tail) > 0 && blank(tail[len(tail)-1]) {
+		tail = tail[:len(tail)-1]
+	}
+	if len(tail) > 0 {
+		keep(lines[next:], true)
+	} else {
+		for len(res) > 0 && blank(res[len(res)-1]) {
+			res = res[:len(res)-1] // the entry ended the file
+		}
+	}
+
+	// The result must still scan, without the entry.
+	rinfo, err := scanTOML(res)
+	if err != nil {
+		return nil, false, fmt.Errorf("internal error: the edited file does not scan: %w", err)
+	}
+	if left, err := tomlEntrySpans(rinfo, name); err != nil || len(left) > 0 {
+		return nil, false, fmt.Errorf("internal error: the edited file still holds [%s.%s]", tomlServersKey, name)
+	}
+
+	var b strings.Builder
+	if bom {
+		b.Write(utf8BOM)
+	}
+	for i, l := range res {
+		if i == len(res)-1 && !strings.HasSuffix(src, "\n") {
+			// The file had no final newline: keep it that way.
+			b.WriteString(strings.TrimSuffix(l, "\r"))
+			break
+		}
+		b.WriteString(l)
+		b.WriteByte('\n')
+	}
+	return []byte(b.String()), true, nil
 }
 
 func sameLines(a, b []string) bool {

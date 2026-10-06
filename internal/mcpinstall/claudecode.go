@@ -21,8 +21,9 @@ var runtimeGOOS = runtime.GOOS
 //
 // add-json refuses a name that exists in that scope ("MCP server <name>
 // already exists in user config", claude 2.1), so a replacement first runs
-// claude mcp remove --scope user <name>. "claude mcp get" is not used to
-// check: it has no --scope and starts the server to health-check it.
+// claude mcp remove --scope user <name>, which is also all PlanRemove runs.
+// "claude mcp get" is not used to check: it has no --scope and starts the
+// server to health-check it.
 
 // maxClaudeStateSize bounds the read of Claude Code's state file, which
 // holds project history and can grow to several MiB.
@@ -67,6 +68,38 @@ func planClaudeCode(srv Server, env Env) (*Change, error) {
 		}
 	}
 	return c, nil
+}
+
+// planClaudeCodeRemove plans claude mcp remove --scope user <name>. The
+// state file decides: no entry, no command. When it cannot be read the
+// command is planned anyway and Apply takes claude's "no such server"
+// answer as success.
+func planClaudeCodeRemove(name string, env Env) *Change {
+	c := &Change{Client: ClaudeCode, Name: name, Path: claudeStatePath(env), env: env, Hint: removeHints[ClaudeCode], remove: true}
+	existing, known := claudeUserEntry(c.Path, name)
+	switch {
+	case known && existing == nil:
+		return c // nothing to remove
+	case known:
+		c.Replaces = true
+	default:
+		c.absentOK = true
+	}
+	c.Commands = [][]string{{"claude", "mcp", "remove", "--scope", "user", name}}
+	if env.LookPath != nil {
+		if p, err := env.LookPath("claude"); err == nil {
+			c.tool = p
+		}
+	}
+	return c
+}
+
+// claudeNoServer reports whether claude's output says the server does not
+// exist in that scope (claude 2.1.291: `No MCP server named "x" in user
+// scope`, exit status 1).
+func claudeNoServer(out []byte) bool {
+	s := strings.ToLower(string(out))
+	return strings.Contains(s, "no mcp server named") || strings.Contains(s, "no mcp server found")
 }
 
 // ToolFound reports whether the claude CLI was found (claude-code only).
@@ -131,16 +164,20 @@ func sameClaudeEntry(raw json.RawMessage, want jsonEntry) bool {
 // checkTool tells whether Apply can run the claude CLI. Its errors carry
 // the commands to run by hand, since a caller may not have printed them.
 func (c *Change) checkTool() error {
+	verb, why := "add", "which cannot be given a JSON argument safely"
+	if c.remove {
+		verb, why = "remove", "which ffc does not run"
+	}
 	if c.tool == "" {
-		return fmt.Errorf("%w; install Claude Code, or add the server yourself with:\n  %s",
-			ErrClaudeNotFound, strings.Join(c.CommandLines(), "\n  "))
+		return fmt.Errorf("%w; install Claude Code, or %s the server yourself with:\n  %s",
+			ErrClaudeNotFound, verb, strings.Join(c.CommandLines(), "\n  "))
 	}
 	if c.env.GOOS == "windows" {
 		switch strings.ToLower(filepath.Ext(c.tool)) {
 		case ".cmd", ".bat":
 			// cmd.exe would re-parse the JSON argument (quotes, %, ^, &).
-			return fmt.Errorf("%w: the claude CLI is a batch file (%s), which cannot be given a JSON argument safely; run this yourself (PowerShell 7):\n  %s",
-				ErrClaudeBatch, c.tool, strings.Join(c.CommandLines(), "\n  "))
+			return fmt.Errorf("%w: the claude CLI is a batch file (%s), %s; run this yourself (PowerShell 7):\n  %s",
+				ErrClaudeBatch, c.tool, why, strings.Join(c.CommandLines(), "\n  "))
 		}
 	}
 	return nil
@@ -176,6 +213,9 @@ func (c *Change) applyClaudeCode() error {
 		if err == nil {
 			removed = removed || argv[2] == "remove"
 			continue
+		}
+		if c.absentOK && argv[2] == "remove" && claudeNoServer(out) {
+			continue // already absent: what the state file could not tell
 		}
 		if c.retryOnExists && argv[2] == "add-json" && bytes.Contains(out, []byte("already exists")) {
 			// The entry exists although the state file did not show it.

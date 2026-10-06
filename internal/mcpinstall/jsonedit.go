@@ -154,6 +154,208 @@ func checkJSONResult(out []byte, topKey, name string, entry jsonEntry, standard 
 	return nil
 }
 
+// removeJSON deletes <topKey>.<name> from a JSON or JSONC document, the
+// reverse of editJSON. Every other byte is kept: comments on lines of their
+// own stay, a comment on the member's own line (before its name or after
+// its value) goes with it, the object's trailing-comma style is kept, and
+// an object left empty becomes {} (topKey itself stays). found is false,
+// and out is old, when there is no such entry.
+func removeJSON(old []byte, topKey, name string) (out []byte, found bool, err error) {
+	bom := bytes.HasPrefix(old, utf8BOM)
+	src := bytes.TrimPrefix(old, utf8BOM)
+	if len(bytes.TrimSpace(src)) == 0 {
+		return old, false, nil
+	}
+	v, err := hujson.Parse(src)
+	if err != nil {
+		return nil, false, fmt.Errorf("not valid JSON: %w", err)
+	}
+	standard := v.IsStandard()
+	root, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return nil, false, errors.New("the top level is not a JSON object")
+	}
+	top, err := uniqueMember(root, topKey)
+	if err != nil {
+		return nil, false, err
+	}
+	if top == nil {
+		return old, false, nil
+	}
+	servers, ok := top.Value.Value.(*hujson.Object)
+	if !ok {
+		return nil, false, fmt.Errorf("%q is not a JSON object", topKey)
+	}
+	m, err := uniqueMember(servers, name)
+	if err != nil {
+		return nil, false, fmt.Errorf("in %q: %w", topKey, err)
+	}
+	if m == nil {
+		return old, false, nil
+	}
+	for i := range servers.Members {
+		if &servers.Members[i] == m {
+			deleteMember(servers, i)
+			break
+		}
+	}
+
+	out = v.Pack()
+	if err := checkRemoveResult(src, out, topKey, name, standard); err != nil {
+		return nil, false, err
+	}
+	if bom {
+		out = append(append([]byte{}, utf8BOM...), out...)
+	}
+	return out, true, nil
+}
+
+// deleteMember removes member i of obj with the text of its line(s).
+//
+// The extra before a member holds the end of the previous line, the
+// comment lines above the member and the start of its own line; the extra
+// after it (before the next member or the closing brace) holds the end of
+// its last line and what follows. The member goes with the start of its
+// first line and the end of its last; when it shares a line with the next
+// member, that member takes its place on the line instead.
+func deleteMember(obj *hujson.Object, i int) {
+	ms := obj.Members
+	n := len(ms)
+	before := ms[i].Name.BeforeExtra
+	// kept: up to the line break that starts the member's line.
+	var kept []byte
+	if b := lineBreaks(before); len(b) > 0 {
+		kept = before[:b[len(b)-1]]
+	} else {
+		kept = bytes.TrimRight(before, " \t")
+	}
+
+	if i < n-1 {
+		next := ms[i+1].Name.BeforeExtra
+		if b := lineBreaks(next); len(b) > 0 {
+			ms[i+1].Name.BeforeExtra = concatExtra(kept, next[b[0]:])
+		} else {
+			ms[i+1].Name.BeforeExtra = concatExtra(before)
+		}
+		obj.Members = append(ms[:i:i], ms[i+1:]...)
+		return
+	}
+
+	// The last member: what follows its line is the closing brace's line.
+	var closing []byte
+	if b := lineBreaks(obj.AfterExtra); len(b) > 0 {
+		closing = obj.AfterExtra[b[0]:]
+	} else if len(bytes.TrimSpace(obj.AfterExtra)) == 0 {
+		closing = obj.AfterExtra // "... }" on one line, no comment
+	}
+	if n == 1 {
+		obj.Members = nil
+		inner := concatExtra(kept, closing)
+		if len(bytes.TrimSpace(inner)) == 0 {
+			inner = hujson.Extra{} // {}
+		}
+		obj.AfterExtra = inner
+		return
+	}
+	prev := &ms[i-1].Value
+	if ms[i].Value.AfterExtra != nil {
+		// Trailing-comma style: the new last member keeps its comma.
+		if prev.AfterExtra == nil {
+			prev.AfterExtra = hujson.Extra{}
+		}
+		obj.AfterExtra = concatExtra(kept, closing)
+	} else {
+		// No trailing comma: the one after the new last member goes, and
+		// what stood before it moves after the member.
+		obj.AfterExtra = concatExtra(prev.AfterExtra, kept, closing)
+		prev.AfterExtra = nil
+	}
+	obj.Members = ms[:i:i]
+}
+
+// concatExtra joins byte slices into a new Extra, never writing into the
+// parsed source.
+func concatExtra(parts ...[]byte) hujson.Extra {
+	var n int
+	for _, p := range parts {
+		n += len(p)
+	}
+	out := make(hujson.Extra, 0, n)
+	for _, p := range parts {
+		out = append(out, p...)
+	}
+	return out
+}
+
+// checkRemoveResult proves a removal before anything is written: the
+// result parses, a strict JSON file stays strict, <topKey>.<name> is gone,
+// and every other member, at the top level and in topKey, is still there in
+// the same order with byte-identical names and values.
+func checkRemoveResult(src, out []byte, topKey, name string, standard bool) error {
+	fail := func(why string) error {
+		return fmt.Errorf("could not edit the file safely: the result %s; remove the entry by hand", why)
+	}
+	nv, err := hujson.Parse(out)
+	if err != nil {
+		return fail("would not be valid JSON (" + err.Error() + ")")
+	}
+	if standard && !nv.IsStandard() {
+		return fail("would no longer be strict JSON")
+	}
+	ov, err := hujson.Parse(src)
+	if err != nil {
+		return fail("could not be compared (" + err.Error() + ")")
+	}
+	oroot, _ := ov.Value.(*hujson.Object)
+	nroot, ok := nv.Value.(*hujson.Object)
+	if oroot == nil || !ok || len(nroot.Members) != len(oroot.Members) {
+		return fail("would change other settings")
+	}
+	for j, om := range oroot.Members {
+		nm := nroot.Members[j]
+		if !sameValueBytes(om.Name, nm.Name) {
+			return fail("would change other settings")
+		}
+		if lit, _ := om.Name.Value.(hujson.Literal); lit == nil || lit.String() != topKey {
+			if !sameValueBytes(om.Value, nm.Value) {
+				return fail("would change other settings")
+			}
+			continue
+		}
+		oldServers, _ := om.Value.Value.(*hujson.Object)
+		ns, ok := nm.Value.Value.(*hujson.Object)
+		if oldServers == nil || !ok {
+			return fail(fmt.Sprintf("would not hold %q as an object", topKey))
+		}
+		if m, err := uniqueMember(ns, name); err != nil || m != nil {
+			return fail(fmt.Sprintf("would still hold the %q entry", name))
+		}
+		var others []hujson.ObjectMember
+		for _, m := range oldServers.Members {
+			if lit, _ := m.Name.Value.(hujson.Literal); lit == nil || lit.String() != name {
+				others = append(others, m)
+			}
+		}
+		if len(others) != len(ns.Members) {
+			return fail(fmt.Sprintf("would change other entries in %q", topKey))
+		}
+		for k, m := range others {
+			if !sameValueBytes(m.Name, ns.Members[k].Name) || !sameValueBytes(m.Value, ns.Members[k].Value) {
+				return fail(fmt.Sprintf("would change other entries in %q", topKey))
+			}
+		}
+	}
+	return nil
+}
+
+// sameValueBytes compares two values byte for byte, without the comments
+// and whitespace around them (those inside are compared).
+func sameValueBytes(a, b hujson.Value) bool {
+	a.BeforeExtra, a.AfterExtra = nil, nil
+	b.BeforeExtra, b.AfterExtra = nil, nil
+	return bytes.Equal(a.Pack(), b.Pack())
+}
+
 // freshJSON is a new document holding only the entry.
 func freshJSON(topKey, name string, entry jsonEntry, eol string) ([]byte, error) {
 	const unit = "  "
@@ -219,29 +421,40 @@ func appendMember(obj *hujson.Object, name, valueText, ind, parentInd, eol strin
 // /* ... */ belongs to the comment: splitting there would put the new member
 // inside it.
 func lastLineBreak(extra []byte) int {
-	last := -1
+	breaks := lineBreaks(extra)
+	if len(breaks) == 0 {
+		return -1
+	}
+	return breaks[len(breaks)-1]
+}
+
+// lineBreaks returns the index of every line break ("\r\n" or "\n") in
+// extra that is not inside a block comment.
+func lineBreaks(extra []byte) []int {
+	var out []int
 	for i := 0; i < len(extra); i++ {
 		switch {
 		case bytes.HasPrefix(extra[i:], []byte("/*")):
 			end := bytes.Index(extra[i+2:], []byte("*/"))
 			if end < 0 {
-				return last // not valid HuJSON; checkJSONResult refuses the result
+				return out // not valid HuJSON; the result check refuses it
 			}
 			i += 2 + end + 1 // on the closing '/'
 		case bytes.HasPrefix(extra[i:], []byte("//")):
 			end := bytes.IndexByte(extra[i:], '\n')
 			if end < 0 {
-				return last
+				return out
 			}
 			i += end - 1 // the newline ending the comment is a line break
 		case extra[i] == '\n':
-			last = i
+			at := i
 			if i > 0 && extra[i-1] == '\r' {
-				last = i - 1
+				at = i - 1
 			}
+			out = append(out, at)
 		}
 	}
-	return last
+	return out
 }
 
 // indentUnit guesses one level of indentation from the first member of the
