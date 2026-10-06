@@ -20,7 +20,7 @@ Ground truth is the code next to yours: copy the closest existing command (`get_
 9. **Single DocTypes:** a command taking `-d`/`-n` for one document defaults the name with `docNameOrSingle(name, doctype)` (not for delete).
 10. **Register:** `rootCmd.AddCommand(cmd)` (or `parentCmd.AddCommand`) in `init()`; `_ = cmd.MarkFlagRequired(...)`.
 11. **Tests** against the fake site through `runFFC` (ffc-dev-testing): success, machine output, a usage error, the server error classes that matter, and `--dry-run` sending no write.
-12. **Docs:** README.md, CLAUDE.md (architecture line, new pitfall) and the matching user skill under `skills/`.
+12. **Docs:** the matching page under docs/cli/ (README.md only for essentials), CLAUDE.md (architecture line, new pitfall) and the matching user skill under `skills/`.
 
 Template and the read/list variants: [references/templates.md](references/templates.md).
 

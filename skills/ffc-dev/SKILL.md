@@ -47,7 +47,7 @@ go build -o /tmp/ffc ./cmd/ffc && /tmp/ffc <cmd> --help   # check help text afte
 
 - Errors: `fmt.Errorf("context: %w", err)`; never log and return.
 - Commit messages follow conventional commits, as in `git log` (`feat(desktop): ...`, `fix(release): ...`, `refactor(sitecache): ...`).
-- User-facing change: update the command's `Long` help, README.md, CLAUDE.md (architecture line or pitfall) and the matching user skill in `skills/` (ffc-core, ffc-bulk-lifecycle, ffc-reports-api, ffc-files-collab, ffc-setup, ffc-mcp).
+- User-facing change: update the command's `Long` help, the matching page under docs/ (README.md only for essentials), CLAUDE.md (architecture line or pitfall) and the matching user skill in `skills/` (ffc-core, ffc-bulk-lifecycle, ffc-reports-api, ffc-files-collab, ffc-setup, ffc-mcp).
 
 ## Shared code to reuse, not duplicate
 

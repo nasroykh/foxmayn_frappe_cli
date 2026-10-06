@@ -29,7 +29,7 @@ The `mcp` command is a long-running server, not a one-shot command. CLAUDE.md pi
 10. **Surface:** if the instructions (`mcpInstructions`) or a prompt should mention the tool, gate the line on `has(tool)`.
 11. **Sites:** the `site` argument is added for free when several sites are served. A tool about the server rather than a site goes in `siteless`.
 12. **Tests:** `newMCPFake(t, readOnly)` + `callTool(t, s, name, args)` (goes through JSON-RPC decoding); confirmation flows with `mcpTClient`. Cover policy refusal (nothing sent), read-only registration, and argument decoding of native vs string JSON.
-13. **Docs:** CLAUDE.md, README MCP section, and `skills/ffc-mcp/references/tools.md`.
+13. **Docs:** CLAUDE.md, docs/mcp/tools.md, and `skills/ffc-mcp/references/tools.md`.
 
 Skeleton:
 
