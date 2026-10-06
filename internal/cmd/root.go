@@ -64,6 +64,9 @@ Example config:
 
 // Execute is the single entry point called from main.
 func Execute() {
+	if os.Getenv(jqChildEnv) == jqChildOn {
+		os.Exit(jqChild(os.Stdin, os.Stdout)) // a jq run for ffc mcp (mcp_jq.go)
+	}
 	// A context cancelled on Ctrl+C / SIGTERM, wired into every command via
 	// cmd.Context(), so long-running or bulk operations can be interrupted
 	// cleanly (M18, L14, L35).

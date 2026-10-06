@@ -100,7 +100,9 @@ func describeTools(s *server.MCPServer) {
 		tool.Title, tool.Annotations.Title = info.title, info.title
 		if info.big {
 			tool.Meta = &mcp.Meta{AdditionalFields: map[string]any{maxResultSizeKey: maxToolResultBytes}}
-			addJQParam(&tool)
+			if jqTool(name) {
+				addJQParam(&tool)
+			}
 		}
 		tools = append(tools, server.ServerTool{Tool: tool, Handler: t.Handler})
 	}
@@ -199,7 +201,7 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 	line("Dates are YYYY-MM-DD and datetimes YYYY-MM-DD HH:MM:SS; Check fields are 0 or 1.")
 	line(`Filters: an object {"status":"Open","docstatus":1} means equality, all conditions ANDed; a list [["grand_total",">",1000],["posting_date","between",["2026-01-01","2026-03-31"]]] takes operators =, !=, >, <, >=, <=, like (with %%), not like, in, not in, between, is ("set" or "not set"). Use fieldnames, not labels.`)
 	if has("list_docs") {
-		line("list_docs returns only name unless you pass fields (or response_format=detailed for every field): always pass fields and a limit (default 20, 0 = all) and page with start. A result too large to return comes back as {data, truncated, next_start, hint}: call again with start=next_start. It and the other tools with large results take jq (e.g. \"[.[] | {name, status}]\"), run by the server before answering: return only the values you need.")
+		line("list_docs returns only name unless you pass fields (or response_format=detailed for every field): always pass fields and a limit (default 20, 0 = all) and page with start. A result too large to return comes back as {data, truncated, next_start, hint}: call again with start=next_start. It and the other read tools with large results take jq (e.g. \"[.[] | {name, status}]\"), run by the server before answering: return only the values you need.")
 	}
 	if has("count_docs") {
 		line("count_docs answers how many without fetching rows.")

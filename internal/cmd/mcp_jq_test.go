@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestMCPJQ(t *testing.T) {
-	s, site, _, _ := mcpTPolicy(t, nil, config.MCPPolicy{})
+	s, site, _, audit := mcpTPolicy(t, nil, config.MCPPolicy{})
 	site.Add("ToDo",
 		map[string]interface{}{"name": "TD-1", "status": "Open"},
 		map[string]interface{}{"name": "TD-2", "status": "Closed"},
@@ -20,47 +21,50 @@ func TestMCPJQ(t *testing.T) {
 		return map[string]interface{}{"doctype": "ToDo", "fields": []string{"name", "status"}, "order_by": "name asc", "jq": jq}
 	}
 
-	// One output is returned as is.
-	if got := mcpTOK(t, s, "list_docs", args(`[.[] | select(.status == "Open") | .name]`)); got != `["TD-1"]` {
-		t.Errorf("one output = %s", got)
-	}
-	if got := mcpTOK(t, s, "list_docs", args(`length`)); got != `2` {
-		t.Errorf("length = %s", got)
-	}
-	// Several outputs, or none, come back as an array.
-	if got := mcpTOK(t, s, "list_docs", args(`.[].name`)); got != `["TD-1","TD-2"]` {
-		t.Errorf("several outputs = %s", got)
-	}
-	if got := mcpTOK(t, s, "list_docs", args(`.[] | select(.status == "Gone")`)); got != `[]` {
-		t.Errorf("no output = %s", got)
+	// The output is JSON: one output as is, none or several as an array.
+	for jq, want := range map[string]string{
+		`[.[] | select(.status == "Open") | .name]`: `["TD-1"]`,
+		`length`:                          `2`,
+		`.[0].name`:                       `"TD-1"`,
+		`.[].name`:                        `["TD-1","TD-2"]`,
+		`.[] | select(.status == "Gone")`: `[]`,
+		`$ENV | length`:                   `0`,
+	} {
+		if got := mcpTOK(t, s, "list_docs", args(jq)); got != want {
+			t.Errorf("%s = %s, want %s", jq, got, want)
+		}
 	}
 	// An empty filter is no filter.
 	if got := mcpTOK(t, s, "list_docs", args(``)); !strings.Contains(got, `"TD-2"`) {
 		t.Errorf("empty jq = %s", got)
 	}
 
-	// Errors: a bad query is refused before any request; a runtime error,
-	// a tool without the parameter, the environment and input are refused.
+	// A bad query, or jq on a tool without it, is refused before any
+	// request; the audit line still names the site.
 	n := len(site.Requests())
 	mcpTErr(t, s, "list_docs", args(`.[`), "jq:")
-	if got := len(site.Requests()); got != n {
-		t.Errorf("a bad query sent %d requests", got-n)
-	}
-	mcpTErr(t, s, "list_docs", args(`.[0] | keys | .foo`), "jq:")
 	mcpTErr(t, s, "count_docs", map[string]interface{}{"doctype": "ToDo", "jq": "."}, "count_docs does not take a jq filter")
+	mcpTErr(t, s, "call_method", map[string]interface{}{"method": "frappe.ping", "jq": "."}, "call_method does not take a jq filter")
+	mcpTErr(t, s, "list_sites", map[string]interface{}{"jq": "."}, "list_sites does not take a jq filter")
 	mcpTErr(t, s, "list_docs", map[string]interface{}{"doctype": "ToDo", "jq": 3}, "jq: expected a string")
-	t.Setenv("FFC_JQ_SECRET", "leak")
-	if got := mcpTOK(t, s, "list_docs", args(`$ENV.FFC_JQ_SECRET`)); got != `null` {
-		t.Errorf("$ENV = %s, want null", got)
+	if got := len(site.Requests()); got != n {
+		t.Errorf("refused queries sent %d requests", got-n)
 	}
+	if raw, err := os.ReadFile(audit); err != nil || !strings.Contains(string(raw), `"site":"prod","tool":"list_docs"`) {
+		t.Errorf("audit: %v %s", err, raw)
+	}
+	// Runtime errors, input, and a result over the cap (a string too).
+	mcpTErr(t, s, "list_docs", args(`.[0] | keys | .foo`), "jq:")
 	mcpTErr(t, s, "list_docs", args(`input`), "jq:")
+	mcpTErr(t, s, "list_docs", args(`"a" * 2000000`), "result is too large")
 
-	// An endless query is stopped.
+	// A runaway query is stopped by memory or time, in the child.
+	mcpTErr(t, s, "list_docs", args(`"a" * 1000000000 | length`), "jq: stopped after using 256 MiB")
 	prev := jqTimeout
-	jqTimeout = 200 * time.Millisecond
+	jqTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { jqTimeout = prev })
 	start := time.Now()
-	mcpTErr(t, s, "list_docs", args(`[range(1e12)]`), "jq: stopped after")
+	mcpTErr(t, s, "list_docs", args(`last(range(1e15))`), "jq: stopped after 300ms")
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("an endless query ran %s", d)
 	}
@@ -73,8 +77,8 @@ func TestMCPJQSchema(t *testing.T) {
 	var with []string
 	for name, st := range s.ListTools() {
 		_, has := st.Tool.InputSchema.Properties[jqParam]
-		if has != toolSurface[name].big {
-			t.Errorf("%s: jq declared %v, big %v", name, has, toolSurface[name].big)
+		if has != jqTool(name) {
+			t.Errorf("%s: jq declared %v, want %v", name, has, jqTool(name))
 		}
 		if has {
 			with = append(with, name)
