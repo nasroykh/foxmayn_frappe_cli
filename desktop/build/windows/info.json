@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.1.0"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "0.1.0",
+			"CompanyName": "Foxmayn",
+			"FileDescription": "A foxmayn_frappe_cli_ui application",
+			"LegalCopyright": "© 2026, Foxmayn",
+			"ProductName": "My Product",
+			"Comments": "This is a comment"
+		}
+	}
+}

@@ -24,7 +24,7 @@
 /bin/
 /dist/
 /ffc
-foxmayn_frappe_cli
+/foxmayn_frappe_cli
 
 # Environment files
 .env
