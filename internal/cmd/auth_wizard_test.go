@@ -10,48 +10,6 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 )
 
-func TestNormalizeSiteURL(t *testing.T) {
-	tests := []struct {
-		in, want string
-		wantErr  bool
-	}{
-		{"erp.example.com", "https://erp.example.com", false},
-		{"  erp.example.com/  ", "https://erp.example.com", false},
-		{"HTTPS://erp.example.com", "https://erp.example.com", false},
-		{"Http://localhost:8000", "http://localhost:8000", false},
-		{"erp.example.com/app/home?x=1#frag", "https://erp.example.com", false},
-		{"https://erp.example.com:8443/", "https://erp.example.com:8443", false},
-		{"erp.example.com:8000", "https://erp.example.com:8000", false},
-		{"http://[::1]:8000/x", "http://[::1]:8000", false},
-		{"", "", true},
-		{"   ", "", true},
-		{"ftp://erp.example.com", "", true},
-		{"https://", "", true},
-		{"https:///path", "", true},
-		{"https://user:pw@erp.example.com", "", true},
-		{"erp.example.com:notaport", "", true},
-	}
-	for _, tt := range tests {
-		got, err := normalizeSiteURL(tt.in)
-		if (err != nil) != tt.wantErr || got != tt.want {
-			t.Errorf("normalizeSiteURL(%q) = (%q, %v), want (%q, err=%v)", tt.in, got, err, tt.want, tt.wantErr)
-		}
-	}
-}
-
-func TestValidateSiteName(t *testing.T) {
-	for _, ok := range []string{"dev", "Prod", "erp.example.com", "#dev", "my_site-2", " padded "} {
-		if err := validateSiteName(ok); err != nil {
-			t.Errorf("validateSiteName(%q) = %v, want nil", ok, err)
-		}
-	}
-	for _, bad := range []string{"", "   ", "my site", "a\tb", "a\nb", "esc\x1b[31m", "nul\x00", "bad\xff"} {
-		if err := validateSiteName(bad); err == nil {
-			t.Errorf("validateSiteName(%q) = nil, want error", bad)
-		}
-	}
-}
-
 func TestCheckNameOnce(t *testing.T) {
 	calls := 0
 	check := checkNameOnce(func(string) error { calls++; return nil })

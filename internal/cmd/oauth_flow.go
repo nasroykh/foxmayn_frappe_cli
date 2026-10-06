@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 )
 
@@ -236,7 +237,7 @@ func collectOAuthSite(ctx context.Context, checkName func(string) error, manual 
 	if err := runForm(huh.NewGroup(siteNameInput(&name), siteURLInput(&rawURL))); err != nil {
 		return "", config.SiteConfig{}, err
 	}
-	siteName, siteURL, err := siteNameAndURL(name, rawURL)
+	siteName, siteURL, err := sitesetup.NameAndURL(name, rawURL)
 	if err != nil {
 		return "", config.SiteConfig{}, err
 	}

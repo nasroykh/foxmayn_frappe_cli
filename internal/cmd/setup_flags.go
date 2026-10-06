@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 	"github.com/spf13/cobra"
 )
 
@@ -74,7 +75,7 @@ func (s *setupFlags) resolve(oauth, apikey, passwordFlag bool) (string, config.S
 	case oauth && s.url == "":
 		return "", config.SiteConfig{}, usageErrorf("missing --url")
 	case oauth:
-		name, siteURL, err := siteNameAndURL(s.name, s.url)
+		name, siteURL, err := sitesetup.NameAndURL(s.name, s.url)
 		if err != nil {
 			return "", config.SiteConfig{}, &usageError{err}
 		}
@@ -97,7 +98,7 @@ func (s *setupFlags) resolve(oauth, apikey, passwordFlag bool) (string, config.S
 		return "", config.SiteConfig{}, usageErrorf("missing credentials: pass --api-key (secret via --api-secret-stdin or $FFC_API_SECRET) or --username (password via --password-stdin or $FFC_PASSWORD)")
 	}
 
-	name, siteURL, err := siteNameAndURL(s.name, s.url)
+	name, siteURL, err := sitesetup.NameAndURL(s.name, s.url)
 	if err != nil {
 		return "", config.SiteConfig{}, &usageError{err}
 	}
@@ -161,25 +162,21 @@ func finishSetup(ctx context.Context, site config.SiteConfig, oauth bool, app oa
 	return site, verifySite(ctx, site)
 }
 
-// verifySite checks the credentials of site against its URL: the same calls
-// the wizard makes (an authenticated call for key/token, a login plus logout
-// for a password).
+// verifySite checks the credentials of site against its URL under a
+// spinner: the same check as the wizard (sitesetup.Verify).
 func verifySite(ctx context.Context, site config.SiteConfig) error {
 	var verifyErr error
 	err := runSpinner("Verifying credentials...", func() {
-		if site.IsOAuth() || site.APIKey != "" && site.APISecret != "" {
-			_, verifyErr = verifyAPIKey(ctx, site)
-		} else if site.IsSessionAuth() {
-			verifyErr = verifyPassword(ctx, site)
-		} else {
-			verifyErr = usageErrorf("site has no credentials to verify")
-		}
+		_, verifyErr = sitesetup.Verify(ctx, site)
 	})
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	if err != nil {
 		return errAborted
+	}
+	if errors.Is(verifyErr, sitesetup.ErrNoCredentials) {
+		return &usageError{verifyErr}
 	}
 	return verifyErr
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitesetup"
 	"github.com/spf13/cobra"
 )
 
@@ -302,7 +303,7 @@ Examples:
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		oldName, newName := args[0], strings.TrimSpace(args[1])
-		if err := validateSiteName(newName); err != nil {
+		if err := sitesetup.ValidateName(newName); err != nil {
 			return &usageError{err}
 		}
 		cfgPath, err := resolveCfgPath()
@@ -340,7 +341,7 @@ Examples:
 		if !cmd.Flags().Changed("url") {
 			return usageErrorf("nothing to change: pass --url")
 		}
-		newURL, err := normalizeSiteURL(seURL)
+		newURL, err := sitesetup.NormalizeURL(seURL)
 		if err != nil {
 			return &usageError{err}
 		}
