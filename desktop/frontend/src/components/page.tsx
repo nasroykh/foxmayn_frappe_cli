@@ -47,7 +47,7 @@ export function Details({ children, label = "Technical details" }: { children: R
 /** A failed load, with a retry button. */
 export function LoadError({ title, error, onRetry }: { title: string; error: AppError; onRetry: () => void }) {
   return (
-    <Alert variant="destructive">
+    <Alert variant="destructive" className="has-data-[slot=alert-action]:pr-28">
       <IconAlertTriangle />
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription>
@@ -70,7 +70,7 @@ export function FFCMissingAlert() {
   const ffc = env.data?.ffc
   if (!ffc || (ffc.found && !ffc.error)) return null
   return (
-    <Alert>
+    <Alert className="has-data-[slot=alert-action]:pr-28">
       <IconAlertTriangle />
       <AlertTitle>{ffc.found ? "The ffc helper does not answer" : "One more thing: install the ffc helper"}</AlertTitle>
       <AlertDescription>

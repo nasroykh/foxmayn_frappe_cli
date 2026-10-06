@@ -128,7 +128,7 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
 
   return (
     <Dialog open={!!target} onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Connect {name}</DialogTitle>
           <DialogDescription>
@@ -136,132 +136,135 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
           </DialogDescription>
         </DialogHeader>
 
-        <FieldGroup>
-          <div className="grid grid-cols-2 gap-4">
-            <Field>
-              <FieldLabel htmlFor="connect-client">Assistant</FieldLabel>
-              <Select items={clientItems} value={client} onValueChange={(v) => v && setClient(v as string)}>
-                <SelectTrigger id="connect-client" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {clientItems.map((i) => (
-                      <SelectItem key={i.value} value={i.value}>
-                        {i.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+        {/* The body scrolls on short windows so the title and buttons stay in view. */}
+        <div className="-mx-4 flex min-h-0 flex-col gap-4 overflow-y-auto px-4 py-1">
+          <FieldGroup>
+            <div className="grid grid-cols-2 gap-4">
+              <Field>
+                <FieldLabel htmlFor="connect-client">Assistant</FieldLabel>
+                <Select items={clientItems} value={client} onValueChange={(v) => v && setClient(v as string)}>
+                  <SelectTrigger id="connect-client" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {clientItems.map((i) => (
+                        <SelectItem key={i.value} value={i.value}>
+                          {i.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="connect-site">Site</FieldLabel>
+                <Select items={siteItems} value={site} onValueChange={(v) => v && setSite(v as string)}>
+                  <SelectTrigger id="connect-site" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {siteItems.map((i) => (
+                        <SelectItem key={i.value} value={i.value}>
+                          {i.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="connect-readonly">Read-only</FieldLabel>
+                <FieldDescription>
+                  It can look at your data but cannot create, change or delete anything.
+                </FieldDescription>
+              </FieldContent>
+              <Switch id="connect-readonly" checked={readOnly} onCheckedChange={setReadOnly} />
             </Field>
-            <Field>
-              <FieldLabel htmlFor="connect-site">Site</FieldLabel>
-              <Select items={siteItems} value={site} onValueChange={(v) => v && setSite(v as string)}>
-                <SelectTrigger id="connect-site" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {siteItems.map((i) => (
-                      <SelectItem key={i.value} value={i.value}>
-                        {i.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-          </div>
-          <Field orientation="horizontal">
-            <FieldContent>
-              <FieldLabel htmlFor="connect-readonly">Read-only</FieldLabel>
-              <FieldDescription>
-                It can look at your data but cannot create, change or delete anything.
-              </FieldDescription>
-            </FieldContent>
-            <Switch id="connect-readonly" checked={readOnly} onCheckedChange={setReadOnly} />
-          </Field>
-        </FieldGroup>
+          </FieldGroup>
 
-        {previewError?.code === "ffc_missing" ? (
-          <Alert>
-            <IconAlertTriangle />
-            <AlertTitle>Install the ffc helper first</AlertTitle>
-            <AlertDescription>{name} runs ffc to reach your sites.</AlertDescription>
-            <AlertAction>
-              <Button size="sm" onClick={installFFC}>
-                <IconDownload data-icon="inline-start" />
-                Install
-              </Button>
-            </AlertAction>
-          </Alert>
-        ) : previewError ? (
-          <Alert variant="destructive">
-            <IconAlertTriangle />
-            <AlertTitle>The change could not be prepared</AlertTitle>
-            <AlertDescription>{previewError.message}</AlertDescription>
-          </Alert>
-        ) : !preview ? (
-          <Skeleton className="h-10 w-full" />
-        ) : (
-          <div className="flex flex-col gap-3">
-            {preview.canApply ? (
-              <Alert>
-                <IconInfoCircle />
-                <AlertTitle>{summary}</AlertTitle>
-                <AlertDescription>{preview.hint}</AlertDescription>
-              </Alert>
-            ) : (
-              <Alert variant="destructive">
-                <IconAlertTriangle />
-                <AlertTitle>This app cannot make the change</AlertTitle>
-                <AlertDescription>
-                  <p>{preview.problem}</p>
-                  {(preview.commands?.length ?? 0) > 0 && <p>You can run this in a terminal instead:</p>}
-                </AlertDescription>
-              </Alert>
-            )}
-            {!preview.canApply &&
-              (preview.commands ?? []).map((c) => (
-                <CopyField key={c} value={c} label="Command" copiedTitle="Command copied" />
-              ))}
-            <Accordion>
-              <AccordionItem value="details">
-                <AccordionTrigger>Technical details</AccordionTrigger>
-                <AccordionContent>
-                  <Tabs defaultValue="summary">
-                    <TabsList>
-                      <TabsTrigger value="summary">Summary</TabsTrigger>
-                      <TabsTrigger value="diff" disabled={!preview.diff}>
-                        Changes
-                      </TabsTrigger>
-                    </TabsList>
-                    <TabsContent value="summary">
-                      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 pt-2 text-xs">
-                        <dt className="text-muted-foreground">Entry name</dt>
-                        <dd className="font-mono">{preview.entryName}</dd>
-                        <dt className="text-muted-foreground">Settings file</dt>
-                        <dd className="font-mono break-all">{preview.path}</dd>
-                        <dt className="text-muted-foreground">Runs</dt>
-                        <dd className="font-mono break-all">{(preview.server ?? []).join(" ") || "—"}</dd>
-                        {(preview.commands?.length ?? 0) > 0 && (
-                          <>
-                            <dt className="text-muted-foreground">Through</dt>
-                            <dd className="font-mono break-all">{(preview.commands ?? []).join("\n")}</dd>
-                          </>
-                        )}
-                      </dl>
-                    </TabsContent>
-                    <TabsContent value="diff">
-                      <DiffView diff={preview.diff} />
-                    </TabsContent>
-                  </Tabs>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-          </div>
-        )}
+          {previewError?.code === "ffc_missing" ? (
+            <Alert className="has-data-[slot=alert-action]:pr-28">
+              <IconAlertTriangle />
+              <AlertTitle>Install the ffc helper first</AlertTitle>
+              <AlertDescription>{name} runs ffc to reach your sites.</AlertDescription>
+              <AlertAction>
+                <Button size="sm" onClick={installFFC}>
+                  <IconDownload data-icon="inline-start" />
+                  Install
+                </Button>
+              </AlertAction>
+            </Alert>
+          ) : previewError ? (
+            <Alert variant="destructive">
+              <IconAlertTriangle />
+              <AlertTitle>The change could not be prepared</AlertTitle>
+              <AlertDescription>{previewError.message}</AlertDescription>
+            </Alert>
+          ) : !preview ? (
+            <Skeleton className="h-10 w-full" />
+          ) : (
+            <div className="flex flex-col gap-3">
+              {preview.canApply ? (
+                <Alert>
+                  <IconInfoCircle />
+                  <AlertTitle>{summary}</AlertTitle>
+                  <AlertDescription>{preview.hint}</AlertDescription>
+                </Alert>
+              ) : (
+                <Alert variant="destructive">
+                  <IconAlertTriangle />
+                  <AlertTitle>This app cannot make the change</AlertTitle>
+                  <AlertDescription>
+                    <p>{preview.problem}</p>
+                    {(preview.commands?.length ?? 0) > 0 && <p>You can run this in a terminal instead:</p>}
+                  </AlertDescription>
+                </Alert>
+              )}
+              {!preview.canApply &&
+                (preview.commands ?? []).map((c) => (
+                  <CopyField key={c} value={c} label="Command" copiedTitle="Command copied" />
+                ))}
+              <Accordion>
+                <AccordionItem value="details">
+                  <AccordionTrigger>Technical details</AccordionTrigger>
+                  <AccordionContent>
+                    <Tabs defaultValue="summary">
+                      <TabsList>
+                        <TabsTrigger value="summary">Summary</TabsTrigger>
+                        <TabsTrigger value="diff" disabled={!preview.diff}>
+                          Changes
+                        </TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="summary">
+                        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 pt-2 text-xs">
+                          <dt className="text-muted-foreground">Entry name</dt>
+                          <dd className="font-mono">{preview.entryName}</dd>
+                          <dt className="text-muted-foreground">Settings file</dt>
+                          <dd className="font-mono break-all">{preview.path}</dd>
+                          <dt className="text-muted-foreground">Runs</dt>
+                          <dd className="font-mono break-all">{(preview.server ?? []).join(" ") || "—"}</dd>
+                          {(preview.commands?.length ?? 0) > 0 && (
+                            <>
+                              <dt className="text-muted-foreground">Through</dt>
+                              <dd className="font-mono break-all">{(preview.commands ?? []).join("\n")}</dd>
+                            </>
+                          )}
+                        </dl>
+                      </TabsContent>
+                      <TabsContent value="diff">
+                        <DiffView diff={preview.diff} />
+                      </TabsContent>
+                    </Tabs>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            </div>
+          )}
+        </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>

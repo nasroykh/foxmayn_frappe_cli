@@ -71,7 +71,7 @@ export function DisconnectDialog({ assistant, onClose }: { assistant: Assistant 
 
   return (
     <AlertDialog open={!!assistant} onOpenChange={(o) => !o && !busy && onClose()}>
-      <AlertDialogContent className="sm:max-w-lg">
+      <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
         <AlertDialogHeader>
           <AlertDialogMedia>
             <IconPlugConnectedX />

@@ -47,7 +47,10 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
   }, [open])
 
   React.useEffect(() => backend.onInstallerLog((line) => setLog((l) => [...l, line])), [])
-  React.useEffect(() => logEnd.current?.scrollIntoView({ block: "end" }), [log])
+  // A block body: newer Chromium returns a promise from scrollIntoView, and an effect must not return one.
+  React.useEffect(() => {
+    logEnd.current?.scrollIntoView({ block: "end" })
+  }, [log])
 
   async function start() {
     setPhase("running")
@@ -87,7 +90,7 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
         onOpenChange(o)
       }}
     >
-      <DialogContent className="sm:max-w-lg" showCloseButton={!running}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg" showCloseButton={!running}>
         <DialogHeader>
           <DialogTitle>Install the ffc helper</DialogTitle>
           <DialogDescription>
