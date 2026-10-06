@@ -29,6 +29,7 @@ export type {
     SignInProgress,
     Site,
     SiteList,
+    UpdateInfo,
     Validation,
     WSLInfo
 } from "./models.js";

@@ -11,6 +11,8 @@
 //   ?signin=noreg     the site cannot register an OAuth client (Frappe v15)
 //   ?signin=denied    the browser sign-in is refused
 //   ?install=fail     the ffc installer fails
+//   ?update=available a newer release exists (toast, sidebar dot, About tab)
+//   ?update=fail      the update check fails (shown by Settings > About)
 //   ?slow=1           every call takes about 1.5 s (loading states)
 //   ?fail=sites       listing sites fails
 //   ?fail=assistants  listing assistants fails
@@ -287,6 +289,22 @@ export const backend: Backend = {
       ffc = { found: true, path: ffcPath, version: "1.10.0" }
       return ffc
     })
+  },
+  async checkForUpdate() {
+    await wait(600)
+    if (params.get("update") === "fail") {
+      fail("network", "GitHub could not be reached. Check your internet connection.", {
+        detail: "dial tcp: lookup api.github.com: no such host",
+      })
+    }
+    const available = params.get("update") === "available"
+    return {
+      available,
+      current: "0.1.0",
+      latest: available ? "0.2.0" : "0.1.0",
+      url: "https://github.com/nasroykh/foxmayn_frappe_cli/releases/tag/desktop-v" + (available ? "0.2.0" : "0.1.0"),
+      publishedAt: "2026-10-20T09:30:00Z",
+    }
   },
   async openWebsite(url) {
     window.open(url, "_blank", "noopener")

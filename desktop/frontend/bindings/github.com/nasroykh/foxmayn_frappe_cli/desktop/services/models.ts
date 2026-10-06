@@ -338,6 +338,34 @@ export interface SiteList {
 }
 
 /**
+ * UpdateInfo is the answer of CheckForUpdate.
+ */
+export interface UpdateInfo {
+    "available": boolean;
+
+    /**
+     * Current is the running version (AppVersion).
+     */
+    "current": string;
+
+    /**
+     * Latest is the newest version the app may offer ("" when none was found).
+     */
+    "latest": string;
+
+    /**
+     * URL is the release page on GitHub, always under this repository's
+     * releases.
+     */
+    "url": string;
+
+    /**
+     * PublishedAt is the release's publish time (RFC 3339), or "".
+     */
+    "publishedAt": string;
+}
+
+/**
  * Validation is the check of a name and URL as typed in step 1 of the Add
  * site form. Errors are per field; it never fails as a call.
  */

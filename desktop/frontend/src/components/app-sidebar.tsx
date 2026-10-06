@@ -24,7 +24,7 @@ const nav: { id: Screen; label: string; icon: typeof IconWorld }[] = [
 ]
 
 export function AppSidebar() {
-  const { screen, setScreen, sites, assistants, env, addSite, installFFC } = useApp()
+  const { screen, setScreen, sites, assistants, env, update, addSite, installFFC } = useApp()
   const siteCount = sites.data?.sites?.length ?? 0
   const connected = assistants.data?.assistants?.filter((a) => a.status === "connected").length ?? 0
   const ffc = env.data?.ffc
@@ -66,6 +66,12 @@ export function AppSidebar() {
                   </SidebarMenuButton>
                   {item.id === "sites" && siteCount > 0 && <SidebarMenuBadge>{siteCount}</SidebarMenuBadge>}
                   {item.id === "assistants" && connected > 0 && <SidebarMenuBadge>{connected}</SidebarMenuBadge>}
+                  {item.id === "settings" && update?.available && (
+                    <SidebarMenuBadge>
+                      <span className="bg-primary size-2 rounded-full" aria-hidden="true" />
+                      <span className="sr-only">Update {update.latest} available</span>
+                    </SidebarMenuBadge>
+                  )}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>

@@ -13,6 +13,7 @@ This directory is its own Go module (`github.com/nasroykh/foxmayn_frappe_cli/des
 - **Sites:** list, add (browser sign-in, API key, or username and password, in the CLI wizard's order), check, make default, rename, change address, remove (an OAuth sign-in is revoked first, as `ffc site remove` does). It edits the same `~/.config/ffc/config.yaml` as the CLI, only through `config.Edit`/`config.Overwrite`, and watches it, so CLI changes show up live.
 - **Assistants:** connect, update or disconnect the "frappe" MCP entry of each assistant through `internal/mcpinstall` (the code behind `ffc mcp install` and `ffc mcp uninstall`), with a preview of the change first.
 - **ffc helper:** the entries run an installed `ffc`, found on PATH or where the install scripts put it. When it is missing, the app offers (after asking) to download the latest ffc release from GitHub, verify it exactly as `ffc update` does (signed `checksums.txt`, then SHA-256, through `internal/release`; it refuses anything unverified), and install it for the user: `%LOCALAPPDATA%\Programs\ffc\ffc.exe` plus the user PATH on Windows, `~/.local/bin/ffc` on macOS. It also shows the install script command, pinned to a release tag, to run by hand. It never bundles its own ffc.
+- **Update notice:** at start, at most once a day (`localStorage` key `ffd-update-checked`), the app asks GitHub for the newest `desktop-v<semver>` release (not a draft; prereleases count only while the running version is 0.x or itself a prerelease) through `AppService.CheckForUpdate` and, when it is newer than this build, shows a toast with a Download button (opens the release page in the browser) and a dot on Settings. Settings > About has a "Check for updates" button. A version that does not parse, such as the `0.0.0-dev` of a build without a release version, never gets an offer. No tokens, no self-update: the user installs the download. Release builds must set the version with `-ldflags "-X github.com/nasroykh/foxmayn_frappe_cli/desktop/services.AppVersion=<semver>"`.
 - On Windows it notices ffc settings inside a running WSL distribution and explains that they are separate.
 
 Stored tokens and secrets never go back to the web view: the Go services return sites without credentials, and a secret typed into a sign-in form only travels from the form to Go.
@@ -20,7 +21,7 @@ Stored tokens and secrets never go back to the web view: the Go services return 
 ## Layout
 
 - `main.go`: the window and the three services.
-- `services/`: `AppService` (environment, ffc detection and installer, opening links and folders), `SitesService` (sites and the OAuth sign-in, events `config:changed` and `signin:progress`), `AssistantsService` (MCP entries). Errors reach the UI as `services.Error` (`code`, `message`, `detail`, ...).
+- `services/`: `AppService` (environment, ffc detection and installer, update check, opening links and folders), `SitesService` (sites and the OAuth sign-in, events `config:changed` and `signin:progress`), `AssistantsService` (MCP entries). Errors reach the UI as `services.Error` (`code`, `message`, `detail`, ...).
 - `frontend/src/lib/backend.ts`: the typed layer over the generated bindings (`frontend/bindings`, regenerate with `wails3 generate bindings -clean=true -ts -i`).
 - `frontend/src/screens/`: sites, add-site sheet, assistants, settings, onboarding. UI components are shadcn/ui on Base UI (`frontend/src/components/ui`).
 
@@ -46,7 +47,7 @@ cd desktop/frontend
 npm run dev:mock   # http://127.0.0.1:9245
 ```
 
-The UI runs in a normal browser against a fake backend (`src/mock/backend.ts`) with sample data. Query parameters pick a scenario, for example `?sites=none` (first run), `?ffc=missing`, `?wsl=1`, `?os=darwin`, `?signin=noreg` (a Frappe v15 site), `?slow=1`, `?fail=sites`; the full list is at the top of the mock. Only the Vite `mock` mode resolves it, so production builds never contain it.
+The UI runs in a normal browser against a fake backend (`src/mock/backend.ts`) with sample data. Query parameters pick a scenario, for example `?sites=none` (first run), `?update=available` (update toast and About tab), `?update=fail`, `?ffc=missing`, `?wsl=1`, `?os=darwin`, `?signin=noreg` (a Frappe v15 site), `?slow=1`, `?fail=sites`; the full list is at the top of the mock. Only the Vite `mock` mode resolves it, so production builds never contain it.
 
 ## Notes
 

@@ -1,5 +1,6 @@
 import {
   IconAlertTriangle,
+  IconArrowUpCircle,
   IconBrandGithub,
   IconBug,
   IconCircleCheck,
@@ -17,7 +18,7 @@ import { useTheme, type Theme } from "@/app/theme"
 import { BrandLogo } from "@/components/brand-logo"
 import { CopyField } from "@/components/copy-field"
 import { PageHeader } from "@/components/page"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -29,7 +30,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { backend } from "@/lib/backend"
-import { appError, errorTitle } from "@/lib/errors"
+import type { UpdateInfo } from "@/lib/backend-types"
+import { appError, errorTitle, type AppError } from "@/lib/errors"
 import { WSLAlert } from "@/screens/wsl-alert"
 
 const REPO = "https://github.com/nasroykh/foxmayn_frappe_cli"
@@ -224,8 +226,71 @@ function FFCTab() {
   )
 }
 
+function UpdateResult({ result }: { result: UpdateOutcome }) {
+  const { downloadUpdate } = useApp()
+  if (result.kind === "error") {
+    return (
+      <Alert variant="destructive">
+        <IconAlertTriangle />
+        <AlertTitle>{errorTitle(result.error)}</AlertTitle>
+        <AlertDescription>{result.error.message}</AlertDescription>
+      </Alert>
+    )
+  }
+  if (result.kind === "available") {
+    return (
+      <Alert>
+        <IconArrowUpCircle />
+        <AlertTitle>Version {result.info.latest} is available</AlertTitle>
+        <AlertDescription>
+          You have {result.info.current}.
+          {result.info.publishedAt ? ` Released ${formatDate(result.info.publishedAt)}.` : ""} Download it from
+          GitHub and install it over this one.
+        </AlertDescription>
+        <AlertAction>
+          <Button size="sm" onClick={() => void downloadUpdate(result.info)}>
+            <IconDownload data-icon="inline-start" />
+            Download
+          </Button>
+        </AlertAction>
+      </Alert>
+    )
+  }
+  return (
+    <Alert>
+      <IconCircleCheck />
+      <AlertTitle>You are up to date</AlertTitle>
+      <AlertDescription>Version {result.info.current} is the newest one.</AlertDescription>
+    </Alert>
+  )
+}
+
+type UpdateOutcome =
+  | { kind: "uptodate"; info: UpdateInfo }
+  | { kind: "available"; info: UpdateInfo }
+  | { kind: "error"; error: AppError }
+
+function formatDate(iso: string) {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { dateStyle: "medium" })
+}
+
 function AboutTab() {
-  const { env } = useApp()
+  const { env, update, checkingUpdate, checkUpdate } = useApp()
+  // What the button found; before any click, what the startup check found.
+  const [clicked, setClicked] = React.useState<UpdateOutcome | null>(null)
+  const result: UpdateOutcome | null =
+    clicked ?? (update?.available ? { kind: "available", info: update } : null)
+
+  async function check() {
+    try {
+      const info = await checkUpdate()
+      setClicked({ kind: info.available ? "available" : "uptodate", info })
+    } catch (err) {
+      setClicked({ kind: "error", error: appError(err) })
+    }
+  }
+
   const os = env.data?.os === "darwin" ? "macOS" : env.data?.os === "windows" ? "Windows" : env.data?.os
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -250,6 +315,15 @@ function AboutTab() {
           Foxmayn makes this app independently. It is not affiliated with or endorsed by Frappe Technologies.
         </AlertDescription>
       </Alert>
+      <div className="flex flex-col gap-3">
+        <div>
+          <Button variant="outline" onClick={check} disabled={checkingUpdate}>
+            {checkingUpdate ? <Spinner data-icon="inline-start" /> : <IconRefresh data-icon="inline-start" />}
+            Check for updates
+          </Button>
+        </div>
+        <div aria-live="polite">{result && <UpdateResult result={result} />}</div>
+      </div>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={() => attempt(() => backend.openWebsite(REPO))}>
           <IconBrandGithub data-icon="inline-start" />

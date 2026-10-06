@@ -19,6 +19,7 @@ import type {
   SignInProgress,
   Site,
   SiteList,
+  UpdateInfo,
   Validation,
   WSLInfo,
 } from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services/models"
@@ -41,6 +42,7 @@ export type {
   SignInProgress,
   Site,
   SiteList,
+  UpdateInfo,
   Validation,
   WSLInfo,
 }
@@ -53,6 +55,7 @@ export interface Backend {
   refreshFFC(): Promise<FFCInfo>
   installFFC(): Cancellable<FFCInfo>
   openWebsite(url: string): Promise<void>
+  checkForUpdate(): Promise<UpdateInfo>
   openConfigFolder(): Promise<void>
   openFFCFolder(): Promise<void>
 
