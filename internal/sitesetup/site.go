@@ -3,8 +3,10 @@
 // login (callback server, client registration, PKCE), writes sites to the
 // config file and revokes an OAuth token on removal.
 //
-// It never prompts, prints or exits. The CLI (internal/cmd) wraps it with
-// forms, spinners and messages; a desktop app can call it directly.
+// It never prompts or exits and prints nothing itself; internal/client, which
+// it calls, may still warn on stderr (the plain-HTTP warning, the --debug
+// trace). The CLI (internal/cmd) wraps it with forms, spinners and
+// messages; a desktop app can call it directly.
 package sitesetup
 
 import (

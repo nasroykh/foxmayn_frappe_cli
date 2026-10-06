@@ -86,7 +86,8 @@ internal/cmd/site.go         → site list / add / remove / rename / edit / use;
                                 revokeTimeout (10 s, passed to sitesetup.RevokeToken)
 internal/cmd/setup_flags.go  → non-interactive setup flags for init and site add (--name/--url/--api-key/--username,
                                 secrets via stdin or env), verifySite (sitesetup.Verify under a spinner; ErrNoCredentials → usage)
-internal/sitesetup/          → prompt-, print- and cobra-free site setup (internal/cmd imports it, never the reverse):
+internal/sitesetup/          → site setup that never prompts or exits, no huh/cobra (internal/cmd imports it, never the
+                                reverse); internal/client may still warn on stderr (plain-HTTP warning, --debug trace):
                                 site.go ValidateName, NormalizeURL, NameAndURL, Verify (key/token: get_logged_user; password:
                                 login + logout), ErrNoCredentials; oauth_client.go ResolveOAuthApp (--client-id, else RFC 7591
                                 registration, else *NoRegistrationError{Unsupported}), ClientMetadata, OAuthScope; oauth_flow.go

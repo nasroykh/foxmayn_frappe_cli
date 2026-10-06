@@ -344,7 +344,7 @@ if errors.Is(err, huh.ErrUserAborted) {
 
 ## Auth Wizard and OAuth (auth_wizard.go, oauth_wizard.go, internal/sitesetup)
 
-`init` and `site add` share one wizard: `chooseAuthMethod` → `collectSite` → `collectAPIKeySite` / `collectPasswordSite` / `collectOAuthSite`. API keys and passwords are verified against the site before saving. Persist with `siteStore(path).Init` (`config.Overwrite`) or `.Add`/`.Rename`/`.SetURL`/`.Remove`/`.SetDefault` (`config.Edit`; `sitesetup.Store`, which drops the site cache through `DropCache`) — never write the file another way. The logic lives in `internal/sitesetup` (no huh, cobra, printing or exit); `internal/cmd` keeps the forms, spinners, messages and error classes.
+`init` and `site add` share one wizard: `chooseAuthMethod` → `collectSite` → `collectAPIKeySite` / `collectPasswordSite` / `collectOAuthSite`. API keys and passwords are verified against the site before saving. Persist with `siteStore(path).Init` (`config.Overwrite`) or `.Add`/`.Rename`/`.SetURL`/`.Remove`/`.SetDefault` (`config.Edit`; `sitesetup.Store`, which drops the site cache through `DropCache`) — never write the file another way. The logic lives in `internal/sitesetup` (no huh or cobra, never prompts or exits; `internal/client` may still warn on stderr: plain-HTTP warning, `--debug` trace); `internal/cmd` keeps the forms, spinners, messages and error classes.
 
 OAuth PKCE: the `callbackServer` (`sitesetup.StartOAuthFlow`) binds `127.0.0.1` (redirect URI `http://127.0.0.1:<port>/callback`, not `localhost`) before the form opens, accepts exactly one result, answers duplicates with 409 and is always closed on abort.
 
