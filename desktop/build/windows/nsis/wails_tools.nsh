@@ -5,19 +5,19 @@
 !include "FileFunc.nsh"
 
 !ifndef INFO_PROJECTNAME
-    !define INFO_PROJECTNAME "foxmayn_frappe_cli_ui"
+    !define INFO_PROJECTNAME "foxmayn-frappe-desktop"
 !endif
 !ifndef INFO_COMPANYNAME
     !define INFO_COMPANYNAME "Foxmayn"
 !endif
 !ifndef INFO_PRODUCTNAME
-    !define INFO_PRODUCTNAME "My Product"
+    !define INFO_PRODUCTNAME "Foxmayn Frappe Desktop"
 !endif
 !ifndef INFO_PRODUCTVERSION
     !define INFO_PRODUCTVERSION "0.1.0"
 !endif
 !ifndef INFO_COPYRIGHT
-    !define INFO_COPYRIGHT "© 2026, Foxmayn"
+    !define INFO_COPYRIGHT "(c) 2026 Foxmayn"
 !endif
 !ifndef PRODUCT_EXECUTABLE
     !define PRODUCT_EXECUTABLE "${INFO_PROJECTNAME}.exe"
