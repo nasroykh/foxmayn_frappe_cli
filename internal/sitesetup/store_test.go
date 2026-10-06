@@ -3,6 +3,7 @@ package sitesetup
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -92,5 +93,96 @@ func TestAddSiteKeepsDefaultAndComments(t *testing.T) {
 	}
 	if cfg.DefaultSite != "dev" || len(cfg.Sites) != 2 {
 		t.Errorf("got default %q with %d sites, want dev with 2", cfg.DefaultSite, len(cfg.Sites))
+	}
+}
+
+// Every write through the store drops the cache of the names it changed,
+// and only after the write succeeded; a refused write drops nothing.
+func TestStoreLifecycleDropsCaches(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	var dropped []string
+	st := Store{Path: path, DropCache: func(name string) { dropped = append(dropped, name) }}
+	expectDropped := func(step string, want ...string) {
+		t.Helper()
+		if !reflect.DeepEqual(dropped, want) {
+			t.Errorf("%s: dropped %q, want %q", step, dropped, want)
+		}
+		dropped = nil
+	}
+	site := config.SiteConfig{URL: "https://a.example", APIKey: "k", APISecret: "s"}
+
+	if err := st.Init("a", site); err != nil {
+		t.Fatal(err)
+	}
+	expectDropped("init", "a")
+	if err := st.Add("b", site); err != nil {
+		t.Fatal(err)
+	}
+	expectDropped("add", "b")
+
+	if err := st.SetDefault("b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetDefault("nope"); err == nil || !strings.Contains(err.Error(), "available: a, b") {
+		t.Errorf("SetDefault(nope) = %v", err)
+	}
+	before, _ := os.ReadFile(path)
+	if err := st.SetDefault("b"); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(path); string(after) != string(before) {
+		t.Error("SetDefault to the current default rewrote the file")
+	}
+	expectDropped("set default")
+
+	if err := st.Rename("b", "c"); err != nil {
+		t.Fatal(err)
+	}
+	expectDropped("rename", "b", "c")
+	if err := st.Rename("missing", "d"); err == nil {
+		t.Error("Rename of a missing site: want error")
+	}
+	expectDropped("refused rename")
+
+	if err := st.SetURL("c", "https://c.example"); err != nil {
+		t.Fatal(err)
+	}
+	expectDropped("set url", "c")
+
+	cfg, err := config.Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultSite != "c" || cfg.Sites["c"].URL != "https://c.example" || cfg.Sites["c"].APISecret != "s" {
+		t.Errorf("config = default %q, sites %+v", cfg.DefaultSite, cfg.Sites)
+	}
+
+	r, err := st.Remove("c")
+	if err != nil || r != (Removed{WasDefault: true, NewDefault: "a"}) {
+		t.Errorf("Remove(c) = %+v, %v", r, err)
+	}
+	expectDropped("remove", "c")
+	r, err = st.Remove("a")
+	if err != nil || r != (Removed{WasDefault: true}) {
+		t.Errorf("Remove(a) = %+v, %v", r, err)
+	}
+	expectDropped("remove last", "a")
+	if _, err := st.Remove("a"); err == nil {
+		t.Error("Remove of a missing site: want error")
+	}
+	expectDropped("refused remove")
+}
+
+// A Store without DropCache still writes.
+func TestStoreWithoutDropCache(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := (Store{Path: path}).Init("a", config.SiteConfig{URL: "https://a.example", APIKey: "k", APISecret: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Store{Path: path}).Remove("a"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err := config.Read(path); err != nil || len(cfg.Sites) != 0 {
+		t.Fatalf("after remove: %+v, %v", cfg, err)
 	}
 }
