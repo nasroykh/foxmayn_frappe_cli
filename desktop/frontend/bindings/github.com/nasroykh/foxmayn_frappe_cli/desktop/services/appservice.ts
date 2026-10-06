@@ -16,6 +16,17 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * CheckForUpdate asks GitHub for the newest desktop release (tag
+ * desktop-v<semver>, not a draft) and compares it with this app's version.
+ * A prerelease counts only while the running version is 0.x or itself a
+ * prerelease. A version that does not parse (a development build) is never
+ * offered an update. It sends no credentials; cancelling ctx stops it.
+ */
+export function CheckForUpdate(): $CancellablePromise<$models.UpdateInfo> {
+    return $Call.ByID(1350308504);
+}
+
+/**
  * Environment returns the app and ffc versions, the config path and the
  * WSL detection (run once per app start).
  */

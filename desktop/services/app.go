@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/release"
 )
 
 // AppVersion is the desktop app's version (build/config.yml info.version).
@@ -39,6 +40,10 @@ type AppService struct {
 	wsl        *wslDetector
 	// install installs ffc and returns its path (ffcInstaller.install).
 	install func(ctx context.Context, log func(string)) (string, error)
+	// version is the running app version and releasesURL the release list the
+	// update check reads (tests point it at a fake).
+	version     string
+	releasesURL string
 
 	wslOnce sync.Once
 	wslInfo WSLInfo
@@ -51,12 +56,14 @@ type AppService struct {
 func NewAppService(host Host, configPath string, ffc *FFCLocator) *AppService {
 	home, _ := os.UserHomeDir()
 	return &AppService{
-		install:    newFFCInstaller(runtime.GOOS, home).install,
-		host:       host,
-		goos:       runtime.GOOS,
-		configPath: configPath,
-		ffc:        ffc,
-		wsl:        newWSLDetector(runtime.GOOS),
+		install:     newFFCInstaller(runtime.GOOS, home).install,
+		version:     AppVersion,
+		releasesURL: release.ReleasesURL,
+		host:        host,
+		goos:        runtime.GOOS,
+		configPath:  configPath,
+		ffc:         ffc,
+		wsl:         newWSLDetector(runtime.GOOS),
 	}
 }
 

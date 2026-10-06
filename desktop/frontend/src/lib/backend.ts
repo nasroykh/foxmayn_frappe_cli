@@ -22,6 +22,7 @@ export const backend: Backend = {
   refreshFFC: () => AppService.RefreshFFC(),
   installFFC: () => cancellable(AppService.InstallFFC()),
   openWebsite: (url) => AppService.OpenWebsite(url),
+  checkForUpdate: () => AppService.CheckForUpdate(),
   openConfigFolder: () => AppService.OpenConfigFolder(),
   openFFCFolder: () => AppService.OpenFFCFolder(),
 
