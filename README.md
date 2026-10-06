@@ -52,7 +52,7 @@ ffc init
 
 The wizard lets you choose between three authentication methods:
 
-- **OAuth 2.0** (`--oauth`) — browser login, PKCE flow; no password is stored (the config keeps the OAuth client id/secret and the access and refresh tokens). You create an OAuth Client on Frappe once and authorize via the browser. The wizard prints the redirect URI to register, `http://127.0.0.1:<port>/callback` (earlier ffc versions used `localhost`; update an existing OAuth Client if it was registered that way).
+- **OAuth 2.0** (`--oauth`) — browser login, PKCE flow; no password is stored (the config keeps the OAuth client id/secret and the access and refresh tokens). See [OAuth client setup](#oauth-client-setup) below: on Frappe v16 with dynamic client registration enabled there is nothing to set up on the site.
 - **API Key** (`--apikey`) — paste your API key and secret from **User → API Access → Generate Keys**. The keys are checked against the site before they are saved. Best choice for scripts and CI.
 - **Username / password** (`--password`) — logs in with a session cookie on every run and logs out when the command ends. The password is stored in the config file (mode 0600). Two-factor authentication is not supported. On a site with **Deny Multiple Sessions** enabled (System Settings), each ffc login can end your other sessions, such as the browser one; use an API key or OAuth there.
 
@@ -69,6 +69,23 @@ Without a terminal (CI, scripts, agents), pass the site and one credential set a
 echo "$SECRET" | ffc init --name prod --url https://erp.example.com --api-key KEY --api-secret-stdin
 echo "$PW" | ffc init --name dev --url http://localhost:8000 --username admin --password-stdin --force
 ```
+
+### OAuth client setup
+
+ffc logs in as a public OAuth client (Authorization Code + PKCE, no client secret) with the redirect URI `http://127.0.0.1:<port>/callback`, scopes `openid all`.
+
+- **Frappe v16, zero setup.** When the site offers dynamic client registration (RFC 7591: **OAuth Settings → Enable Dynamic Client Registration**, with **Show Auth Server Metadata** on; both default to on, but an administrator may have turned them off), `ffc init --oauth` and `ffc site add --oauth` register a client by themselves: an OAuth Client named `ffc (<your host name>)`, for the callback URL of that login only, with no secret. Its client id is stored in the config like a hand-made one. Each OAuth setup registers a new client, at most one per run; the site shows its consent page on the first login. Newer Frappe releases allow 5 registrations per 10 minutes from one IP address: a 429 says so.
+- **Otherwise** (Frappe v15, registration turned off, or a failed registration), the wizard says why in one line, prints the redirect URI and asks for the ID (and secret, for a confidential client) of an OAuth Client you create once under **Integrations → OAuth Client → New** (Grant Type Authorization Code, Scopes `openid all`, that redirect URI). An API key (`--apikey`) needs no OAuth Client at all and is the usual fallback.
+- **`--client-id ID`** uses that OAuth Client and never registers one (its secret, if it has one, comes from `FFC_OAUTH_CLIENT_SECRET`).
+- **Without the prompts**, `--oauth --name NAME --url URL` runs the same flow non-interactively; the browser login still needs a person. With no `--client-id` and no registration on the site it is a usage error (exit 2) naming `--client-id`.
+
+```bash
+ffc site add --oauth                                   # wizard; registers a client on v16
+ffc site add --oauth --client-id 1a2b3c4d5e            # use an OAuth Client you created
+ffc init --oauth --name prod --url https://erp.example.com
+```
+
+Earlier ffc versions used `localhost` in the redirect URI; update an OAuth Client registered that way.
 
 ## Configuration
 
@@ -128,9 +145,10 @@ Non-interactive `site add` (no terminal needed; `--name`, `--url` and one creden
 echo "$SECRET" | ffc site add --name staging --url https://staging.example.com --api-key KEY --api-secret-stdin
 echo "$PW" | ffc site add --name dev --url http://localhost:8000 --username admin --password-stdin
 FFC_API_SECRET="$SECRET" ffc site add --name prod --url erp.example.com --api-key KEY --force
+ffc site add --oauth --name prod --url https://erp.example.com   # no prompts, still a browser login
 ```
 
-OAuth setup stays interactive.
+`ffc site remove` revokes an OAuth site's token on the server first (`frappe.integrations.oauth2.revoke_token`: the refresh token and the access token issued with it). That is best effort and bounded to 10 seconds: when the site cannot be reached or refuses, a warning is printed and the site is removed anyway. The OAuth Client itself (registered or hand-made) stays on the site; an administrator can delete it.
 
 **Settings Management (`ffc config`)**
 
@@ -269,9 +287,9 @@ With `--json`, an error is printed on stderr as one JSON object, and stdout carr
 *   **`init`**: Interactive setup wizard — creates your initial config. Choose between OAuth 2.0 browser flow (`--oauth`), API key/secret (`--apikey`) or username/password (`--password`). Auto-adds `https://` if you omit the scheme.
 *   **`site`**: Manage multiple Frappe sites without editing the config file:
     *   `ffc site list` — show all configured sites (name, URL, auth method, default; in `--json`, `default` is a boolean)
-    *   `ffc site add [--oauth|--apikey|--password]` — add a new site interactively
+    *   `ffc site add [--oauth|--apikey|--password]` — add a new site interactively (`--oauth` registers an OAuth client on Frappe v16 when the site allows it; `--client-id` uses a given one)
     *   `ffc site use [name]` — set the default site (shows selection menu if name omitted)
-    *   `ffc site remove [name] [--yes]` — remove a site (shows selection menu if name omitted)
+    *   `ffc site remove [name] [--yes]` — remove a site (shows selection menu if name omitted); an OAuth site's token is revoked on the server first, best effort
     *   `ffc site rename OLD NEW` / `ffc site edit NAME --url URL` — rename a site / change its URL
 *   **`config`**: Interactive TUI to tweak settings, or non-interactive via subcommands:
     *   `ffc config get [--json|--yaml]` — print all settings
@@ -839,6 +857,8 @@ foxmayn_frappe_cli/
 │   │   ├── auth_wizard.go    # Shared API key / password / OAuth wizard for init and site add
 │   │   ├── init.go           # init
 │   │   ├── oauth_flow.go     # OAuth PKCE callback server and flow
+│   │   ├── oauth_setup.go    # OAuth client choice (registration, fallback), no prompts
+│   │   ├── oauth_revoke.go   # token revocation for site remove
 │   │   ├── site.go           # site list/add/remove/use
 │   │   ├── config_cmd.go     # Interactive settings menu, config get/set
 │   │   ├── whoami.go, can.go, doctor.go, server_cache.go  # identity, permissions, health; version cache
@@ -875,7 +895,7 @@ foxmayn_frappe_cli/
 │   │   ├── lifecycle.go      # Submit, cancel, amend, copy, rename, restore, workflow
 │   │   ├── collab.go         # Comments, assignments, tags, shares
 │   │   ├── server.go         # Versions, logged user, roles, permission checks
-│   │   ├── oauth.go          # ExchangeOAuthCode, RefreshOAuthToken, GetOAuthUser
+│   │   ├── oauth.go          # Token exchange/refresh, user, server metadata, client registration, revocation
 │   │   └── session.go        # Username/password login
 │   ├── config/
 │   │   ├── config.go         # Config loading and env overrides
