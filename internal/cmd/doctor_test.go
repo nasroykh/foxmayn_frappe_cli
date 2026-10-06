@@ -86,8 +86,12 @@ func TestDoctorHealthy(t *testing.T) {
 	if r.Err != nil || r.Code != 0 {
 		t.Fatalf("exit %d, %v\n%s", r.Code, r.Err, r.Stdout)
 	}
-	for _, id := range []string{"config.file", "config.dir", "config.parse", "config.lock", "net.tls", "net.reachable",
-		"net.clock", "auth.valid", "server.versions", "server.api_v2", "mcp.daemon", "update.check"} {
+	want := []string{"config.file", "config.parse", "config.lock", "net.tls", "net.reachable",
+		"net.clock", "auth.valid", "server.versions", "server.api_v2", "mcp.daemon", "update.check"}
+	if runtime.GOOS != "windows" { // permission bits are not checked on Windows
+		want = append(want, "config.dir")
+	}
+	for _, id := range want {
 		c := doctorTWant(t, checks, id, "pass")
 		if _, ok := c["hint"]; !ok {
 			t.Errorf("%s has no hint key", id)
@@ -121,7 +125,11 @@ func TestDoctorHumanOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := runFFC(t, cfg, "", "doctor")
-	cmdTHas(t, r.Stdout, "config.file", "net.reachable", "chmod 600")
+	want := []string{"config.file", "net.reachable"}
+	if runtime.GOOS != "windows" {
+		want = append(want, "chmod 600")
+	}
+	cmdTHas(t, r.Stdout, want...)
 	if r.Code != 1 {
 		t.Errorf("exit %d, want 1", r.Code)
 	}
