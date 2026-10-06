@@ -351,6 +351,15 @@ func (s *Site) serve(w http.ResponseWriter, r *http.Request) {
 	case path == tokenEndpoint:
 		s.token(w, r, body)
 		return
+	case path == revokeEndpoint:
+		s.revokeToken(w, r, body)
+		return
+	case path == registerEndpoint:
+		s.registerClient(w, r, body)
+		return
+	case path == metadataPath:
+		s.authServerMetadata(w, r)
+		return
 	case path == "/api/method/frappe.ping":
 		writeJSON(w, http.StatusOK, map[string]string{"message": "pong"})
 		return
