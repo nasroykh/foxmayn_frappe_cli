@@ -21,8 +21,10 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/relsig"
 )
 
-// LatestURL is the GitHub API endpoint of the latest ffc release.
-const LatestURL = "https://api.github.com/repos/nasroykh/foxmayn_frappe_cli/releases/latest"
+// ReleasesURL lists the repository's newest releases. The repository also
+// publishes desktop app releases, so GitHub's releases/latest may be one of
+// those; Latest picks the newest ffc release from this list instead.
+const ReleasesURL = "https://api.github.com/repos/nasroykh/foxmayn_frappe_cli/releases?per_page=100"
 
 const (
 	// MaxArchiveBytes caps the downloaded archive and MaxBinaryBytes one
@@ -35,8 +37,10 @@ const (
 
 // Release is the part of GitHub's release JSON that ffc reads.
 type Release struct {
-	TagName string  `json:"tag_name"`
-	Assets  []Asset `json:"assets"`
+	TagName    string  `json:"tag_name"`
+	Draft      bool    `json:"draft"`
+	Prerelease bool    `json:"prerelease"`
+	Assets     []Asset `json:"assets"`
 }
 
 // Asset is one file attached to a release.
@@ -55,12 +59,16 @@ type Target struct {
 	SignatureURL string
 }
 
-// Latest fetches the latest release from url (LatestURL outside tests).
+// Latest returns the newest ffc release in the list at url (ReleasesURL
+// outside tests): the first one, in GitHub's newest-first order, that is
+// neither a draft nor a prerelease and whose tag is "v<digit>…" (the CLI's
+// tags; desktop releases use another prefix). It is what releases/latest
+// gave before desktop releases existed.
 func Latest(ctx context.Context, url string, timeout time.Duration) (*Release, error) {
-	var rel Release
+	var rels []Release
 	resp, err := client.NewHTTPClient(timeout).R().
 		SetContext(ctx).
-		SetResult(&rel).
+		SetResult(&rels).
 		SetHeader("Accept", "application/vnd.github+json").
 		Get(url)
 	if err != nil {
@@ -69,10 +77,17 @@ func Latest(ctx context.Context, url string, timeout time.Duration) (*Release, e
 	if resp.StatusCode() != 200 {
 		return nil, fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode())
 	}
-	if rel.TagName == "" {
-		return nil, fmt.Errorf("no releases found on GitHub")
+	for i := range rels {
+		if r := &rels[i]; !r.Draft && !r.Prerelease && isCLITag(r.TagName) {
+			return r, nil
+		}
 	}
-	return &rel, nil
+	return nil, fmt.Errorf("no ffc release found on GitHub")
+}
+
+// isCLITag reports whether tag is an ffc CLI release tag: "v" then a digit.
+func isCLITag(tag string) bool {
+	return len(tag) > 1 && tag[0] == 'v' && tag[1] >= '0' && tag[1] <= '9'
 }
 
 // AssetName returns the GoReleaser archive name of a platform. GoReleaser

@@ -54,7 +54,7 @@ func newFFCInstaller(goos, home string) *ffcInstaller {
 		home:   home,
 		getenv: os.Getenv,
 		latest: func(ctx context.Context) (*release.Release, error) {
-			return release.Latest(ctx, release.LatestURL, 30*time.Second)
+			return release.Latest(ctx, release.ReleasesURL, 30*time.Second)
 		},
 		download:  release.Download,
 		addToPath: addUserPath,
