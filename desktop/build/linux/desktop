@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=My Product
+Comment=A foxmayn_frappe_cli_ui application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/foxmayn_frappe_cli_ui.exe %u
+Terminal=false
+Type=Application
+Icon=foxmayn_frappe_cli_ui.exe
+Categories=Utility;
+StartupWMClass=foxmayn_frappe_cli_ui.exe
+
+ 
