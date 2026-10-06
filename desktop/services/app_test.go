@@ -87,14 +87,12 @@ func TestParseFFCVersion(t *testing.T) {
 }
 
 func TestInstallCommands(t *testing.T) {
-	if c := installCommand("windows"); !strings.Contains(c, "install.ps1 | iex") || !strings.HasPrefix(c, "powershell -NoProfile -ExecutionPolicy Bypass") {
+	pinned := "/foxmayn_frappe_cli/" + installScriptTag + "/"
+	if c := installCommand("windows"); !strings.Contains(c, pinned+"install.ps1 | iex") || !strings.HasPrefix(c, "powershell -NoProfile -ExecutionPolicy Bypass") {
 		t.Errorf("windows command = %q", c)
 	}
-	if a := installArgv("darwin"); a[0] != "sh" || !strings.Contains(a[2], "install.sh | sh") {
-		t.Errorf("unix argv = %q", a)
-	}
-	if a := installArgv("windows"); a[0] != "powershell" || !strings.Contains(a[len(a)-1], "install.ps1 | iex") {
-		t.Errorf("windows argv = %q", a)
+	if c := installCommand("darwin"); !strings.Contains(c, pinned+"install.sh | sh") || strings.Contains(c, "/main/") {
+		t.Errorf("unix command = %q", c)
 	}
 }
 
@@ -103,51 +101,34 @@ func TestInstallFFC(t *testing.T) {
 	loc := fakeLocator("darwin", "/Users/me", "", nil)
 	s := NewAppService(h, "/Users/me/.config/ffc/config.yaml", loc)
 	s.goos = "darwin"
-	s.installer = func(ctx context.Context, argv []string, line func(string)) error {
-		if argv[0] != "sh" {
-			t.Errorf("argv = %q", argv)
-		}
-		line("Downloading ffc...")
-		line("Installed to /usr/local/bin/ffc")
+	s.install = func(ctx context.Context, log func(string)) (string, error) {
+		log("Downloading ffc...")
+		log("Installed ffc v9.9.9 to /usr/local/bin/ffc")
 		loc.isFile = func(p string) bool { return p == "/usr/local/bin/ffc" }
-		return nil
+		return "/usr/local/bin/ffc", nil
 	}
 	info, err := s.InstallFFC(context.Background())
 	if err != nil || !info.Found || info.Path != "/usr/local/bin/ffc" {
 		t.Fatalf("InstallFFC = %+v, %v", info, err)
 	}
-	if lines := h.named(EventInstallerLog); len(lines) != 2 || lines[1].(InstallerLine).Line != "Installed to /usr/local/bin/ffc" {
+	if lines := h.named(EventInstallerLog); len(lines) != 2 || lines[1].(InstallerLine).Line != "Installed ffc v9.9.9 to /usr/local/bin/ffc" {
 		t.Errorf("log events = %v", lines)
 	}
 
-	// A failing installer, and one that leaves no binary behind.
+	// A failing install, one that leaves no binary behind, and a cancelled one.
 	loc.isFile = func(string) bool { return false }
-	s.installer = func(context.Context, []string, func(string)) error { return errors.New("exit status 1") }
+	s.install = func(context.Context, func(string)) (string, error) { return "", errors.New("checksum mismatch") }
 	if _, err := s.InstallFFC(context.Background()); code(err) != CodeFailed {
-		t.Errorf("failing installer: %v", err)
+		t.Errorf("failing install: %v", err)
 	}
-	s.installer = func(context.Context, []string, func(string)) error { return nil }
+	s.install = func(context.Context, func(string)) (string, error) { return "/usr/local/bin/ffc", nil }
 	if _, err := s.InstallFFC(context.Background()); code(err) != CodeFailed {
-		t.Errorf("installer without a binary: %v", err)
+		t.Errorf("install without a binary: %v", err)
 	}
-}
-
-// The real runner streams both output streams line by line.
-func TestRunInstallerStreamsLines(t *testing.T) {
-	if os.Getenv("FFD_HELPER") == "1" {
-		os.Stdout.WriteString("one\r\n\n")
-		os.Stderr.WriteString("two\n")
-		os.Exit(0)
-	}
-	t.Setenv("FFD_HELPER", "1")
-	var lines []string
-	err := runInstaller(context.Background(), []string{os.Args[0], "-test.run=TestRunInstallerStreamsLines"}, func(l string) { lines = append(lines, l) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := strings.Join(lines, "|")
-	if !strings.Contains(got, "one") || !strings.Contains(got, "two") || strings.Contains(got, "\r") {
-		t.Errorf("lines = %q", lines)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.install = func(ctx context.Context, _ func(string)) (string, error) { cancel(); return "", ctx.Err() }
+	if _, err := s.InstallFFC(ctx); code(err) != CodeCancelled {
+		t.Errorf("cancelled install: %v", err)
 	}
 }
 

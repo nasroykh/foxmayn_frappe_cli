@@ -23,7 +23,8 @@ type Environment struct {
 	ConfigPath   string  `json:"configPath"`
 	ConfigExists bool    `json:"configExists"`
 	FFC          FFCInfo `json:"ffc"`
-	// InstallCommand installs ffc by hand (the README's one-liner).
+	// InstallCommand installs ffc by hand: the README's one-liner, with the
+	// script pinned to a release tag.
 	InstallCommand string  `json:"installCommand"`
 	WSL            WSLInfo `json:"wsl"`
 }
@@ -36,7 +37,8 @@ type AppService struct {
 	configPath string
 	ffc        *FFCLocator
 	wsl        *wslDetector
-	installer  func(ctx context.Context, argv []string, line func(string)) error
+	// install installs ffc and returns its path (ffcInstaller.install).
+	install func(ctx context.Context, log func(string)) (string, error)
 
 	wslOnce sync.Once
 	wslInfo WSLInfo
@@ -47,13 +49,14 @@ type AppService struct {
 // NewAppService builds the service for this machine. configPath is the ffc
 // config file (config.DefaultConfigPath).
 func NewAppService(host Host, configPath string, ffc *FFCLocator) *AppService {
+	home, _ := os.UserHomeDir()
 	return &AppService{
+		install:    newFFCInstaller(runtime.GOOS, home).install,
 		host:       host,
 		goos:       runtime.GOOS,
 		configPath: configPath,
 		ffc:        ffc,
 		wsl:        newWSLDetector(runtime.GOOS),
-		installer:  runInstaller,
 	}
 }
 
@@ -89,17 +92,17 @@ func (s *AppService) RefreshFFC() FFCInfo {
 	return s.ffc.Refresh()
 }
 
-// InstallFFC runs the official installer (install.ps1 on Windows, install.sh
-// elsewhere), sends each line it prints as an "installer:log" event, then
-// looks for the binary again. The UI asks the user first. Cancelling the
-// call stops the installer.
+// InstallFFC downloads the latest ffc release from GitHub, verifies its
+// signature and checksum, installs it for this user (see ffcInstaller), sends
+// each step as an "installer:log" event, then looks for the binary again.
+// The UI asks the user first. Cancelling the call stops the download.
 func (s *AppService) InstallFFC(ctx context.Context) (FFCInfo, error) {
 	if !s.installMu.TryLock() {
 		return FFCInfo{}, &Error{Code: CodeUnavailable, Message: "The installer is already running."}
 	}
 	defer s.installMu.Unlock()
 
-	err := s.installer(ctx, installArgv(s.goos), func(line string) {
+	_, err := s.install(ctx, func(line string) {
 		s.host.Emit(EventInstallerLog, InstallerLine{Line: line})
 	})
 	info := s.ffc.Refresh()
@@ -107,9 +110,9 @@ func (s *AppService) InstallFFC(ctx context.Context) (FFCInfo, error) {
 	case ctx.Err() != nil:
 		return info, newError(CodeCancelled, "The installation was cancelled.", nil)
 	case err != nil:
-		return info, newError(CodeFailed, "The installer did not finish.", err)
+		return info, newError(CodeFailed, "ffc could not be installed.", err)
 	case !info.Found:
-		return info, &Error{Code: CodeFailed, Message: "The installer finished, but ffc was not found where it installs. Restart the app and try again."}
+		return info, &Error{Code: CodeFailed, Message: "ffc was installed, but it was not found where it should be. Restart the app and try again."}
 	}
 	return info, nil
 }

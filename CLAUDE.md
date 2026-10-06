@@ -126,7 +126,7 @@ internal/cmd/workflow.go         → workflow transitions / apply / bulk-apply (
 internal/cmd/collab.go           → T2.5 logic shared by CLI and MCP: addComment (commentHTML), assignUsers/unassignUsers,
                                 tagDoc/untagDoc (cleanTags), shareDoc/unshareDoc; each reads the state first
 internal/cmd/collab_cmds.go      → comment / assign / unassign / tag / untag / share (confirm or --yes) / unshare
-internal/cmd/update.go           → self-update (size-limited download, signed checksums.txt + SHA256 check, atomic swap)
+internal/cmd/update.go           → self-update: internal/release finds, downloads and verifies; update.go confirms and swaps the binary
 internal/cmd/update_check.go     → background update check; owns rootCmd.PersistentPreRunE
 internal/cmd/mcp.go              → mcp subcommand, --read-only + policy flags (mcpFlags) + --toolsets, newMCPEnv (site per call, cached
                                 client), startMCP (credential check + registerTools filtered by policy)
@@ -195,10 +195,14 @@ internal/output/             → lipgloss table and JSON; every server value pas
 internal/text/               → Sanitize: strips C0/C1 controls (terminal escape injection), bidi overrides/isolates
                                 and zero-width characters (Trojan Source); keeps LRM/RLM/ALM/ZWJ/ZWNJ
 internal/relsig/             → Ed25519 sign/verify of checksums.txt (domain-separated); ReleaseKeys in keys.go
+internal/release/            → prompt-free release code shared by `ffc update` and the desktop installer: Latest (releases/latest),
+                                Release.Target (asset for GOOS/GOARCH, checksums.txt, signature), Download (Fetch size-limited, Verify =
+                                relsig signature + SHA-256, Extract from zip/tar.gz; fails closed)
 tools/relsign/               → keygen / sign / verify for the release key (run by GoReleaser, not shipped)
 internal/version/            → Build-time version variables (ldflags)
 desktop/                     → Foxmayn Frappe Desktop (Wails v3 + React 19 + shadcn/ui on Base UI), its own Go module nested under the ffc module path;
-                                services/ (AppService, SitesService, AssistantsService over sitesetup/mcpinstall), frontend/src
+                                services/ (AppService, SitesService, AssistantsService over sitesetup/mcpinstall; install.go installs ffc
+                                in-process through internal/release, never by running the install scripts), frontend/src
                                 (lib/backend.ts over the bindings, screens/), `npm run dev:mock` browser preview; Windows and macOS only (desktop/README.md)
 ```
 

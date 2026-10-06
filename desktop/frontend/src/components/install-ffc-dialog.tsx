@@ -94,22 +94,23 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
         <DialogHeader>
           <DialogTitle>Install the ffc helper</DialogTitle>
           <DialogDescription>
-            Assistants use ffc, a small program from Foxmayn, to talk to your Frappe sites. This downloads the official
-            signed release from GitHub and installs it for your user only.
+            Assistants use ffc, a small program from Foxmayn, to talk to your Frappe sites. This downloads the latest
+            ffc release from GitHub, checks its signature and installs it for your user only.
           </DialogDescription>
         </DialogHeader>
 
         {phase === "confirm" && (
           <Collapsible>
             <CollapsibleTrigger render={<Button variant="link" size="sm" className="px-0" />}>
-              Show the command that will run
+              Where it goes
             </CollapsibleTrigger>
             <CollapsibleContent className="flex flex-col gap-2 pt-2">
               <p className="text-muted-foreground text-xs">
                 {isMac
-                  ? "It runs the install script with sh. It installs to /usr/local/bin or ~/.local/bin."
-                  : "It runs the install script with PowerShell. It installs to your user's Programs folder and adds it to your PATH."}{" "}
-                You can also run it yourself in a terminal.
+                  ? "It installs ffc to ~/.local/bin."
+                  : "It installs ffc to your user's Programs folder and adds that folder to your PATH."}{" "}
+                The download is refused unless its signature matches Foxmayn's release key. You can also install it
+                yourself in a terminal:
               </p>
               <CopyField value={command} label="Install command" copiedTitle="Command copied" />
             </CollapsibleContent>
@@ -142,7 +143,7 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
             <ScrollArea className="bg-muted h-40 rounded-lg">
               <div className="p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap" role="log" aria-live="polite">
                 {log.length === 0 ? (
-                  <span className="text-muted-foreground">Waiting for the installer…</span>
+                  <span className="text-muted-foreground">Starting…</span>
                 ) : (
                   log.join("\n")
                 )}
@@ -151,7 +152,7 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
             </ScrollArea>
             {phase === "failed" && (
               <div className="flex flex-col gap-2">
-                <p className="text-muted-foreground text-xs">You can also run the installer yourself in a terminal:</p>
+                <p className="text-muted-foreground text-xs">You can also install it yourself in a terminal:</p>
                 <CopyField value={command} label="Install command" copiedTitle="Command copied" />
               </div>
             )}

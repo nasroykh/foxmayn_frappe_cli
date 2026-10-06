@@ -1,10 +1,8 @@
 package services
 
 import (
-	"bufio"
 	"context"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,13 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
-
-// Installer one-liners, as the README gives them. installCommand is shown to
-// the user to copy; installArgv is what the app runs.
-const (
-	installURLWindows = "https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install.ps1"
-	installURLUnix    = "https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install.sh"
 )
 
 // FFCInfo says whether the ffc binary is installed and where.
@@ -29,25 +20,6 @@ type FFCInfo struct {
 	// Error is set when the binary was found but did not answer
 	// "ffc --version".
 	Error string `json:"error,omitempty"`
-}
-
-// installCommand is the command the user can copy to install ffc by hand.
-func installCommand(goos string) string {
-	if goos == "windows" {
-		return `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm ` + installURLWindows + ` | iex"`
-	}
-	return "curl -fsSL " + installURLUnix + " | sh"
-}
-
-// installArgv is the installer as the app runs it. On Windows the progress
-// bar of Invoke-WebRequest is turned off: PowerShell 5.1 slows a download
-// down badly while drawing it, and nobody sees it here.
-func installArgv(goos string) []string {
-	if goos == "windows" {
-		return []string{"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-			"$ProgressPreference = 'SilentlyContinue'; irm " + installURLWindows + " | iex"}
-	}
-	return []string{"sh", "-c", "curl -fsSL " + installURLUnix + " | sh"}
 }
 
 // FFCLocator finds the ffc binary: on PATH first, then where the install
@@ -173,35 +145,4 @@ func parseFFCVersion(out string) string {
 		return m[1]
 	}
 	return strings.TrimSpace(out)
-}
-
-// runInstaller runs argv and calls line for every line it prints (stdout and
-// stderr), until it exits or ctx ends.
-func runInstaller(ctx context.Context, argv []string, line func(string)) error {
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	hideWindow(cmd)
-	pr, pw := io.Pipe()
-	cmd.Stdout = pw
-	cmd.Stderr = pw
-	if err := cmd.Start(); err != nil {
-		pw.Close()
-		return err
-	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		sc := bufio.NewScanner(pr)
-		sc.Buffer(make([]byte, 64*1024), 1024*1024)
-		for sc.Scan() {
-			if l := strings.TrimRight(sc.Text(), "\r"); strings.TrimSpace(l) != "" {
-				line(l)
-			}
-		}
-		// Keep draining after an over-long line so the child never blocks.
-		_, _ = io.Copy(io.Discard, pr)
-	}()
-	err := cmd.Wait()
-	pw.Close()
-	<-done
-	return err
 }

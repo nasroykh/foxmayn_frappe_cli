@@ -24,10 +24,10 @@ export function Environment(): $CancellablePromise<$models.Environment> {
 }
 
 /**
- * InstallFFC runs the official installer (install.ps1 on Windows, install.sh
- * elsewhere), sends each line it prints as an "installer:log" event, then
- * looks for the binary again. The UI asks the user first. Cancelling the
- * call stops the installer.
+ * InstallFFC downloads the latest ffc release from GitHub, verifies its
+ * signature and checksum, installs it for this user (see ffcInstaller), sends
+ * each step as an "installer:log" event, then looks for the binary again.
+ * The UI asks the user first. Cancelling the call stops the download.
  */
 export function InstallFFC(): $CancellablePromise<$models.FFCInfo> {
     return $Call.ByID(2608237942);

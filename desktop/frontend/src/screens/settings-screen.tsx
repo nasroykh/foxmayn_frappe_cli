@@ -170,8 +170,8 @@ function FFCTab() {
             )}
           </CardTitle>
           <CardDescription>
-            The program assistants run to reach your sites. This app finds it on your PATH or where the official
-            installer puts it; it never ships its own copy.
+            The program assistants run to reach your sites. This app finds it on your PATH or where the ffc
+            installers put it, and can install the latest release for you; it never ships its own copy.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
