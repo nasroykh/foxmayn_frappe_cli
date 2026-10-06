@@ -140,7 +140,7 @@ export function RenameSiteDialog({ site, onClose }: { site: Site | null; onClose
       title="Rename site"
       description="Assistants set to use this site by name stop reaching it until you connect them again."
       label="New name"
-      hint="Letters, numbers, dots, dashes and underscores."
+      hint="Any name without spaces, for example acme-prod."
       initial={(s) => s.name}
       submitLabel="Rename"
       submit={async (s, name) => {

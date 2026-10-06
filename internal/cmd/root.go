@@ -38,6 +38,7 @@ Env vars:    FFC_SITE, FFC_CONFIG, FFC_TIMEOUT, FFC_OUTPUT, FFC_DEBUG (like --si
              --config, --timeout, --output, --debug; a flag wins over the variable),
              FFC_API_KEY + FFC_API_SECRET (override the site's credentials),
              FFC_URL (with the env key pair, or alone when there is no config file),
+             FFC_PASSWORD, FFC_OAUTH_CLIENT_SECRET (setup secrets for init / site add),
              FFC_NO_UPDATE_CHECK (disable the daily update check)
 
 Exit codes:  0 ok, 1 error, 2 usage, 3 auth, 4 not found, 5 permission,
