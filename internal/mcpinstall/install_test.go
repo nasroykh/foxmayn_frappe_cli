@@ -827,3 +827,72 @@ func TestClaudeCodeRemovedThenAddFails(t *testing.T) {
 		t.Errorf("calls %q", f.calls)
 	}
 }
+
+func TestClaudeDesktopPackagedPath(t *testing.T) {
+	setup := func(t *testing.T) (Env, string, string, string) {
+		env := testEnv(t, "windows")
+		local := filepath.Join(env.Home, "AppData", "Local")
+		env.Getenv = func(k string) string {
+			if k == "LOCALAPPDATA" {
+				return local
+			}
+			return ""
+		}
+		pkg := filepath.Join(local, "Packages", claudeDesktopPackage)
+		packaged := filepath.Join(pkg, "LocalCache", "Roaming", "Claude", "claude_desktop_config.json")
+		classic := filepath.Join(env.ConfigDir, "Claude", "claude_desktop_config.json")
+		return env, pkg, packaged, classic
+	}
+	path := func(t *testing.T, env Env) string {
+		t.Helper()
+		p, err := ConfigPath(ClaudeDesktop, env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	t.Run("no package", func(t *testing.T) {
+		env, _, _, classic := setup(t)
+		if got := path(t, env); got != classic {
+			t.Errorf("got %q, want %q", got, classic)
+		}
+	})
+	t.Run("package installed, no file yet", func(t *testing.T) {
+		env, pkg, packaged, _ := setup(t)
+		if err := os.MkdirAll(pkg, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if got := path(t, env); got != packaged {
+			t.Errorf("got %q, want %q", got, packaged)
+		}
+	})
+	t.Run("existing file in the real AppData is used in place", func(t *testing.T) {
+		env, pkg, _, classic := setup(t)
+		if err := os.MkdirAll(pkg, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, classic, "{}")
+		if got := path(t, env); got != classic {
+			t.Errorf("got %q, want %q", got, classic)
+		}
+	})
+	t.Run("package file wins", func(t *testing.T) {
+		env, _, packaged, classic := setup(t)
+		writeFile(t, classic, "{}")
+		writeFile(t, packaged, `{"mcpServers": {}}`)
+		if got := path(t, env); got != packaged {
+			t.Errorf("got %q, want %q", got, packaged)
+		}
+		if c := mustPlan(t, ClaudeDesktop, testSrv, env); c.Path != packaged {
+			t.Errorf("Plan path %q, want %q", c.Path, packaged)
+		}
+	})
+	t.Run("not on macOS", func(t *testing.T) {
+		env := testEnv(t, "darwin")
+		env.Getenv = func(k string) string { return filepath.Join(env.Home, "x") }
+		if got, want := path(t, env), filepath.Join(env.ConfigDir, "Claude", "claude_desktop_config.json"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}

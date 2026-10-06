@@ -31,6 +31,7 @@ func newInstallT(t *testing.T) *installT {
 	t.Setenv("HOME", it.home)
 	t.Setenv("USERPROFILE", it.home)
 	t.Setenv("APPDATA", filepath.Join(it.home, "AppData", "Roaming"))
+	t.Setenv("LOCALAPPDATA", filepath.Join(it.home, "AppData", "Local"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(it.home, ".config"))
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv("CLAUDE_CONFIG_DIR", "")

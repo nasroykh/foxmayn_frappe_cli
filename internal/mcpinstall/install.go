@@ -439,14 +439,15 @@ var hints = map[string]string{
 
 // ConfigPath is the user-level config file of a file-based client.
 //
-//   - claude-desktop: <ConfigDir>/Claude/claude_desktop_config.json
+//   - claude-desktop: <ConfigDir>/Claude/claude_desktop_config.json, or the
+//     Microsoft Store package's copy (claudeDesktopPath)
 //   - cursor: ~/.cursor/mcp.json
 //   - vscode: <ConfigDir>/Code/User/mcp.json (default profile)
 //   - codex: $CODEX_HOME/config.toml, else ~/.codex/config.toml
 func ConfigPath(client string, env Env) (string, error) {
 	switch client {
 	case ClaudeDesktop:
-		return filepath.Join(env.ConfigDir, "Claude", "claude_desktop_config.json"), nil
+		return claudeDesktopPath(env), nil
 	case Cursor:
 		return filepath.Join(env.Home, ".cursor", "mcp.json"), nil
 	case VSCode:
@@ -460,6 +461,40 @@ func ConfigPath(client string, env Env) (string, error) {
 		return claudeStatePath(env), nil
 	}
 	return "", invalidf("unknown client %q (want one of %s)", client, strings.Join(Clients, ", "))
+}
+
+// claudeDesktopPackage is the package family name of Claude Desktop's MSIX
+// package (Windows).
+const claudeDesktopPackage = "Claude_pzs8sxrjxfjjc"
+
+// claudeDesktopPath is Claude Desktop's config file. Windows gives a packaged
+// app a private copy of %AppData%: files it creates there land in
+// %LocalAppData%\Packages\<family>\LocalCache\Roaming, while files that
+// already existed in the real %AppData% are read and changed in place. So the
+// package's file wins when it exists, then the real one; with neither, the
+// package's location when the package is installed, else the real %AppData%.
+func claudeDesktopPath(env Env) string {
+	classic := filepath.Join(env.ConfigDir, "Claude", "claude_desktop_config.json")
+	local := env.getenv("LOCALAPPDATA")
+	if env.GOOS != "windows" || local == "" {
+		return classic
+	}
+	pkg := filepath.Join(local, "Packages", claudeDesktopPackage)
+	packaged := filepath.Join(pkg, "LocalCache", "Roaming", "Claude", "claude_desktop_config.json")
+	switch {
+	case exists(packaged):
+		return packaged
+	case exists(classic):
+		return classic
+	case exists(pkg):
+		return packaged
+	}
+	return classic
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // resolveLink follows a symlinked config file (dotfiles) so the atomic
