@@ -165,7 +165,7 @@ func unassignUsers(ctx context.Context, c *client.FrappeClient, doctype, name st
 			missing = append(missing, u)
 			continue
 		}
-		if err := c.Unassign(ctx, doctype, name, u); err != nil {
+		if err := c.Unassign(ctx, doctype, name, stored(before, []string{u})[0]); err != nil {
 			return nil, err
 		}
 		removed = append(removed, u)
