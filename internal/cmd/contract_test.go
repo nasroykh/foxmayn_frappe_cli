@@ -338,9 +338,17 @@ func contractGetValue(t *testing.T, c *client.FrappeClient) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// get_value sends a null field (custom_note) that GetDoc leaves out;
+	// fetchDocFields drops it.
 	want, _ := filterKeys(doc, fields)
-	if g, w := fmt.Sprintf("%#v", got), fmt.Sprintf("%#v", want); g != w {
-		t.Errorf("get_value differs from GetDoc:\n got %s\nwant %s", g, w)
+	for k, v := range got {
+		if _, ok := want[k]; !ok && v != nil {
+			t.Errorf("get_value has %s = %#v, GetDoc has no %s", k, v, k)
+		}
+	}
+	out, err := fetchDocFields(ctx, c, contractDT, name, fields)
+	if g, w := fmt.Sprintf("%#v", out), fmt.Sprintf("%#v", want); err != nil || g != w {
+		t.Errorf("fetchDocFields differs from GetDoc (%v):\n got %s\nwant %s", err, g, w)
 	}
 
 	if got, err = c.GetValue(ctx, contractDT, name+"-missing", []string{"title"}); err != nil || len(got) != 0 {
@@ -360,7 +368,7 @@ func contractGetValue(t *testing.T, c *client.FrappeClient) {
 			}
 		}
 	}
-	out, err := fetchDocFields(ctx, c, contractDT, name, []string{"title", "items"})
+	out, err = fetchDocFields(ctx, c, contractDT, name, []string{"title", "items"})
 	if rows, _ := out["items"].([]interface{}); err != nil || out["title"] != "get_value" || len(rows) != 1 {
 		t.Errorf("fetchDocFields with a Table field: %v, %v", out, err)
 	}
