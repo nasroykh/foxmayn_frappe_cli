@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
@@ -108,14 +109,28 @@ var hookedDoctypes = map[string]bool{
 // get_value answer that is an error, empty or missing a field (unknown or
 // child-table field, a Table field, a document the list query does not
 // show, a field above the user's permission level on v15), so errors and
-// exit codes stay those of GetDoc. CLI get-doc and MCP get_doc share it.
+// exit codes stay those of GetDoc. get_value always asks for name too, and
+// an answer for another name falls back as well: a virtual DocType's
+// controller may ignore the filters and return its first row (Frappe's RQ
+// Worker does). CLI get-doc and MCP get_doc share it.
 func fetchDocFields(ctx context.Context, c *client.FrappeClient, doctype, name string, fields []string) (map[string]interface{}, error) {
 	if valueFields(doctype, name, fields) {
-		doc, err := c.GetValue(ctx, doctype, name, fields)
+		ask := fields
+		if !slices.Contains(fields, "name") {
+			ask = append(slices.Clone(fields), "name")
+		}
+		doc, err := c.GetValue(ctx, doctype, name, ask)
 		var api *client.APIError
 		switch {
 		case err == nil:
-			if out, missing := filterKeys(doc, fields); len(missing) == 0 {
+			if out, missing := filterKeys(doc, fields); len(missing) == 0 && doc["name"] == name {
+				// GetDoc leaves out empty (null) fields; get_value sends
+				// them. Same output either way.
+				for k, v := range out {
+					if v == nil {
+						delete(out, k)
+					}
+				}
 				return out, nil
 			}
 		case !errors.As(err, &api):
@@ -136,7 +151,9 @@ func valueFields(doctype, name string, fields []string) bool {
 		return false
 	}
 	for _, f := range fields {
-		if !client.ValidIdentifier(f) {
+		// _seen, _liked_by, ...: optional columns a table may lack (a 500
+		// "Unknown column" and an Error Log entry before the fallback).
+		if !client.ValidIdentifier(f) || strings.HasPrefix(f, "_") {
 			return false
 		}
 	}

@@ -169,7 +169,7 @@ func TestCmdGetDocSingleDefaultsName(t *testing.T) {
 func TestCmdGetDocFieldsGetValue(t *testing.T) {
 	s := cmdTSite(t)
 	s.ChildTable("Item", "barcodes", "Item Barcode")
-	s.Add("Item", map[string]interface{}{"name": "IT-1", "item_name": "Bolt", "qty": json.Number("3"),
+	s.Add("Item", map[string]interface{}{"name": "IT-1", "item_name": "Bolt", "qty": json.Number("3"), "note": nil,
 		"barcodes": []interface{}{map[string]interface{}{"barcode": "123"}}})
 	const value, doc = "/api/method/frappe.client.get_value", "/api/resource/Item/IT-1"
 	// sent counts the get_value and GetDoc requests since its last call.
@@ -180,12 +180,13 @@ func TestCmdGetDocFieldsGetValue(t *testing.T) {
 		return
 	}
 
-	r := cmdTOK(t, cmdTRun(t, s, "--json", "get-doc", "-d", "Item", "-n", "IT-1", "--fields", "item_name,qty"))
+	// A null field is left out, as GetDoc's answer leaves it out.
+	r := cmdTOK(t, cmdTRun(t, s, "--json", "get-doc", "-d", "Item", "-n", "IT-1", "--fields", "item_name,qty,note"))
 	if out := cmdTObj(t, r); len(out) != 2 || out["item_name"] != "Bolt" || fmt.Sprint(out["qty"]) != "3" {
 		t.Fatalf("out %v", out)
 	}
 	req := s.RequestsTo("GET", value)
-	if len(req) != 1 || req[0].Query.Get("fieldname") != `["item_name","qty"]` || req[0].Query.Get("filters") != `{"name":"IT-1"}` {
+	if len(req) != 1 || req[0].Query.Get("fieldname") != `["item_name","qty","note","name"]` || req[0].Query.Get("filters") != `{"name":"IT-1"}` {
 		t.Fatalf("get_value requests %+v", req)
 	}
 	if v, d := sent(); v != 1 || d != 0 {
@@ -223,6 +224,15 @@ func TestCmdGetDocFieldsGetValue(t *testing.T) {
 	if out := cmdTObj(t, r); fmt.Sprint(out["qty"]) != "3" {
 		t.Fatalf("after a refused get_value: %v", out)
 	}
+	// A virtual DocType's controller may ignore the filters and answer its
+	// first row: an answer for another name is not used.
+	s.HandleMethod("frappe.client.get_value", func(*http.Request, map[string]interface{}) (interface{}, error) {
+		return map[string]interface{}{"name": "IT-OTHER", "qty": 99}, nil
+	})
+	r = cmdTOK(t, cmdTRun(t, s, "--json", "get-doc", "-d", "Item", "-n", "IT-1", "--fields", "qty"))
+	if out := cmdTObj(t, r); fmt.Sprint(out["qty"]) != "3" || len(out) != 1 {
+		t.Fatalf("answer for another name: %v", out)
+	}
 	s.HandleMethod("frappe.client.get_value", nil)
 	sent()
 
@@ -232,6 +242,7 @@ func TestCmdGetDocFieldsGetValue(t *testing.T) {
 		{"-d", "ToDo", "-n", "TD-1", "--fields", "status"},
 		{"-d", "System Settings", "--fields", "language"},
 		{"-d", "Item", "-n", "IT-1", "--fields", "item_name,barcodes.barcode"},
+		{"-d", "Item", "-n", "IT-1", "--fields", "item_name,_seen"},
 		{"-d", "Item", "-n", "IT-1", "--fields", "item_name", "--keys", "qty"},
 		{"-d", "Item", "-n", "IT-1"},
 	} {
