@@ -17,7 +17,7 @@
 | `get_schema` | read | `doctype*`, `full`, `keys` | `ffc get-schema` (always live, never cached) |
 | `list_doctypes` | read | `module`, `limit` (default 50) | `ffc list-doctypes` |
 | `list_reports` | read | `module`, `limit` (default 50) | `ffc list-reports` |
-| `run_report` | read | `report_name*`, `filters`, `limit` (default 500), `response_format` | `ffc run-report` |
+| `run_report` | read | `report_name*`, `filters`, `limit` (default 500), `response_format`, `prepared`, `fresh`, `prepared_report` | `ffc run-report` |
 | `search` | read | `text*`, `doctype`, `limit` (default 20, max 100) | `ffc search` |
 | `get_doc_context` | read | `doctype*`, `name`, `links` (default true), `timeline` (default false) | `ffc doc-info --links` (no `--onload`) |
 | `create_doc` | write | `doctype*`, `data*` | `ffc create-doc` |
@@ -62,6 +62,7 @@
 - `jq` is accepted by the large read tools only: `list_docs`, `get_doc`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `aggregate`, `get_doc_context`, `list_attachments`, `get_print_html`. Not by `call_method` or any write. One output as is, several as an array; the filter is stopped after 5 s or 256 MiB.
 - `list_docs` too large: `{data, truncated: true, next_start, hint}`; otherwise a plain array. `response_format: detailed` without `fields` returns every field.
 - `run_report` returns `columns`, `result`, `report_summary` (if any), plus `total_rows`, `truncated`, `hint` when cut. `detailed` returns the raw result.
+- `run_report` `prepared: true` runs a heavy report as a Frappe prepared report (site's `long` queue worker): your finished result for the same filters (`prepared_report: {name, finished}`), else your queued job or a new one, waited for at most a minute with progress notifications. Still running: `{status: "queued", prepared_report: {name}, hint}`; call again with `prepared_report: NAME` and the same filters. `fresh` starts a new one. Read-only servers only reuse a finished or queued one, never start one, refuse `fresh`.
 - `search` without `doctype` answers `{results, hidden_by_policy}`; with `doctype` a plain list.
 - `aggregate` answers `{doctype, rows, truncated}` (and `warning` when the site ignored the order).
 - `get_doc_context` caps comments, emails and workflow log at 50, attachments, assignments, shares and tags at 100, 50 changes per version, 100 timeline entries (`omitted` counts the rest); parts from DocTypes the policy forbids are left out and counted in `hidden_by_policy`.

@@ -3,8 +3,10 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -12,8 +14,9 @@ import (
 )
 
 // compactReportResult strips execution noise from a RunReport response,
-// keeping only columns, result, report_summary (if non-nil) and the
-// truncation markers added by limitReportRows.
+// keeping only columns, result, report_summary (if non-nil), the truncation
+// markers added by limitReportRows and, for a prepared report's result, the
+// Prepared Report it came from.
 func compactReportResult(r map[string]interface{}) map[string]interface{} {
 	out := map[string]interface{}{
 		"columns": r["columns"],
@@ -24,7 +27,52 @@ func compactReportResult(r map[string]interface{}) map[string]interface{} {
 			out[k] = v
 		}
 	}
+	if doc, ok := r["doc"].(map[string]interface{}); ok {
+		out["prepared_report"] = map[string]interface{}{"name": doc["name"], "finished": doc["report_end_time"]}
+	}
 	return out
+}
+
+// mcpPreparedWait bounds how long run_report waits for a prepared report's
+// job; a longer one is answered as queued, and the model calls again. Tests
+// lower it.
+var mcpPreparedWait = time.Minute
+
+// runPreparedMCP is run_report with prepared. A read-only server only
+// reuses: a finished result for these filters, or a job already queued for
+// them (make_prepared_report inserts a document and starts a job). Progress
+// notifications go out while it waits; a job still running when the wait
+// ends is the answer {status: "queued", prepared_report: {name}, hint}, not
+// an error (queued true).
+func runPreparedMCP(ctx context.Context, c *client.FrappeClient, report string, filters map[string]interface{}, name string, fresh bool) (result map[string]interface{}, queued bool, err error) {
+	policy, ok := policyFrom(ctx)
+	if !ok {
+		return nil, false, fmt.Errorf("policy: no policy to decide whether a prepared report may be started")
+	}
+	reuse := policy.readOnly()
+	if reuse && fresh {
+		return nil, false, fmt.Errorf("policy: fresh starts a new prepared report, and MCP is read-only for this site, so it only reuses one")
+	}
+	start, polls := time.Now(), 0
+	opt := client.PreparedOptions{Fresh: fresh, Name: name, ReuseOnly: reuse, Wait: mcpPreparedWait,
+		OnWait: func(n string) {
+			polls++
+			sendProgress(ctx, polls, 0, fmt.Sprintf("prepared report %s is queued or running (%s)", n, time.Since(start).Round(time.Second)))
+		}}
+	res, err := c.RunPreparedReport(ctx, report, filters, opt)
+	var pe *client.PreparedReportError
+	switch {
+	case errors.As(err, &pe) && pe.Pending:
+		return map[string]interface{}{
+			"status":          "queued",
+			"prepared_report": map[string]interface{}{"name": pe.Name},
+			"hint": fmt.Sprintf("The site's background job is still running after %s. Call run_report again with prepared_report %q and the same filters to get the result. A job that never finishes usually means the site has no worker on its \"long\" queue.",
+				pe.Waited, pe.Name),
+		}, true, nil
+	case errors.Is(err, client.ErrNoPreparedReport):
+		return nil, false, fmt.Errorf("%w; MCP is read-only for this site, so it does not start one (ffc run-report -n %s --prepared does)", err, shellQuote(report))
+	}
+	return res, false, err
 }
 
 // registerTools adds the Frappe API tools the policy allows to the MCP
@@ -372,11 +420,31 @@ func registerRunReport(s *server.MCPServer, env *mcpEnv) {
 			mcp.Description("Maximum number of result rows to return. Default: 500. Use 0 for all rows. Rows that do not fit in 512 KiB are dropped from the end (truncated, total_rows and a hint say so): narrow the filters instead."),
 		),
 		responseFormatOption("concise drops execution metadata (timing, chart, message noise); detailed returns the report as Frappe answered it, rows still limited."),
+		mcp.WithBoolean("prepared",
+			mcp.Description(fmt.Sprintf("Use Frappe's prepared reports for a heavy report that outlasts a request: a background job on the site's \"long\" queue runs it. Returns your finished result for the same filters (prepared_report names it and when it finished; it may be old), else waits for your queued job or starts one, for at most %s. A job still running then is answered {status: \"queued\", prepared_report: {name}, hint}: call again with prepared_report. A read-only server never starts a job, it only reuses one. A report not marked prepared runs normally.", mcpPreparedWait)),
+		),
+		mcp.WithBoolean("fresh",
+			mcp.Description("With prepared: ignore a finished result and start a new job (not on a read-only server)."),
+		),
+		mcp.WithString("prepared_report",
+			mcp.Description("Wait for this Prepared Report (from an earlier queued answer, same filters) and return its result. Implies prepared."),
+		),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		reportName, err := req.RequireString("report_name")
 		if err != nil {
 			return nil, err
+		}
+		preparedName, err := stringArg(req, "prepared_report")
+		if err != nil {
+			return nil, err
+		}
+		prepared, fresh := req.GetBool("prepared", false) || preparedName != "", req.GetBool("fresh", false)
+		switch {
+		case fresh && preparedName != "":
+			return nil, fmt.Errorf("fresh and prepared_report cannot be combined")
+		case fresh && !prepared:
+			return nil, fmt.Errorf("fresh needs prepared")
 		}
 		filters, err := objectArg(req, "filters", false)
 		if err != nil {
@@ -391,7 +459,16 @@ func registerRunReport(s *server.MCPServer, env *mcpEnv) {
 			return nil, err
 		}
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
-			result, err := c.RunReport(ctx, reportName, filters)
+			var result map[string]interface{}
+			if prepared {
+				var queued bool
+				result, queued, err = runPreparedMCP(ctx, c, reportName, filters, preparedName, fresh)
+				if queued {
+					return result, nil
+				}
+			} else {
+				result, err = c.RunReport(ctx, reportName, filters)
+			}
 			if err != nil {
 				return nil, err
 			}

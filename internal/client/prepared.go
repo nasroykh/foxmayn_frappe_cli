@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -33,6 +34,10 @@ type PreparedOptions struct {
 	// Name resumes waiting for this Prepared Report (made with the same
 	// filters) instead of looking for one.
 	Name string
+	// ReuseOnly never starts a job: without a completed result or a queued
+	// job for these filters, RunPreparedReport returns ErrNoPreparedReport.
+	// Fresh is ignored with it.
+	ReuseOnly bool
 	// Wait bounds the time spent waiting for the background job.
 	Wait time.Duration
 	// OnWait, when set, is called with the Prepared Report's name before
@@ -66,6 +71,10 @@ func (e *PreparedReportError) Error() string {
 	return msg
 }
 
+// ErrNoPreparedReport is RunPreparedReport's answer under ReuseOnly when
+// there is nothing to reuse.
+var ErrNoPreparedReport = errors.New("no finished or queued prepared report for these filters")
+
 // PreparedPollStart is the first pause between two checks of a queued job;
 // it doubles up to preparedPollMax. Tests lower it.
 var PreparedPollStart = time.Second
@@ -94,7 +103,7 @@ func (c *FrappeClient) RunPreparedReport(ctx context.Context, reportName string,
 		if err != nil {
 			return nil, err
 		}
-		if res["prepared_report"] != true || (!opt.Fresh && res["doc"] != nil) {
+		if res["prepared_report"] != true || ((!opt.Fresh || opt.ReuseOnly) && res["doc"] != nil) {
 			return res, nil
 		}
 		queued, err := c.queuedPrepared(ctx, reportName, filtersJSON)
@@ -103,6 +112,8 @@ func (c *FrappeClient) RunPreparedReport(ctx context.Context, reportName string,
 		}
 		if len(queued) > 0 {
 			name = queued[0]
+		} else if opt.ReuseOnly {
+			return nil, ErrNoPreparedReport
 		} else if name, err = c.makePrepared(ctx, reportName, filtersJSON); err != nil {
 			return nil, err
 		}
@@ -115,15 +126,21 @@ func (c *FrappeClient) RunPreparedReport(ctx context.Context, reportName string,
 		withName[k] = v
 	}
 	withName["prepared_report_name"] = name
-	filtersJSON, err = reportFilters(withName)
+	namedJSON, err := reportFilters(withName)
 	if err != nil {
 		return nil, err
 	}
-	res, err := c.runReport(ctx, reportName, filtersJSON, false)
+	res, err := c.runReport(ctx, reportName, namedJSON, false)
 	if err != nil {
 		return nil, err
 	}
-	if res["doc"] == nil {
+	if doc, ok := res["doc"].(map[string]interface{}); ok {
+		// The answer carries the Prepared Report, so this check needs no
+		// right to read it (checkPrepared's may have been skipped).
+		if err := matchPrepared(doc, reportName, filtersJSON, name); err != nil {
+			return nil, err
+		}
+	} else {
 		// Failed (no attachment: Frappe logs it and answers without a doc).
 		e := &PreparedReportError{Report: reportName, Name: name}
 		var pr dataEnvelope
@@ -204,21 +221,32 @@ func (c *FrappeClient) makePrepared(ctx context.Context, reportName, filtersJSON
 	return result.Message.Name, nil
 }
 
-// checkPrepared refuses a Prepared Report made for another report or other
-// filters: run would return its result anyway (it only checks the owner),
-// and the wait, which looks for the job among those for our filters, would
-// not see it. When the user may not read Prepared Report documents the
-// check is skipped.
+// checkPrepared refuses, before the wait, a Prepared Report made for
+// another report or other filters: the wait looks for the job among those
+// for our filters and would not see it, and run checks only the owner (v16
+// also the report). When the user may not read Prepared Report documents
+// (403) it is left to the check of the final answer in RunPreparedReport.
 func (c *FrappeClient) checkPrepared(ctx context.Context, reportName, filtersJSON, name string) error {
 	var pr dataEnvelope
-	if c.do(ctx, http.MethodGet, resourcePath("Prepared Report", name), nil, nil, nil, &pr) != nil {
+	err := c.do(ctx, http.MethodGet, resourcePath("Prepared Report", name), nil, nil, nil, &pr)
+	var api *APIError
+	if errors.As(err, &api) && api.Status == http.StatusForbidden {
 		return nil
 	}
-	if r, _ := pr.Data["report_name"].(string); r != reportName {
+	if err != nil {
+		return err
+	}
+	return matchPrepared(pr.Data, reportName, filtersJSON, name)
+}
+
+// matchPrepared refuses a Prepared Report document whose report or filters
+// differ from ours.
+func matchPrepared(doc map[string]interface{}, reportName, filtersJSON, name string) error {
+	if r, _ := doc["report_name"].(string); r != reportName {
 		return &StateError{Message: fmt.Sprintf("prepared report %s is for report %q, not %q", name, r, reportName)}
 	}
 	var got, want interface{}
-	stored, _ := pr.Data["filters"].(string)
+	stored, _ := doc["filters"].(string)
 	if json.Unmarshal([]byte(stored), &got) != nil || json.Unmarshal([]byte(filtersJSON), &want) != nil || !reflect.DeepEqual(got, want) {
 		return &StateError{Message: fmt.Sprintf("prepared report %s was made with the filters %s; pass the same --filters", name, stored)}
 	}
