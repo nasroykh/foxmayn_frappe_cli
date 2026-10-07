@@ -785,6 +785,31 @@ func (c *FrappeClient) GetCount(ctx context.Context, doctype, filters string) (i
 	return result.Message, nil
 }
 
+// CountAtLeast counts the documents matching filters, but stops at n:
+// frappe.desk.reportview.get_count with a limit counts a LIMIT n subquery,
+// so it answers min(total, n) without reading every row (v15 and v16). On
+// MariaDB, v16 also caps that query at 1 second and answers null when it
+// runs out; ok is then false. A virtual DocType's controller may ignore the
+// limit, so the answer is cut to n here.
+func (c *FrappeClient) CountAtLeast(ctx context.Context, doctype, filters string, n int) (count int, ok bool, err error) {
+	query := map[string]string{"doctype": doctype, "limit": strconv.Itoa(n)}
+	if filters != "" {
+		query["filters"] = filters
+	}
+	hints := readHints(doctype)
+	delete(hints, http.StatusNotFound)
+	var result struct {
+		Message *int `json:"message"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/method/frappe.desk.reportview.get_count", nil, query, hints, &result); err != nil {
+		return 0, false, err
+	}
+	if result.Message == nil {
+		return 0, false, nil
+	}
+	return min(*result.Message, n), true, nil
+}
+
 // Ping checks server connectivity by calling GET /api/method/frappe.ping.
 func (c *FrappeClient) Ping(ctx context.Context) (string, error) {
 	var result struct {

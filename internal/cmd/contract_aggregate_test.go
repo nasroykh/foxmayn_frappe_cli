@@ -119,6 +119,19 @@ func contractAggregate(t *testing.T, c *client.FrappeClient, sc *config.SiteConf
 		t.Errorf("count-docs --group-by no_such_field: exit %d (%v)", r.Code, r.Err)
 	}
 
+	// reportview.get_count with a limit counts a LIMIT subquery on v15 and
+	// v16: min(total, limit), never more. Three documents match.
+	for n, want := range map[int]int{2: 2, 3: 3, 5: 3} {
+		got, ok, err := c.CountAtLeast(ctx, contractDT, filters, n)
+		if err != nil || !ok || got != want {
+			t.Errorf("CountAtLeast %d = %d, %v, %v; want %d", n, got, ok, err, want)
+		}
+	}
+	r = runFFC(t, cfg, "", "count-docs", "-d", contractDT, "--filters", filters, "--at-least", "4")
+	if r.Err != nil || strings.TrimSpace(r.Stdout) != "false" {
+		t.Errorf("count-docs --at-least 4: %v %q %s", r.Err, r.Stdout, r.Stderr)
+	}
+
 	t.Run("permission level", func(t *testing.T) { contractAggregatePermlevel(t, c, sc) })
 }
 

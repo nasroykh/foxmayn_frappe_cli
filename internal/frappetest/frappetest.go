@@ -2,8 +2,9 @@
 //
 // It serves /api/resource (list, get, create, update, delete), the
 // /api/method endpoints ffc uses (login, logout, get_logged_user, ping,
-// get_count, query_report.run, search_link, global search, the OAuth token
-// endpoint's refresh grant) and any method registered with HandleMethod.
+// get_count (frappe.client and reportview), query_report.run, search_link,
+// global search, the OAuth token endpoint's refresh grant) and any method
+// registered with HandleMethod.
 // OAuth access tokens can be made to expire (ExpireToken, ExpireTokenAfter).
 // Files (files.go): upload_file (multipart), attach_file, /files and
 // /private/files, get_max_file_size, download_pdf and get_html_and_style.
@@ -468,6 +469,8 @@ func (s *Site) method(w http.ResponseWriter, r *http.Request, name string, body 
 		result = s.loggedUser(user)
 	case name == "frappe.client.get_count":
 		result, err = s.getCount(args)
+	case name == "frappe.desk.reportview.get_count":
+		result, err = s.getCountLimit(args)
 	case name == "frappe.desk.query_report.run":
 		result, err = s.runReport(args)
 	default:
@@ -495,6 +498,20 @@ func (s *Site) getCount(args map[string]interface{}) (interface{}, error) {
 		return nil, err
 	}
 	return len(rows), nil
+}
+
+// getCountLimit is reportview.get_count: with a limit it counts a LIMIT
+// subquery, so it answers min(total, limit) (v15 and v16).
+func (s *Site) getCountLimit(args map[string]interface{}) (interface{}, error) {
+	n, err := s.getCount(args)
+	if err != nil {
+		return nil, err
+	}
+	limit, _ := strconv.Atoi(fmt.Sprint(args["limit"]))
+	if limit > 0 {
+		return min(n.(int), limit), nil
+	}
+	return n, nil
 }
 
 func (s *Site) runReport(args map[string]interface{}) (interface{}, error) {

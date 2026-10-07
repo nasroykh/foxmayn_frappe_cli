@@ -88,6 +88,7 @@ No tool returns file contents or PDFs.
 - Tools whose results can be large tell the client the cap, so Claude Code does not cut the JSON.
 - `get_doc_context` returns at most 50 comments, emails and workflow log entries, 100 attachments, assignments, shares and tags, 50 changes per version and 100 timeline entries; the rest is counted in `omitted`.
 - `count_docs`, `whoami` and `list_sites` also return structured content with an output schema.
+- `count_docs` with `at_least: N` only answers whether N or more documents match: the site stops counting at N. It returns `result` (true/false) and `count` (exact below N, N otherwise); both are `null`, with a `warning`, when Frappe v16 on MariaDB gave up counting after 1 second.
 - `bulk_create`, `bulk_update` and `bulk_delete` send progress notifications when the call carries a progress token; cancelling the call stops new items.
 
 ## `jq` on read tools

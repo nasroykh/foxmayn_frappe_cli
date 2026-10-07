@@ -12,7 +12,7 @@
 | `check_permission` | read | `doctype*`, `name`, `perm_type`, `all` | `ffc can` (denied = `allowed: false`, not an error) |
 | `get_doc` | read | `doctype*`, `name` (Single DocTypes may omit), `fields` | `ffc get-doc` |
 | `list_docs` | read | `doctype*`, `fields`, `filters`, `limit` (default 20, 0 = all), `start`, `order_by`, `response_format` | `ffc list-docs` |
-| `count_docs` | read | `doctype*`, `filters` | `ffc count-docs` |
+| `count_docs` | read | `doctype*`, `filters`, `at_least` (stops counting there: `result`, `count`, null with `warning` on a timeout) | `ffc count-docs` |
 | `aggregate` | read | `doctype*`, `group_by`, `count`, `sum`, `avg`, `min`, `max`, `filters`, `order_by`, `limit` (1-1000, default 100) | `ffc aggregate` |
 | `get_schema` | read | `doctype*`, `full`, `keys` | `ffc get-schema` (always live, never cached) |
 | `list_doctypes` | read | `module`, `limit` (default 50) | `ffc list-doctypes` |
