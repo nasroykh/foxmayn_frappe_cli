@@ -1,0 +1,74 @@
+name: Desktop install scripts
+
+# Runs install-desktop.sh and install-desktop.ps1 against the newest published
+# desktop release on real macOS and Windows runners, the way a user would.
+on:
+  push:
+    branches: [main]
+    paths:
+      - install-desktop.sh
+      - install-desktop.ps1
+      - .github/workflows/install-scripts.yml
+  pull_request:
+    paths:
+      - install-desktop.sh
+      - install-desktop.ps1
+      - .github/workflows/install-scripts.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    env:
+      FFD_NO_OPEN: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install (piped into sh, as users run it)
+        run: sh < install-desktop.sh
+
+      - name: Installed, signature intact, not quarantined
+        run: |
+          app="/Applications/Foxmayn Frappe Desktop.app"
+          test -d "$app"
+          codesign --verify --deep --strict "$app"
+          if xattr -p com.apple.quarantine "$app" 2>/dev/null; then
+            echo "the app is quarantined" >&2
+            exit 1
+          fi
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app/Contents/Info.plist"
+
+      - name: Install again over it (the update path)
+        run: sh < install-desktop.sh
+
+  windows:
+    runs-on: windows-latest
+    env:
+      FFD_NO_OPEN: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Windows PowerShell 5.1, piped into iex, as users run it.
+      - name: Install
+        shell: powershell
+        run: Get-Content -Raw .\install-desktop.ps1 | Invoke-Expression
+
+      - name: Installed and not marked as downloaded
+        shell: powershell
+        run: |
+          $exe = Join-Path $env:LOCALAPPDATA "Programs\Foxmayn Frappe Desktop\foxmayn-frappe-desktop.exe"
+          if (-not (Test-Path $exe)) { throw "$exe missing" }
+          if (Get-Item $exe -Stream Zone.Identifier -ErrorAction SilentlyContinue) { throw "the exe carries a mark of the web" }
+
+      - name: Install again while it runs (the update path)
+        shell: powershell
+        run: |
+          $exe = Join-Path $env:LOCALAPPDATA "Programs\Foxmayn Frappe Desktop\foxmayn-frappe-desktop.exe"
+          Start-Process $exe
+          Start-Sleep -Seconds 5
+          Get-Content -Raw .\install-desktop.ps1 | Invoke-Expression

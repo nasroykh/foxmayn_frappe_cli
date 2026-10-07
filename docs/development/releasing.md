@@ -29,11 +29,11 @@ The changelog leaves out `docs:`, `test:` and `chore:` commits and merge commits
 
 ### Signing keys
 
-`internal/relsig/keys.go` lists the trusted public keys, and `install.sh` repeats them (a test keeps them in sync). There are two: the CI key, and an offline backup key whose private half is not in CI.
+`internal/relsig/keys.go` lists the trusted public keys, and `install.sh` and `install-desktop.sh` repeat them (a test keeps them in sync). There are two: the CI key, and an offline backup key whose private half is not in CI.
 
 - `relsign` refuses a signing secret that does not match a trusted key, so a release cannot publish an unverifiable signature.
-- **Rotate:** generate a key with `go run ./tools/relsign keygen <file>`, add its public key to `ReleaseKeys` and `install.sh` next to the old one, ship a release signed with the old key, then switch the secret.
-- **Compromised CI key:** switch the secret to the backup key (binaries since v1.6.3 trust it), remove the compromised key from `ReleaseKeys` and `install.sh` in that release, and create a new offline backup.
+- **Rotate:** generate a key with `go run ./tools/relsign keygen <file>`, add its public key to `ReleaseKeys`, `install.sh` and `install-desktop.sh` next to the old one, ship a release signed with the old key, then switch the secret.
+- **Compromised CI key:** switch the secret to the backup key (binaries since v1.6.3 trust it), remove the compromised key from `ReleaseKeys`, `install.sh` and `install-desktop.sh` in that release, and create a new offline backup.
 - Never commit a private key.
 
 ### Which release users get
@@ -53,6 +53,8 @@ The changelog leaves out `docs:`, `test:` and `chore:` commits and merge commits
 `desktop-release.yml` then builds a per-user NSIS installer on Windows (`wails3 package INSTALL_SCOPE=user`) and a universal (arm64 + amd64) `.dmg` on macOS, with the version from the tag stamped into the app. It writes `checksums.txt` for both, signs it with `relsign`, attests provenance, and creates the release with `--latest=false`, plus `--prerelease` for 0.x versions or a version with a `-` suffix.
 
 Assets: `foxmayn-frappe-desktop-<version>-windows-amd64-setup.exe`, `foxmayn-frappe-desktop-<version>-macos-universal.dmg`, `checksums.txt`, `checksums.txt.sig`.
+
+`install-desktop.sh` and `install-desktop.ps1` (repository root) install the newest `desktop-v<X.Y.Z>` release (no `-` suffix) by these asset names, so renaming an asset breaks them. The app's update notice runs them from the new release's tag (`desktopInstallCommand`), so tag a commit that has them. Put the two one-liners in the release notes (the default notes have them).
 
 A pull request that touches the workflow or `desktop/build/`, and a manual run, build and package the same way as a dry run: workflow artifacts only, version `0.0.0-dev`, never a release.
 

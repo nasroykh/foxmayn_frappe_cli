@@ -249,7 +249,8 @@ function FFCTab() {
 }
 
 function UpdateResult({ result }: { result: UpdateOutcome }) {
-  const { downloadUpdate } = useApp()
+  const { downloadUpdate, env } = useApp()
+  const terminal = env.data?.os === "darwin" ? "Terminal" : "PowerShell"
   if (result.kind === "error") {
     return (
       <Alert variant="destructive">
@@ -264,13 +265,32 @@ function UpdateResult({ result }: { result: UpdateOutcome }) {
       <Alert>
         <IconArrowUpCircle />
         <AlertTitle>Version {result.info.latest} is available</AlertTitle>
-        <AlertDescription>
-          You have {result.info.current}.
-          {result.info.publishedAt ? ` Released ${formatDate(result.info.publishedAt)}.` : ""} Download it from
-          GitHub and install it over this one.
+        <AlertDescription className="flex flex-col gap-2">
+          {result.info.installCommand ? (
+            <>
+              <span>
+                You have {result.info.current}.
+                {result.info.publishedAt ? ` Released ${formatDate(result.info.publishedAt)}.` : ""} The easiest way
+                to install it: run this in {terminal}. It checks the download, closes this app, installs the new
+                version over it and opens it again, with no security warning to click through.
+              </span>
+              <CopyField value={result.info.installCommand} label="Install command" copiedTitle="Command copied" />
+              <span>Or download it from GitHub and install it over this one.</span>
+            </>
+          ) : (
+            <span>
+              You have {result.info.current}.
+              {result.info.publishedAt ? ` Released ${formatDate(result.info.publishedAt)}.` : ""} Download it from
+              GitHub and install it over this one.
+            </span>
+          )}
         </AlertDescription>
         <AlertAction>
-          <Button size="sm" onClick={() => void downloadUpdate(result.info)}>
+          <Button
+            size="sm"
+            variant={result.info.installCommand ? "outline" : "default"}
+            onClick={() => void downloadUpdate(result.info)}
+          >
             <IconDownload data-icon="inline-start" />
             Download
           </Button>

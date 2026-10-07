@@ -34,6 +34,9 @@ type UpdateInfo struct {
 	URL string `json:"url"`
 	// PublishedAt is the release's publish time (RFC 3339), or "".
 	PublishedAt string `json:"publishedAt"`
+	// InstallCommand installs Latest from a terminal (desktopInstallCommand),
+	// set when an update is available and Latest has no prerelease suffix.
+	InstallCommand string `json:"installCommand"`
 	// FFC compares the installed ffc with the newest ffc release.
 	FFC FFCUpdate `json:"ffc"`
 }
@@ -115,7 +118,24 @@ func (s *AppService) CheckForUpdate(ctx context.Context) (UpdateInfo, error) {
 		info.PublishedAt = t.UTC().Format(time.RFC3339)
 	}
 	info.Available = bestVer.compare(cur) > 0
+	if info.Available && bestVer.pre == "" {
+		info.InstallCommand = desktopInstallCommand(s.goos, info.Latest)
+	}
 	return info, nil
+}
+
+// desktopInstallCommand runs install-desktop.sh (macOS) or install-desktop.ps1
+// (Windows) from the release's own tag, never from main. The scripts install
+// the newest desktop-v<X.Y.Z>, which is version or a later one. A download
+// by curl or PowerShell is not quarantined or marked as from the internet,
+// so the unsigned app opens without the Gatekeeper or SmartScreen screens a
+// browser download meets.
+func desktopInstallCommand(goos, version string) string {
+	base := "https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/" + desktopTagStart + version
+	if goos == "windows" {
+		return `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm ` + base + `/install-desktop.ps1 | iex"`
+	}
+	return "curl -fsSL " + base + "/install-desktop.sh | sh"
 }
 
 // newestFFC compares the installed ffc (cur, shown as current) with the ffc

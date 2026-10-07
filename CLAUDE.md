@@ -70,6 +70,7 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 - `.github/workflows/desktop-release.yml` — `desktop-v*` tags publish; a PR touching the file or desktop/build/**, and a manual run, are dry runs (artifacts only). Windows per-user NSIS installer and universal macOS dmg (version stamped through `wails3 update build-assets` plus the `APP_VERSION` ldflags in the windows/darwin Taskfiles), then checksums.txt signed with relsign, provenance attestation and a prerelease with `--latest=false`
 - `install.sh` — Linux/macOS: detects OS/arch, downloads tarball, verifies SHA256, installs to `/usr/local/bin` or `~/.local/bin`
 - `install.ps1` — Windows: detects arch, downloads zip, verifies SHA256, installs to `%LOCALAPPDATA%\Programs\ffc`, adds to user PATH
+- `install-desktop.sh` / `install-desktop.ps1` — the desktop app: newest `desktop-v<X.Y.Z>` from the releases API (`FFD_VERSION` overrides), SHA-256 (+ signature with OpenSSL 3 on macOS, keys kept in sync by `TestInstallScriptInSync`), then the app to `/Applications` (or `~/Applications`) via hdiutil + ditto + `codesign --verify`, or the NSIS setup run with `/S` (per user). Closes only the installed copy. A curl/PowerShell download carries no quarantine/mark of the web, so the unsigned app skips Gatekeeper and SmartScreen; that is their purpose until the app is signed. The update notice runs them from the release tag (`desktopInstallCommand`)
 
 ## Architecture
 

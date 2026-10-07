@@ -28,7 +28,19 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 
 Both scripts download the latest release for your platform and check its SHA-256 checksum. Manual downloads, building from source, signature checks, updating (`ffc update`) and uninstalling: [Installation](docs/getting-started/installation.md).
 
-**Desktop app:** download the `desktop-v…` release from the [Releases page](https://github.com/nasroykh/foxmayn_frappe_cli/releases). Beta builds are unsigned; see [Install the desktop app](docs/desktop/install.md) for the first-launch steps.
+**Desktop app:** beta builds are not signed yet, so install them from a terminal to skip the macOS and Windows warnings (the scripts check the download):
+
+```bash
+# macOS
+curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install-desktop.sh | sh
+```
+
+```powershell
+# Windows (PowerShell or cmd.exe)
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install-desktop.ps1 | iex"
+```
+
+Or download the `desktop-v…` release from the [Releases page](https://github.com/nasroykh/foxmayn_frappe_cli/releases); see [Install the desktop app](docs/desktop/install.md) for the first-launch steps.
 
 ## Quickstart
 
