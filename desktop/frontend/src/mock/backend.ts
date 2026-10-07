@@ -105,10 +105,10 @@ let sites: StoredSite[] = configExists
 
 let ffc: FFCInfo =
   params.get("ffc") === "missing"
-    ? { found: false, path: "", version: "" }
+    ? { found: false, path: "", version: "", updatable: false }
     : params.get("ffc") === "broken"
-      ? { found: true, path: ffcPath, version: "", error: "exit status 1" }
-      : { found: true, path: ffcPath, version: "1.10.0" }
+      ? { found: true, path: ffcPath, version: "", error: "exit status 1", updatable: false }
+      : { found: true, path: ffcPath, version: "1.10.0", updatable: true }
 
 function changed() {
   configExists = true
@@ -286,7 +286,12 @@ export const backend: Backend = {
         }
         for (const cb of installListeners) cb(line)
       }
-      ffc = { found: true, path: ffcPath, version: params.get("ffc-update") === "available" ? "1.12.0" : "1.10.0" }
+      ffc = {
+        found: true,
+        path: ffcPath,
+        version: params.get("ffc-update") === "available" ? "1.12.0" : "1.10.0",
+        updatable: true,
+      }
       return ffc
     })
   },

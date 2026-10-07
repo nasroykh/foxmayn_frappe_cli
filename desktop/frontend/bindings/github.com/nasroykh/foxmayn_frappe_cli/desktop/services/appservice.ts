@@ -19,11 +19,14 @@ import * as $models from "./models.js";
  * CheckForUpdate asks GitHub for the newest desktop release (tag
  * desktop-v<semver>, not a draft) and compares it with this app's version.
  * A prerelease counts only while the running version is 0.x or itself a
- * prerelease. A version that does not parse (a development build) is never
- * offered an update. From the same list it compares the installed ffc with
- * the newest ffc release (the rule of `ffc update`: not a draft, not a
- * prerelease, a v<digit> tag). It sends no credentials; cancelling ctx stops
- * it.
+ * prerelease. An app version that does not parse (a development build) is
+ * never offered an app update. From the same list it compares the installed
+ * ffc, when FFCInfo.Updatable (InstallFFC replaces it in place; anything else
+ * is left to its own `ffc update` notice), with the ffc release InstallFFC
+ * would install (newestFFC); a development build of the app still checks
+ * ffc. Nothing is fetched when
+ * neither version is a release. It sends no credentials; cancelling ctx
+ * stops it.
  */
 export function CheckForUpdate(): $CancellablePromise<$models.UpdateInfo> {
     return $Call.ByID(1350308504);

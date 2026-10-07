@@ -118,24 +118,11 @@ func (s *AppService) RefreshFFC() FFCInfo {
 }
 
 // updateTarget is the ffc binary InstallFFC replaces in place: the one the
-// app found, when it is a release build, so an update never leaves the old
-// binary first on PATH. "" (no ffc, or a development build the user made)
-// installs into the installer's own folder. On macOS a symlink is followed
-// so the file it points to is replaced, not the link.
+// app found, when FFCInfo.Updatable, so an update never leaves the old binary
+// first on PATH. "" (no ffc, a development build, anything the app must not
+// overwrite) installs into the installer's own folder.
 func (s *AppService) updateTarget() string {
-	info := s.ffc.Info()
-	if !info.Found {
-		return ""
-	}
-	if _, ok := releaseVersion(info.Version); !ok {
-		return ""
-	}
-	if s.goos != "windows" {
-		if p, err := filepath.EvalSymlinks(info.Path); err == nil {
-			return p
-		}
-	}
-	return info.Path
+	return s.ffc.Info().target
 }
 
 // InstallFFC downloads the latest ffc release from GitHub, verifies its

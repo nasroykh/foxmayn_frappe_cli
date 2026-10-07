@@ -196,8 +196,8 @@ func TestInstallerRealRelease(t *testing.T) {
 		t.Fatalf("%s --version: %v", path, err)
 	}
 	t.Logf("%s --version: %s", path, strings.TrimSpace(string(out)))
-	if v := parseFFCVersion(string(out)); !strings.HasPrefix(v, "v") && !strings.HasPrefix(v, "1") {
-		t.Errorf("version = %q", v)
+	if v, ok := parseFFCVersion(string(out)); !ok || (!strings.HasPrefix(v, "v") && !strings.HasPrefix(v, "1")) {
+		t.Errorf("version = %q, %v", v, ok)
 	}
 }
 

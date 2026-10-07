@@ -45,7 +45,8 @@ type FFCUpdate struct {
 	// Current is the installed ffc's version ("" when ffc is not installed).
 	Current string `json:"current"`
 	// Latest is the newest ffc release ("" when none was found or the
-	// installed ffc is not a release build).
+	// installed ffc is not updatable: not a release build, or a file the app
+	// must not replace).
 	Latest string `json:"latest"`
 }
 
@@ -61,17 +62,20 @@ type updateRelease struct {
 // CheckForUpdate asks GitHub for the newest desktop release (tag
 // desktop-v<semver>, not a draft) and compares it with this app's version.
 // A prerelease counts only while the running version is 0.x or itself a
-// prerelease. A version that does not parse (a development build) is never
-// offered an update. From the same list it compares the installed ffc with
-// the newest ffc release (the rule of `ffc update`: not a draft, not a
-// prerelease, a v<digit> tag). It sends no credentials; cancelling ctx stops
-// it.
+// prerelease. An app version that does not parse (a development build) is
+// never offered an app update. From the same list it compares the installed
+// ffc, when FFCInfo.Updatable (InstallFFC replaces it in place; anything else
+// is left to its own `ffc update` notice), with the ffc release InstallFFC
+// would install (newestFFC); a development build of the app still checks
+// ffc. Nothing is fetched when
+// neither version is a release. It sends no credentials; cancelling ctx
+// stops it.
 func (s *AppService) CheckForUpdate(ctx context.Context) (UpdateInfo, error) {
 	info := UpdateInfo{Current: s.version}
 	cur, appOK := releaseVersion(s.version)
 	installed := s.ffc.Info()
 	ffcCur, ffcOK := releaseVersion(installed.Version)
-	ffcOK = ffcOK && installed.Found
+	ffcOK = ffcOK && installed.Updatable
 	info.FFC.Current = installed.Version
 	if !appOK && !ffcOK {
 		return info, nil
@@ -114,28 +118,23 @@ func (s *AppService) CheckForUpdate(ctx context.Context) (UpdateInfo, error) {
 	return info, nil
 }
 
-// newestFFC compares the installed ffc (cur, shown as current) with the
-// newest ffc release in rels, the one `ffc update` would install.
+// newestFFC compares the installed ffc (cur, shown as current) with the ffc
+// release InstallFFC and `ffc update` would install: the first entry of the
+// list that release.Latest takes (not a draft, not a prerelease, a v<digit>
+// tag). Picking it the same way means the offer always names what gets
+// installed; it is offered only when newer, so it is never a downgrade.
 func newestFFC(rels []updateRelease, cur semver, current string) FFCUpdate {
 	out := FFCUpdate{Current: current}
-	var best semver
-	found := false
 	for i := range rels {
 		r := &rels[i]
 		if r.Draft || r.Prerelease || !release.IsCLITag(r.TagName) {
 			continue
 		}
-		v, ok := parseSemver(r.TagName)
-		if !ok || v.pre != "" {
-			continue
+		if v, ok := parseSemver(r.TagName); ok {
+			out.Latest = v.String()
+			out.Available = v.compare(cur) > 0
 		}
-		if !found || v.compare(best) > 0 {
-			best, found = v, true
-		}
-	}
-	if found {
-		out.Latest = best.String()
-		out.Available = best.compare(cur) > 0
+		break
 	}
 	return out
 }

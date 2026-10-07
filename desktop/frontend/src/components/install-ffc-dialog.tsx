@@ -35,14 +35,15 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   const command = env.data?.installCommand ?? ""
   const isMac = env.data?.os === "darwin"
-  // An ffc that is already there is replaced where it is (the Go side picks
-  // the place); the wording follows. Fixed while the dialog runs.
+  // An updatable ffc (a release build the Go side may replace) is replaced
+  // where it is; anything else gets a fresh install in the app's folder. The
+  // wording follows. Fixed while the dialog runs.
   const [updating, setUpdating] = React.useState(false)
   const installed = env.data?.ffc
 
   React.useEffect(() => {
     if (open && phase !== "running") {
-      setUpdating(!!installed?.found)
+      setUpdating(!!installed?.updatable)
       setPhase("confirm")
       setLog([])
       setError(null)

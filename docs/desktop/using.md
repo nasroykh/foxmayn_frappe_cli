@@ -75,7 +75,7 @@ Assistants reach your sites through the `ffc` command line, so it must be instal
    - Windows: `%LOCALAPPDATA%\Programs\ffc\ffc.exe`, added to your user PATH.
    - macOS: `~/.local/bin/ffc`. If that folder is not on your shell's PATH, the app shows the line to add to `~/.zprofile`. Assistants use the full path, so they work either way.
 
-The app finds an existing ffc on PATH or where the install scripts put it. When a newer ffc release is out, the app says so (see [Updates](#updates)) and **Update** replaces the ffc it found, where it is, with the same checks. A development build of ffc (version `dev`) is never replaced: the app installs a release next to it in its own folder. You can also run `ffc update` in a terminal. After an update, restart your connected assistants so they start the new ffc. The ffc helper tab also shows the install script command to run by hand.
+The app finds an existing ffc on PATH or where the install scripts put it. When a newer ffc release is out, the app says so (see [Updates](#updates)) and **Update** replaces the ffc it found, where it is, with the same checks. A development build of ffc (version `dev`), a program that does not answer like ffc, or a wrapper script (such as `ffc.cmd`) is never replaced: the app installs a release in its own folder instead. You can also run `ffc update` in a terminal. After an update, restart your connected assistants so they start the new ffc. The ffc helper tab also shows the install script command to run by hand.
 
 ## Settings
 

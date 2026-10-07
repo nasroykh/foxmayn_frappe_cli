@@ -20,6 +20,14 @@ type FFCInfo struct {
 	// Error is set when the binary was found but did not answer
 	// "ffc --version".
 	Error string `json:"error,omitempty"`
+	// Updatable means installing replaces this binary where it is: a working
+	// release build (not "dev") whose file is ffc.exe on Windows, or ffc
+	// after symlinks elsewhere. Otherwise an install puts a new copy in the
+	// installer's own folder.
+	Updatable bool `json:"updatable"`
+	// target is the file an in-place install writes (Path with symlinks
+	// resolved outside Windows); set when Updatable.
+	target string
 }
 
 // FFCLocator finds the ffc binary: on PATH first, then where the install
@@ -32,6 +40,7 @@ type FFCLocator struct {
 	lookPath func(string) (string, error)
 	isFile   func(string) bool
 	version  func(path string) (string, error)
+	resolve  func(path string) (string, error)
 
 	mu     sync.Mutex
 	cached *FFCInfo
@@ -45,6 +54,7 @@ func newFFCLocator(goos, home string) *FFCLocator {
 		lookPath: exec.LookPath,
 		isFile:   isRegularFile,
 		version:  ffcVersion,
+		resolve:  filepath.EvalSymlinks,
 	}
 }
 
@@ -121,13 +131,38 @@ func (l *FFCLocator) detect() FFCInfo {
 		info.Error = err.Error()
 	}
 	info.Version = v
+	if _, release := releaseVersion(v); release && err == nil {
+		info.target = l.inPlaceTarget(p)
+		info.Updatable = info.target != ""
+	}
 	return info
 }
 
-var versionPattern = regexp.MustCompile(`ffc version (\S+)`)
+// inPlaceTarget is the file an update of the ffc at p replaces, or "" when
+// it must not be replaced: anything but ffc.exe on Windows (a .cmd/.bat
+// shim would be overwritten with an exe; symlinks are not followed there,
+// EvalSymlinks would also expand 8.3 names), and outside Windows anything
+// whose resolved file is not named ffc (a multi-call binary, a package
+// manager's store).
+func (l *FFCLocator) inPlaceTarget(p string) string {
+	if l.goos == "windows" {
+		if strings.EqualFold(filepath.Base(p), "ffc.exe") {
+			return p
+		}
+		return ""
+	}
+	if r, err := l.resolve(p); err == nil && filepath.Base(r) == "ffc" {
+		return r
+	}
+	return ""
+}
+
+var versionPattern = regexp.MustCompile(`^ffc version (\S+)`)
 
 // ffcVersion runs "ffc --version" (at most 10 s) and returns the version
-// ("v1.10.0", or "dev" for a source build).
+// ("v1.10.0", or "dev" for a source build). Output that does not start with
+// "ffc version " is an error: the program is not ffc (or not one this app
+// understands), so it is never treated as a working ffc or replaced.
 func ffcVersion(path string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -137,12 +172,16 @@ func ffcVersion(path string) (string, error) {
 	if err != nil {
 		return "", errors.New("ffc --version failed: " + err.Error())
 	}
-	return parseFFCVersion(string(out)), nil
+	v, ok := parseFFCVersion(string(out))
+	if !ok {
+		return "", errors.New(`"--version" did not answer like ffc`)
+	}
+	return v, nil
 }
 
-func parseFFCVersion(out string) string {
-	if m := versionPattern.FindStringSubmatch(out); m != nil {
-		return m[1]
+func parseFFCVersion(out string) (string, bool) {
+	if m := versionPattern.FindStringSubmatch(strings.TrimSpace(out)); m != nil {
+		return m[1], true
 	}
-	return strings.TrimSpace(out)
+	return "", false
 }
