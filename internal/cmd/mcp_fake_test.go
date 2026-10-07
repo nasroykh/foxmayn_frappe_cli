@@ -415,8 +415,8 @@ func TestMCPFakeCountDocsAtLeast(t *testing.T) {
 	if m["result"] != true || m["count"] != 2.0 || m["at_least"] != 2.0 || m["doctype"] != "ToDo" {
 		t.Errorf("at_least 2: %v", m)
 	}
-	if q := mcpTOnly(t, site, "GET", path).Query; q.Get("limit") != "2" || q.Get("doctype") != "ToDo" {
-		t.Errorf("query %v", q)
+	if b := mcpTBody(t, mcpTOnly(t, site, "POST", path)); fmt.Sprint(b["limit"]) != "2" || b["doctype"] != "ToDo" {
+		t.Errorf("body %v", b)
 	}
 	m = mcpTObj(t, mcpTOK(t, s, "count_docs", map[string]interface{}{"doctype": "ToDo", "at_least": "5", "filters": map[string]interface{}{"status": "Open"}}))
 	if m["result"] != false || m["count"] != 2.0 {

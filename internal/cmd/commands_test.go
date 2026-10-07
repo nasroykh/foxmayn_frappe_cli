@@ -382,9 +382,12 @@ func TestCmdCountDocsAtLeast(t *testing.T) {
 	if strings.TrimSpace(r.Stdout) != "true" {
 		t.Fatalf("stdout %q", r.Stdout)
 	}
-	reqs := s.RequestsTo("GET", path)
-	if len(reqs) != 1 || reqs[0].Query.Get("limit") != "2" || reqs[0].Query.Get("doctype") != "ToDo" || reqs[0].Query.Has("filters") {
-		t.Fatalf("requests %+v", reqs)
+	reqs := s.RequestsTo("POST", path)
+	if len(reqs) != 1 {
+		t.Fatalf("requests %+v", s.Requests())
+	}
+	if b := mcpTBody(t, reqs[0]); fmt.Sprint(b["limit"]) != "2" || b["doctype"] != "ToDo" || b["filters"] != nil {
+		t.Fatalf("body %v", b)
 	}
 
 	// The site stops at the limit: the count is exact below it, the limit otherwise.
@@ -396,8 +399,8 @@ func TestCmdCountDocsAtLeast(t *testing.T) {
 	if fmt.Sprint(out["count"]) != "2" || out["result"] != false {
 		t.Fatalf("out %v", out)
 	}
-	reqs = s.RequestsTo("GET", path)
-	if f := reqs[len(reqs)-1].Query.Get("filters"); !strings.Contains(f, "Open") {
+	reqs = s.RequestsTo("POST", path)
+	if f := fmt.Sprint(mcpTBody(t, reqs[len(reqs)-1])["filters"]); !strings.Contains(f, "Open") {
 		t.Fatalf("filters %q", f)
 	}
 
@@ -414,6 +417,17 @@ func TestCmdCountDocsAtLeast(t *testing.T) {
 	}
 	if !strings.Contains(r.Stderr, "warning:") {
 		t.Fatalf("stderr %q", r.Stderr)
+	}
+	r = cmdTOK(t, cmdTRun(t, s, "count-docs", "-d", "ToDo", "--at-least", "1", "--jq", ".result"))
+	if strings.TrimSpace(r.Stdout) != "null" {
+		t.Fatalf("--jq .result on an unknown answer: %q", r.Stdout)
+	}
+
+	s.HandleMethod("frappe.desk.reportview.get_count", func(*http.Request, map[string]interface{}) (interface{}, error) {
+		return nil, frappetest.Permission("No permission for ToDo")
+	})
+	if r := cmdTRun(t, s, "count-docs", "-d", "ToDo", "--at-least", "1"); r.Code != exitPermission {
+		t.Fatalf("403: exit %d (%v)", r.Code, r.Err)
 	}
 
 	before := len(s.Requests())

@@ -792,16 +792,17 @@ func (c *FrappeClient) GetCount(ctx context.Context, doctype, filters string) (i
 // runs out; ok is then false. A virtual DocType's controller may ignore the
 // limit, so the answer is cut to n here.
 func (c *FrappeClient) CountAtLeast(ctx context.Context, doctype, filters string, n int) (count int, ok bool, err error) {
-	query := map[string]string{"doctype": doctype, "limit": strconv.Itoa(n)}
+	// POST like GetCount: a long "in" filter would not fit in a URL.
+	body := map[string]interface{}{"doctype": doctype, "limit": n}
 	if filters != "" {
-		query["filters"] = filters
+		body["filters"] = filters
 	}
 	hints := readHints(doctype)
 	delete(hints, http.StatusNotFound)
 	var result struct {
 		Message *int `json:"message"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/api/method/frappe.desk.reportview.get_count", nil, query, hints, &result); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/api/method/frappe.desk.reportview.get_count", body, nil, hints, &result); err != nil {
 		return 0, false, err
 	}
 	if result.Message == nil {
