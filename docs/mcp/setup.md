@@ -50,7 +50,7 @@ After installing, restart the client:
 
 Claude Desktop on Linux is unofficial; the path above is what ffc uses there.
 
-**Not verified:** the Cursor path on Windows (`%USERPROFILE%\.cursor\mcp.json`) and the VS Code paths are inferred from those products' documentation, not quoted from it. `CODEX_HOME` was checked against the Codex CLI but is not in its documentation.
+On Windows, the Cursor path (`%USERPROFILE%\.cursor\mcp.json`) and the VS Code path (`%APPDATA%\Code\User\mcp.json`) were checked on a real install: both editors keep their MCP servers there. **Not verified:** the VS Code paths on macOS and Linux are inferred from its documentation, not quoted from it. `CODEX_HOME` was checked against the Codex CLI but is not in its documentation.
 
 ## How the file is changed
 
