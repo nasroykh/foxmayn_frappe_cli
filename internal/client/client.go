@@ -853,29 +853,53 @@ func (c *FrappeClient) Ping(ctx context.Context) (string, error) {
 }
 
 // RunReport executes a Frappe query report and returns its columns and data rows.
+// It always runs the report now, in the request (ignore_prepared_report),
+// even for a report marked as prepared; RunPreparedReport uses the
+// background job instead.
 func (c *FrappeClient) RunReport(ctx context.Context, reportName string, filters map[string]interface{}) (map[string]interface{}, error) {
-	filtersJSON := "{}"
-	if len(filters) > 0 {
-		b, err := json.Marshal(filters)
-		if err != nil {
-			return nil, fmt.Errorf("encoding filters: %w", err)
-		}
-		filtersJSON = string(b)
+	filtersJSON, err := reportFilters(filters)
+	if err != nil {
+		return nil, err
 	}
-	body := map[string]interface{}{
-		"report_name":            reportName,
-		"filters":                filtersJSON,
-		"ignore_prepared_report": 1,
-	}
-	hints := map[int]string{
+	return c.runReport(ctx, reportName, filtersJSON, true)
+}
+
+func reportHints(reportName string) map[int]string {
+	return map[int]string{
 		http.StatusUnauthorized: authHint,
 		http.StatusForbidden:    fmt.Sprintf("permission denied (403): your user may not have access to report %q", reportName),
 		http.StatusNotFound:     fmt.Sprintf("report %q not found (404)", reportName),
 	}
+}
+
+// reportFilters encodes report filters as query_report.run takes them: a
+// JSON object, "{}" for none. encoding/json sorts the keys, as Frappe does
+// when it matches prepared reports by their filters.
+func reportFilters(filters map[string]interface{}) (string, error) {
+	if len(filters) == 0 {
+		return "{}", nil
+	}
+	b, err := json.Marshal(filters)
+	if err != nil {
+		return "", fmt.Errorf("encoding filters: %w", err)
+	}
+	return string(b), nil
+}
+
+// runReport calls frappe.desk.query_report.run.
+func (c *FrappeClient) runReport(ctx context.Context, reportName, filtersJSON string, ignorePrepared bool) (map[string]interface{}, error) {
+	body := map[string]interface{}{
+		"report_name":            reportName,
+		"filters":                filtersJSON,
+		"ignore_prepared_report": 0,
+	}
+	if ignorePrepared {
+		body["ignore_prepared_report"] = 1
+	}
 	var result struct {
 		Message map[string]interface{} `json:"message"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/api/method/frappe.desk.query_report.run", body, nil, hints, &result); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/api/method/frappe.desk.query_report.run", body, nil, reportHints(reportName), &result); err != nil {
 		return nil, err
 	}
 	if result.Message == nil {
