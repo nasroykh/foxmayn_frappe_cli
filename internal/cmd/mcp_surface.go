@@ -662,15 +662,22 @@ func withProgress(ctx context.Context, req mcp.CallToolRequest) context.Context 
 // notification can be lost or arrive after the tool's response. Clients
 // must not count on seeing every step or the last one.
 func notifyProgress(ctx context.Context, done, total int) {
+	sendProgress(ctx, done, total, fmt.Sprintf("%d of %d done", done, total))
+}
+
+// sendProgress is notifyProgress with a message of its own; total <= 0
+// leaves the total out (unknown), as for a prepared report's job.
+func sendProgress(ctx context.Context, progress, total int, message string) {
 	token := ctx.Value(progressCtxKey{})
 	srv := server.ServerFromContext(ctx)
 	if token == nil || srv == nil {
 		return
 	}
-	_ = srv.SendNotificationToClient(ctx, string(mcp.MethodNotificationProgress), map[string]any{
-		"progressToken": token, "progress": done, "total": total,
-		"message": fmt.Sprintf("%d of %d done", done, total),
-	})
+	params := map[string]any{"progressToken": token, "progress": progress, "message": message}
+	if total > 0 {
+		params["total"] = total
+	}
+	_ = srv.SendNotificationToClient(ctx, string(mcp.MethodNotificationProgress), params)
 }
 
 // ─── fitting large results ──────────────────────────────────────────────────

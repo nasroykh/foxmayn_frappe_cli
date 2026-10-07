@@ -99,6 +99,14 @@ The output is JSON (one output as is, none or several as an array) under the sam
 
 `list_docs` and `run_report` also take `response_format`: `concise` (default) or `detailed` (every field for `list_docs` without `fields`; the report as Frappe returns it).
 
+### Prepared reports
+
+`run_report` with `prepared: true` uses Frappe's prepared reports, as `ffc run-report --prepared` does: a worker on the site's `long` queue runs the report. It returns your finished result for the same filters (`prepared_report` gives its `name` and when it `finished`; it may be old), else waits for your queued job or starts one. `fresh: true` ignores a finished result; it needs `prepared` and cannot be combined with `prepared_report`. A `prepared_report` made for another report or other filters is refused.
+
+- The server waits at most a minute, sending progress notifications when the client asked for them. A job still running then is answered `{"status": "queued", "prepared_report": {"name": ...}, "hint": ...}`; call again with `prepared_report` set to that name and the same `filters`.
+- A read-only server only reuses: a finished result, or a job already queued for those filters (for example by `ffc run-report --prepared`). It never starts one, since that saves a Prepared Report document on the site, and refuses `fresh`. `prepared_report` works there too.
+- A failed job is an error. On a report not marked "prepared", `prepared` runs it normally.
+
 ## Resources
 
 Read-only JSON resources, served through the same tool handlers (so policy, audit and size cap apply):

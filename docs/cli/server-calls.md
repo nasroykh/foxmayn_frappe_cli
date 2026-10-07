@@ -50,7 +50,7 @@ ffc run-report -n "Stock Balance" --filters '{"company":"Acme"}' --prepared --wa
 - If you already have a finished result for the same filters, ffc returns it at once. It may be old: stderr names the Prepared Report and when it finished. `--fresh` prepares a new one.
 - Otherwise ffc reuses your queued job for these filters, or starts one, and checks it until it finishes or `--wait` runs out. The per-request `--timeout` still applies to each check.
 - When the wait runs out, ffc exits with code 7 and prints the command to continue, with `--prepared-name`. A job that never starts usually means the site has no worker on the `long` queue.
-- `--prepared-name` with other `--filters`, or for another report, exits 6 (checked when your user may read Prepared Report documents).
+- `--prepared-name` with other `--filters`, or for another report, exits 6.
 - The filters you pass are the ones used: a Custom Report's saved filters are not applied.
 - A job that fails also exits 7. The error message appears when your user may read Prepared Report documents (System Manager or Prepared Report User).
 - Each new job saves a Prepared Report document on the site; Frappe deletes them after 30 days. With `--json`, the response's `doc` is that document.
