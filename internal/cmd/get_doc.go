@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
@@ -45,7 +47,15 @@ Examples:
 		}
 		name := docNameOrSingle(gdName, gdDoctype)
 
+		// --keys outside --fields needs the whole document.
+		some := fields
+		if gdKeys != "" && !subset(splitCSV(gdKeys), fields) {
+			some = nil
+		}
 		doc, err := callSite(cmd, fmt.Sprintf("Fetching %s %s…", gdDoctype, name), func(ctx context.Context, c *client.FrappeClient) (map[string]interface{}, error) {
+			if len(some) > 0 {
+				return fetchDocFields(ctx, c, gdDoctype, name, some)
+			}
 			return c.GetDoc(ctx, gdDoctype, name)
 		})
 		if err != nil {
@@ -76,4 +86,69 @@ func init() {
 	_ = getDocCmd.MarkFlagRequired("doctype")
 
 	rootCmd.AddCommand(getDocCmd)
+}
+
+// hookedDoctypes are the DocTypes Frappe itself guards with has_permission
+// hooks (frappe/hooks.py, v16.36.1). Those hooks decide per document, and
+// frappe.client.get_value does not run them, so fetchDocFields reads these
+// with GetDoc. Hooks from other apps cannot be known from here: for them
+// get_value shows what list-docs shows.
+var hookedDoctypes = map[string]bool{
+	"Event": true, "ToDo": true, "Note": true, "User": true, "Dashboard Chart": true, "Number Card": true,
+	"Kanban Board": true, "Contact": true, "Address": true, "Communication": true, "Workflow Action": true,
+	"File": true, "Prepared Report": true, "Notification Settings": true, "Dashboard Settings": true,
+	"Notification Log": true, "User Invitation": true, "Document Follow": true,
+}
+
+// fetchDocFields returns the given top-level fields of a document, keyed as
+// filterKeys would key them from GetDoc. Plain fields of a regular DocType
+// come from frappe.client.get_value, which sends only those columns; a
+// Single (name == doctype), a hooked DocType, a "*" or a name that is not a
+// plain identifier (link.field, child.field) goes to GetDoc. So does any
+// get_value answer that is an error, empty or missing a field (unknown or
+// child-table field, a Table field, a document the list query does not
+// show, a field above the user's permission level on v15), so errors and
+// exit codes stay those of GetDoc. CLI get-doc and MCP get_doc share it.
+func fetchDocFields(ctx context.Context, c *client.FrappeClient, doctype, name string, fields []string) (map[string]interface{}, error) {
+	if valueFields(doctype, name, fields) {
+		doc, err := c.GetValue(ctx, doctype, name, fields)
+		var api *client.APIError
+		switch {
+		case err == nil:
+			if out, missing := filterKeys(doc, fields); len(missing) == 0 {
+				return out, nil
+			}
+		case !errors.As(err, &api):
+			return nil, err
+		}
+	}
+	doc, err := c.GetDoc(ctx, doctype, name)
+	if err != nil {
+		return nil, err
+	}
+	out, _ := filterKeys(doc, fields)
+	return out, nil
+}
+
+// valueFields reports whether fetchDocFields may ask get_value.
+func valueFields(doctype, name string, fields []string) bool {
+	if name == doctype || hookedDoctypes[doctype] || len(fields) == 0 {
+		return false
+	}
+	for _, f := range fields {
+		if !client.ValidIdentifier(f) {
+			return false
+		}
+	}
+	return true
+}
+
+// subset reports whether every key is in fields.
+func subset(keys, fields []string) bool {
+	for _, k := range keys {
+		if !slices.Contains(fields, k) {
+			return false
+		}
+	}
+	return true
 }

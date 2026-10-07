@@ -2,9 +2,9 @@
 //
 // It serves /api/resource (list, get, create, update, delete), the
 // /api/method endpoints ffc uses (login, logout, get_logged_user, ping,
-// get_count (frappe.client and reportview), query_report.run, search_link,
-// global search, the OAuth token endpoint's refresh grant) and any method
-// registered with HandleMethod.
+// get_count (frappe.client and reportview), get_value, query_report.run,
+// search_link, global search, the OAuth token endpoint's refresh grant) and
+// any method registered with HandleMethod.
 // OAuth access tokens can be made to expire (ExpireToken, ExpireTokenAfter).
 // Files (files.go): upload_file (multipart), attach_file, /files and
 // /private/files, get_max_file_size, download_pdf and get_html_and_style.
@@ -471,6 +471,8 @@ func (s *Site) method(w http.ResponseWriter, r *http.Request, name string, body 
 		result, err = s.getCount(args)
 	case name == "frappe.desk.reportview.get_count":
 		result, err = s.getCountLimit(args)
+	case name == "frappe.client.get_value":
+		result, err = s.getValue(args)
 	case name == "frappe.desk.query_report.run":
 		result, err = s.runReport(args)
 	default:
@@ -512,6 +514,48 @@ func (s *Site) getCountLimit(args map[string]interface{}) (interface{}, error) {
 		return min(n.(int), limit), nil
 	}
 	return n, nil
+}
+
+// getValue is frappe.client.get_value with as_dict: the first matching
+// document's fields, {} when none matches. As on v16, a field the DocType
+// lacks is a DataError and a Table field (child rows) is left out, with
+// name standing in when nothing else is left.
+func (s *Site) getValue(args map[string]interface{}) (interface{}, error) {
+	dt, _ := args["doctype"].(string)
+	var fields []string
+	switch f := args["fieldname"].(type) {
+	case string:
+		if json.Unmarshal([]byte(f), &fields) != nil {
+			fields = []string{f}
+		}
+	case []interface{}:
+		for _, x := range f {
+			str, _ := x.(string)
+			fields = append(fields, str)
+		}
+	}
+	for _, f := range fields {
+		if !s.knownField(dt, f) {
+			return nil, DataError("Field not permitted in query: " + f)
+		}
+	}
+	rows, err := s.query(dt, args["filters"])
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return map[string]interface{}{}, nil
+	}
+	out := map[string]interface{}{}
+	for _, f := range fields {
+		if _, table := rows[0][f].([]interface{}); !table {
+			out[f] = rows[0][f]
+		}
+	}
+	if len(out) == 0 {
+		out["name"] = rows[0]["name"]
+	}
+	return out, nil
 }
 
 func (s *Site) runReport(args map[string]interface{}) (interface{}, error) {

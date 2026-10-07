@@ -132,12 +132,10 @@ func registerGetDoc(s *server.MCPServer, env *mcpEnv) {
 			return nil, err
 		}
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
-			doc, err := c.GetDoc(ctx, doctype, name)
-			if err != nil || len(fields) == 0 {
-				return doc, err
+			if len(fields) > 0 {
+				return fetchDocFields(ctx, c, doctype, name, fields)
 			}
-			out, _ := filterKeys(doc, fields)
-			return out, nil
+			return c.GetDoc(ctx, doctype, name)
 		}, nil
 	}))
 }

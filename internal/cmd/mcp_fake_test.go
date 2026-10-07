@@ -154,6 +154,30 @@ func TestMCPFakeGetDoc(t *testing.T) {
 	}
 }
 
+// get_doc fields shares fetchDocFields with the CLI: get_value for plain
+// fields, the whole document when its answer lacks one.
+func TestMCPFakeGetDocFieldsGetValue(t *testing.T) {
+	s, site := newMCPFake(t, false)
+	site.ChildTable("Item", "barcodes", "Item Barcode")
+	site.Add("Item", map[string]interface{}{"name": "IT-1", "item_name": "Bolt",
+		"barcodes": []interface{}{map[string]interface{}{"barcode": "123"}}})
+	m := mcpTObj(t, mcpTOK(t, s, "get_doc", map[string]interface{}{"doctype": "Item", "name": "IT-1", "fields": []interface{}{"item_name"}}))
+	if !reflect.DeepEqual(m, map[string]interface{}{"item_name": "Bolt"}) {
+		t.Errorf("fields = %v", m)
+	}
+	mcpTOnly(t, site, "GET", "/api/method/frappe.client.get_value")
+	if n := len(site.RequestsTo("GET", "/api/resource/Item/IT-1")); n != 0 {
+		t.Errorf("plain fields also read the document (%d)", n)
+	}
+
+	m = mcpTObj(t, mcpTOK(t, s, "get_doc", map[string]interface{}{"doctype": "Item", "name": "IT-1", "fields": `["item_name","barcodes"]`}))
+	if rows, _ := m["barcodes"].([]interface{}); len(m) != 2 || len(rows) != 1 {
+		t.Errorf("table field = %v", m)
+	}
+	mcpTOnly(t, site, "GET", "/api/resource/Item/IT-1")
+	mcpTErr(t, s, "get_doc", map[string]interface{}{"doctype": "Item", "name": "nope", "fields": []interface{}{"item_name"}}, "Item nope not found")
+}
+
 func TestMCPFakeGetDocSingleDefaultsName(t *testing.T) {
 	s, site := newMCPFake(t, false)
 	site.Add("System Settings", map[string]interface{}{"name": "System Settings", "language": "en"})

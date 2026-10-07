@@ -25,7 +25,7 @@ R = read tool (kept by `--read-only`), W = writes, M = `call_method` (treated as
 | `ping` | R | Check the connection. | `ffc ping` |
 | `whoami` | R | Signed-in user, roles, installed apps. | `ffc whoami` |
 | `check_permission` | R | May the user do X on a DocType or document? | `ffc can` |
-| `get_doc` | R | One document. | `ffc get-doc` |
+| `get_doc` | R | One document (with `fields`, only those columns are read when possible). | `ffc get-doc` |
 | `get_doc_context` | R | Versions, comments, attachments, assignments, shares, tags, links, timeline. | `ffc doc-info` (without `--onload`) |
 | `list_docs` | R | List documents. | `ffc list-docs` |
 | `count_docs` | R | Count documents. | `ffc count-docs` |
