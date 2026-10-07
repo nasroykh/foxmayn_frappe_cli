@@ -656,6 +656,36 @@ func (c *FrappeClient) GetDoc(ctx context.Context, doctype, name string) (map[st
 	return env.doc()
 }
 
+// GetValue reads some fields of one document with frappe.client.get_value
+// (GET; fieldname a JSON list, filters {"name": name}): a list query with
+// limit 1, so only those columns travel, not the whole document with its
+// child tables. It answers {} when no readable document matches; a field the
+// DocType lacks (or that only a child table has) is a 417 DataError, and a
+// Table field is left out of the answer (v16). Unlike GetDoc it applies only
+// list permissions (roles, user permissions, permission query conditions),
+// not has_permission hooks; callers decide when that is acceptable.
+func (c *FrappeClient) GetValue(ctx context.Context, doctype, name string, fields []string) (map[string]interface{}, error) {
+	f, err := json.Marshal(fields)
+	if err != nil {
+		return nil, err
+	}
+	filters, err := json.Marshal(map[string]string{"name": name})
+	if err != nil {
+		return nil, err
+	}
+	query := map[string]string{"doctype": doctype, "fieldname": string(f), "filters": string(filters)}
+	var result struct {
+		Message map[string]interface{} `json:"message"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/method/frappe.client.get_value", nil, query, docHints(doctype, name, "read"), &result); err != nil {
+		return nil, err
+	}
+	if result.Message == nil {
+		return map[string]interface{}{}, nil
+	}
+	return result.Message, nil
+}
+
 // CreateDoc posts a new document and returns the created document fields.
 func (c *FrappeClient) CreateDoc(ctx context.Context, doctype string, data map[string]interface{}) (map[string]interface{}, error) {
 	hints := readHints(doctype)

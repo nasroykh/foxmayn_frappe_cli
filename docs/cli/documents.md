@@ -18,6 +18,8 @@ ffc get-doc -d "System Settings" --json       # Single DocType: --name defaults 
 | `-f, --fields` | Fields to show, as a JSON array or comma-separated list. |
 | `--keys` | Comma-separated keys to keep in JSON output. |
 
+**`--fields` reads less.** For plain field names on a regular DocType, ffc asks Frappe for just those columns (`frappe.client.get_value`) instead of the whole document with its child tables, which matters for large documents such as an invoice with hundreds of rows. When that answer is incomplete (a Table field, an unknown field, a document the list query does not show) or refused, ffc reads the whole document as before, so output, errors and exit codes do not change. Single DocTypes, DocTypes that Frappe guards with per-document permission hooks (User, File, ToDo, Contact, Address, Communication, ...) and `--keys` outside `--fields` always read the whole document. One difference remains: `get_value` applies list permissions (roles, user permissions, permission query conditions) but not an app's own per-document `has_permission` hook, the same as `list-docs`.
+
 The table view shows Field/Value rows.
 
 ## List documents: `list-docs`

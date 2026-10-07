@@ -84,6 +84,7 @@ func TestContract(t *testing.T) {
 
 	t.Run("numbers keep the server literal", func(t *testing.T) { contractNumbers(t, c, sc) })
 	t.Run("list default fields are name only", func(t *testing.T) { contractListDefault(t, c) })
+	t.Run("get_value matches the document", func(t *testing.T) { contractGetValue(t, c) })
 	t.Run("child table PUT replaces rows", func(t *testing.T) { contractChildPut(t, c) })
 	t.Run("lifecycle submit cancel amend", func(t *testing.T) { contractLifecycle(t, c) })
 	t.Run("lifecycle commands", func(t *testing.T) { contractLifecycleCLI(t, c, sc) })
@@ -314,6 +315,62 @@ func contractListDefault(t *testing.T, c *client.FrappeClient) {
 		if len(r) != 1 || r["name"] == nil {
 			t.Errorf("row = %v, want only name", r)
 		}
+	}
+}
+
+// contractGetValue pins what fetchDocFields relies on (get-doc --fields):
+// frappe.client.get_value returns plain fields exactly as GetDoc does
+// (number literals, dates, datetimes), {} for a missing document, and
+// never a value it should not: a Table field and a child-only field are
+// either an error or absent from the answer, so the caller falls back.
+func contractGetValue(t *testing.T, c *client.FrappeClient) {
+	ctx := contractCtx(t)
+	name := createContractDoc(t, c, map[string]interface{}{
+		"title": "get_value", "status": "Closed", "n_int": 7, "n_float": 0.25, "n_cur": 12, "n_check": 1,
+		"items": []interface{}{map[string]interface{}{"item": "bolt", "qty": 2}},
+	})
+	doc, err := c.GetDoc(ctx, contractDT, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := []string{"name", "title", "status", "n_int", "n_float", "n_cur", "n_check", "docstatus", "idx", "owner", "creation", "modified", "custom_note"}
+	got, err := c.GetValue(ctx, contractDT, name, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// get_value sends a null field (custom_note) that GetDoc leaves out;
+	// fetchDocFields drops it.
+	want, _ := filterKeys(doc, fields)
+	for k, v := range got {
+		if _, ok := want[k]; !ok && v != nil {
+			t.Errorf("get_value has %s = %#v, GetDoc has no %s", k, v, k)
+		}
+	}
+	out, err := fetchDocFields(ctx, c, contractDT, name, fields)
+	if g, w := fmt.Sprintf("%#v", out), fmt.Sprintf("%#v", want); err != nil || g != w {
+		t.Errorf("fetchDocFields differs from GetDoc (%v):\n got %s\nwant %s", err, g, w)
+	}
+
+	if got, err = c.GetValue(ctx, contractDT, name+"-missing", []string{"title"}); err != nil || len(got) != 0 {
+		t.Errorf("missing document: %v, %v; want {}", got, err)
+	}
+	for _, f := range []string{"items", "item"} {
+		got, err := c.GetValue(ctx, contractDT, name, []string{"title", f})
+		var api *client.APIError
+		switch {
+		case errors.As(err, &api):
+			t.Logf("get_value with %q: HTTP %d %s", f, api.Status, api.ExcType)
+		case err != nil:
+			t.Errorf("get_value with %q: %v", f, err)
+		default:
+			if _, ok := got[f]; ok {
+				t.Errorf("get_value answered %q = %#v; fetchDocFields would take it", f, got[f])
+			}
+		}
+	}
+	out, err = fetchDocFields(ctx, c, contractDT, name, []string{"title", "items"})
+	if rows, _ := out["items"].([]interface{}); err != nil || out["title"] != "get_value" || len(rows) != 1 {
+		t.Errorf("fetchDocFields with a Table field: %v, %v", out, err)
 	}
 }
 

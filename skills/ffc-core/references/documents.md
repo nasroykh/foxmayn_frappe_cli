@@ -15,7 +15,7 @@ Flags as in `ffc <command> --help`. Every command also takes the global flags (`
 | --- | --- |
 | `-d, --doctype` | required |
 | `-n, --name` | defaults to the DocType name (Single DocTypes such as `System Settings`) |
-| `-f, --fields` | CSV or JSON array; narrows table and JSON |
+| `-f, --fields` | CSV or JSON array; narrows table and JSON. Plain fields are read with `frappe.client.get_value` (only those columns); falls back to the whole document when that answer is incomplete or refused |
 | `--keys` | top-level keys kept in JSON; wins over `--fields` |
 
 ## list-docs
