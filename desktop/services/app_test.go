@@ -237,3 +237,17 @@ func TestConfigPathFromEnv(t *testing.T) {
 		t.Errorf("FFC_CONFIG: %q, %v", got, err)
 	}
 }
+
+func TestSetWindowTheme(t *testing.T) {
+	h := &fakeHost{}
+	dir := t.TempDir()
+	s := NewAppService(h, filepath.Join(dir, "config.yaml"), fakeLocator("windows", dir, "", nil))
+	s.SetWindowTheme(true)
+	s.SetWindowTheme(false)
+	if len(h.themes) != 2 || !h.themes[0] || h.themes[1] {
+		t.Errorf("themes = %v, want [true false]", h.themes)
+	}
+	if WindowBackground(true) == WindowBackground(false) {
+		t.Error("dark and light window backgrounds are the same")
+	}
+}

@@ -58,6 +58,7 @@ export interface Backend {
   checkForUpdate(): Promise<UpdateInfo>
   openConfigFolder(): Promise<void>
   openFFCFolder(): Promise<void>
+  setWindowTheme(dark: boolean): Promise<void>
 
   listSites(): Promise<SiteList>
   validate(name: string, url: string): Promise<Validation>

@@ -315,6 +315,9 @@ export const backend: Backend = {
   async openFFCFolder() {
     if (!ffc.found) fail("ffc_missing", "The ffc helper is not installed.")
   },
+  async setWindowTheme() {
+    // No native window in the browser preview.
+  },
 
   async listSites(): Promise<SiteList> {
     await wait(400)
