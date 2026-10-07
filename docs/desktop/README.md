@@ -9,7 +9,7 @@ A desktop app for Windows and macOS that manages your Frappe and ERPNext sites a
 - **Sites.** Add a site with browser sign-in (OAuth), an API key, or a username and password. Check the connection, make a site the default, rename it, change its address, remove it.
 - **Assistants.** Connect Claude Desktop, Claude Code, Cursor, VS Code or Codex to a site, optionally read-only, with a preview of the change first. Disconnect again with one click.
 - **ffc helper.** Assistants reach your sites through the `ffc` command line. If it is missing, the app downloads the latest ffc release, verifies its signature and checksum, and installs it for you.
-- **Update notice.** Tells you when a newer version of the app is available.
+- **Update notice.** Tells you when a newer version of the app is available, and updates ffc for you when a newer ffc release is out.
 
 The app and the CLI share one config file, `~/.config/ffc/config.yaml`. Sites you add with `ffc` show up in the app, and the other way round, live.
 

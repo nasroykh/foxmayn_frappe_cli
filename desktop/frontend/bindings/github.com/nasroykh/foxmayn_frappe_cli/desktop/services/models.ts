@@ -187,6 +187,34 @@ export interface FFCInfo {
      * "ffc --version".
      */
     "error"?: string;
+
+    /**
+     * Updatable means installing replaces this binary where it is: a working
+     * release build (not "dev") whose file is ffc.exe on Windows, or ffc
+     * after symlinks elsewhere. Otherwise an install puts a new copy in the
+     * installer's own folder.
+     */
+    "updatable": boolean;
+}
+
+/**
+ * FFCUpdate says whether a newer ffc release than the installed one exists.
+ * InstallFFC installs it.
+ */
+export interface FFCUpdate {
+    "available": boolean;
+
+    /**
+     * Current is the installed ffc's version ("" when ffc is not installed).
+     */
+    "current": string;
+
+    /**
+     * Latest is the newest ffc release ("" when none was found or the
+     * installed ffc is not updatable: not a release build, or a file the app
+     * must not replace).
+     */
+    "latest": string;
 }
 
 /**
@@ -363,6 +391,11 @@ export interface UpdateInfo {
      * PublishedAt is the release's publish time (RFC 3339), or "".
      */
     "publishedAt": string;
+
+    /**
+     * FFC compares the installed ffc with the newest ffc release.
+     */
+    "ffc": FFCUpdate;
 }
 
 /**

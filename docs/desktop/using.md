@@ -75,14 +75,14 @@ Assistants reach your sites through the `ffc` command line, so it must be instal
    - Windows: `%LOCALAPPDATA%\Programs\ffc\ffc.exe`, added to your user PATH.
    - macOS: `~/.local/bin/ffc`. If that folder is not on your shell's PATH, the app shows the line to add to `~/.zprofile`. Assistants use the full path, so they work either way.
 
-The app finds an existing ffc on PATH or where the install scripts put it. To update ffc later, run `ffc update` in a terminal, or **Install again** in Settings. The ffc helper tab also shows the install script command to run by hand.
+The app finds an existing ffc on PATH or where the install scripts put it. When a newer ffc release is out, the app says so (see [Updates](#updates)) and **Update** replaces the ffc it found, where it is, with the same checks. A development build of ffc (version `dev`), a program that does not answer like ffc, or a wrapper script (such as `ffc.cmd`) is never replaced: the app installs a release in its own folder instead. You can also run `ffc update` in a terminal. After an update, restart your connected assistants so they start the new ffc. The ffc helper tab also shows the install script command to run by hand.
 
 ## Settings
 
 | Tab | Contents |
 | --- | --- |
 | General | **Theme** (Light, Dark, System). **Settings file**: the path of `config.yaml`, with **Open folder**. |
-| ffc helper | Installed version and path, **Install ffc** / **Install again**, **Look again**, **Open folder**. |
+| ffc helper | Installed version and path, **Install ffc** / **Update to X** / **Install again**, **Look again**, **Open folder**. |
 | About | Version, **Check for updates**, **Source code**, **Report a problem**. |
 
 Number and date formats are CLI settings: `ffc config`.
@@ -91,7 +91,7 @@ The app uses `~/.config/ffc/config.yaml`, or the file `FFC_CONFIG` names, as the
 
 ## Updates
 
-At start, at most once a day, the app asks GitHub for the newest `desktop-v` release. When one is newer, it shows a notice with a **Download** button (opens the release page) and a dot on Settings. Settings > About > **Check for updates** checks at any time. The app does not update itself: download and run the new installer. Development builds (version `0.0.0-dev`) never show the notice. The check cannot be turned off.
+At start, at most once a day, the app asks GitHub for the newest `desktop-v` release. When one is newer, it shows a notice with a **Download** button (opens the release page) and a dot on Settings. Settings > About > **Check for updates** checks at any time. The app does not update itself: download and run the new installer. Development builds (version `0.0.0-dev`) never show the notice. The same check compares the installed ffc with the newest ffc release (the one `ffc update` would install): when it is newer, a notice offers **Update**, the sidebar shows "ffc X available", and Settings > ffc helper shows **Update to X**. The check cannot be turned off.
 
 ## WSL (Windows)
 

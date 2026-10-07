@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/release"
 )
 
 const relBase = "https://github.com/nasroykh/foxmayn_frappe_cli/releases/tag/"
@@ -254,5 +256,88 @@ func TestSemverCompare(t *testing.T) {
 		if _, ok := parseSemver(bad); ok {
 			t.Errorf("%q parsed", bad)
 		}
+	}
+}
+
+// ffcService is updateService with an ffc of version ffcVer found on PATH.
+func ffcService(t *testing.T, app, ffcVer string, h http.HandlerFunc) *AppService {
+	t.Helper()
+	s := updateService(t, app, h)
+	s.ffc = fakeLocator("darwin", "/Users/me", "/usr/local/bin/ffc", nil)
+	s.ffc.version = func(string) (string, error) { return ffcVer, nil }
+	s.ffc.resolve = func(p string) (string, error) { return p, nil }
+	return s
+}
+
+func TestCheckForUpdateFFC(t *testing.T) {
+	// GitHub's order (newest first); the desktop release, the draft and the
+	// prerelease never count, whatever their numbers.
+	list := listJSON(`[
+ {"tag_name":"desktop-v9.0.0"},
+ {"tag_name":"v2.0.0","draft":true},
+ {"tag_name":"v1.13.0-rc1","prerelease":true},
+ {"tag_name":"v1.12.1"},
+ {"tag_name":"v1.12.0"}
+]`)
+	for _, c := range []struct {
+		installed string
+		available bool
+	}{{"1.12.0", true}, {"v1.11.0", true}, {"1.12.1", false}, {"1.13.0", false}, {"1.12.1-rc1", true}} {
+		got, err := ffcService(t, "0.1.0", c.installed, list).CheckForUpdate(context.Background())
+		if err != nil || got.FFC.Available != c.available || got.FFC.Latest != "1.12.1" || got.FFC.Current != c.installed {
+			t.Errorf("ffc %s: %+v, %v", c.installed, got.FFC, err)
+		}
+		// The desktop answer is unchanged by the ffc one.
+		if !got.Available || got.Latest != "9.0.0" {
+			t.Errorf("ffc %s: desktop part %+v", c.installed, got)
+		}
+	}
+
+	// The release named is the one the installer takes (release.Latest: the
+	// first final v<digit> entry), so offer and install never differ. A
+	// backport listed first is never offered as an "update" (no downgrade).
+	backport := `[{"tag_name":"v1.11.5"},{"tag_name":"v1.12.0"}]`
+	got, err := ffcService(t, "0.1.0", "1.12.0", listJSON(backport)).CheckForUpdate(context.Background())
+	if err != nil || got.FFC.Available || got.FFC.Latest != "1.11.5" {
+		t.Errorf("backport first: %+v, %v", got.FFC, err)
+	}
+	srv := httptest.NewServer(listJSON(backport))
+	defer srv.Close()
+	if r, err := release.Latest(context.Background(), srv.URL, 5*time.Second); err != nil || r.TagName != "v"+got.FFC.Latest {
+		t.Errorf("installer picks %v, %v; the check named %s", r, err, got.FFC.Latest)
+	}
+
+	// A development build of the app still checks ffc; the desktop part stays empty.
+	got, err = ffcService(t, "0.0.0-dev", "1.12.0", list).CheckForUpdate(context.Background())
+	if err != nil || !got.FFC.Available || got.Available || got.Latest != "" {
+		t.Errorf("dev app: %+v, %v", got, err)
+	}
+
+	// An ffc built from source is never offered a release; with a dev app too, nothing is asked.
+	var hits atomic.Int32
+	got, err = ffcService(t, "0.0.0-dev", "dev", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`[{"tag_name":"v9.0.0"}]`))
+	}).CheckForUpdate(context.Background())
+	if err != nil || got.FFC.Available || got.FFC.Latest != "" || got.FFC.Current != "dev" || hits.Load() != 0 {
+		t.Errorf("dev ffc: %+v, %v, %d requests", got.FFC, err, hits.Load())
+	}
+
+	// An ffc the app would not replace (here a symlink to a multi-call
+	// binary) is left to its own update notice: no offer, no request.
+	s := ffcService(t, "0.0.0-dev", "1.12.0", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`[{"tag_name":"v9.0.0"}]`))
+	})
+	s.ffc.resolve = func(string) (string, error) { return "/usr/bin/busybox", nil }
+	got, err = s.CheckForUpdate(context.Background())
+	if err != nil || got.FFC.Available || got.FFC.Latest != "" || hits.Load() != 0 {
+		t.Errorf("not updatable: %+v, %v, %d requests", got.FFC, err, hits.Load())
+	}
+
+	// No ffc release in the list.
+	got, err = ffcService(t, "0.1.0", "1.12.0", listJSON(`[{"tag_name":"desktop-v0.1.0"}]`)).CheckForUpdate(context.Background())
+	if err != nil || got.FFC.Available || got.FFC.Latest != "" {
+		t.Errorf("no ffc release: %+v, %v", got.FFC, err)
 	}
 }

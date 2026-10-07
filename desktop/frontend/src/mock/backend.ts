@@ -105,10 +105,10 @@ let sites: StoredSite[] = configExists
 
 let ffc: FFCInfo =
   params.get("ffc") === "missing"
-    ? { found: false, path: "", version: "" }
+    ? { found: false, path: "", version: "", updatable: false }
     : params.get("ffc") === "broken"
-      ? { found: true, path: ffcPath, version: "", error: "exit status 1" }
-      : { found: true, path: ffcPath, version: "1.10.0" }
+      ? { found: true, path: ffcPath, version: "", error: "exit status 1", updatable: false }
+      : { found: true, path: ffcPath, version: "1.10.0", updatable: true }
 
 function changed() {
   configExists = true
@@ -286,7 +286,12 @@ export const backend: Backend = {
         }
         for (const cb of installListeners) cb(line)
       }
-      ffc = { found: true, path: ffcPath, version: "1.10.0" }
+      ffc = {
+        found: true,
+        path: ffcPath,
+        version: params.get("ffc-update") === "available" ? "1.12.0" : "1.10.0",
+        updatable: true,
+      }
       return ffc
     })
   },
@@ -298,12 +303,15 @@ export const backend: Backend = {
       })
     }
     const available = params.get("update") === "available"
+    // ?ffc-update=available: the installed ffc (1.10.0 until the mock install) is behind 1.12.0.
+    const ffcLatest = params.get("ffc-update") === "available" ? "1.12.0" : ffc.version
     return {
       available,
       current: "0.1.0",
       latest: available ? "0.2.0" : "0.1.0",
       url: "https://github.com/nasroykh/foxmayn_frappe_cli/releases/tag/desktop-v" + (available ? "0.2.0" : "0.1.0"),
       publishedAt: "2026-10-20T09:30:00Z",
+      ffc: { available: ffc.found && ffcLatest !== ffc.version, current: ffc.version, latest: ffcLatest },
     }
   },
   async openWebsite(url) {

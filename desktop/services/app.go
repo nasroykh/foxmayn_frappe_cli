@@ -41,8 +41,9 @@ type AppService struct {
 	configPath string
 	ffc        *FFCLocator
 	wsl        *wslDetector
-	// install installs ffc and returns its path (ffcInstaller.install).
-	install func(ctx context.Context, log func(string)) (string, error)
+	// install installs ffc (over the binary at over, when set) and returns its
+	// path (ffcInstaller.installAt).
+	install func(ctx context.Context, over string, log func(string)) (string, error)
 	// version is the running app version and releasesURL the release list the
 	// update check reads (tests point it at a fake).
 	version     string
@@ -59,7 +60,7 @@ type AppService struct {
 func NewAppService(host Host, configPath string, ffc *FFCLocator) *AppService {
 	home, _ := os.UserHomeDir()
 	return &AppService{
-		install:     newFFCInstaller(runtime.GOOS, home).install,
+		install:     newFFCInstaller(runtime.GOOS, home).installAt,
 		version:     AppVersion,
 		releasesURL: release.ReleasesURL,
 		host:        host,
@@ -116,8 +117,17 @@ func (s *AppService) RefreshFFC() FFCInfo {
 	return s.ffc.Refresh()
 }
 
+// updateTarget is the ffc binary InstallFFC replaces in place: the one the
+// app found, when FFCInfo.Updatable, so an update never leaves the old binary
+// first on PATH. "" (no ffc, a development build, anything the app must not
+// overwrite) installs into the installer's own folder.
+func (s *AppService) updateTarget() string {
+	return s.ffc.Info().target
+}
+
 // InstallFFC downloads the latest ffc release from GitHub, verifies its
-// signature and checksum, installs it for this user (see ffcInstaller), sends
+// signature and checksum, installs it for this user (see ffcInstaller) over
+// the ffc already found when that is a release build (updateTarget), sends
 // each step as an "installer:log" event, then looks for the binary again.
 // The UI asks the user first. Cancelling the call stops the download.
 func (s *AppService) InstallFFC(ctx context.Context) (FFCInfo, error) {
@@ -126,7 +136,7 @@ func (s *AppService) InstallFFC(ctx context.Context) (FFCInfo, error) {
 	}
 	defer s.installMu.Unlock()
 
-	_, err := s.install(ctx, func(line string) {
+	_, err := s.install(ctx, s.updateTarget(), func(line string) {
 		s.host.Emit(EventInstallerLog, InstallerLine{Line: line})
 	})
 	info := s.ffc.Refresh()

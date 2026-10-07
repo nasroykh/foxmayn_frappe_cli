@@ -2,7 +2,7 @@ import * as React from "react"
 
 import { backend } from "@/lib/backend"
 import { toast } from "@/components/ui/toast"
-import type { AssistantList, CheckResult, Environment, SiteList, UpdateInfo } from "@/lib/backend-types"
+import type { AssistantList, CheckResult, Environment, FFCUpdate, SiteList, UpdateInfo } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 
 const UPDATE_CHECKED_KEY = "ffd-update-checked"
@@ -75,6 +75,11 @@ interface AppContextValue {
   checkUpdate: () => Promise<UpdateInfo>
   /** Opens the release page in the browser. */
   downloadUpdate: (info: UpdateInfo) => Promise<void>
+  /**
+   * A newer ffc release than the installed ffc, from the latest check: null
+   * when there is none, or once the installed version changed (updated).
+   */
+  ffcUpdate: FFCUpdate | null
 
   /** Sites whose connection check is running. */
   checking: ReadonlySet<string>
@@ -158,18 +163,33 @@ export function AppProvider({
     markUpdateChecked()
     void checkUpdate().then(
       (info) => {
-        if (!info.available) return
-        toast.add({
-          title: `Foxmayn Frappe Desktop ${info.latest} is available`,
-          description: "A newer version can be downloaded from GitHub.",
-          type: "info",
-          timeout: 20000,
-          actionProps: { children: "Download", onClick: () => void downloadUpdate(info) },
-        })
+        if (info.available) {
+          toast.add({
+            title: `Foxmayn Frappe Desktop ${info.latest} is available`,
+            description: "A newer version can be downloaded from GitHub.",
+            type: "info",
+            timeout: 20000,
+            actionProps: { children: "Download", onClick: () => void downloadUpdate(info) },
+          })
+        }
+        if (info.ffc.available) {
+          toast.add({
+            title: `ffc ${info.ffc.latest} is available`,
+            description: `You have ffc ${info.ffc.current}. The app can update it for you.`,
+            type: "info",
+            timeout: 20000,
+            actionProps: { children: "Update", onClick: actions.installFFC },
+          })
+        }
       },
       () => {},
     )
-  }, [checkUpdate, downloadUpdate])
+  }, [checkUpdate, downloadUpdate, actions.installFFC])
+
+  // The check's answer stays valid only for the ffc it saw: after an update
+  // (or a new ffc found) the installed version differs, and nothing is offered.
+  const ffcUpdate =
+    update?.ffc.available && env.data?.ffc.found && env.data.ffc.version === update.ffc.current ? update.ffc : null
 
   const checkSite = React.useCallback(
     async (name: string) => {
@@ -201,6 +221,7 @@ export function AppProvider({
       checkingUpdate,
       checkUpdate,
       downloadUpdate,
+      ffcUpdate,
       checking,
       checkSite,
       screen,
@@ -218,6 +239,7 @@ export function AppProvider({
       checkingUpdate,
       checkUpdate,
       downloadUpdate,
+      ffcUpdate,
       checking,
       checkSite,
       screen,

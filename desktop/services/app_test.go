@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -78,10 +79,15 @@ func TestParseFFCVersion(t *testing.T) {
 	for in, want := range map[string]string{
 		"ffc version 1.10.0 (b75ef8c, 2026-10-06T09:07:10Z)\n": "1.10.0",
 		"ffc version dev (none, unknown)\n":                    "dev",
-		"something else\n":                                     "something else",
 	} {
-		if got := parseFFCVersion(in); got != want {
-			t.Errorf("parseFFCVersion(%q) = %q, want %q", in, got, want)
+		if got, ok := parseFFCVersion(in); !ok || got != want {
+			t.Errorf("parseFFCVersion(%q) = %q, %v, want %q", in, got, ok, want)
+		}
+	}
+	// Not ffc: another program that prints a version, or mentions ffc later on.
+	for _, in := range []string{"something else\n", "1.2.3\n", "tool 2.0 (ffc version v1.0.0)\n", ""} {
+		if got, ok := parseFFCVersion(in); ok {
+			t.Errorf("parseFFCVersion(%q) = %q, accepted", in, got)
 		}
 	}
 }
@@ -101,7 +107,7 @@ func TestInstallFFC(t *testing.T) {
 	loc := fakeLocator("darwin", "/Users/me", "", nil)
 	s := NewAppService(h, "/Users/me/.config/ffc/config.yaml", loc)
 	s.goos = "darwin"
-	s.install = func(ctx context.Context, log func(string)) (string, error) {
+	s.install = func(ctx context.Context, _ string, log func(string)) (string, error) {
 		log("Downloading ffc...")
 		log("Installed ffc v9.9.9 to /usr/local/bin/ffc")
 		loc.isFile = func(p string) bool { return p == "/usr/local/bin/ffc" }
@@ -117,16 +123,18 @@ func TestInstallFFC(t *testing.T) {
 
 	// A failing install, one that leaves no binary behind, and a cancelled one.
 	loc.isFile = func(string) bool { return false }
-	s.install = func(context.Context, func(string)) (string, error) { return "", errors.New("checksum mismatch") }
+	s.install = func(context.Context, string, func(string)) (string, error) {
+		return "", errors.New("checksum mismatch")
+	}
 	if _, err := s.InstallFFC(context.Background()); code(err) != CodeFailed {
 		t.Errorf("failing install: %v", err)
 	}
-	s.install = func(context.Context, func(string)) (string, error) { return "/usr/local/bin/ffc", nil }
+	s.install = func(context.Context, string, func(string)) (string, error) { return "/usr/local/bin/ffc", nil }
 	if _, err := s.InstallFFC(context.Background()); code(err) != CodeFailed {
 		t.Errorf("install without a binary: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s.install = func(ctx context.Context, _ func(string)) (string, error) { cancel(); return "", ctx.Err() }
+	s.install = func(ctx context.Context, _ string, _ func(string)) (string, error) { cancel(); return "", ctx.Err() }
 	if _, err := s.InstallFFC(ctx); code(err) != CodeCancelled {
 		t.Errorf("cancelled install: %v", err)
 	}
@@ -249,5 +257,65 @@ func TestSetWindowTheme(t *testing.T) {
 	}
 	if WindowBackground(true) == WindowBackground(false) {
 		t.Error("dark and light window backgrounds are the same")
+	}
+}
+
+func TestUpdateTarget(t *testing.T) {
+	winPath := `C:\Users\me\AppData\Local\Programs\ffc\ffc.exe`
+	cases := []struct {
+		name, goos, onPath, version string
+		verr                        error
+		resolved                    string // what a symlink resolves to (darwin)
+		want                        string // "" = install into the installer's folder
+	}{
+		{"windows release exe", "windows", winPath, "v1.12.0", nil, "", winPath},
+		{"windows cmd shim", "windows", `C:\tools\ffc.cmd`, "v1.12.0", nil, "", ""},
+		{"windows source build", "windows", winPath, "dev", nil, "", ""},
+		{"windows not ffc", "windows", winPath, "", errors.New(`"--version" did not answer like ffc`), "", ""},
+		{"darwin symlink to an ffc", "darwin", "/usr/local/bin/ffc", "1.12.0", nil, "/opt/ffc/bin/ffc", "/opt/ffc/bin/ffc"},
+		{"darwin symlink to a multi-call binary", "darwin", "/usr/local/bin/ffc", "1.12.0", nil, "/bin/busybox", ""},
+		{"not installed", "darwin", "", "", nil, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.goos == "windows" && runtime.GOOS != "windows" {
+				t.Skip("Windows paths need Windows path functions")
+			}
+			loc := fakeLocator(c.goos, "/home/me", c.onPath, nil)
+			loc.version = func(string) (string, error) { return c.version, c.verr }
+			loc.resolve = func(p string) (string, error) {
+				if c.resolved != "" {
+					return c.resolved, nil
+				}
+				return p, nil
+			}
+			s := NewAppService(&fakeHost{}, "/x/config.yaml", loc)
+			s.goos = c.goos
+			want := c.want
+			if want == winPath {
+				want, _ = filepath.Abs(want) // the locator makes PATH hits absolute
+			}
+			if got := s.updateTarget(); got != want {
+				t.Errorf("updateTarget = %q, want %q", got, want)
+			}
+			if info := s.ffc.Info(); info.Updatable != (want != "") {
+				t.Errorf("Updatable = %v", info.Updatable)
+			}
+
+			// InstallFFC hands that target to the installer.
+			var over string
+			s.install = func(_ context.Context, o string, _ func(string)) (string, error) {
+				over = o
+				loc.lookPath = func(string) (string, error) { return `C:\ffc.exe`, nil }
+				loc.version = func(string) (string, error) { return "v1.12.1", nil }
+				return o, nil
+			}
+			if _, err := s.InstallFFC(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if over != want {
+				t.Errorf("installed over %q, want %q", over, want)
+			}
+		})
 	}
 }

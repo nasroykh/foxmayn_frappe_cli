@@ -48,7 +48,7 @@ Not yet: Windows and macOS only. The CLI runs on Linux.
 No. The CLI contacts your sites and, once a day, GitHub to check for updates (`FFC_NO_UPDATE_CHECK` turns that off). The desktop app contacts your sites and GitHub.
 
 **How do I update?**
-`ffc update` for the CLI. For the desktop app, download the new installer when the app shows the update notice.
+`ffc update` for the CLI, or **Update** in the desktop app when it says a newer ffc is out. For the desktop app itself, download the new installer when the app shows the update notice.
 
 **Does ffc cache my documents?**
 No. It caches only app versions, DocType and report names, and schemas. See [the local cache](cli/schema-and-cache.md#the-local-cache).
