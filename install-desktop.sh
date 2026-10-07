@@ -82,9 +82,16 @@ VERSION="${FFD_VERSION:-}"
 VERSION="${VERSION#desktop-v}"
 VERSION="${VERSION#v}"
 if [ -z "$VERSION" ]; then
-  LIST=$(curl -fsSL -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${REPO}/releases?per_page=100" || true)
+  LIST=$(curl -fsSL -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${REPO}/releases?per_page=100" 2>/dev/null || true)
   # One field per line whether GitHub indents the JSON or not.
   VERSION=$(printf '%s\n' "$LIST" | tr ',' '\n' | sed -n 's/.*"tag_name": *"desktop-v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)".*/\1/p' | head -n 1)
+fi
+if [ -z "$VERSION" ]; then
+  # The API allows 60 requests an hour per IP address, which a shared network
+  # can use up; the releases feed (newest 10 releases) is not limited that way.
+  # Its link elements are the only raw quotes (release notes are escaped).
+  FEED=$(curl -fsSL "https://github.com/${REPO}/releases.atom" 2>/dev/null || true)
+  VERSION=$(printf '%s\n' "$FEED" | grep -o 'releases/tag/desktop-v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"' | head -n 1 | sed 's/.*desktop-v//; s/"$//' || true)
 fi
 case "$VERSION" in
   [0-9]*) ;;

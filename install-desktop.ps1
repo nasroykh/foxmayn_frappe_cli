@@ -39,6 +39,16 @@ if (-not $Version) {
         Select-Object -First 1 -ExpandProperty tag_name
     if ($Tag) { $Version = $Tag -replace '^desktop-v', '' }
 }
+if (-not $Version) {
+    # The API allows 60 requests an hour per IP address, which a shared
+    # network can use up; the releases feed (newest 10 releases) is not limited
+    # that way. Its link elements are the only raw quotes (notes are escaped).
+    try {
+        $Feed = (Invoke-WebRequest -UseBasicParsing "https://github.com/$Repo/releases.atom").Content
+        $M = [regex]::Match($Feed, 'releases/tag/desktop-v(\d+\.\d+\.\d+)"')
+        if ($M.Success) { $Version = $M.Groups[1].Value }
+    } catch { }
+}
 if ($Version -notmatch '^\d') {
     throw "Could not find the latest desktop release (GitHub may be limiting requests). Pick one from https://github.com/$Repo/releases and set `$env:FFD_VERSION before running this again."
 }
