@@ -311,6 +311,11 @@ export const backend: Backend = {
       latest: available ? "0.2.0" : "0.1.0",
       url: "https://github.com/nasroykh/foxmayn_frappe_cli/releases/tag/desktop-v" + (available ? "0.2.0" : "0.1.0"),
       publishedAt: "2026-10-20T09:30:00Z",
+      installCommand: !available
+        ? ""
+        : os === "windows"
+          ? 'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/desktop-v0.2.0/install-desktop.ps1 | iex"'
+          : "curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/desktop-v0.2.0/install-desktop.sh | sh",
       ffc: { available: ffc.found && ffcLatest !== ffc.version, current: ffc.version, latest: ffcLatest },
     }
   },

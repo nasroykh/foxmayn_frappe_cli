@@ -1,8 +1,35 @@
 # Install Foxmayn Frappe Desktop
 
-Download and install the desktop app on Windows or macOS, get past the warnings for unsigned beta builds, and uninstall it.
+Install the desktop app on Windows or macOS, update it, and uninstall it.
 
 Not an official Frappe product; not affiliated with Frappe Technologies.
+
+## Install from a terminal (recommended)
+
+One command downloads the newest desktop release, checks it, installs it and opens it. Use the same command to update.
+
+```bash
+# macOS (Terminal)
+curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install-desktop.sh | sh
+```
+
+```powershell
+# Windows (PowerShell or cmd.exe)
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install-desktop.ps1 | iex"
+```
+
+Why this is easier: beta builds are not yet signed by Apple or with a Windows code-signing certificate. A browser marks what it downloads, and macOS (Gatekeeper) or Windows (SmartScreen) then stops an unsigned app with a warning. A download made by `curl` or PowerShell is not marked, so the app opens normally. The scripts check the download themselves instead.
+
+| | `install-desktop.sh` (macOS) | `install-desktop.ps1` (Windows) |
+| --- | --- | --- |
+| SHA-256 against `checksums.txt` | Yes | Yes |
+| Signature of `checksums.txt` | Yes with OpenSSL 3 (`brew install openssl@3`); macOS's own LibreSSL cannot, and then the script says so | No (Windows has no built-in Ed25519 check) |
+| Installs to | `/Applications`, or `~/Applications` when that is not writable | `%LOCALAPPDATA%\Programs\Foxmayn Frappe Desktop` (per user, no administrator rights) |
+| An installed copy that is running | Quit first | Closed first |
+
+Options (environment variables): `FFD_VERSION=0.1.1` installs that version instead of the newest; `FFD_NO_OPEN=1` does not open the app afterwards. On macOS, `FFC_SKIP_SIGNATURE=1` skips the signature check, at your own risk.
+
+When a new version is out, the app's update notice (Settings > About) shows this command, pinned to that release, with a copy button.
 
 ## Download
 
@@ -16,7 +43,7 @@ Desktop releases are on the project's [Releases page](https://github.com/nasroyk
 
 Linux is not supported yet.
 
-## Windows
+## Windows (manual download)
 
 1. Run `foxmayn-frappe-desktop-<version>-windows-amd64-setup.exe`.
 2. Beta builds are not code-signed, so SmartScreen warns about an unknown publisher. Click **More info**, then **Run anyway**.
@@ -24,7 +51,7 @@ Linux is not supported yet.
 
 **Uninstall:** Settings > Apps > Installed apps > Foxmayn Frappe Desktop > Uninstall. The installer includes an uninstaller.
 
-## macOS
+## macOS (manual download)
 
 1. Open the `.dmg` and drag the app to **Applications**.
 2. Beta builds are not signed with an Apple Developer ID or notarized, so macOS blocks the first launch:

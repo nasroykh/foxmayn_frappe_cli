@@ -70,12 +70,22 @@ func TestCheckForUpdatePicksHighestDesktopSemver(t *testing.T) {
 
 func TestCheckForUpdateURLAndDate(t *testing.T) {
 	s := updateService(t, "0.1.0", listJSON(`[{"tag_name":"desktop-v0.2.0","html_url":"`+relBase+`desktop-v0.2.0","published_at":"2026-10-01T12:00:00+02:00"}]`))
+	s.goos = "darwin"
 	got, err := s.CheckForUpdate(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.URL != relBase+"desktop-v0.2.0" || got.PublishedAt != "2026-10-01T10:00:00Z" {
 		t.Errorf("got %+v", got)
+	}
+	// The terminal command runs the script from the release's own tag.
+	pinned := "https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/desktop-v0.2.0/"
+	if got.InstallCommand != "curl -fsSL "+pinned+"install-desktop.sh | sh" {
+		t.Errorf("darwin InstallCommand = %q", got.InstallCommand)
+	}
+	s.goos = "windows"
+	if got, _ := s.CheckForUpdate(context.Background()); !strings.Contains(got.InstallCommand, "irm "+pinned+"install-desktop.ps1 | iex") {
+		t.Errorf("windows InstallCommand = %q", got.InstallCommand)
 	}
 
 	for _, bad := range []string{
@@ -134,6 +144,11 @@ func TestCheckForUpdatePrereleaseRule(t *testing.T) {
 		}
 		if got.Available != c.avail || got.Latest != c.latest {
 			t.Errorf("current %s: available=%v latest=%q, want %v %q", c.cur, got.Available, got.Latest, c.avail, c.latest)
+		}
+		// The scripts install the newest stable release, so a prerelease
+		// offer has no command (the release page only).
+		if got.InstallCommand != "" {
+			t.Errorf("current %s: InstallCommand = %q for a prerelease", c.cur, got.InstallCommand)
 		}
 	}
 	// A flagged prerelease with a plain tag counts as one on 1.x.

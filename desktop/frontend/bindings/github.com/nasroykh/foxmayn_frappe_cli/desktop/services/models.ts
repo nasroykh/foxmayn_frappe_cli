@@ -393,6 +393,12 @@ export interface UpdateInfo {
     "publishedAt": string;
 
     /**
+     * InstallCommand installs Latest from a terminal (desktopInstallCommand),
+     * set when an update is available and Latest has no prerelease suffix.
+     */
+    "installCommand": string;
+
+    /**
      * FFC compares the installed ffc with the newest ffc release.
      */
     "ffc": FFCUpdate;

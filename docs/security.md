@@ -12,6 +12,10 @@ Every CLI release publishes `checksums.txt` (SHA-256 of each archive), `checksum
 | Desktop app's ffc install | Yes | Yes, same code as `ffc update`. |
 | `install.sh` | Yes | Yes when OpenSSL 3 is present; otherwise a warning and checksum only. |
 | `install.ps1` | Yes | No. |
+| `install-desktop.sh` (desktop app, macOS) | Yes | Yes when OpenSSL 3 is present (macOS ships LibreSSL, so usually Homebrew's `openssl@3`); otherwise a note and checksum only. It also refuses an app whose code signature does not verify. |
+| `install-desktop.ps1` (desktop app, Windows) | Yes | No. |
+
+Desktop releases sign `checksums.txt` with the same keys. The desktop app itself is not yet signed by Apple or with a Windows certificate; the install scripts download with `curl` or PowerShell, which do not mark the file as downloaded from the internet, so macOS Gatekeeper and Windows SmartScreen do not stop it. The checks above replace theirs.
 
 The signature is made over the text `ffc release checksums v1` followed by the contents of `checksums.txt`. Someone who can replace release files cannot also forge the signature. Two keys are trusted: the CI signing key and an offline backup key, so a leaked CI key can be replaced without breaking updates.
 

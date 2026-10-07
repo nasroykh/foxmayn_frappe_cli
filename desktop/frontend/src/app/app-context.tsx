@@ -1,6 +1,7 @@
 import * as React from "react"
 
 import { backend } from "@/lib/backend"
+import { copy } from "@/components/copy-field"
 import { toast } from "@/components/ui/toast"
 import type { AssistantList, CheckResult, Environment, FFCUpdate, SiteList, UpdateInfo } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
@@ -163,7 +164,17 @@ export function AppProvider({
     markUpdateChecked()
     void checkUpdate().then(
       (info) => {
-        if (info.available) {
+        if (info.available && info.installCommand) {
+          // The terminal command avoids the warnings an unsigned download meets.
+          const terminal = info.installCommand.startsWith("curl") ? "Terminal" : "PowerShell"
+          toast.add({
+            title: `Foxmayn Frappe Desktop ${info.latest} is available`,
+            description: `Copy the install command and run it in ${terminal}. Settings > About has it too.`,
+            type: "info",
+            timeout: 20000,
+            actionProps: { children: "Copy command", onClick: () => void copy(info.installCommand, "Command copied") },
+          })
+        } else if (info.available) {
           toast.add({
             title: `Foxmayn Frappe Desktop ${info.latest} is available`,
             description: "A newer version can be downloaded from GitHub.",
