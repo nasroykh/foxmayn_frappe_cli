@@ -13,7 +13,7 @@ require (
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/itchyny/gojq v0.12.19
 	github.com/mark3labs/mcp-go v1.1.1
-	github.com/mattn/go-isatty v0.0.20
+	github.com/mattn/go-isatty v0.0.24
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f
