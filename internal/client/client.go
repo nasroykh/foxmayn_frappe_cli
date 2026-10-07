@@ -895,6 +895,10 @@ func (c *FrappeClient) runReport(ctx context.Context, reportName, filtersJSON st
 	}
 	if ignorePrepared {
 		body["ignore_prepared_report"] = 1
+	} else {
+		// Otherwise a Custom Report's saved filters replace ours, and with
+		// them prepared_report_name (query_report.py _run, v15 and v16).
+		body["are_default_filters"] = 0
 	}
 	var result struct {
 		Message map[string]interface{} `json:"message"`

@@ -2,9 +2,12 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -18,8 +21,10 @@ import (
 // queue runs the report and attaches the result. get_reports_in_queued_state
 // lists the user's Queued/Started ones for a report and filters; it needs no
 // role, unlike reading Prepared Report documents (System Manager or Prepared
-// Report User). Frappe matches filters as JSON with sorted keys and no
-// spaces, which is what encoding/json writes.
+// Report User). Frappe matches filters after its own json.loads and
+// as_json on both sides, so how ffc encodes them does not matter (a number
+// keeps its type, though: 1.0 is not 1). A Custom Report's saved filters
+// are not applied here (are_default_filters=0): ours are what is matched.
 
 // PreparedOptions controls RunPreparedReport.
 type PreparedOptions struct {
@@ -80,7 +85,11 @@ func (c *FrappeClient) RunPreparedReport(ctx context.Context, reportName string,
 		return nil, err
 	}
 	name := opt.Name
-	if name == "" {
+	if name != "" {
+		if err := c.checkPrepared(ctx, reportName, filtersJSON, name); err != nil {
+			return nil, err
+		}
+	} else {
 		res, err := c.runReport(ctx, reportName, filtersJSON, false)
 		if err != nil {
 			return nil, err
@@ -120,7 +129,8 @@ func (c *FrappeClient) RunPreparedReport(ctx context.Context, reportName string,
 		var pr dataEnvelope
 		if c.do(ctx, http.MethodGet, resourcePath("Prepared Report", name), nil, nil, nil, &pr) == nil {
 			e.Status, _ = pr.Data["status"].(string)
-			e.Message, _ = pr.Data["error_message"].(string)
+			msg, _ := pr.Data["error_message"].(string)
+			e.Message = lastLine(msg)
 		}
 		return nil, e
 	}
@@ -151,7 +161,7 @@ func (c *FrappeClient) waitPrepared(ctx context.Context, reportName, filtersJSON
 		select {
 		case <-ctx.Done():
 			t.Stop()
-			return ctx.Err()
+			return fmt.Errorf("stopped waiting for prepared report %s, which keeps running (--prepared-name %s picks it up): %w", name, name, ctx.Err())
 		case <-t.C:
 		}
 		pause = min(pause*2, preparedPollMax)
@@ -192,4 +202,36 @@ func (c *FrappeClient) makePrepared(ctx context.Context, reportName, filtersJSON
 		return "", fmt.Errorf("unexpected response: make_prepared_report returned no name")
 	}
 	return result.Message.Name, nil
+}
+
+// checkPrepared refuses a Prepared Report made for another report or other
+// filters: run would return its result anyway (it only checks the owner),
+// and the wait, which looks for the job among those for our filters, would
+// not see it. When the user may not read Prepared Report documents the
+// check is skipped.
+func (c *FrappeClient) checkPrepared(ctx context.Context, reportName, filtersJSON, name string) error {
+	var pr dataEnvelope
+	if c.do(ctx, http.MethodGet, resourcePath("Prepared Report", name), nil, nil, nil, &pr) != nil {
+		return nil
+	}
+	if r, _ := pr.Data["report_name"].(string); r != reportName {
+		return &StateError{Message: fmt.Sprintf("prepared report %s is for report %q, not %q", name, r, reportName)}
+	}
+	var got, want interface{}
+	stored, _ := pr.Data["filters"].(string)
+	if json.Unmarshal([]byte(stored), &got) != nil || json.Unmarshal([]byte(filtersJSON), &want) != nil || !reflect.DeepEqual(got, want) {
+		return &StateError{Message: fmt.Sprintf("prepared report %s was made with the filters %s; pass the same --filters", name, stored)}
+	}
+	return nil
+}
+
+// lastLine keeps the last non-empty line of a Prepared Report's
+// error_message (Frappe stores the whole traceback), at most 300 runes.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	l := []rune(strings.TrimSpace(lines[len(lines)-1]))
+	if len(l) > 300 {
+		l = append(l[:299], '…')
+	}
+	return string(l)
 }

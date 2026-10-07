@@ -4,7 +4,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +35,11 @@ func contractPrepared(t *testing.T, c *client.FrappeClient, sc *config.SiteConfi
 	}); err != nil {
 		t.Fatalf("create report: %v", err)
 	}
-	t.Cleanup(func() { teardownPrepared(context.Background(), t, c) })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		teardownPrepared(ctx, t, c)
+	})
 	createContractDoc(t, c, map[string]interface{}{"title": "prepared"})
 
 	live, err := c.RunReport(ctx, contractPreparedReport, nil)
@@ -41,7 +47,8 @@ func contractPrepared(t *testing.T, c *client.FrappeClient, sc *config.SiteConfi
 		t.Fatalf("run with ignore_prepared_report: %v, prepared_report %v", err, live["prepared_report"])
 	}
 
-	opt := client.PreparedOptions{Wait: 3 * time.Minute}
+	// A healthy worker takes seconds; a missing one should fail fast.
+	opt := client.PreparedOptions{Wait: 90 * time.Second}
 	res, err := c.RunPreparedReport(ctx, contractPreparedReport, nil, opt)
 	if err != nil {
 		t.Fatalf("prepared run (is the long-queue worker running?): %v", err)
@@ -60,7 +67,7 @@ func contractPrepared(t *testing.T, c *client.FrappeClient, sc *config.SiteConfi
 	if d, _ := again["doc"].(map[string]interface{}); err != nil || d["name"] != doc["name"] {
 		t.Errorf("second run: %v, doc %v; want %v reused", err, again["doc"], doc["name"])
 	}
-	r := runFFC(t, contractConfig(t, sc), "", "--json", "run-report", "-n", contractPreparedReport, "--prepared", "--fresh", "--wait", "3m")
+	r := runFFC(t, contractConfig(t, sc), "", "--json", "run-report", "-n", contractPreparedReport, "--prepared", "--fresh", "--wait", "90s")
 	if r.Err != nil || !strings.Contains(r.Stderr, "From prepared report") || strings.Contains(r.Stderr, fmt.Sprint(doc["name"])+",") {
 		t.Errorf("run-report --prepared --fresh: %v\n%s", r.Err, r.Stderr)
 	}
@@ -71,7 +78,12 @@ func contractPrepared(t *testing.T, c *client.FrappeClient, sc *config.SiteConfi
 func teardownPrepared(ctx context.Context, t *testing.T, c *client.FrappeClient) {
 	t.Helper()
 	rep, err := c.GetDoc(ctx, "Report", contractPreparedReport)
+	var api *client.APIError
+	if errors.As(err, &api) && api.Status == http.StatusNotFound {
+		return
+	}
 	if err != nil {
+		t.Logf("teardown: read Report %q: %v (left in place)", contractPreparedReport, err)
 		return
 	}
 	if rep["ref_doctype"] != contractDT || rep["is_standard"] != "No" {

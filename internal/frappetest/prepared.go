@@ -61,7 +61,10 @@ func (s *Site) preparedRun(report string, result map[string]interface{}, filters
 	defer s.mu.Unlock()
 	var doc map[string]interface{}
 	if dn != "" {
-		doc = s.doctypes["Prepared Report"][dn]
+		// Frappe looks it up by name and owner first.
+		if d := s.doctypes["Prepared Report"][dn]; d != nil && d["owner"] == user {
+			doc = d
+		}
 	} else {
 		for _, d := range s.doctypes["Prepared Report"] {
 			if d["report_name"] == report && d["filters"] == norm && d["owner"] == user && d["status"] == "Completed" &&

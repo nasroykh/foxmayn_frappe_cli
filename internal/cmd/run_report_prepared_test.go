@@ -58,7 +58,7 @@ func TestCmdRunReportPrepared(t *testing.T) {
 	}
 	reqs := s.RequestsTo("POST", rpRun)
 	first, last := mcpTBody(t, reqs[0]), mcpTBody(t, reqs[1])
-	if fmt.Sprint(first["ignore_prepared_report"]) != "0" || first["filters"] != `{"company":"Acme","warehouse":"A"}` {
+	if fmt.Sprint(first["ignore_prepared_report"]) != "0" || fmt.Sprint(first["are_default_filters"]) != "0" || first["filters"] != `{"company":"Acme","warehouse":"A"}` {
 		t.Errorf("first run %v", first)
 	}
 	if want := fmt.Sprintf(`{"company":"Acme","prepared_report_name":"%v","warehouse":"A"}`, doc["name"]); last["filters"] != want {
@@ -120,13 +120,22 @@ func TestCmdRunReportPreparedPending(t *testing.T) {
 	if _, m, _ := rpCount(s); m != makes {
 		t.Fatalf("--prepared-name made a new job")
 	}
+	// A name made with other filters or for another report is refused.
+	r = cmdTRun(t, s, "run-report", "-n", "Stock", "--filters", `{"company":"Other"}`, "--prepared-name", name[1])
+	if r.Code != exitValidation || !strings.Contains(r.Err.Error(), `made with the filters {"company":"Acme"}`) {
+		t.Fatalf("other filters: exit %d: %v", r.Code, r.Err)
+	}
+	r = cmdTRun(t, s, "run-report", "-n", "Plain", "--filters", `{"company":"Acme"}`, "--prepared-name", name[1])
+	if r.Code != exitValidation || !strings.Contains(r.Err.Error(), `is for report "Stock"`) {
+		t.Fatalf("other report: exit %d: %v", r.Code, r.Err)
+	}
 }
 
 func TestCmdRunReportPreparedFails(t *testing.T) {
 	s := rpSite(t)
-	s.PrepareReport("Stock", 1, "division by zero")
+	s.PrepareReport("Stock", 1, "Traceback (most recent call last):\n  File \"x.py\", line 1\nZeroDivisionError: division by zero\n")
 	r := cmdTRun(t, s, "run-report", "-n", "Stock", "--prepared")
-	if r.Code != exitNetwork || !strings.Contains(r.Err.Error(), "has no result (status Error): division by zero") {
+	if r.Code != exitNetwork || !strings.Contains(r.Err.Error(), "has no result (status Error): ZeroDivisionError: division by zero") || strings.Contains(r.Err.Error(), "Traceback") {
 		t.Fatalf("exit %d: %v", r.Code, r.Err)
 	}
 
