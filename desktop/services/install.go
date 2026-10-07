@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,17 +84,30 @@ func (i *ffcInstaller) dir() (string, error) {
 // each step. It returns the installed binary's path. Cancelling ctx stops the
 // download; nothing is written after ctx ends.
 func (i *ffcInstaller) install(ctx context.Context, log func(string)) (string, error) {
-	path, err := i.run(ctx, log)
+	return i.installAt(ctx, "", log)
+}
+
+// installAt is install, but over the binary at over when over is set:
+// an ffc found elsewhere (on PATH, /usr/local/bin) is updated where it is,
+// instead of a second copy landing in dir() behind it.
+func (i *ffcInstaller) installAt(ctx context.Context, over string, log func(string)) (string, error) {
+	path, err := i.run(ctx, over, log)
 	if err != nil && ctx.Err() == nil {
 		log("error: " + err.Error())
 	}
 	return path, err
 }
 
-func (i *ffcInstaller) run(ctx context.Context, log func(string)) (string, error) {
-	dir, err := i.dir()
-	if err != nil {
-		return "", err
+func (i *ffcInstaller) run(ctx context.Context, over string, log func(string)) (string, error) {
+	path, dir := over, filepath.Dir(over)
+	if over == "" {
+		d, err := i.dir()
+		if err != nil {
+			return "", err
+		}
+		path, dir = filepath.Join(d, release.BinaryName(i.goos)), d
+	} else {
+		log("Updating the ffc at " + path)
 	}
 	log(fmt.Sprintf("Detecting platform... %s/%s", i.goos, i.goarch))
 	log("Fetching the latest release from GitHub...")
@@ -115,12 +129,18 @@ func (i *ffcInstaller) run(ctx context.Context, log func(string)) (string, error
 		return "", err
 	}
 
-	path := filepath.Join(dir, release.BinaryName(i.goos))
 	if err := writeBinary(path, bin, i.goos == "windows"); err != nil {
+		if over != "" && errors.Is(err, fs.ErrPermission) {
+			return "", fmt.Errorf(`%w; this app cannot write to %s. Update ffc in a terminal with "ffc update" (with sudo if it is a system folder)`, err, dir)
+		}
 		return "", err
 	}
 	log("Installed ffc " + rel.TagName + " to " + path)
 
+	if over != "" {
+		// It was found there, so PATH (or the locator) already reaches it.
+		return path, nil
+	}
 	if i.goos == "windows" {
 		switch added, err := i.addToPath(dir); {
 		case err != nil:

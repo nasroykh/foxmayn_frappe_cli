@@ -35,9 +35,14 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   const command = env.data?.installCommand ?? ""
   const isMac = env.data?.os === "darwin"
+  // An ffc that is already there is replaced where it is (the Go side picks
+  // the place); the wording follows. Fixed while the dialog runs.
+  const [updating, setUpdating] = React.useState(false)
+  const installed = env.data?.ffc
 
   React.useEffect(() => {
     if (open && phase !== "running") {
+      setUpdating(!!installed?.found)
       setPhase("confirm")
       setLog([])
       setError(null)
@@ -63,8 +68,10 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
       setResult(info)
       setPhase("done")
       toast.add({
-        title: "ffc is installed",
-        description: `Version ${info.version || "unknown"} is ready.`,
+        title: updating ? "ffc is updated" : "ffc is installed",
+        description: updating
+          ? `Version ${info.version || "unknown"} is ready. Restart your connected assistants to use it.`
+          : `Version ${info.version || "unknown"} is ready.`,
         type: "success",
       })
       void reloadEnv()
@@ -92,14 +99,15 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
     >
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg" showCloseButton={!running}>
         <DialogHeader>
-          <DialogTitle>Install the ffc helper</DialogTitle>
+          <DialogTitle>{updating ? "Update the ffc helper" : "Install the ffc helper"}</DialogTitle>
           <DialogDescription>
-            Assistants use ffc, a small program from Foxmayn, to talk to your Frappe sites. This downloads the latest
-            ffc release from GitHub, checks its signature and installs it for your user only.
+            {updating
+              ? `This downloads the latest ffc release from GitHub, checks its signature and replaces the ffc ${installed?.version || ""} at ${installed?.path ?? ""}. A development build of ffc is left alone and a new copy is installed for your user instead.`
+              : "Assistants use ffc, a small program from Foxmayn, to talk to your Frappe sites. This downloads the latest ffc release from GitHub, checks its signature and installs it for your user only."}
           </DialogDescription>
         </DialogHeader>
 
-        {phase === "confirm" && (
+        {phase === "confirm" && !updating && (
           <Collapsible>
             <CollapsibleTrigger render={<Button variant="link" size="sm" className="px-0" />}>
               Where it goes
@@ -130,7 +138,14 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
               <Alert>
                 <IconCircleCheck />
                 <AlertTitle>ffc {result.version} is installed</AlertTitle>
-                <AlertDescription className="break-all">{result.path}</AlertDescription>
+                <AlertDescription className="break-all">
+                  {result.path}
+                  {updating && (
+                    <span className="block break-normal">
+                      Restart your connected assistants (quit them fully) so they use the new version.
+                    </span>
+                  )}
+                </AlertDescription>
               </Alert>
             )}
             {phase === "failed" && error && (
@@ -167,7 +182,7 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
               </Button>
               <Button onClick={start}>
                 <IconDownload data-icon="inline-start" />
-                Install ffc
+                {updating ? "Update ffc" : "Install ffc"}
               </Button>
             </>
           )}

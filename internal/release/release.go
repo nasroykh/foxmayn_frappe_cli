@@ -78,15 +78,16 @@ func Latest(ctx context.Context, url string, timeout time.Duration) (*Release, e
 		return nil, fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode())
 	}
 	for i := range rels {
-		if r := &rels[i]; !r.Draft && !r.Prerelease && isCLITag(r.TagName) {
+		if r := &rels[i]; !r.Draft && !r.Prerelease && IsCLITag(r.TagName) {
 			return r, nil
 		}
 	}
 	return nil, fmt.Errorf("no ffc release found on GitHub")
 }
 
-// isCLITag reports whether tag is an ffc CLI release tag: "v" then a digit.
-func isCLITag(tag string) bool {
+// IsCLITag reports whether tag is an ffc CLI release tag: "v" then a digit.
+// Desktop releases ("desktop-v...") never match.
+func IsCLITag(tag string) bool {
 	return len(tag) > 1 && tag[0] == 'v' && tag[1] >= '0' && tag[1] <= '9'
 }
 

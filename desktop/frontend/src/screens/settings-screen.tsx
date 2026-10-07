@@ -133,7 +133,7 @@ function GeneralTab() {
 }
 
 function FFCTab() {
-  const { env, reloadEnv, reloadAssistants, installFFC } = useApp()
+  const { env, reloadEnv, reloadAssistants, installFFC, ffcUpdate } = useApp()
   const [refreshing, setRefreshing] = React.useState(false)
   const ffc = env.data?.ffc
 
@@ -159,7 +159,12 @@ function FFCTab() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             ffc helper
-            {ok ? (
+            {ok && ffcUpdate ? (
+              <Badge variant="secondary">
+                <IconArrowUpCircle data-icon="inline-start" />
+                Update available
+              </Badge>
+            ) : ok ? (
               <Badge>
                 <IconCircleCheck data-icon="inline-start" />
                 Installed
@@ -193,9 +198,19 @@ function FFCTab() {
                   </AlertDescription>
                 </Alert>
               )}
+              {ffcUpdate && (
+                <Alert>
+                  <IconArrowUpCircle />
+                  <AlertTitle>ffc {ffcUpdate.latest} is available</AlertTitle>
+                  <AlertDescription>
+                    Updating replaces the ffc above, where it is. Restart your connected assistants afterwards so they
+                    use the new version.
+                  </AlertDescription>
+                </Alert>
+              )}
               <p className="text-muted-foreground text-sm">
-                To update it, run <code className="bg-muted rounded px-1 py-0.5 font-mono text-xs">ffc update</code> in
-                a terminal, or install it again here.
+                The app looks for a newer ffc once a day (Check for updates in About looks now). You can also run{" "}
+                <code className="bg-muted rounded px-1 py-0.5 font-mono text-xs">ffc update</code> in a terminal.
               </p>
             </>
           ) : (
@@ -206,10 +221,17 @@ function FFCTab() {
           )}
         </CardContent>
         <CardFooter className="gap-2">
-          <Button onClick={installFFC} variant={ok ? "outline" : "default"}>
-            <IconDownload data-icon="inline-start" />
-            {ffc.found ? "Install again" : "Install ffc"}
-          </Button>
+          {ok && ffcUpdate ? (
+            <Button onClick={installFFC}>
+              <IconArrowUpCircle data-icon="inline-start" />
+              Update to {ffcUpdate.latest}
+            </Button>
+          ) : (
+            <Button onClick={installFFC} variant={ok ? "outline" : "default"}>
+              <IconDownload data-icon="inline-start" />
+              {ffc.found ? "Install again" : "Install ffc"}
+            </Button>
+          )}
           <Button variant="outline" onClick={refresh} disabled={refreshing}>
             {refreshing ? <Spinner data-icon="inline-start" /> : <IconRefresh data-icon="inline-start" />}
             Look again
@@ -259,7 +281,7 @@ function UpdateResult({ result }: { result: UpdateOutcome }) {
   return (
     <Alert>
       <IconCircleCheck />
-      <AlertTitle>You are up to date</AlertTitle>
+      <AlertTitle>The app is up to date</AlertTitle>
       <AlertDescription>Version {result.info.current} is the newest one.</AlertDescription>
     </Alert>
   )
@@ -276,7 +298,7 @@ function formatDate(iso: string) {
 }
 
 function AboutTab() {
-  const { env, update, checkingUpdate, checkUpdate } = useApp()
+  const { env, update, checkingUpdate, checkUpdate, ffcUpdate, installFFC } = useApp()
   // What the button found; before any click, what the startup check found.
   const [clicked, setClicked] = React.useState<UpdateOutcome | null>(null)
   const result: UpdateOutcome | null =
@@ -322,7 +344,21 @@ function AboutTab() {
             Check for updates
           </Button>
         </div>
-        <div aria-live="polite">{result && <UpdateResult result={result} />}</div>
+        <div aria-live="polite" className="flex flex-col gap-3">
+          {result && <UpdateResult result={result} />}
+          {ffcUpdate && (
+            <Alert>
+              <IconArrowUpCircle />
+              <AlertTitle>ffc {ffcUpdate.latest} is available</AlertTitle>
+              <AlertDescription>You have ffc {ffcUpdate.current}.</AlertDescription>
+              <AlertAction>
+                <Button size="sm" onClick={installFFC}>
+                  Update ffc
+                </Button>
+              </AlertAction>
+            </Alert>
+          )}
+        </div>
       </div>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={() => attempt(() => backend.openWebsite(REPO))}>

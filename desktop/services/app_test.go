@@ -101,7 +101,7 @@ func TestInstallFFC(t *testing.T) {
 	loc := fakeLocator("darwin", "/Users/me", "", nil)
 	s := NewAppService(h, "/Users/me/.config/ffc/config.yaml", loc)
 	s.goos = "darwin"
-	s.install = func(ctx context.Context, log func(string)) (string, error) {
+	s.install = func(ctx context.Context, _ string, log func(string)) (string, error) {
 		log("Downloading ffc...")
 		log("Installed ffc v9.9.9 to /usr/local/bin/ffc")
 		loc.isFile = func(p string) bool { return p == "/usr/local/bin/ffc" }
@@ -117,16 +117,18 @@ func TestInstallFFC(t *testing.T) {
 
 	// A failing install, one that leaves no binary behind, and a cancelled one.
 	loc.isFile = func(string) bool { return false }
-	s.install = func(context.Context, func(string)) (string, error) { return "", errors.New("checksum mismatch") }
+	s.install = func(context.Context, string, func(string)) (string, error) {
+		return "", errors.New("checksum mismatch")
+	}
 	if _, err := s.InstallFFC(context.Background()); code(err) != CodeFailed {
 		t.Errorf("failing install: %v", err)
 	}
-	s.install = func(context.Context, func(string)) (string, error) { return "/usr/local/bin/ffc", nil }
+	s.install = func(context.Context, string, func(string)) (string, error) { return "/usr/local/bin/ffc", nil }
 	if _, err := s.InstallFFC(context.Background()); code(err) != CodeFailed {
 		t.Errorf("install without a binary: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s.install = func(ctx context.Context, _ func(string)) (string, error) { cancel(); return "", ctx.Err() }
+	s.install = func(ctx context.Context, _ string, _ func(string)) (string, error) { cancel(); return "", ctx.Err() }
 	if _, err := s.InstallFFC(ctx); code(err) != CodeCancelled {
 		t.Errorf("cancelled install: %v", err)
 	}
@@ -249,5 +251,39 @@ func TestSetWindowTheme(t *testing.T) {
 	}
 	if WindowBackground(true) == WindowBackground(false) {
 		t.Error("dark and light window backgrounds are the same")
+	}
+}
+
+func TestInstallFFCUpdatesInPlace(t *testing.T) {
+	cases := []struct {
+		name, onPath, version, want string
+	}{
+		{"release build on PATH", "/usr/local/bin/ffc", "v1.12.0", "/usr/local/bin/ffc"},
+		{"source build", "/Users/me/go/bin/ffc", "dev", ""},
+		{"not installed", "", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			loc := fakeLocator("windows", `C:\Users\me`, c.onPath, nil)
+			loc.version = func(string) (string, error) { return c.version, nil }
+			s := NewAppService(&fakeHost{}, "/x/config.yaml", loc)
+			s.goos = "windows"
+			var over string
+			s.install = func(_ context.Context, o string, _ func(string)) (string, error) {
+				over = o
+				loc.lookPath = func(string) (string, error) { return `C:\ffc.exe`, nil }
+				return o, nil
+			}
+			if _, err := s.InstallFFC(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			want := c.want
+			if want != "" {
+				want, _ = filepath.Abs(want) // the locator makes PATH hits absolute
+			}
+			if over != want {
+				t.Errorf("installed over %q, want %q", over, want)
+			}
+		})
 	}
 }

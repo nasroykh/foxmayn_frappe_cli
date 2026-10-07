@@ -200,3 +200,63 @@ func TestInstallerRealRelease(t *testing.T) {
 		t.Errorf("version = %q", v)
 	}
 }
+
+func TestInstallerInPlace(t *testing.T) {
+	for _, goos := range []string{"windows", "darwin"} {
+		t.Run(goos, func(t *testing.T) {
+			i, dir, log := fakeInstaller(t, goos)
+			i.addToPath = func(string) (bool, error) { t.Error("PATH changed for an in-place update"); return false, nil }
+			i.shellPath = func() (string, error) { t.Error("shell PATH read for an in-place update"); return "", nil }
+			over := filepath.Join(dir, "elsewhere", release.BinaryName(goos))
+			if err := os.MkdirAll(filepath.Dir(over), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(over, []byte("OLD"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path, err := i.installAt(context.Background(), over, func(l string) { *log = append(*log, l) })
+			if err != nil || path != over {
+				t.Fatalf("installAt = %q, %v", path, err)
+			}
+			if b, _ := os.ReadFile(over); string(b) != "NEW" {
+				t.Errorf("binary = %q", b)
+			}
+			def, _ := i.dir()
+			if _, err := os.Stat(filepath.Join(def, release.BinaryName(goos))); !os.IsNotExist(err) {
+				t.Errorf("a second copy was installed in %s: %v", def, err)
+			}
+			if !strings.Contains(strings.Join(*log, "\n"), "Updating the ffc at "+over) {
+				t.Errorf("log = %v", *log)
+			}
+		})
+	}
+}
+
+func TestInstallerInPlaceNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("folder permissions via chmod need a Unix file system")
+	}
+	i, dir, log := fakeInstaller(t, "darwin")
+	sys := filepath.Join(dir, "system")
+	over := filepath.Join(sys, "ffc")
+	if err := os.MkdirAll(sys, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(over, []byte("OLD"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sys, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sys, 0o755) })
+	if os.Geteuid() == 0 {
+		t.Skip("root writes anywhere")
+	}
+	_, err := i.installAt(context.Background(), over, func(l string) { *log = append(*log, l) })
+	if err == nil || !strings.Contains(err.Error(), `"ffc update"`) {
+		t.Fatalf("installAt = %v", err)
+	}
+	if b, _ := os.ReadFile(over); string(b) != "OLD" {
+		t.Errorf("binary changed: %q", b)
+	}
+}

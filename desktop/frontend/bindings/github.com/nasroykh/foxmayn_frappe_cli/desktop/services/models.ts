@@ -190,6 +190,25 @@ export interface FFCInfo {
 }
 
 /**
+ * FFCUpdate says whether a newer ffc release than the installed one exists.
+ * InstallFFC installs it.
+ */
+export interface FFCUpdate {
+    "available": boolean;
+
+    /**
+     * Current is the installed ffc's version ("" when ffc is not installed).
+     */
+    "current": string;
+
+    /**
+     * Latest is the newest ffc release ("" when none was found or the
+     * installed ffc is not a release build).
+     */
+    "latest": string;
+}
+
+/**
  * InstallerLine is the payload of EventInstallerLog.
  */
 export interface InstallerLine {
@@ -363,6 +382,11 @@ export interface UpdateInfo {
      * PublishedAt is the release's publish time (RFC 3339), or "".
      */
     "publishedAt": string;
+
+    /**
+     * FFC compares the installed ffc with the newest ffc release.
+     */
+    "ffc": FFCUpdate;
 }
 
 /**

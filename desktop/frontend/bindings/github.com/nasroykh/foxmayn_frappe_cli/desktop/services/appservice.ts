@@ -20,7 +20,10 @@ import * as $models from "./models.js";
  * desktop-v<semver>, not a draft) and compares it with this app's version.
  * A prerelease counts only while the running version is 0.x or itself a
  * prerelease. A version that does not parse (a development build) is never
- * offered an update. It sends no credentials; cancelling ctx stops it.
+ * offered an update. From the same list it compares the installed ffc with
+ * the newest ffc release (the rule of `ffc update`: not a draft, not a
+ * prerelease, a v<digit> tag). It sends no credentials; cancelling ctx stops
+ * it.
  */
 export function CheckForUpdate(): $CancellablePromise<$models.UpdateInfo> {
     return $Call.ByID(1350308504);
@@ -36,7 +39,8 @@ export function Environment(): $CancellablePromise<$models.Environment> {
 
 /**
  * InstallFFC downloads the latest ffc release from GitHub, verifies its
- * signature and checksum, installs it for this user (see ffcInstaller), sends
+ * signature and checksum, installs it for this user (see ffcInstaller) over
+ * the ffc already found when that is a release build (updateTarget), sends
  * each step as an "installer:log" event, then looks for the binary again.
  * The UI asks the user first. Cancelling the call stops the download.
  */

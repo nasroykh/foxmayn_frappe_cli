@@ -1,4 +1,4 @@
-import { IconAlertTriangle, IconCircleCheck, IconPlus, IconRobot, IconSettings, IconWorld } from "@tabler/icons-react"
+import { IconAlertTriangle, IconArrowUpCircle, IconCircleCheck, IconPlus, IconRobot, IconSettings, IconWorld } from "@tabler/icons-react"
 
 import { useApp, type Screen } from "@/app/app-context"
 import { BrandLogo } from "@/components/brand-logo"
@@ -24,7 +24,7 @@ const nav: { id: Screen; label: string; icon: typeof IconWorld }[] = [
 ]
 
 export function AppSidebar() {
-  const { screen, setScreen, sites, assistants, env, update, addSite, installFFC } = useApp()
+  const { screen, setScreen, sites, assistants, env, update, addSite, installFFC, ffcUpdate } = useApp()
   const siteCount = sites.data?.sites?.length ?? 0
   const connected = assistants.data?.assistants?.filter((a) => a.status === "connected").length ?? 0
   const ffc = env.data?.ffc
@@ -97,6 +97,11 @@ export function AppSidebar() {
           <SidebarMenuItem>
             {!ffc ? (
               <SidebarMenuSkeleton showIcon />
+            ) : ffc.found && !ffc.error && ffcUpdate ? (
+              <SidebarMenuButton onClick={installFFC} tooltip={`Update ffc ${ffc.version} to ${ffcUpdate.latest}`}>
+                <IconArrowUpCircle />
+                <span className="truncate">ffc {ffcUpdate.latest} available</span>
+              </SidebarMenuButton>
             ) : ffc.found && !ffc.error ? (
               <SidebarMenuButton onClick={() => setScreen("settings")} tooltip={`ffc helper at ${ffc.path}`}>
                 <IconCircleCheck />

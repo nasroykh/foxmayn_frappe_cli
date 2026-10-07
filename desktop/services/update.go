@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/release"
 )
 
 const (
@@ -33,6 +34,19 @@ type UpdateInfo struct {
 	URL string `json:"url"`
 	// PublishedAt is the release's publish time (RFC 3339), or "".
 	PublishedAt string `json:"publishedAt"`
+	// FFC compares the installed ffc with the newest ffc release.
+	FFC FFCUpdate `json:"ffc"`
+}
+
+// FFCUpdate says whether a newer ffc release than the installed one exists.
+// InstallFFC installs it.
+type FFCUpdate struct {
+	Available bool `json:"available"`
+	// Current is the installed ffc's version ("" when ffc is not installed).
+	Current string `json:"current"`
+	// Latest is the newest ffc release ("" when none was found or the
+	// installed ffc is not a release build).
+	Latest string `json:"latest"`
 }
 
 // updateRelease is the part of GitHub's release JSON the check reads.
@@ -48,17 +62,30 @@ type updateRelease struct {
 // desktop-v<semver>, not a draft) and compares it with this app's version.
 // A prerelease counts only while the running version is 0.x or itself a
 // prerelease. A version that does not parse (a development build) is never
-// offered an update. It sends no credentials; cancelling ctx stops it.
+// offered an update. From the same list it compares the installed ffc with
+// the newest ffc release (the rule of `ffc update`: not a draft, not a
+// prerelease, a v<digit> tag). It sends no credentials; cancelling ctx stops
+// it.
 func (s *AppService) CheckForUpdate(ctx context.Context) (UpdateInfo, error) {
 	info := UpdateInfo{Current: s.version}
-	cur, ok := parseSemver(s.version)
-	if !ok || cur.isDevBuild() {
+	cur, appOK := releaseVersion(s.version)
+	installed := s.ffc.Info()
+	ffcCur, ffcOK := releaseVersion(installed.Version)
+	ffcOK = ffcOK && installed.Found
+	info.FFC.Current = installed.Version
+	if !appOK && !ffcOK {
 		return info, nil
 	}
 
 	rels, err := s.fetchReleases(ctx)
 	if err != nil {
 		return info, err
+	}
+	if ffcOK {
+		info.FFC = newestFFC(rels, ffcCur, installed.Version)
+	}
+	if !appOK {
+		return info, nil
 	}
 	var best *updateRelease
 	var bestVer semver
@@ -85,6 +112,39 @@ func (s *AppService) CheckForUpdate(ctx context.Context) (UpdateInfo, error) {
 	}
 	info.Available = bestVer.compare(cur) > 0
 	return info, nil
+}
+
+// newestFFC compares the installed ffc (cur, shown as current) with the
+// newest ffc release in rels, the one `ffc update` would install.
+func newestFFC(rels []updateRelease, cur semver, current string) FFCUpdate {
+	out := FFCUpdate{Current: current}
+	var best semver
+	found := false
+	for i := range rels {
+		r := &rels[i]
+		if r.Draft || r.Prerelease || !release.IsCLITag(r.TagName) {
+			continue
+		}
+		v, ok := parseSemver(r.TagName)
+		if !ok || v.pre != "" {
+			continue
+		}
+		if !found || v.compare(best) > 0 {
+			best, found = v, true
+		}
+	}
+	if found {
+		out.Latest = best.String()
+		out.Available = best.compare(cur) > 0
+	}
+	return out
+}
+
+// releaseVersion parses a release version; a development build ("dev",
+// "0.0.0-dev") is not one.
+func releaseVersion(s string) (semver, bool) {
+	v, ok := parseSemver(s)
+	return v, ok && !v.isDevBuild()
 }
 
 func (s *AppService) fetchReleases(ctx context.Context) ([]updateRelease, error) {

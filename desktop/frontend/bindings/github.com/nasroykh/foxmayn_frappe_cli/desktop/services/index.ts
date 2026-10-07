@@ -22,6 +22,7 @@ export type {
     ConnectRequest,
     Environment,
     FFCInfo,
+    FFCUpdate,
     InstallerLine,
     PasswordRequest,
     Preview,
