@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -277,6 +278,9 @@ func TestUpdateTarget(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			if c.goos == "windows" && runtime.GOOS != "windows" {
+				t.Skip("Windows paths need Windows path functions")
+			}
 			loc := fakeLocator(c.goos, "/home/me", c.onPath, nil)
 			loc.version = func(string) (string, error) { return c.version, c.verr }
 			loc.resolve = func(p string) (string, error) {
