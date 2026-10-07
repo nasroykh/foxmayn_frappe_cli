@@ -12,7 +12,7 @@
 
 `<config dir>` is `%APPDATA%` on Windows, `~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config` on Linux.
 
-UNVERIFIED (per the project's own notes): Cursor's Windows path and the VS Code paths are inferred; `CODEX_HOME` was checked against one codex-cli release only.
+Checked on a real Windows install: Cursor's and VS Code's Windows paths. UNVERIFIED (per the project's own notes): the VS Code paths on macOS and Linux are inferred; `CODEX_HOME` was checked against one codex-cli release only.
 
 ## Behaviour
 
