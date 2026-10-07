@@ -80,6 +80,8 @@ type Site struct {
 	searchFields map[string][]string
 	globalSearch map[string][]string
 	reports      map[string]map[string]interface{}
+	prepared     map[string]preparedJob // prepared reports, see prepared.go
+	jobs         map[string]int         // Prepared Report name → worker steps left
 	methods      map[string]MethodFunc
 	overrides    map[string]http.Handler
 	sessions     map[string]bool
@@ -124,6 +126,8 @@ func New(t testing.TB) *Site {
 		tables:    map[string]map[string]string{},
 		onSubmit:  map[string]map[string]bool{},
 		reports:   map[string]map[string]interface{}{},
+		prepared:  map[string]preparedJob{},
+		jobs:      map[string]int{},
 		methods:   map[string]MethodFunc{},
 		overrides: map[string]http.Handler{},
 		sessions:  map[string]bool{},
@@ -474,7 +478,11 @@ func (s *Site) method(w http.ResponseWriter, r *http.Request, name string, body 
 	case name == "frappe.client.get_value":
 		result, err = s.getValue(args)
 	case name == "frappe.desk.query_report.run":
-		result, err = s.runReport(args)
+		result, err = s.runReport(args, user)
+	case name == "frappe.core.doctype.prepared_report.prepared_report.make_prepared_report":
+		result, err = s.makePrepared(args, user)
+	case name == "frappe.core.doctype.prepared_report.prepared_report.get_reports_in_queued_state":
+		result, err = s.queuedPrepared(args, user)
 	default:
 		err = Validation(fmt.Sprintf("Failed to get method for command %s with No module named '%s'", name, name))
 	}
@@ -558,13 +566,17 @@ func (s *Site) getValue(args map[string]interface{}) (interface{}, error) {
 	return out, nil
 }
 
-func (s *Site) runReport(args map[string]interface{}) (interface{}, error) {
+func (s *Site) runReport(args map[string]interface{}, user string) (interface{}, error) {
 	name, _ := args["report_name"].(string)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	res, ok := s.reports[name]
+	_, prepared := s.prepared[name]
+	s.mu.Unlock()
 	if !ok {
 		return nil, NotFound(fmt.Sprintf("Report %s not found", name))
+	}
+	if prepared && fmt.Sprint(args["ignore_prepared_report"]) != "1" {
+		return s.preparedRun(name, res, args["filters"], user), nil
 	}
 	return res, nil
 }

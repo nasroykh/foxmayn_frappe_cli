@@ -32,8 +32,29 @@ ffc run-report -n "Accounts Receivable" --json --keys columns,result
 | `--filters` | Report filters as a JSON object (also `@FILE`, `@-`). |
 | `-l, --limit` | Maximum result rows, for the table and JSON (`0` = all). |
 | `--keys` | Top-level keys to keep in JSON output, e.g. `columns,result`. |
+| `--prepared` | Use Frappe's background job (prepared report) instead of running the report in the request. |
+| `--fresh` | With `--prepared`: prepare a new result even if a finished one exists. |
+| `--wait` | With `--prepared`: how long to wait for the job (default `5m`). |
+| `--prepared-name` | Wait for this Prepared Report and return its result (from an earlier run with the same `--filters`). |
 
 The table shows the report's columns. `--json` prints the full response. Heavy reports may need a longer `--timeout`, for example `--timeout 2m`.
+
+### Heavy reports: `--prepared`
+
+ffc normally runs a report in the request, even one marked "prepared" in Frappe, so a heavy report can outlast the server's request timeout. `--prepared` uses Frappe's prepared reports instead: a worker on the site's `long` queue runs the report and keeps the result.
+
+```bash
+ffc run-report -n "Stock Balance" --filters '{"company":"Acme"}' --prepared --wait 10m
+```
+
+- If you already have a finished result for the same filters, ffc returns it at once. It may be old: stderr names the Prepared Report and when it finished. `--fresh` prepares a new one.
+- Otherwise ffc reuses your queued job for these filters, or starts one, and checks it until it finishes or `--wait` runs out. The per-request `--timeout` still applies to each check.
+- When the wait runs out, ffc exits with code 7 and prints the command to continue, with `--prepared-name`. A job that never starts usually means the site has no worker on the `long` queue.
+- `--prepared-name` with other `--filters`, or for another report, exits 6 (checked when your user may read Prepared Report documents).
+- The filters you pass are the ones used: a Custom Report's saved filters are not applied.
+- A job that fails also exits 7. The error message appears when your user may read Prepared Report documents (System Manager or Prepared Report User).
+- Each new job saves a Prepared Report document on the site; Frappe deletes them after 30 days. With `--json`, the response's `doc` is that document.
+- On a report that is not marked "prepared", `--prepared` runs it normally.
 
 ## Call a server method: `call-method`
 

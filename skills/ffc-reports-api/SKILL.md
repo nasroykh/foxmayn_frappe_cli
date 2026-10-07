@@ -51,6 +51,7 @@ ffc run-report -n "Accounts Receivable" --filters @filters.json --limit 100 --ke
 ```
 
 - `run-report`: `-n/--name` (required), `--filters` (JSON object; most reports need some, e.g. `company`), `-l/--limit` (rows, table and JSON; `0` = all), `--keys`.
+- Heavy report: `--prepared` runs it as a Frappe prepared report on the site's `long` queue worker. It reuses your finished result for the same filters (stderr names it and its finish time; `--fresh` makes a new one), else your queued job, else starts one, and waits up to `--wait` (default 5m). A wait that runs out exits 7 with a resume command (`--prepared-name NAME` with the same `--filters`). Each new job leaves a Prepared Report document (deleted after 30 days).
 - `--json` returns the full response (`columns`, `result`, and Frappe's other keys); trim with `--keys columns,result`.
 - Heavy reports outrun the 30 s default: raise `--timeout`.
 - `list-reports`: `-m/--module`, `-l` (default 50), `--all`, `--page-size`.
