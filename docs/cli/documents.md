@@ -50,9 +50,12 @@ ffc list-docs -d ToDo --filters @filters.json --jq '.[].name'
 ffc count-docs -d ToDo
 ffc count-docs -d "Sales Invoice" --filters '{"status":"Paid"}'
 ffc count-docs -d ToDo --group-by status
+ffc count-docs -d "Error Log" --at-least 1000
 ```
 
 The count is printed alone on stdout, ready for scripts. `--group-by FIELD` returns one row per value, most frequent first, at most 50 groups. See [Search and aggregate](search-and-aggregate.md#counts-per-value-count-docs---group-by) for the details and for `assigned_to`.
+
+`--at-least N` answers whether N or more documents match, and stops counting at N (Frappe's `frappe.desk.reportview.get_count` with a limit), so it stays cheap on a large table. It prints `true` or `false`. With `--json` the answer is `{"doctype", "at_least", "result", "count"}`, where `count` is exact below N and N otherwise. On MariaDB, Frappe v16 gives that count 1 second; when it runs out, `result` and `count` are `null`, ffc prints `unknown` and a warning on stderr, and exits 0. A plain `count-docs` has no such limit. `--at-least` cannot be combined with `--group-by`.
 
 ## Create a document: `create-doc`
 

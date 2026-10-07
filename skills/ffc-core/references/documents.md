@@ -32,7 +32,7 @@ Flags as in `ffc <command> --help`. Every command also takes the global flags (`
 
 ## count-docs
 
-`-d` (required), `--filters`, `--group-by FIELD`. JSON: `{"doctype":"...","count":N}` (`--jq .count` for the number). `--group-by` is the list sidebar count (at most 50 groups); see the ffc-reports-api skill for it and for `ffc aggregate`.
+`-d` (required), `--filters`, `--group-by FIELD`, `--at-least N`. JSON: `{"doctype":"...","count":N}` (`--jq .count` for the number). `--at-least N` stops counting at N and prints `true`/`false`; JSON `{"doctype","at_least","result","count"}` (count exact below N, N otherwise; both `null` with a stderr warning and exit 0 when Frappe v16 on MariaDB hits its 1 s limit). Not with `--group-by`. `--group-by` is the list sidebar count (at most 50 groups); see the ffc-reports-api skill for it and for `ffc aggregate`.
 
 ## create-doc
 

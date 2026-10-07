@@ -375,6 +375,77 @@ func TestCmdCountDocs(t *testing.T) {
 	cmdTFail(t, cmdTRun(t, s, "count-docs", "-d", "ToDo", "--filters", `{"bogus":1}`), "bogus")
 }
 
+func TestCmdCountDocsAtLeast(t *testing.T) {
+	s := cmdTSite(t)
+	const path = "/api/method/frappe.desk.reportview.get_count"
+	r := cmdTOK(t, cmdTRun(t, s, "count-docs", "-d", "ToDo", "--at-least", "2"))
+	if strings.TrimSpace(r.Stdout) != "true" {
+		t.Fatalf("stdout %q", r.Stdout)
+	}
+	reqs := s.RequestsTo("POST", path)
+	if len(reqs) != 1 {
+		t.Fatalf("requests %+v", s.Requests())
+	}
+	if b := mcpTBody(t, reqs[0]); fmt.Sprint(b["limit"]) != "2" || b["doctype"] != "ToDo" || b["filters"] != nil {
+		t.Fatalf("body %v", b)
+	}
+
+	// The site stops at the limit: the count is exact below it, the limit otherwise.
+	out := cmdTObj(t, cmdTOK(t, cmdTRun(t, s, "--json", "count-docs", "-d", "ToDo", "--at-least", "2")))
+	if fmt.Sprint(out["count"]) != "2" || out["result"] != true || fmt.Sprint(out["at_least"]) != "2" || out["doctype"] != "ToDo" {
+		t.Fatalf("out %v", out)
+	}
+	out = cmdTObj(t, cmdTOK(t, cmdTRun(t, s, "--json", "count-docs", "-d", "ToDo", "--at-least", "5", "--filters", `{"status":"Open"}`)))
+	if fmt.Sprint(out["count"]) != "2" || out["result"] != false {
+		t.Fatalf("out %v", out)
+	}
+	reqs = s.RequestsTo("POST", path)
+	if f := fmt.Sprint(mcpTBody(t, reqs[len(reqs)-1])["filters"]); !strings.Contains(f, "Open") {
+		t.Fatalf("filters %q", f)
+	}
+
+	// MariaDB statement timeout on v16: get_count answers null.
+	s.HandleMethod("frappe.desk.reportview.get_count", func(*http.Request, map[string]interface{}) (interface{}, error) { return nil, nil })
+	r = cmdTOK(t, cmdTRun(t, s, "count-docs", "-d", "ToDo", "--at-least", "1"))
+	if strings.TrimSpace(r.Stdout) != "unknown" || !strings.Contains(r.Stderr, "warning: the site stopped counting") {
+		t.Fatalf("stdout %q stderr %q", r.Stdout, r.Stderr)
+	}
+	r = cmdTOK(t, cmdTRun(t, s, "--json", "count-docs", "-d", "ToDo", "--at-least", "1"))
+	out = cmdTObj(t, r)
+	if v, ok := out["result"]; !ok || v != nil || out["count"] != nil || out["warning"] != nil {
+		t.Fatalf("out %v", out)
+	}
+	if !strings.Contains(r.Stderr, "warning:") {
+		t.Fatalf("stderr %q", r.Stderr)
+	}
+	r = cmdTOK(t, cmdTRun(t, s, "count-docs", "-d", "ToDo", "--at-least", "1", "--jq", ".result"))
+	if strings.TrimSpace(r.Stdout) != "null" {
+		t.Fatalf("--jq .result on an unknown answer: %q", r.Stdout)
+	}
+
+	s.HandleMethod("frappe.desk.reportview.get_count", func(*http.Request, map[string]interface{}) (interface{}, error) {
+		return nil, frappetest.Permission("No permission for ToDo")
+	})
+	if r := cmdTRun(t, s, "count-docs", "-d", "ToDo", "--at-least", "1"); r.Code != exitPermission {
+		t.Fatalf("403: exit %d (%v)", r.Code, r.Err)
+	}
+
+	before := len(s.Requests())
+	for args, want := range map[string]string{
+		"0":                   "--at-least must be at least 1",
+		"-1":                  "--at-least must be at least 1",
+		"3 --group-by status": "cannot be combined",
+	} {
+		r := cmdTRun(t, s, append([]string{"count-docs", "-d", "ToDo", "--at-least"}, strings.Fields(args)...)...)
+		if cmdTFail(t, r, want); r.Code != exitUsage {
+			t.Errorf("--at-least %s: exit %d, want %d", args, r.Code, exitUsage)
+		}
+	}
+	if n := len(s.Requests()); n != before {
+		t.Fatalf("usage errors sent %d requests", n-before)
+	}
+}
+
 // ─── get-schema ──────────────────────────────────────────────────────────────
 
 func cmdTSchemaSite(t *testing.T) *frappetest.Site {

@@ -407,6 +407,51 @@ func TestMCPFakeCountDocs(t *testing.T) {
 	}
 }
 
+func TestMCPFakeCountDocsAtLeast(t *testing.T) {
+	s, site := newMCPFake(t, false)
+	mcpTSeedTodos(site)
+	const path = "/api/method/frappe.desk.reportview.get_count"
+	m := mcpTObj(t, mcpTOK(t, s, "count_docs", map[string]interface{}{"doctype": "ToDo", "at_least": 2}))
+	if m["result"] != true || m["count"] != 2.0 || m["at_least"] != 2.0 || m["doctype"] != "ToDo" {
+		t.Errorf("at_least 2: %v", m)
+	}
+	if b := mcpTBody(t, mcpTOnly(t, site, "POST", path)); fmt.Sprint(b["limit"]) != "2" || b["doctype"] != "ToDo" {
+		t.Errorf("body %v", b)
+	}
+	m = mcpTObj(t, mcpTOK(t, s, "count_docs", map[string]interface{}{"doctype": "ToDo", "at_least": "5", "filters": map[string]interface{}{"status": "Open"}}))
+	if m["result"] != false || m["count"] != 2.0 {
+		t.Errorf("at_least 5 Open: %v", m)
+	}
+	if n := len(site.RequestsTo("POST", "/api/method/frappe.client.get_count")); n != 0 {
+		t.Errorf("at_least also sent %d full counts", n)
+	}
+
+	// A virtual DocType's controller may ignore the limit.
+	site.HandleMethod("frappe.desk.reportview.get_count", func(*http.Request, map[string]interface{}) (interface{}, error) { return 40, nil })
+	m = mcpTObj(t, mcpTOK(t, s, "count_docs", map[string]interface{}{"doctype": "ToDo", "at_least": 3}))
+	if m["result"] != true || m["count"] != 3.0 {
+		t.Errorf("uncapped answer: %v", m)
+	}
+
+	site.HandleMethod("frappe.desk.reportview.get_count", func(*http.Request, map[string]interface{}) (interface{}, error) { return nil, nil })
+	m = mcpTObj(t, mcpTOK(t, s, "count_docs", map[string]interface{}{"doctype": "ToDo", "at_least": 1}))
+	if v, ok := m["result"]; !ok || v != nil || m["count"] != nil || !strings.Contains(fmt.Sprint(m["warning"]), "stopped counting") {
+		t.Errorf("timeout: %v", m)
+	}
+
+	before := len(site.Requests())
+	mcpTErr(t, s, "count_docs", map[string]interface{}{"doctype": "ToDo", "at_least": 0}, "at_least: must be at least 1")
+	mcpTErr(t, s, "count_docs", map[string]interface{}{"doctype": "ToDo", "at_least": 1.5}, "at_least")
+	if n := len(site.Requests()); n != before {
+		t.Errorf("invalid at_least sent %d requests", n-before)
+	}
+	// null is no at_least: a full count.
+	m = mcpTObj(t, mcpTOK(t, s, "count_docs", map[string]interface{}{"doctype": "ToDo", "at_least": nil}))
+	if m["count"] != 3.0 || m["result"] != nil {
+		t.Errorf("at_least null: %v", m)
+	}
+}
+
 func TestMCPFakeCountDocsErrors(t *testing.T) {
 	s, site := newMCPFake(t, false)
 	mcpTSeedTodos(site)

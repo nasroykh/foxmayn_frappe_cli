@@ -215,7 +215,8 @@ func registerListDocs(s *server.MCPServer, env *mcpEnv) {
 }
 
 // countDocsSchema is count_docs' output schema (its structuredContent).
-var countDocsSchema = json.RawMessage(`{"type":"object","properties":{"doctype":{"type":"string"},"count":{"type":"integer","minimum":0}},"required":["doctype","count"]}`)
+// With at_least, count is null when the site gave up counting.
+var countDocsSchema = json.RawMessage(`{"type":"object","properties":{"doctype":{"type":"string"},"count":{"type":["integer","null"],"minimum":0},"at_least":{"type":"integer","minimum":1},"result":{"type":["boolean","null"]},"warning":{"type":"string"}},"required":["doctype","count"]}`)
 
 func registerCountDocs(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("count_docs",
@@ -227,6 +228,9 @@ func registerCountDocs(s *server.MCPServer, env *mcpEnv) {
 			mcp.Description("The Frappe DocType"),
 		),
 		jsonParam("filters", `Filter expression, e.g. {"status":"Open"} or [["status","=","Open"]]`),
+		mcp.WithNumber("at_least",
+			mcp.Description("Only answer whether at least this many documents match: the site stops counting there, which is cheaper on large tables. Returns result (true/false) and count (exact below at_least, at_least otherwise); both are null, with a warning, when the site gave up counting (1 second limit on MariaDB)."),
+		),
 		mcp.WithRawOutputSchema(countDocsSchema),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
@@ -238,7 +242,21 @@ func registerCountDocs(s *server.MCPServer, env *mcpEnv) {
 		if err != nil {
 			return nil, err
 		}
+		atLeast, err := intArg(req, "at_least", 0)
+		if err != nil {
+			return nil, err
+		}
+		if v := req.GetArguments()["at_least"]; v != nil && atLeast < 1 {
+			return nil, fmt.Errorf("at_least: must be at least 1")
+		}
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
+			if atLeast > 0 {
+				m, err := atLeastResult(ctx, c, doctype, filters, atLeast)
+				if err != nil {
+					return nil, err
+				}
+				return structuredOut{Text: m, Structured: m}, nil
+			}
 			count, err := c.GetCount(ctx, doctype, filters)
 			if err != nil {
 				return nil, err
