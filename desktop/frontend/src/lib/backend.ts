@@ -25,6 +25,7 @@ export const backend: Backend = {
   checkForUpdate: () => AppService.CheckForUpdate(),
   openConfigFolder: () => AppService.OpenConfigFolder(),
   openFFCFolder: () => AppService.OpenFFCFolder(),
+  setWindowTheme: (dark) => AppService.SetWindowTheme(dark),
 
   listSites: () => SitesService.List(),
   validate: (name, url) => SitesService.Validate(name, url),

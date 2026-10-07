@@ -64,6 +64,16 @@ type Host interface {
 	Emit(name string, data any)
 	OpenURL(url string) error
 	OpenFile(path string) error
+	SetWindowTheme(dark bool)
+}
+
+// WindowBackground is the window colour behind the page: the page's
+// --background in light mode (white) or dark mode (zinc-950).
+func WindowBackground(dark bool) application.RGBA {
+	if dark {
+		return application.NewRGB(9, 9, 11)
+	}
+	return application.NewRGB(255, 255, 255)
 }
 
 // WailsHost is the Host of the running app. App is set after
@@ -87,4 +97,19 @@ func (h *WailsHost) OpenURL(url string) error {
 // OpenFile opens a file or folder with the operating system.
 func (h *WailsHost) OpenFile(path string) error {
 	return h.App.Browser.OpenFile(path)
+}
+
+// SetWindowTheme gives every window the background of the page's theme and
+// shows a window that is still hidden (main creates it hidden, so it appears
+// only once the page has applied the theme).
+func (h *WailsHost) SetWindowTheme(dark bool) {
+	if h.App == nil {
+		return
+	}
+	for _, w := range h.App.Window.GetAll() {
+		w.SetBackgroundColour(WindowBackground(dark))
+		if !w.IsVisible() {
+			w.Show()
+		}
+	}
 }

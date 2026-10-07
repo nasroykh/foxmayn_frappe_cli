@@ -71,3 +71,12 @@ export function OpenWebsite(rawURL: string): $CancellablePromise<void> {
 export function RefreshFFC(): $CancellablePromise<$models.FFCInfo> {
     return $Call.ByID(3479642558);
 }
+
+/**
+ * SetWindowTheme matches the window background to the theme the page applied
+ * (the in-app choice, not only the system theme) and shows the window if it
+ * is still hidden. The page calls it on start and on every theme change.
+ */
+export function SetWindowTheme(dark: boolean): $CancellablePromise<void> {
+    return $Call.ByID(2244513231, dark);
+}

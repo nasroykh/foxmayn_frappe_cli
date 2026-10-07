@@ -1,5 +1,7 @@
 import * as React from "react"
 
+import { backend } from "@/lib/backend"
+
 export type Theme = "light" | "dark" | "system"
 
 const STORAGE_KEY = "ffd-theme"
@@ -24,10 +26,15 @@ function writeTheme(t: Theme) {
 
 const query = () => window.matchMedia("(prefers-color-scheme: dark)")
 
+// apply sets the page theme, then gives the native window the same
+// background and shows it (it starts hidden; see main.go).
 function apply(t: Theme) {
   const dark = t === "dark" || (t === "system" && query().matches)
   document.documentElement.classList.toggle("dark", dark)
   document.documentElement.style.colorScheme = dark ? "dark" : "light"
+  backend.setWindowTheme(dark).catch(() => {
+    // Best effort: main.go shows the window anyway after a few seconds.
+  })
 }
 
 const ThemeContext = React.createContext<{ theme: Theme; setTheme: (t: Theme) => void } | null>(null)

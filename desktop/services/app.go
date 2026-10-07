@@ -153,6 +153,13 @@ func (s *AppService) OpenWebsite(rawURL string) error {
 	return nil
 }
 
+// SetWindowTheme matches the window background to the theme the page applied
+// (the in-app choice, not only the system theme) and shows the window if it
+// is still hidden. The page calls it on start and on every theme change.
+func (s *AppService) SetWindowTheme(dark bool) {
+	s.host.SetWindowTheme(dark)
+}
+
 // OpenConfigFolder opens the folder that holds config.yaml.
 func (s *AppService) OpenConfigFolder() error {
 	return s.openFolder(filepath.Dir(s.configPath))

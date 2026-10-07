@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/services"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -40,22 +41,25 @@ func main() {
 	})
 	host.App = app
 
-	// The window opens once the app runs, when the system theme can be read,
-	// so its background matches the page and a dark system shows no white
-	// flash before the page paints.
+	// The window is created hidden once the app runs, with the system theme's
+	// background. The page shows it through AppService.SetWindowTheme after
+	// applying the in-app theme, so neither theme flashes the other's colour.
+	// If the page never calls (it failed to load), it is shown anyway.
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
-		bg := application.NewRGB(255, 255, 255)
-		if app.Env.IsDarkMode() {
-			bg = application.NewRGB(9, 9, 11) // --background in dark mode (zinc-950)
-		}
-		app.Window.NewWithOptions(application.WebviewWindowOptions{
+		w := app.Window.NewWithOptions(application.WebviewWindowOptions{
 			Title:            "Foxmayn Frappe Desktop",
 			Width:            1100,
 			Height:           720,
 			MinWidth:         900,
 			MinHeight:        600,
-			BackgroundColour: bg,
+			BackgroundColour: services.WindowBackground(app.Env.IsDarkMode()),
+			Hidden:           true,
 			URL:              "/",
+		})
+		time.AfterFunc(3*time.Second, func() {
+			if !w.IsVisible() {
+				w.Show()
+			}
 		})
 	})
 
