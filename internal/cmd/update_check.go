@@ -57,7 +57,7 @@ func runUpdateCheck() {
 	// Notify if the cached latest is newer than the running binary.
 	cur := version.Version
 	if state.Latest != "" && !isDevBuild(cur) && newerThan(cur, state.Latest) {
-		fmt.Fprintf(os.Stderr, "Update available: %s → %s  (run: ffc update)\n", cur, state.Latest)
+		fmt.Fprintf(os.Stderr, "Update available: %s → %s  (run: %s)\n", cur, state.Latest, updateCommand())
 	}
 
 	if time.Since(state.CheckedAt) > updateCheckInterval {
@@ -74,7 +74,7 @@ func startBackgroundFetch(path string, state updateCheckState) {
 	updateCheckDone = make(chan struct{})
 	go func() {
 		defer close(updateCheckDone)
-		rel, err := release.Latest(context.Background(), release.ReleasesURL, 10*time.Second)
+		rel, err := release.Latest(context.Background(), releasesURL, 10*time.Second)
 		if err != nil {
 			return
 		}

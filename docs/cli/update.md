@@ -1,6 +1,6 @@
 # update
 
-Update ffc in place to the latest signed release, however it was installed.
+Update ffc in place to the latest signed release. A copy installed by a package manager is updated through that manager instead.
 
 ```bash
 ffc update           # check, show the new version, ask, install
@@ -30,6 +30,18 @@ ffc replaces the running binary in its current location. On Windows the running 
 
 Entries written by `ffc mcp install` keep working: they point at the same path.
 
+## Package managers
+
+A package manager keeps track of the version it installed, so `ffc update` does not replace its copy. It still checks, then stops with the command to run:
+
+| Installed with | ffc lives under | Update with |
+| --- | --- | --- |
+| Homebrew | `<prefix>/Cellar/ffc/` or `<prefix>/Caskroom/ffc/` | `brew upgrade ffc` |
+| Scoop | `<scoop root>/apps/ffc/` (also `$SCOOP`, `$SCOOP_GLOBAL`) | `scoop update ffc` |
+| winget | `...\WinGet\Packages\...` or `...\WinGet\Links\` | `winget upgrade ffc` |
+
+`ffc update --check` works as usual, and the daily notice and `ffc doctor` name the same command.
+
 ## Automatic update check
 
 At most once a day, ffc checks GitHub in the background and prints a one-line notice on stderr when a newer version exists:
@@ -37,6 +49,8 @@ At most once a day, ffc checks GitHub in the background and prints a one-line no
 ```text
 Update available: v1.10.0 → v1.11.0  (run: ffc update)
 ```
+
+For a package manager's copy, the notice names its command instead (see above).
 
 The check is skipped for `update`, `mcp`, `completion` and `help`. A failing network costs at most one attempt per day. To turn it off, set `FFC_NO_UPDATE_CHECK` to any value.
 
