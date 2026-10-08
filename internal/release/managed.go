@@ -16,7 +16,7 @@ type Manager struct {
 var (
 	homebrew = Manager{Name: "Homebrew", Command: "brew upgrade ffc"}
 	scoop    = Manager{Name: "Scoop", Command: "scoop update ffc"}
-	winget   = Manager{Name: "winget", Command: "winget upgrade ffc"}
+	winget   = Manager{Name: "winget", Command: "winget upgrade --id Foxmayn.ffc"}
 )
 
 // managedSegments are path parts, lower case with forward slashes, that only a
