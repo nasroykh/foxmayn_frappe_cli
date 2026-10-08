@@ -25,8 +25,8 @@ There is no confirmation prompt, as for `bulk-create` and `bulk-update`: use `--
 
 ## Formats
 
-- **CSV**: the Data Import layout. The first non-empty row is the header. A document is its first row plus the rows below it whose document columns are all blank: those rows only add table rows. A row with a value in any document column starts the next document. Empty rows are skipped. Cells are trimmed, and a leading `'` before `=`, `+`, `-`, `@`, a tab or a carriage return is removed (Frappe's exporter adds it so a spreadsheet does not run a formula). The file must be UTF-8 (a BOM is fine).
-- **JSON / NDJSON**: an array of documents, or one per line, as `ffc export --output json` (or `ndjson`) writes them: fieldnames as keys, each table an array of row objects. `null` and `""` mean "not set". Numbers and `true`/`false` are taken where they fit.
+- **CSV**: the Data Import layout. The first non-empty row is the header. A document is its first row plus the rows below it whose document columns are all blank: those rows only add table rows. A row with a value in any document column starts the next document; `owner` and `docstatus` count as document columns here, as in Frappe, although their values are not set. Empty rows are skipped; a row whose values are all in ignored or untitled columns is a problem. Cells are trimmed, and a leading `'` before `=`, `+`, `-`, `@`, a tab or a carriage return is removed (Frappe's exporter adds it so a spreadsheet does not run a formula). The file must be UTF-8 (a BOM is fine).
+- **JSON / NDJSON**: an array of documents, or one per line, as `ffc export --output json` (or `ndjson`) writes them: fieldnames as keys, each table an array of row objects. `null` and `""` mean "not set". Numbers and `true`/`false` are taken where they fit. A UTF-8 BOM is skipped.
 - **TSV** is refused: export escapes backslashes, tabs and line breaks in TSV cells, so the values would not come back as they were.
 - **Excel** is not read. Save the sheet as CSV UTF-8, or use the desk's Data Import. A later `--server` mode will hand such files to Frappe.
 
@@ -42,7 +42,7 @@ Headers are matched like Frappe's importer (untranslated):
 | `items.name`, `ID (Items)` | a table row's name |
 | `owner`, `docstatus`, `creation`, `modified`, `modified_by`, `idx`, and a table's `parent`, `parenttype`, `parentfield`, `idx` | nothing: these are skipped with a warning (use `--submit` to submit) |
 
-An unknown header, a table named without a field (`items`), or two columns for one field is a usage error (exit 2), and every one is listed. A column with no header is skipped (with a warning when it holds values).
+An unknown header, a table named without a field (`items`), two columns for one field, or a Password field (in any header form, or as a JSON key) is a usage error (exit 2), and every one is listed. ffc import never sets passwords: the site answers them masked, so they could not be compared, and their values would show in warnings and plans. A column with no header is skipped (with a warning when it holds values).
 
 ## Values
 
@@ -50,16 +50,19 @@ A blank cell means "not set": it never clears a field. Values are converted as F
 
 | Field type | Accepted |
 | --- | --- |
-| Check | `1`/`0`, `yes`/`no`, `y`/`n`, `true`/`false`, `t`/`f` (any case) |
+| Check | `1`/`0`, `yes`/`no`, `y`/`n`, `true`/`false`, `t`/`f` (any case). Other numbers are refused. |
 | Int | a whole number (`12`, `+12`, `12.0`). `2.5` is refused (Frappe would store 2). |
 | Float, Currency, Percent | a plain number: `1234.56`, `.5`, `1e3`. `1,234.56` is refused. |
-| Date, Datetime | one format per column, guessed from its values like Frappe's `guess_date_format`: `2026-01-31`, `31-01-2026`, `01-31-2026`, `31/01/2026`, `31.01.26`, `31 Jan 2026`, `31 January 2026`, with a time `10:05`, `10:05:00`, `10:05:00.123456` or `10:05 PM`. The format most values match wins (day-first before month-first), and a value it cannot read is a problem; seconds with or without a fraction count as one format. Sent as `YYYY-MM-DD` and `YYYY-MM-DD HH:MM:SS`. |
+| Date, Datetime | one format per column, guessed from its values like Frappe's `guess_date_format`: `2026-01-31`, `31-01-2026`, `01-31-2026`, `31/01/2026`, `31.01.26`, `31 Jan 2026`, `31 January 2026`, with a time `10:05`, `10:05:00`, `10:05:00.123456` or `10:05 PM`. The format most values match wins (day-first before month-first), and a value it cannot read is a problem; seconds with or without a fraction count as one format. When every value of a column also reads with day and month swapped, and some value then means another date (`01-02-2026`), a warning says how the column was read. Sent as `YYYY-MM-DD` and `YYYY-MM-DD HH:MM:SS`, with `.ffffff` added when the fraction of a second is not zero. |
+| Time | `H:MM`, `HH:MM`, `HH:MM:SS` or `HH:MM:SS.ffffff` (24-hour); sent as `HH:MM:SS`, plus `.ffffff` when the fraction is not zero. |
 | Duration | `1d 2h 3m 4s` (any of the parts, in that order, one space apart), as export writes it; a leading `-` for a negative one. JSON: seconds. |
 | Select | one of the field's options (any value when it has none) |
 | Link | the name of an existing document (checked, see below) |
-| everything else (Data, Text, Time, Dynamic Link, ...) | the text as it is |
+| everything else (Data, Text, Dynamic Link, ...) | the text as it is |
 
-Link values are checked before anything is written: one list request per target DocType (in chunks of 50 names), compared without case, as MariaDB does. A Link to the imported DocType may name a document of the same file. When your user may not read the target DocType, a warning says the site will check those values on save. Dynamic Links are not checked (Frappe's importer does not either).
+Link values are checked before anything is written: one list request per target DocType (split so that each request URL stays under about 4 KiB), compared without case, as MariaDB does. The check lists documents as your user, so User Permissions apply, while Frappe's importer checks with `get_all`, which ignores them: a user restricted by User Permissions can be told that a document that exists is not there (the problem says so). When your user may not read the target DocType, a warning says the site will check those values on save. Dynamic Links are not checked (Frappe's importer does not either).
+
+A Link to the imported DocType may name a document that the same file inserts, when the insert keeps its name (`Prompt` or `UUID` naming, or the `field:<x>` naming field) and the document comes earlier in the file; a later document, or the document itself, is a problem. When the file has such Links, the documents are written one at a time in file order (`--concurrency` is ignored, with a warning). Otherwise, with `--concurrency` above 1 the order of the writes is not guaranteed.
 
 ## Checking first
 
@@ -67,7 +70,7 @@ The whole file is read, converted and checked before the first write. When anyth
 
 ```text
 line 2, status "Pending": not one of the options: Open, Closed
-line 3, items.item "I-Z": no Item named "I-Z"
+line 3, items.item "I-Z": no Item named "I-Z" (or your User Permissions hide it from you)
 2 problems in tickets.csv; nothing was written
 ```
 
@@ -77,7 +80,7 @@ Header and invocation problems (unknown columns, `--mode update` without a name 
 
 ## Insert
 
-Each document is created with `POST /api/resource/<DocType>`, with its table rows.
+Each document is created with `POST /api/resource/<DocType>`, with its table rows. A table row that holds only a row name is left out.
 
 - **Names.** Through the REST API Frappe keeps a given name only when the DocType's naming rule is `Prompt` or `UUID` (`set_new_name`); Frappe's own Data Import keeps it in more cases because it runs with an import flag. So ffc sends the name column only for those rules. With a `field:<x>` rule and no `<x>` column, the name goes into `<x>`. Otherwise the name column is ignored, with a warning, and Frappe names the documents. Table row names are never sent on insert.
 - With names sent, two documents of the file with the same name (compared without case) are a problem.
@@ -89,8 +92,9 @@ Each document is read (`GET`), compared with the file, and written with `PUT` on
 - Every document needs a name; a name that appears twice is a problem.
 - Only the fields whose value differs are sent. Numbers compare by value, Link names without case.
 - A table that has rows for the document in the file replaces the document's rows. A row whose `items.name` is one of the document's rows keeps it: its name and the values the file leaves blank stay, and the file's values go on top. Other rows are new. Rows the file leaves out are removed, and the file's order becomes the order. A table with no rows for the document in the file is left alone, so a file cannot empty a table.
+- When none of a document's rows in a table has a row name (no `items.name` column, or JSON rows without `"name"`) and the document has rows in that table on the site, that is a problem (nothing is written): the file's rows would replace the site's rows and every column the file does not have would go back to its default. Export the documents with `ffc export`, which writes `items.name`, and edit that file. Rows without a name are fine next to named rows (they are added), and for a document whose table is empty.
 - The update carries the `modified` value that was read: when someone saved the document in between, it fails with "changed on the server" (exit 6 for that document) and nothing of it is saved.
-- When the site saves a value other than the one sent (a field above your permission level is dropped silently by Frappe, a controller rewrites a value), the result carries a warning.
+- When the site saves a value other than the one sent (a field above your permission level is dropped silently by Frappe, a controller rewrites a value), the result carries a warning. Table rows are compared by position on the file's columns, for inserts too.
 
 ## --submit
 

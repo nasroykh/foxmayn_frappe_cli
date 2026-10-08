@@ -29,6 +29,10 @@ type importField struct {
 	field  string // the fieldname; "name" for the ID
 	f      client.FormField
 	ignore bool // a standard column ffc does not set (owner, modified, ...)
+	// password: a Password field. ffc import refuses them: the site
+	// answers them masked, so a value could never be compared, and it
+	// would show in warnings and dry-run plans.
+	password bool
 }
 
 func (f importField) key() string {
@@ -55,6 +59,7 @@ type importMeta struct {
 	tableOrder  []string
 	tables      map[string]importTable
 	childOrder  map[string][]client.FormField
+	passwords   map[string]bool // keys (field, table.field) of Password fields
 }
 
 func newImportMeta(doctype string, metas map[string]*client.FormMeta) (*importMeta, error) {
@@ -63,7 +68,8 @@ func newImportMeta(doctype string, metas map[string]*client.FormMeta) (*importMe
 		return nil, fmt.Errorf("no meta for %s", doctype)
 	}
 	m := &importMeta{doctype: doctype, autoname: meta.Autoname, submittable: meta.IsSubmittable,
-		fields: map[string]client.FormField{}, tables: map[string]importTable{}, childOrder: map[string][]client.FormField{}}
+		fields: map[string]client.FormField{}, tables: map[string]importTable{}, childOrder: map[string][]client.FormField{},
+		passwords: map[string]bool{}}
 	for _, f := range meta.Fields {
 		switch {
 		case isTableType(f.Fieldtype):
@@ -73,6 +79,9 @@ func newImportMeta(doctype string, metas map[string]*client.FormMeta) (*importMe
 			}
 			t := importTable{field: f, doctype: child.Name, fields: map[string]client.FormField{}}
 			for _, cf := range child.Fields {
+				if cf.Fieldtype == "Password" {
+					m.passwords[f.Fieldname+"."+cf.Fieldname] = true
+				}
 				if !noDataTypes[cf.Fieldtype] {
 					t.fields[cf.Fieldname] = cf
 					m.childOrder[f.Fieldname] = append(m.childOrder[f.Fieldname], cf)
@@ -81,6 +90,9 @@ func newImportMeta(doctype string, metas map[string]*client.FormMeta) (*importMe
 			m.tables[f.Fieldname] = t
 			m.tableOrder = append(m.tableOrder, f.Fieldname)
 		case !noDataTypes[f.Fieldtype]:
+			if f.Fieldtype == "Password" {
+				m.passwords[f.Fieldname] = true
+			}
 			m.fields[f.Fieldname] = f
 			m.order = append(m.order, f)
 		}
@@ -144,7 +156,7 @@ func (m *importMeta) headerMap() map[string]importField {
 	}
 	for _, f := range m.order {
 		label := strings.TrimSpace(f.Label)
-		col := importField{field: f.Fieldname, f: f}
+		col := importField{field: f.Fieldname, f: f, password: m.passwords[f.Fieldname]}
 		set(label, col, false)
 		set(f.Fieldname, col, true)
 		if label != "" {
@@ -166,7 +178,7 @@ func (m *importMeta) headerMap() map[string]importField {
 			set(importChildLabel[s]+" ("+ref+")", f, true)
 		}
 		for _, f := range m.childOrder[t] {
-			col := importField{table: t, field: f.Fieldname, f: f}
+			col := importField{table: t, field: f.Fieldname, f: f, password: m.passwords[t+"."+f.Fieldname]}
 			set(t+"."+f.Fieldname, col, true)
 			if label := strings.TrimSpace(f.Label); label != "" {
 				set(label+" ("+ref+")", col, true)
@@ -305,6 +317,7 @@ func parseImportCSV(data []byte, m *importMeta) (*importFile, error) {
 		}
 		var parent importRow
 		rows := map[string]*importRow{}
+		starts, ignoredOnly := false, false
 		for j, cell := range rec {
 			if cell == "" {
 				continue
@@ -317,9 +330,15 @@ func parseImportCSV(data []byte, m *importMeta) (*importFile, error) {
 			c := cols[j]
 			if c.field == "" {
 				untitledUsed[j] = true
+				ignoredOnly = true
 				continue
 			}
 			if c.ignore {
+				// Frappe matches owner and docstatus (get_column_indexes,
+				// importer.py:1817), so a value there starts a document
+				// although ffc does not set it.
+				starts = starts || c.table == "" && (c.field == "owner" || c.field == "docstatus")
+				ignoredOnly = true
 				continue
 			}
 			target := &parent
@@ -336,10 +355,14 @@ func parseImportCSV(data []byte, m *importMeta) (*importFile, error) {
 		}
 		parent.line = line
 		switch {
-		case len(parent.values) > 0:
+		case len(parent.values) == 0 && len(rows) == 0:
+			if ignoredOnly {
+				out.problems = append(out.problems, importProblem{Row: line,
+					Reason: "the row has values only in ignored or untitled columns: nothing of it would be imported"})
+			}
+			continue
+		case len(parent.values) > 0 || starts:
 			out.docs = append(out.docs, &importDoc{line: line, parent: parent, tables: map[string][]importRow{}})
-		case len(rows) == 0:
-			continue // only ignored or untitled columns hold values
 		case len(out.docs) == 0:
 			out.problems = append(out.problems, importProblem{Row: line,
 				Reason: "the first row has no value in the document's columns: table rows continue the document above them"})
@@ -380,6 +403,10 @@ func matchImportHeader(header []string, m *importMeta, out *importFile) ([]impor
 			}
 			continue
 		}
+		if c.password {
+			bad = append(bad, fmt.Sprintf("column %d %q is a Password field: ffc import never sets passwords (remove the column)", j+1, h))
+			continue
+		}
 		if prev, dup := seen[c.key()]; dup {
 			bad = append(bad, fmt.Sprintf("columns %d %q and %d %q both set %s", prev+1, header[prev], j+1, h, c.key()))
 			continue
@@ -403,6 +430,7 @@ func matchImportHeader(header []string, m *importMeta, out *importFile) ([]impor
 // line), as ffc export writes them: fieldnames as keys, each table an array
 // of rows. null and "" mean not set.
 func parseImportJSON(data []byte, ndjson bool, m *importMeta) (*importFile, error) {
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	out := &importFile{unit: "item"}
 	type item struct {
 		row int
@@ -441,6 +469,7 @@ func parseImportJSON(data []byte, ndjson bool, m *importMeta) (*importFile, erro
 	}
 	ignored := map[string]bool{}
 	unknown := map[string]bool{}
+	passwords := map[string]bool{}
 	var bad []string
 	blank := func(v interface{}) bool {
 		s, ok := v.(string)
@@ -475,6 +504,8 @@ func parseImportJSON(data []byte, ndjson bool, m *importMeta) (*importFile, erro
 						rv := row[rk]
 						_, isField := t.fields[rk]
 						switch {
+						case m.passwords[k+"."+rk]:
+							passwords[k+"."+rk] = true
 						case rk == "name" || isField:
 							if !blank(rv) {
 								ir.values[rk] = &importValue{v: rv, col: fmt.Sprintf("%s[%d].%s", k, i+1, rk)}
@@ -489,6 +520,10 @@ func parseImportJSON(data []byte, ndjson bool, m *importMeta) (*importFile, erro
 						d.tables[k] = append(d.tables[k], ir)
 					}
 				}
+				continue
+			}
+			if m.passwords[k] {
+				passwords[k] = true
 				continue
 			}
 			if _, isField := m.fields[k]; isField || k == "name" {
@@ -514,6 +549,9 @@ func parseImportJSON(data []byte, ndjson bool, m *importMeta) (*importFile, erro
 	}
 	for k := range unknown {
 		bad = append(bad, fmt.Sprintf("%q is not a field of %s", k, m.doctype))
+	}
+	for k := range passwords {
+		bad = append(bad, fmt.Sprintf("%q is a Password field: ffc import never sets passwords (remove the key)", k))
 	}
 	if len(bad) > 0 {
 		sort.Strings(bad)
@@ -579,7 +617,8 @@ func sortedValueKeys(m map[string]*importValue) []string {
 // (importer.py:1693) and validate_value (:1614) do, and reports the ones
 // that cannot be: Check words, numbers, dates in the column's format,
 // Durations, Select options. A failed value is left out of its document.
-func (f *importFile) convert(m *importMeta) {
+// It returns warnings: date columns whose day and month could be swapped.
+func (f *importFile) convert(m *importMeta) []string {
 	// One date format per column, the most common one its values match
 	// (guess_date_format_for_column, importer.py:1927).
 	type colKey struct{ table, field string }
@@ -592,9 +631,18 @@ func (f *importFile) convert(m *importMeta) {
 		}
 	})
 	formats := map[colKey]string{}
+	var warnings []string
 	for k, vals := range dateValues {
 		formats[k] = columnDateFormat(vals)
+		if w := ambiguousDates(vals, formats[k]); w != "" {
+			col := k.field
+			if k.table != "" {
+				col = k.table + "." + k.field
+			}
+			warnings = append(warnings, fmt.Sprintf("column %s: %s", col, w))
+		}
 	}
+	sort.Strings(warnings)
 	f.eachValue(m, func(d *importDoc, line int, table, field string, v *importValue) {
 		conv, err := convertImportValue(m.fieldOf(table, field), v.v, formats[colKey{table, field}])
 		if err != nil {
@@ -613,6 +661,52 @@ func (f *importFile) convert(m *importMeta) {
 			}
 		}
 	}
+	return warnings
+}
+
+// ambiguousDates explains, when every value of a column also reads in the
+// format with day and month swapped and some value then means another
+// date, how the column was read; else "". Frappe takes day first in such
+// a tie (guess_date_format's order), and so does ffc.
+func ambiguousDates(values []string, format string) string {
+	if !strings.Contains(format, "%d") || !strings.Contains(format, "%m") {
+		return ""
+	}
+	twin := strings.NewReplacer("%d", "%m", "%m", "%d").Replace(format)
+	differs := ""
+	for _, v := range values {
+		a, ok := parseDate(v, format)
+		if !ok {
+			continue
+		}
+		b, ok := parseDate(v, twin)
+		if !ok {
+			return ""
+		}
+		if differs == "" && !a.Equal(b) {
+			differs = v
+		}
+	}
+	if differs == "" {
+		return ""
+	}
+	return fmt.Sprintf("every date also reads as %s (%q read as %s); check that %s is the file's format",
+		userDateFormat(twin), differs, userDateFormat(format), userDateFormat(format))
+}
+
+// parseDate reads s in a column's format. Seconds with and without a
+// fraction are one format to ffc: the site sends a fraction only when it
+// is not zero, so an export mixes both in one column.
+func parseDate(s, format string) (time.Time, bool) {
+	t, ok := strptime(s, format)
+	if !ok {
+		if strings.Contains(format, "%S.%f") {
+			t, ok = strptime(s, strings.Replace(format, "%S.%f", "%S", 1))
+		} else if strings.Contains(format, "%S") {
+			t, ok = strptime(s, strings.Replace(format, "%S", "%S.%f", 1))
+		}
+	}
+	return t, ok
 }
 
 func dropNil(m map[string]*importValue) {
@@ -655,7 +749,7 @@ func convertImportValue(f client.FormField, v interface{}, dateFormat string) (i
 		case "f", "false", "n", "no":
 			return json.Number("0"), nil
 		}
-		if n, ok := wholeNumber(s); ok {
+		if n, ok := wholeNumber(s); ok && (n == "0" || n == "1") {
 			return n, nil
 		}
 		return nil, errors.New("not a Check value: use 1 or 0, yes or no, true or false")
@@ -677,17 +771,7 @@ func convertImportValue(f client.FormField, v interface{}, dateFormat string) (i
 		if format == "" {
 			format = "%Y-%m-%d" // importer.py:1993
 		}
-		t, ok := strptime(s, format)
-		if !ok {
-			// Seconds with and without a fraction are one format to ffc:
-			// the site sends a fraction only when it is not zero, so an
-			// export mixes both in one column.
-			if strings.Contains(format, "%S.%f") {
-				t, ok = strptime(s, strings.Replace(format, "%S.%f", "%S", 1))
-			} else if strings.Contains(format, "%S") {
-				t, ok = strptime(s, strings.Replace(format, "%S", "%S.%f", 1))
-			}
-		}
+		t, ok := parseDate(s, format)
 		if !ok {
 			return nil, fmt.Errorf("not a valid %s: use %s, the format of the column", strings.ToLower(f.Fieldtype), userDateFormat(format))
 		}
@@ -722,11 +806,41 @@ func convertImportValue(f client.FormField, v interface{}, dateFormat string) (i
 		return s, nil
 	case "Link", "Dynamic Link":
 		return s, nil
+	case "Time":
+		if _, ok := v.(string); ok {
+			if t, ok := normalTime(s); ok {
+				return t, nil
+			}
+		}
+		return nil, errors.New("not a time: use HH:MM or HH:MM:SS (24-hour, seconds may have a fraction)")
 	}
 	if _, ok := v.(bool); ok {
 		return nil, errors.New("expected text, not true or false")
 	}
 	return v, nil
+}
+
+var timeRe = regexp.MustCompile(`^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?$`)
+
+// normalTime is a time of day as HH:MM:SS, plus .ffffff when the fraction
+// is not zero: what Frappe stores, so that a value compares equal to the
+// site's (which answers "9:05:00", or "9:05:00.500000").
+func normalTime(s string) (string, bool) {
+	g := timeRe.FindStringSubmatch(strings.TrimSpace(s))
+	if g == nil {
+		return "", false
+	}
+	h, _ := strconv.Atoi(g[1])
+	mi, _ := strconv.Atoi(g[2])
+	sec, _ := strconv.Atoi(g[3]) // "" is 0
+	if h > 23 || mi > 59 || sec > 59 {
+		return "", false
+	}
+	out := fmt.Sprintf("%02d:%02d:%02d", h, mi, sec)
+	if frac := strings.TrimRight(g[4], "0"); frac != "" {
+		out += "." + frac + strings.Repeat("0", 6-len(frac))
+	}
+	return out, true
 }
 
 // wholeNumber is s as an integer literal. Frappe's cint truncates 2.5 to

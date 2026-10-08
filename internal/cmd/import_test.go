@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -198,7 +199,7 @@ func TestImportProblemsWriteNothing(t *testing.T) {
 		`line 2, urgent "maybe": not a Check value`,
 		`line 2, effort "2 hours": not a duration`,
 		`line 2, count "1.5": not a whole number`,
-		`line 2, customer "Nobody": no Customer named "Nobody"`,
+		`line 2, customer "Nobody": no Customer named "Nobody" (or your User Permissions hide it from you)`,
 		`line 3, lines.item "I-Z": no Item named "I-Z"`,
 		`line 3, lines.qty "x": not a whole number`,
 		// The column's format is dd-mm-yyyy (31-01-2026); 2026-02-30 is not.
@@ -526,7 +527,10 @@ func TestImportValueConversion(t *testing.T) {
 		{ft("Duration"), "1d 2h 3m 4s", json.Number("93784")}, {ft("Duration"), "45s", json.Number("45")}, {ft("Duration"), "2h 5s", json.Number("7205")},
 		{ft("Duration"), "-1h 1m 40s", json.Number("-3700")}, {ft("Duration"), json.Number("12.5"), json.Number("12.5")},
 		{client.FormField{Fieldtype: "Select", Options: "A\nB"}, "B", "B"}, {client.FormField{Fieldtype: "Select"}, "any", "any"},
-		{ft("Data"), "0123", "0123"}, {ft("Time"), "10:00", "10:00"}, {ft("Link"), " ACME ", "ACME"},
+		{ft("Data"), "0123", "0123"}, {ft("Link"), " ACME ", "ACME"},
+		{ft("Check"), "0", json.Number("0")}, {ft("Check"), json.Number("1"), json.Number("1")},
+		{ft("Time"), "10:00", "10:00:00"}, {ft("Time"), "9:05", "09:05:00"}, {ft("Time"), "23:59:59", "23:59:59"},
+		{ft("Time"), "09:05:00.5", "09:05:00.500000"}, {ft("Time"), "09:05:00.000", "09:05:00"},
 	}
 	for _, c := range ok {
 		got, err := convertImportValue(c.f, c.in, "")
@@ -538,7 +542,9 @@ func TestImportValueConversion(t *testing.T) {
 		f  client.FormField
 		in interface{}
 	}{
-		{ft("Check"), "maybe"}, {ft("Int"), "2.5"}, {ft("Int"), "1,000"}, {ft("Float"), "1_000"}, {ft("Float"), "inf"},
+		{ft("Check"), "maybe"}, {ft("Check"), "2"}, {ft("Check"), "-1"}, {ft("Check"), json.Number("5")},
+		{ft("Time"), "24:00"}, {ft("Time"), "10:60"}, {ft("Time"), "10"}, {ft("Time"), "10:5"}, {ft("Time"), "10:00 PM"},
+		{ft("Time"), json.Number("10")}, {ft("Int"), "2.5"}, {ft("Int"), "1,000"}, {ft("Float"), "1_000"}, {ft("Float"), "inf"},
 		{ft("Duration"), "1h2m"}, {ft("Duration"), "90"}, {ft("Duration"), "2m 1h"}, {client.FormField{Fieldtype: "Select", Options: "A\nB"}, "a"},
 		{ft("Data"), map[string]interface{}{}}, {ft("Data"), true}, {ft("Date"), json.Number("20260101")},
 	}
@@ -546,6 +552,11 @@ func TestImportValueConversion(t *testing.T) {
 		if got, err := convertImportValue(c.f, c.in, ""); err == nil {
 			t.Errorf("%s %#v accepted as %#v", c.f.Fieldtype, c.in, got)
 		}
+	}
+	// The site answers a Time as "9:05:00": equal to the file's 09:05.
+	tm := ft("Time")
+	if !sameImportValue(tm, "9:05:00", "09:05:00") || !sameImportValue(tm, "9:05:00.500000", "09:05:00.500000") || sameImportValue(tm, "9:05:00", "09:06:00") {
+		t.Errorf("Time comparison")
 	}
 }
 
@@ -578,5 +589,177 @@ func TestImportHeaderMap(t *testing.T) {
 		if _, ok := h[missing]; ok {
 			t.Errorf("%q matched", missing)
 		}
+	}
+}
+
+// Password fields are refused (exit 2) in every form, and their values
+// never appear in any output.
+func TestImportRefusesPasswords(t *testing.T) {
+	s := exportTSite(t)
+	s.DocField("Order Item", "pin", "Password")
+	for _, c := range []struct{ file, content string }{
+		{"p.csv", "name,secret\nO-1,hunter2\n"},
+		{"c.csv", "name,items.name,items.pin\nO-1,I-1,hunter2\n"},
+		{"p.json", `[{"name":"O-1","secret":"hunter2"}]`},
+		{"c.ndjson", `{"name":"O-1","items":[{"name":"I-1","pin":"hunter2"}]}` + "\n"},
+	} {
+		path := writeImportFile(t, c.file, c.content)
+		for _, extra := range [][]string{nil, {"--json"}, {"--dry-run"}} {
+			args := append([]string{"import", "-d", "Order", path, "--mode", "update"}, extra...)
+			r := cmdTRun(t, s, args...)
+			if r.Code != exitUsage || !strings.Contains(r.Stderr, "is a Password field") {
+				t.Errorf("%s %v: exit %d %s", c.file, extra, r.Code, r.Stderr)
+			}
+			if strings.Contains(r.Stdout+r.Stderr, "hunter2") {
+				t.Errorf("%s %v: the password was printed:\n%s\n%s", c.file, extra, r.Stdout, r.Stderr)
+			}
+		}
+	}
+	if writes(s) != 0 {
+		t.Errorf("a refused file wrote")
+	}
+}
+
+// An update whose table rows carry no row names, for a document that has
+// rows on the site, would reset their other columns: a problem, nothing
+// written. A document without rows on the site, and an insert, are fine.
+func TestImportUnnamedRowsUpdate(t *testing.T) {
+	s := exportTSite(t)
+	path := writeImportFile(t, "u.csv", "name,items.qty\nO-1,5\n,6\nO-2,7\n")
+	for _, extra := range [][]string{nil, {"--dry-run"}} {
+		r := cmdTRun(t, s, append([]string{"import", "-d", "Order", path, "--mode", "update"}, extra...)...)
+		if r.Code != exitValidation || writes(s) != 0 ||
+			!strings.Contains(r.Stderr, "line 2, items.name: O-1 has 3 items rows on the site and the file names none of them") ||
+			!strings.Contains(r.Stderr, "ffc export") || strings.Contains(r.Stderr, "O-2 has") {
+			t.Errorf("%v: exit %d, %d writes\n%s", extra, r.Code, writes(s), r.Stderr)
+		}
+	}
+	r := cmdTRun(t, s, "import", "-d", "Order", writeImportFile(t, "o2.csv", "name,items.qty\nO-2,7\n"), "--mode", "update")
+	if d, _ := s.Doc("Order", "O-2"); r.Code != 0 || len(rowsOf(d["items"])) != 1 {
+		t.Errorf("O-2: exit %d %s", r.Code, r.Stderr)
+	}
+	r = cmdTRun(t, s, "import", "-d", "Order", writeImportFile(t, "i.csv", "customer,items.qty\nNew,5\n"), "--mode", "insert")
+	if r.Code != 0 {
+		t.Errorf("insert: exit %d %s", r.Code, r.Stderr)
+	}
+}
+
+// A table value the site did not save as sent is reported, like a field.
+func TestImportNotKeptTable(t *testing.T) {
+	s := importTSite(t)
+	answer := `{"data":{"name":"T-X","subject":"A","docstatus":0,"lines":[{"name":"r1","item":"I-A","qty":9,"modified":"later"}]}}`
+	s.Handle("POST /api/resource/Ticket", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(answer))
+	}))
+	path := writeImportFile(t, "k.csv", "subject,lines.item,lines.qty\nA,I-A,1\n")
+	r := cmdTRun(t, s, "--json", "import", "-d", "Ticket", path, "--mode", "insert")
+	res := importJSON(t, r)["results"].([]interface{})[0].(map[string]interface{})
+	if r.Code != 0 || res["warning"] != "not saved as sent: lines row 1 qty: sent 1, saved 9" {
+		t.Errorf("exit %d %v", r.Code, res)
+	}
+	answer = `{"data":{"name":"T-X","subject":"A","docstatus":0,"lines":[]}}`
+	r = cmdTRun(t, s, "--json", "import", "-d", "Ticket", path, "--mode", "insert")
+	res = importJSON(t, r)["results"].([]interface{})[0].(map[string]interface{})
+	if res["warning"] != "not saved as sent: lines: sent 1 rows, saved 0" {
+		t.Errorf("%v", res)
+	}
+}
+
+// Same-file Links: only to names an insert keeps, only to a document
+// above; then the writes keep the file's order. Long Link lists are split
+// by URL length.
+func TestImportSameFileLinks(t *testing.T) {
+	s := importTSite(t)
+	csv := "name,subject,parent_ticket\nP-1,A,\nP-2,B,P-1\n"
+	// Hash naming: P-1 will not be P-1.
+	r := cmdTRun(t, s, "import", "-d", "Ticket", writeImportFile(t, "h.csv", csv), "--mode", "insert")
+	if r.Code != exitValidation || !strings.Contains(r.Stderr, `line 3, parent_ticket "P-1": no Ticket named "P-1"`) || writes(s) != 0 {
+		t.Errorf("hash: exit %d %s", r.Code, r.Stderr)
+	}
+	s.DocTypeFlags("Ticket", map[string]interface{}{"autoname": "prompt"})
+	r = cmdTRun(t, s, "import", "-d", "Ticket", writeImportFile(t, "o.csv", "name,subject,parent_ticket\nQ-2,B,Q-1\nQ-1,A,\nQ-3,C,Q-3\n"), "--mode", "insert")
+	if r.Code != exitValidation || !strings.Contains(r.Stderr, `line 2, parent_ticket "Q-1": Ticket "Q-1" is created by line 3, after this document`) ||
+		!strings.Contains(r.Stderr, `line 4, parent_ticket "Q-3": the document links to itself`) || writes(s) != 0 {
+		t.Errorf("order: exit %d %s", r.Code, r.Stderr)
+	}
+	r = cmdTRun(t, s, "import", "-d", "Ticket", writeImportFile(t, "c.csv", csv), "--mode", "insert", "--concurrency", "4")
+	posts := s.RequestsTo("POST", "/api/resource/Ticket")
+	if r.Code != 0 || !strings.Contains(r.Stderr, "writing one at a time") || len(posts) != 2 ||
+		!strings.Contains(posts[0].Body, `"P-1"`) || !strings.Contains(posts[1].Body, `"parent_ticket":"P-1"`) {
+		t.Errorf("concurrency: exit %d %s", r.Code, r.Stderr)
+	}
+	// 30 names of 300 characters: more than one GET, each URL bounded.
+	var b strings.Builder
+	b.WriteString("subject,customer\n")
+	for i := 0; i < 30; i++ {
+		name := fmt.Sprintf("%03d%s", i, strings.Repeat("c", 297))
+		s.Add("Customer", map[string]interface{}{"name": name})
+		fmt.Fprintf(&b, "S%d,%s\n", i, name)
+	}
+	before := len(s.RequestsTo("GET", "/api/resource/Customer"))
+	r = cmdTRun(t, s, "import", "-d", "Ticket", writeImportFile(t, "l.csv", b.String()), "--mode", "insert", "--dry-run")
+	gets := s.RequestsTo("GET", "/api/resource/Customer")[before:]
+	if r.Code != 0 || len(gets) != 3 {
+		t.Fatalf("exit %d, %d GETs %s", r.Code, len(gets), r.Stderr)
+	}
+	for _, g := range gets {
+		if n := len(url.QueryEscape(g.Query.Get("filters"))); n > linkURLBudget {
+			t.Errorf("filters of %d bytes", n)
+		}
+	}
+}
+
+// Row grouping: an owner or docstatus value starts a document (Frappe
+// matches them); a row with values only in ignored or untitled columns is
+// a problem, never dropped silently.
+func TestImportIgnoredColumnsGrouping(t *testing.T) {
+	s := importTSite(t)
+	r := cmdTRun(t, s, "--json", "import", "-d", "Ticket", writeImportFile(t, "o.csv", "subject,lines.item,owner\nA,I-A,\n,I-B,x@y\n"), "--mode", "insert")
+	if out := importJSON(t, r); r.Code != 0 || out["created"] != float64(2) {
+		t.Errorf("owner: exit %d %v", r.Code, out)
+	}
+	for _, csv := range []string{
+		"subject,lines.item,creation\nA,I-A,\n,,2026-01-01\n",
+		"subject,,lines.item\nA,,I-A\n,zzz,\n",
+		"subject,owner\nA,\n,x@y\n",
+	} {
+		r = cmdTRun(t, s, "import", "-d", "Ticket", writeImportFile(t, "g.csv", csv), "--mode", "insert")
+		if r.Code != exitValidation || !strings.Contains(r.Stderr, "line 3: the row has values only in ignored or untitled columns") {
+			t.Errorf("%q: exit %d %s", csv, r.Code, r.Stderr)
+		}
+	}
+}
+
+// Insert: a row with only a row name is no row; a BOM before JSON or
+// NDJSON is skipped.
+func TestImportInsertNameOnlyRowsAndBOM(t *testing.T) {
+	s := importTSite(t)
+	r := cmdTRun(t, s, "--json", "import", "-d", "Ticket", writeImportFile(t, "n.csv", "subject,lines.name,lines.item\nA,r1,I-A\n,r2,\n"), "--mode", "insert")
+	name := fmt.Sprint(importJSON(t, r)["results"].([]interface{})[0].(map[string]interface{})["name"])
+	if d, _ := s.Doc("Ticket", name); r.Code != 0 || len(rowsOf(d["lines"])) != 1 {
+		t.Errorf("exit %d %v", r.Code, d["lines"])
+	}
+	for file, content := range map[string]string{"b.json": "\xef\xbb\xbf[{\"subject\":\"B\"}]", "b.ndjson": "\xef\xbb\xbf{\"subject\":\"B\"}\n"} {
+		if r := cmdTRun(t, s, "import", "-d", "Ticket", writeImportFile(t, file, content), "--mode", "insert"); r.Code != 0 {
+			t.Errorf("%s: exit %d %s", file, r.Code, r.Stderr)
+		}
+	}
+}
+
+// A date column whose day and month could be swapped is read day first,
+// with a warning.
+func TestImportAmbiguousDates(t *testing.T) {
+	s := importTSite(t)
+	r := cmdTRun(t, s, "import", "-d", "Ticket", writeImportFile(t, "a.csv", "subject,due\nA,01-02-2026\nB,03-04-2026\n"), "--mode", "insert")
+	if r.Code != 0 || !strings.Contains(r.Stderr, `column due: every date also reads as mm-dd-yyyy ("01-02-2026" read as dd-mm-yyyy)`) {
+		t.Errorf("exit %d %s", r.Code, r.Stderr)
+	}
+	r = cmdTRun(t, s, "import", "-d", "Ticket", writeImportFile(t, "b.csv", "subject,due\nA,01-02-2026\nB,31-01-2026\n"), "--mode", "insert")
+	if r.Code != 0 || strings.Contains(r.Stderr, "also reads as") {
+		t.Errorf("unambiguous: exit %d %s", r.Code, r.Stderr)
+	}
+	if w := ambiguousDates([]string{"05-05-2026", "2026-01-01"}, "%d-%m-%Y"); w != "" {
+		t.Errorf("same date either way: %q", w)
 	}
 }

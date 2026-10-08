@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -171,12 +172,16 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 	job := &importJob{c: c, m: m, docs: f.docs, update: mode == "update", submit: imSubmit}
 	warnings := job.prepare(f)
-	f.convert(m)
+	warnings = append(warnings, f.convert(m)...)
 
 	var linkWarnings []string
+	var sameFile bool
 	var linkErr error
 	if spinErr := runSpinner("Checking Link values…", func() {
-		linkWarnings, linkErr = checkLinks(ctx, c, m, f)
+		linkWarnings, sameFile, linkErr = job.checkLinks(ctx, f)
+		if linkErr == nil && job.update {
+			linkErr = job.checkUnnamedRows(ctx, f)
+		}
 		if linkErr == nil && imSubmit {
 			linkErr = refuseImportWorkflow(ctx, c, imDoctype)
 		}
@@ -185,6 +190,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 	if linkErr != nil {
 		return linkErr
+	}
+	workers := imBulk.concurrency
+	if sameFile && workers > 1 {
+		workers = 1
+		linkWarnings = append(linkWarnings, "documents link to documents created earlier in the file: writing one at a time, in file order (--concurrency ignored)")
 	}
 	for _, w := range append(warnings, linkWarnings...) {
 		output.PrintWarning("warning: " + w)
@@ -199,7 +209,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	results := make([]importResult, len(job.docs))
 	var rep bulkReport
 	_ = runSpinner(fmt.Sprintf("Importing %d %s documents…", len(job.docs), imDoctype), func() {
-		rep = runBulk(ctx, len(job.docs), imBulk.concurrency, imBulk.failFast, "done", func(ctx context.Context, i int) (string, error) {
+		rep = runBulk(ctx, len(job.docs), workers, imBulk.failFast, "done", func(ctx context.Context, i int) (string, error) {
 			r, err := job.one(ctx, i)
 			results[i] = r
 			return r.Name, err
@@ -336,41 +346,95 @@ func (j *importJob) anyValue(field string) bool {
 	return false
 }
 
-// linkChunk caps the names of one existence check: they travel in a GET
-// URL.
-const linkChunk = 50
+// linkURLBudget caps the escaped filters of one existence check: they
+// travel in a GET URL, and servers and proxies refuse long ones (4 KiB is
+// a common limit).
+const linkURLBudget = 3500
+
+// linkChunks splits names into lists whose filters stay within
+// linkURLBudget once escaped; a name longer than that goes alone.
+func linkChunks(values []string) ([][]string, error) {
+	base := len(url.QueryEscape(`[["name","in",[]]]`))
+	var out [][]string
+	var cur []string
+	size := base
+	for _, v := range values {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		n := len(url.QueryEscape(string(b))) + len("%2C")
+		if len(cur) > 0 && size+n > linkURLBudget {
+			out = append(out, cur)
+			cur, size = nil, base
+		}
+		cur = append(cur, v)
+		size += n
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out, nil
+}
+
+// fileNames are the names an insert keeps (prompt or UUID naming, the
+// "field:x" naming field), lower-case, with the line of their document: a
+// Link to the imported DocType may name one of them. An update creates
+// nothing, and a name the site makes up cannot be linked to.
+func (j *importJob) fileNames() map[string]int {
+	out := map[string]int{}
+	if j.update {
+		return out
+	}
+	af := j.m.autonameField()
+	for _, d := range j.docs {
+		var n string
+		switch {
+		case j.sendName || j.nameField != "":
+			n = d.parent.name()
+		case af != "":
+			if v := d.parent.values[af]; v != nil {
+				n = strings.TrimSpace(cellText(v.v))
+			}
+		}
+		if k := strings.ToLower(n); k != "" {
+			if _, dup := out[k]; !dup {
+				out[k] = d.line
+			}
+		}
+	}
+	return out
+}
 
 // checkLinks reports Link values that name no document, as Data Import's
 // value check does (value_mapping.py get_invalid_link_select_items: one
 // query per target DocType, names compared case-insensitively like
-// MariaDB). A Link to the imported DocType may name a document of the
-// file. Dynamic Links are not checked (Frappe does not either). When the
-// user may not read a target DocType, the site checks on save (warning).
-func checkLinks(ctx context.Context, c *client.FrappeClient, m *importMeta, f *importFile) ([]string, error) {
+// MariaDB). It lists the names with a GET list, which applies the user's
+// User Permissions where Frappe's get_all does not: a restricted user may
+// be told a document does not exist. A Link to the imported DocType may
+// name a document an insert creates earlier in the file (sameFile is then
+// true: the writes must keep the file's order). Dynamic Links are not
+// checked (Frappe does not either). When the user may not read a target
+// DocType, the site checks on save (warning).
+func (j *importJob) checkLinks(ctx context.Context, f *importFile) (warnings []string, sameFile bool, err error) {
+	m := j.m
 	type ref struct {
-		line  int
-		col   string
-		value string
+		line, docLine int
+		col, value    string
 	}
 	refs := map[string][]ref{}
-	f.eachValue(m, func(_ *importDoc, line int, table, field string, v *importValue) {
+	f.eachValue(m, func(d *importDoc, line int, table, field string, v *importValue) {
 		fld := m.fieldOf(table, field)
 		if fld.Fieldtype == "Link" && fld.Options != "" {
-			refs[fld.Options] = append(refs[fld.Options], ref{line, v.col, cellText(v.v)})
+			refs[fld.Options] = append(refs[fld.Options], ref{line, d.line, v.col, cellText(v.v)})
 		}
 	})
-	inFile := map[string]bool{}
-	for _, d := range f.docs {
-		if n := d.parent.name(); n != "" {
-			inFile[strings.ToLower(n)] = true
-		}
-	}
+	inFile := j.fileNames()
 	targets := make([]string, 0, len(refs))
 	for t := range refs {
 		targets = append(targets, t)
 	}
 	sort.Strings(targets)
-	var warnings []string
 	for _, target := range targets {
 		var values []string
 		seen := map[string]bool{}
@@ -381,15 +445,21 @@ func checkLinks(ctx context.Context, c *client.FrappeClient, m *importMeta, f *i
 			}
 		}
 		found := map[string]bool{}
+		chunks, err := linkChunks(values)
+		if err != nil {
+			return nil, false, err
+		}
 		var readErr error
-		for start := 0; start < len(values) && readErr == nil; start += linkChunk {
-			chunk := values[start:min(len(values), start+linkChunk)]
+		for _, chunk := range chunks {
+			if readErr != nil {
+				break
+			}
 			filters, err := json.Marshal([]interface{}{[]interface{}{"name", "in", chunk}})
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			var rows []map[string]interface{}
-			rows, readErr = c.GetList(ctx, target, client.ListOptions{Fields: []string{"name"}, Filters: string(filters), Limit: -1})
+			rows, readErr = j.c.GetList(ctx, target, client.ListOptions{Fields: []string{"name"}, Filters: string(filters), Limit: -1})
 			for _, r := range rows {
 				if n, ok := docName(r["name"]); ok {
 					found[strings.ToLower(n)] = true
@@ -402,18 +472,71 @@ func checkLinks(ctx context.Context, c *client.FrappeClient, m *importMeta, f *i
 			continue
 		}
 		if readErr != nil {
-			return nil, fmt.Errorf("checking the %s Link values: %w", target, readErr)
+			return nil, false, fmt.Errorf("checking the %s Link values: %w", target, readErr)
 		}
 		for _, r := range refs[target] {
 			k := strings.ToLower(r.value)
-			if found[k] || target == m.doctype && inFile[k] {
+			if found[k] {
 				continue
 			}
-			f.problems = append(f.problems, importProblem{Row: r.line, Column: r.col, Value: r.value,
-				Reason: fmt.Sprintf("no %s named %q", target, r.value)})
+			reason := fmt.Sprintf("no %s named %q (or your User Permissions hide it from you)", target, r.value)
+			if at, ok := inFile[k]; ok && target == m.doctype {
+				switch {
+				case at < r.docLine:
+					sameFile = true
+					continue
+				case at == r.docLine:
+					reason = "the document links to itself: it does not exist before it is created"
+				default:
+					reason = fmt.Sprintf("%s %q is created by %s %d, after this document: put it above", target, r.value, f.unit, at)
+				}
+			}
+			f.problems = append(f.problems, importProblem{Row: r.line, Column: r.col, Value: r.value, Reason: reason})
 		}
 	}
-	return warnings, nil
+	return warnings, sameFile, nil
+}
+
+// checkUnnamedRows reports, in an update, a table whose rows in the file
+// carry no row names while the document has rows on the site: the file's
+// rows would replace them, and every column the file does not have would
+// go back to its default. ffc export writes table.name, so an exported
+// file keeps the rows. It reads those documents (GET, so a dry run too);
+// one that is not found is left to the write, which reports it.
+func (j *importJob) checkUnnamedRows(ctx context.Context, f *importFile) error {
+	for _, d := range j.docs {
+		var tables []string
+		for _, t := range j.m.tableOrder {
+			rows := d.tables[t]
+			named := false
+			for _, r := range rows {
+				named = named || r.name() != ""
+			}
+			if len(rows) > 0 && !named {
+				tables = append(tables, t)
+			}
+		}
+		name := d.parent.name()
+		if len(tables) == 0 || name == "" {
+			continue
+		}
+		cur, err := j.c.GetDoc(ctx, j.m.doctype, name)
+		var api *client.APIError
+		if errors.As(err, &api) && api.Status == http.StatusNotFound {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("reading %s %s: %w", j.m.doctype, name, err)
+		}
+		for _, t := range tables {
+			if n := len(rowsOf(cur[t])); n > 0 {
+				f.problems = append(f.problems, importProblem{Row: d.line, Column: t + ".name",
+					Reason: fmt.Sprintf("%s has %d %s %s on the site and the file names none of them: they would be replaced by the file's rows, losing every column the file does not have. Export the document with ffc export (it writes %s.name) and edit that file",
+						name, n, t, plural(n, "row"), t)})
+			}
+		}
+	}
+	return nil
 }
 
 // reportImportProblems lists every problem (stdout data in machine
@@ -486,7 +609,7 @@ func (j *importJob) one(ctx context.Context, i int) (importResult, error) {
 				return res, conflictError(err, j.m.doctype, res.Name, fmt.Sprint(modified))
 			}
 			doc = saved
-			res.Warning = j.notKept(payload, saved)
+			res.Warning = j.notKept(d, payload, saved)
 		}
 	} else {
 		res.Status = "created"
@@ -497,7 +620,7 @@ func (j *importJob) one(ctx context.Context, i int) (importResult, error) {
 		}
 		res.Name, _ = docName(saved["name"])
 		doc = saved
-		res.Warning = j.notKept(payload, saved)
+		res.Warning = j.notKept(d, payload, saved)
 	}
 	if !j.submit {
 		return res, nil
@@ -520,9 +643,28 @@ func (j *importJob) one(ctx context.Context, i int) (importResult, error) {
 	return res, nil
 }
 
+// sentRows are the file's rows of a table as a write sends them, in
+// order: an insert leaves out rows that hold only a row name.
+func (j *importJob) sentRows(d *importDoc, t string) []importRow {
+	if j.update {
+		return d.tables[t]
+	}
+	var out []importRow
+	for _, r := range d.tables[t] {
+		for k := range r.values {
+			if k != "name" {
+				out = append(out, r)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // insertPayload is a new document: the file's values and table rows
-// (without row names: Frappe names new rows). The name is sent only when
-// the naming rule keeps it, or goes into the "field:x" naming field.
+// (without row names: Frappe names new rows; a row with nothing else is
+// left out). The name is sent only when the naming rule keeps it, or goes
+// into the "field:x" naming field.
 func (j *importJob) insertPayload(d *importDoc) map[string]interface{} {
 	out := map[string]interface{}{}
 	for k, v := range d.parent.values {
@@ -538,7 +680,11 @@ func (j *importJob) insertPayload(d *importDoc) map[string]interface{} {
 			out[j.nameField] = name
 		}
 	}
-	for t, rows := range d.tables {
+	for t := range d.tables {
+		rows := j.sentRows(d, t)
+		if len(rows) == 0 {
+			continue
+		}
 		list := make([]interface{}, 0, len(rows))
 		for _, r := range rows {
 			row := map[string]interface{}{}
@@ -622,22 +768,30 @@ func (j *importJob) updatePayload(cur map[string]interface{}, d *importDoc) (map
 
 // sameImportValue compares a site value with a file value: numbers by
 // value, Link names case-insensitively (MariaDB matches them so, and the
-// site corrects the case on save).
+// site corrects the case on save), times as HH:MM:SS[.ffffff] (the site
+// answers "9:05:00").
 func sameImportValue(f client.FormField, site, file interface{}) bool {
-	if f.Fieldtype == "Link" || f.Fieldtype == "Dynamic Link" {
-		a, aok := site.(string)
-		b, bok := file.(string)
+	a, aok := site.(string)
+	b, bok := file.(string)
+	switch {
+	case !aok || !bok:
+	case f.Fieldtype == "Link" || f.Fieldtype == "Dynamic Link":
+		return strings.EqualFold(a, b)
+	case f.Fieldtype == "Time":
+		ta, aok := normalTime(a)
+		tb, bok := normalTime(b)
 		if aok && bok {
-			return strings.EqualFold(a, b)
+			return ta == tb
 		}
 	}
 	return sameValue(site, file)
 }
 
-// notKept names the fields the site saved with another value than the
-// one sent (fields above the user's permission level are dropped, a
-// controller may rewrite a value), like edit-doc's warning.
-func (j *importJob) notKept(sent, saved map[string]interface{}) string {
+// notKept names the fields and table cells the site saved with another
+// value than the one sent (fields above the user's permission level are
+// dropped, a controller may rewrite a value), like edit-doc's warning.
+// Table rows are compared by position, on the file's columns only.
+func (j *importJob) notKept(d *importDoc, sent, saved map[string]interface{}) string {
 	var out []string
 	for _, k := range objectKeys(sent) {
 		if k == "modified" || k == "name" {
@@ -648,6 +802,29 @@ func (j *importJob) notKept(sent, saved map[string]interface{}) string {
 		}
 		if !sameImportValue(j.m.fields[k], saved[k], sent[k]) {
 			out = append(out, fmt.Sprintf("%s: sent %s, saved %s", k, diffValue(sent[k]), diffValue(saved[k])))
+		}
+	}
+	for _, t := range j.m.tableOrder {
+		if _, ok := sent[t]; !ok {
+			continue
+		}
+		sentList, savedList := rowsOf(sent[t]), rowsOf(saved[t])
+		if len(savedList) != len(sentList) {
+			out = append(out, fmt.Sprintf("%s: sent %d rows, saved %d", t, len(sentList), len(savedList)))
+			continue
+		}
+		for i, r := range j.sentRows(d, t) {
+			if i >= len(sentList) {
+				break
+			}
+			for _, k := range sortedValueKeys(r.values) {
+				if k == "name" {
+					continue
+				}
+				if !sameImportValue(j.m.tables[t].fields[k], savedList[i][k], sentList[i][k]) {
+					out = append(out, fmt.Sprintf("%s row %d %s: sent %s, saved %s", t, i+1, k, diffValue(sentList[i][k]), diffValue(savedList[i][k])))
+				}
+			}
 		}
 	}
 	if len(out) == 0 {
