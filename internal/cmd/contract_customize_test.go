@@ -5,6 +5,7 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,7 +20,10 @@ import (
 // Custom Field and Property Setter (made through /api/resource, so not
 // system generated), a Client Script whose script lands in a sidecar file
 // byte for byte, a Workflow with its states and action, no stamps in any
-// file, and a second pull that writes nothing.
+// file, and a second pull that writes nothing. Then push: the folder
+// pushed back changes nothing, an edited script and Workflow transition are
+// updated (the table replaced), and a deleted Client Script is created
+// again.
 func contractCustomizePull(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
 	ctx := contractCtx(t)
 	script := "frappe.ui.form.on(\"" + contractDT + "\", {\n\trefresh(frm) {\n\t\t// <b>&</b>\n\t},\n});\n"
@@ -104,4 +108,76 @@ func contractCustomizePull(t *testing.T, c *client.FrappeClient, sc *config.Site
 	if again.Err != nil || json.Unmarshal([]byte(again.Stdout), &res) != nil || res.Written != 0 || res.Unchanged < 6 {
 		t.Errorf("second pull changed files: %v\n%s", again.Err, again.Stdout)
 	}
+	contractCustomizePush(t, c, cfg, dir)
+}
+
+func contractCustomizePush(t *testing.T, c *client.FrappeClient, cfg, dir string) {
+	ctx := contractCtx(t)
+	push := func(want map[string]float64) map[string]interface{} {
+		t.Helper()
+		r := runFFC(t, cfg, "", "--json", "customize", "push", dir, "-d", contractDT, "--yes")
+		var res map[string]interface{}
+		if r.Err != nil || json.Unmarshal([]byte(r.Stdout), &res) != nil {
+			t.Fatalf("push: %v\n%s\n%s", r.Err, r.Stdout, r.Stderr)
+		}
+		if w, ok := res["warnings"]; ok {
+			t.Logf("push warnings: %v", w)
+		}
+		for k, v := range want {
+			if res[k] != v {
+				t.Errorf("push %s = %v, want %v\n%s", k, res[k], v, r.Stdout)
+			}
+		}
+		return res
+	}
+	push(map[string]float64{"create": 0, "update": 0})
+
+	name := contractDT + " Form"
+	script := "frappe.ui.form.on(\"" + contractDT + "\", {});\n"
+	if err := os.WriteFile(filepath.Join(dir, "client_script", name+".script.js"), []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wfPath := filepath.Join(dir, "workflow", contractWF+".json")
+	wf, err := readCustomFile(filepath.Dir(wfPath), filepath.Base(wfPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := wf["transitions"].([]interface{})
+	rows[0].(map[string]interface{})["allow_self_approval"] = json.Number("0")
+	b, err := marshalCustomDoc(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wfPath, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := push(map[string]float64{"create": 0, "update": 2, "applied": 2})
+	for _, it := range res["plan"].([]interface{}) {
+		m := it.(map[string]interface{})
+		if m["action"] != "update" {
+			continue
+		}
+		if f := fmt.Sprint(m["fields"]); f != "[script]" && f != "[transitions]" {
+			t.Errorf("%s/%s changed %s", m["type"], m["name"], f)
+		}
+	}
+	if doc, err := c.GetDoc(ctx, "Client Script", name); err != nil || doc["script"] != script {
+		t.Errorf("script after push: %v %q", err, doc["script"])
+	}
+	doc, err := c.GetDoc(ctx, "Workflow", contractWF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr, _ := doc["transitions"].([]interface{}); len(tr) != 1 || fmt.Sprint(tr[0].(map[string]interface{})["allow_self_approval"]) != "0" {
+		t.Errorf("transitions after push: %v", doc["transitions"])
+	}
+
+	if err := c.DeleteDoc(ctx, "Client Script", name); err != nil {
+		t.Fatal(err)
+	}
+	push(map[string]float64{"create": 1, "update": 0, "applied": 1})
+	if doc, err := c.GetDoc(ctx, "Client Script", name); err != nil || doc["script"] != script || doc["dt"] != contractDT {
+		t.Errorf("recreated script: %v %v", err, doc)
+	}
+	push(map[string]float64{"create": 0, "update": 0})
 }

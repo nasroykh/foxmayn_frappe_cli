@@ -67,8 +67,9 @@ func customTypeSlugs() []string {
 
 var customizeCmd = &cobra.Command{
 	Use:   "customize",
-	Short: "Pull site customizations into files",
-	Long: `Copy a site's customizations to files you can review and keep in git.
+	Short: "Pull site customizations into files and push them to a site",
+	Long: `Copy a site's customizations to files you can review and keep in git
+(pull), and apply such a folder to a site (push).
 
 Covers Custom Fields, Property Setters, Client and Server Scripts, Print
 Formats, Reports, Notifications, Workflows (with their states and actions)
@@ -178,20 +179,28 @@ func customSelection(doctypes, module, types string, includeSystem bool) (custom
 	case len(sel.Doctypes) == 0 && sel.Module == "":
 		return sel, usageErrorf("pass -d/--doctype or --module")
 	}
+	var err error
+	sel.Types, err = customTypeList(types)
+	return sel, err
+}
+
+// customTypeList parses --types: every kind when empty, else the named
+// ones without repeats.
+func customTypeList(types string) ([]customType, error) {
 	if types == "" {
-		sel.Types = customTypes
-		return sel, nil
+		return customTypes, nil
 	}
+	var out []customType
 	for _, slug := range splitCSV(types) {
 		i := slices.IndexFunc(customTypes, func(t customType) bool { return t.slug == slug })
 		if i < 0 {
-			return sel, usageErrorf("--types: unknown kind %q (one of %s)", slug, strings.Join(customTypeSlugs(), ", "))
+			return nil, usageErrorf("--types: unknown kind %q (one of %s)", slug, strings.Join(customTypeSlugs(), ", "))
 		}
-		if !slices.ContainsFunc(sel.Types, func(t customType) bool { return t.slug == slug }) {
-			sel.Types = append(sel.Types, customTypes[i])
+		if !slices.ContainsFunc(out, func(t customType) bool { return t.slug == slug }) {
+			out = append(out, customTypes[i])
 		}
 	}
-	return sel, nil
+	return out, nil
 }
 
 // customDoc is a pulled document, normalized.
@@ -289,31 +298,48 @@ func customNames(ctx context.Context, c *client.FrappeClient, t customType, sel 
 // customInChunk is the most names one "in" filter carries.
 const customInChunk = 50
 
-// fetchCustomDocs reads and normalizes t's documents; the meta (child
-// tables included) says which fields are passwords.
-func fetchCustomDocs(ctx context.Context, c *client.FrappeClient, t customType, names []string) ([]customDoc, error) {
-	metas, err := c.FormMetas(ctx, t.doctype)
+// customMeta is what pull and push need from a kind's meta (child tables
+// included).
+type customMeta struct {
+	tables map[string]string          // table field → child DocType
+	secret map[string]map[string]bool // DocType → its Password fields
+	fields map[string]map[string]bool // DocType → its fields
+}
+
+func readCustomMeta(ctx context.Context, c *client.FrappeClient, doctype string) (*customMeta, error) {
+	metas, err := c.FormMetas(ctx, doctype)
 	if err != nil {
 		return nil, err
 	}
-	tables := map[string]string{} // table field → child DocType
-	if m := metas[t.doctype]; m != nil {
-		for _, f := range m.Fields {
+	m := &customMeta{tables: map[string]string{}, secret: map[string]map[string]bool{}, fields: map[string]map[string]bool{}}
+	if top := metas[doctype]; top != nil {
+		for _, f := range top.Fields {
 			if f.Options != "" && (f.Fieldtype == "Table" || f.Fieldtype == "Table MultiSelect") {
-				tables[f.Fieldname] = f.Options
+				m.tables[f.Fieldname] = f.Options
 			}
 		}
 	}
-	secret := map[string]map[string]bool{}
-	for dt, m := range metas {
-		for _, f := range m.Fields {
+	for dt, meta := range metas {
+		m.fields[dt] = map[string]bool{}
+		for _, f := range meta.Fields {
+			m.fields[dt][f.Fieldname] = true
 			if f.Fieldtype == "Password" {
-				if secret[dt] == nil {
-					secret[dt] = map[string]bool{}
+				if m.secret[dt] == nil {
+					m.secret[dt] = map[string]bool{}
 				}
-				secret[dt][f.Fieldname] = true
+				m.secret[dt][f.Fieldname] = true
 			}
 		}
+	}
+	return m, nil
+}
+
+// fetchCustomDocs reads and normalizes t's documents; the meta (child
+// tables included) says which fields are passwords.
+func fetchCustomDocs(ctx context.Context, c *client.FrappeClient, t customType, names []string) ([]customDoc, error) {
+	meta, err := readCustomMeta(ctx, c, t.doctype)
+	if err != nil {
+		return nil, err
 	}
 	out := make([]customDoc, 0, len(names))
 	for _, name := range names {
@@ -321,7 +347,7 @@ func fetchCustomDocs(ctx context.Context, c *client.FrappeClient, t customType, 
 		if err != nil {
 			return nil, fmt.Errorf("reading %s %s: %w", t.doctype, name, err)
 		}
-		norm, dropped := normalizeCustomDoc(doc, t.doctype, secret, tables)
+		norm, dropped := normalizeCustomDoc(doc, t.doctype, meta.secret, meta.tables)
 		d := customDoc{Type: t, Name: name, Doc: norm}
 		if len(dropped) > 0 {
 			d.Warnings = append(d.Warnings, fmt.Sprintf("%s %s: %s not written (password); set it on each site", t.doctype, name, strings.Join(dropped, ", ")))
