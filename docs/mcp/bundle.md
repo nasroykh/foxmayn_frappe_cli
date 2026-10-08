@@ -14,13 +14,13 @@ The bundle does not hold your sites or credentials. It uses the same config file
 
 1. Set up at least one site with the command-line tool: `ffc init` (see [Setup](setup.md) for installing ffc itself).
 2. Download `ffc_<version>.mcpb` from the [latest release](https://github.com/nasroykh/foxmayn_frappe_cli/releases/latest).
-3. Open the file (double-click it), or in Claude Desktop go to Settings, Extensions and drag it in. Confirm the install.
+3. Open the file with Claude Desktop (double-click it) and confirm the install.
 
 To update, install the newer bundle over the old one.
 
 ## Settings
 
-Claude Desktop shows these after the install, under the extension's settings:
+Claude Desktop shows these in the extension's settings:
 
 | Setting | Meaning | Default |
 | --- | --- | --- |
@@ -38,7 +38,7 @@ They map to `FFC_SITE`, `FFC_CONFIG` and `--read-only`. Per-site limits and conf
 
 ## Not signed
 
-The bundle and the binary inside are not signed or notarized, and the bundle is not in Anthropic's extension directory. Claude Desktop warns about an extension it cannot vouch for. Check the download against `checksums.txt` from the same release, which is signed (see [Security](../security.md)), or verify its build attestation with `gh attestation verify`.
+The bundle and the binary inside are not signed or notarized, and the bundle is not in Anthropic's extension directory. Check the download against `checksums.txt` from the same release, which is signed (see [Security](../security.md)), or verify its build attestation with `gh attestation verify`.
 
 ## See also
 
