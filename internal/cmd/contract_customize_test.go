@@ -4,6 +4,8 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,12 +32,18 @@ func contractCustomizePull(t *testing.T, c *client.FrappeClient, sc *config.Site
 	// DocType keeps submitting as before.
 	draft, done, action := contractWF+" Draft", contractWF+" Done", contractWF+" Finish"
 	t.Cleanup(func() { teardownWorkflow(contractCtx(t), t, c) })
+	// The workflow subtest's states may still exist: fixture documents
+	// link to them until the final teardown.
+	exists := func(err error) bool {
+		var api *client.APIError
+		return errors.As(err, &api) && api.Status == http.StatusConflict
+	}
 	for _, st := range []string{draft, done} {
-		if _, err := c.CreateDoc(ctx, "Workflow State", map[string]interface{}{"workflow_state_name": st}); err != nil {
+		if _, err := c.CreateDoc(ctx, "Workflow State", map[string]interface{}{"workflow_state_name": st}); err != nil && !exists(err) {
 			t.Fatalf("Workflow State: %v", err)
 		}
 	}
-	if _, err := c.CreateDoc(ctx, "Workflow Action Master", map[string]interface{}{"workflow_action_name": action}); err != nil {
+	if _, err := c.CreateDoc(ctx, "Workflow Action Master", map[string]interface{}{"workflow_action_name": action}); err != nil && !exists(err) {
 		t.Fatalf("Workflow Action Master: %v", err)
 	}
 	if _, err := c.CreateDoc(ctx, "Workflow", map[string]interface{}{
