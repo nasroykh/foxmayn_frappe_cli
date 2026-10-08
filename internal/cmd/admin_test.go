@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -111,7 +112,7 @@ func TestJobs(t *testing.T) {
 	}
 	args := (*got)[0]
 	if args["doctype"] != "RQ Job" || args["limit_page_length"] != json.Number("5") ||
-		mustJSON(t, args["filters"]) != `[["status","=","failed"],["queue","=","long"]]` {
+		mustJSON(t, args["filters"]) != `[["RQ Job","status","=","failed"],["RQ Job","queue","=","long"]]` {
 		t.Errorf("get_list args %v", args)
 	}
 	rows := cmdTRows(t, cmdTOK(t, cmdTRun(t, s, "--json", "jobs")))
@@ -120,10 +121,45 @@ func TestJobs(t *testing.T) {
 	}
 	cmdTFail(t, cmdTRun(t, s, "jobs", "--status", "broken"), "--status must be one of")
 
-	s.Add("RQ Job", map[string]interface{}{"name": "site||j2", "job_id": "site||j2", "status": "failed", "exc_info": "Traceback\nKeyError: 'thumb'", "arguments": "{\"a\": 1}"})
+	// Server text is printed without terminal escapes.
+	s.Add("RQ Job", map[string]interface{}{"name": "site||j2", "job_id": "site||j2", "status": "failed",
+		"exc_info": "Traceback\nKeyError: 'thumb'\x1b]0;title\a", "arguments": "{\"a\": 1}\x1b[2J"})
 	r = cmdTOK(t, cmdTRun(t, s, "jobs", "-n", "site||j2"))
-	if !strings.Contains(r.Stdout, "status             failed") || !strings.Contains(r.Stdout, "\nTraceback\nKeyError: 'thumb'") {
-		t.Errorf("job:\n%s", r.Stdout)
+	if !strings.Contains(r.Stdout, "status             failed") || !strings.Contains(r.Stdout, "\nTraceback\nKeyError: 'thumb'") ||
+		strings.ContainsAny(r.Stdout, "\x1b\a") {
+		t.Errorf("job:\n%q", r.Stdout)
+	}
+}
+
+// Frappe v15 lists only the first 20 matching jobs: a full page warns.
+func TestJobsV15(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		n       int
+		warn    bool
+	}{{"15.121.6", 20, true}, {"15.121.6", 19, false}, {"16.37.0", 20, false}} {
+		s := frappetest.New(t)
+		s.SetApps(map[string]frappetest.App{"frappe": {Title: "Frappe Framework", Version: tc.version}})
+		jobs := make([]interface{}, tc.n)
+		for i := range jobs {
+			jobs[i] = map[string]interface{}{"name": fmt.Sprint(i), "job_id": fmt.Sprint(i), "status": "finished"}
+		}
+		s.HandleMethod("frappe.client.get_list", func(*http.Request, map[string]interface{}) (interface{}, error) { return jobs, nil })
+		r := cmdTOK(t, cmdTRun(t, s, "--json", "jobs", "-l", "5"))
+		if got := strings.Contains(r.Stderr, "lists only 20 jobs"); got != tc.warn || len(cmdTRows(t, r)) != 5 {
+			t.Errorf("%s with %d jobs: stderr %q", tc.version, tc.n, r.Stderr)
+		}
+	}
+}
+
+// A check that failed on the site leaves its fields unset: no alarm.
+func TestHealthAttentionUnset(t *testing.T) {
+	if got := healthAttention(map[string]interface{}{}); len(got) != 0 {
+		t.Errorf("unset report: %v", got)
+	}
+	got := healthAttention(map[string]interface{}{"background_jobs_check": "failed", "total_background_workers": json.Number("0")})
+	if len(got) != 2 {
+		t.Errorf("failed checks: %v", got)
 	}
 }
 
@@ -176,8 +212,8 @@ func TestErrors(t *testing.T) {
 	}
 	cmdTFail(t, cmdTRun(t, s, "errors", "--since", "yesterday"), "use a duration such as")
 	r = cmdTOK(t, cmdTRun(t, s, "errors", "--since", "20m"))
-	if !strings.Contains(r.Stdout, "No errors logged in the last 20m.") {
-		t.Errorf("empty:\n%s", r.Stdout)
+	if r.Stdout != "" || !strings.Contains(r.Stderr, "No errors logged in the last 20m.") {
+		t.Errorf("empty: %q, %q", r.Stdout, r.Stderr)
 	}
 }
 
@@ -213,18 +249,45 @@ func TestScheduler(t *testing.T) {
 	}
 }
 
+// At the cap the report says so; equal counts sort by method, not by the
+// job type's hash name.
+func TestSchedulerCap(t *testing.T) {
+	s := frappetest.New(t)
+	adminTClock(t)
+	s.Add("System Settings", map[string]interface{}{"name": "System Settings", "time_zone": "UTC"})
+	s.HandleMethod("frappe.utils.scheduler.get_scheduler_status", func(*http.Request, map[string]interface{}) (interface{}, error) {
+		return map[string]interface{}{"status": "active"}, nil
+	})
+	s.Add("Scheduled Job Type",
+		map[string]interface{}{"name": "a1", "method": "app.z", "stopped": 0},
+		map[string]interface{}{"name": "z1", "method": "app.a", "stopped": 0})
+	s.AddDocType("Scheduled Job Log", "status", "creation", "scheduled_job_type", "details")
+	for i := 0; i < schedulerFailureCap+2; i++ {
+		s.Add("Scheduled Job Log", map[string]interface{}{"name": fmt.Sprintf("l%d", i), "status": "Failed",
+			"scheduled_job_type": []string{"a1", "z1"}[i%2], "creation": fmt.Sprintf("2026-10-08 08:%02d:%02d", i/60%60, i%60)})
+	}
+	r := cmdTOK(t, cmdTRun(t, s, "--json", "scheduler"))
+	rep := cmdTObj(t, r)
+	f := rep["failures"].([]interface{})
+	if rep["warning"] == nil || !strings.Contains(r.Stderr, "only the newest 1000 failed runs") || len(f) != 2 ||
+		f[0].(map[string]interface{})["method"] != "app.a" || f[0].(map[string]interface{})["count"] != float64(500) {
+		t.Errorf("report %v\nstderr %s", rep, r.Stderr)
+	}
+}
+
 func TestParseSince(t *testing.T) {
-	for in, want := range map[string]time.Duration{"0": 0, "": 0, "30m": 30 * time.Minute, "1h": time.Hour, "7d": 7 * 24 * time.Hour} {
+	for in, want := range map[string]time.Duration{"0": 0, "": 0, "30s": 30 * time.Second, "30m": 30 * time.Minute, "1h": time.Hour, "7d": 7 * 24 * time.Hour} {
 		if got, err := parseSince(in); err != nil || got != want {
 			t.Errorf("parseSince(%q) = %v, %v", in, got, err)
 		}
 	}
-	for _, bad := range []string{"-1h", "xd", "yesterday", "-2d"} {
+	for _, bad := range []string{"-1h", "xd", "yesterday", "-2d", "200000d"} {
 		if _, err := parseSince(bad); err == nil {
 			t.Errorf("parseSince(%q) accepted", bad)
 		}
 	}
-	for d, want := range map[time.Duration]string{90 * time.Minute: " in the last 1h30m", time.Hour: " in the last 1h", 20 * time.Minute: " in the last 20m", 48 * time.Hour: " in the last 2d"} {
+	for d, want := range map[time.Duration]string{90 * time.Minute: " in the last 1h30m", time.Hour: " in the last 1h", 20 * time.Minute: " in the last 20m", 48 * time.Hour: " in the last 2d",
+		30 * time.Second: " in the last 30s", 90 * time.Second: " in the last 1m30s", 10 * time.Second: " in the last 10s", 2 * time.Hour: " in the last 2h"} {
 		if got := sinceText(d); got != want {
 			t.Errorf("sinceText(%v) = %q", d, got)
 		}

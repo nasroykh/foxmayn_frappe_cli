@@ -41,6 +41,8 @@ ffc jobs -n "<job id>"
 
 `ffc jobs` lists the background jobs that Redis still holds, newest first. Redis keeps finished and failed jobs only for a while, so this is recent history, not a log.
 
+On Frappe v15 the list holds at most 20 jobs: the first 20 that Frappe meets, in queue order, sorted afterwards. They are not necessarily the newest, and ffc warns when the page is full. Filter with `--status` or `--queue` to see the jobs you want.
+
 | Flag | Meaning |
 | --- | --- |
 | `--status` | Only jobs in this state: `queued`, `started`, `failed`, `finished`, `deferred`, `scheduled` or `canceled`. |
@@ -66,7 +68,7 @@ ffc errors -n "<name>"
 | --- | --- |
 | `--since` | Only errors newer than this: `30m`, `1h`, `7d`, and so on (default `24h`). `0` lists them all. |
 | `-d, --doctype` | Only errors about this DocType. |
-| `--method` | Only errors whose title contains this text. |
+| `--method` | Only errors whose title contains this text. `%` and `_` are wildcards (SQL `like`). |
 | `-l, --limit` | At most this many errors (1-500, default 20). |
 | `-n, --name` | Show one entry with its traceback. |
 
@@ -91,4 +93,4 @@ The scheduler is inactive when any of these is true:
 
 Only job types with "Create Log" leave a Scheduled Job Log, for failed runs as well as successful ones. Frappe sets it for every frequency except All and Cron. A failure of a job type without it shows only among the background jobs, while Redis keeps it: `ffc jobs --status failed`. At most the newest 1000 failed runs are counted.
 
-With `--json` the answer is `{status, enabled, stopped, since, failures: [{job_type, method, count, last_failure, error}]}`.
+With `--json` the answer is `{status, enabled, stopped, since, failures: [{job_type, method, count, last_failure, error}], warning}`. `since` is the start of the window in site time, left out with `--since 0`. `method`, `error` and `warning` are left out when empty; `warning` says when the 1000 cap was reached.

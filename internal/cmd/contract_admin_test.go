@@ -42,21 +42,33 @@ func contractAdmin(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) 
 	t.Logf("health attention: %v", health["attention"])
 
 	// The health report queued a frappe.ping job, so the queue has one.
+	// v15 lists only the first 20 job ids it meets (and warns), so the
+	// ping may be missing there; any job then stands in for it.
+	jr := runFFC(t, cfg, "", "--json", "jobs", "-l", "50")
+	if jr.Err != nil {
+		t.Fatalf("jobs: %v\n%s", jr.Err, jr.Stderr)
+	}
 	var jobs []map[string]interface{}
-	if err := json.Unmarshal([]byte(run("jobs", "-l", "50")), &jobs); err != nil {
+	if err := json.Unmarshal([]byte(jr.Stdout), &jobs); err != nil {
 		t.Fatal(err)
 	}
-	found := false
+	var target map[string]interface{}
 	for _, j := range jobs {
 		if j["job_name"] == "frappe.ping" {
-			found = true
-			if _, err := c.GetDoc(contractCtx(t), "RQ Job", j["job_id"].(string)); err != nil {
-				t.Errorf("jobs -n target: %v", err)
-			}
+			target = j
+			break
 		}
 	}
-	if !found {
-		t.Errorf("no frappe.ping job among %d", len(jobs))
+	v15 := strings.Contains(jr.Stderr, "lists only 20 jobs")
+	switch {
+	case target == nil && v15 && len(jobs) > 0:
+		t.Logf("v15: no frappe.ping among the %d jobs listed", len(jobs))
+		target = jobs[0]
+	case target == nil:
+		t.Fatalf("no frappe.ping job among %d\n%s", len(jobs), jr.Stderr)
+	}
+	if _, err := c.GetDoc(contractCtx(t), "RQ Job", target["job_id"].(string)); err != nil {
+		t.Errorf("jobs -n target: %v", err)
 	}
 	if out := run("jobs", "--status", "failed", "-l", "1"); !strings.HasPrefix(strings.TrimSpace(out), "[") {
 		t.Errorf("jobs --status: %s", out)

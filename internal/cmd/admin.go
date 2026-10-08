@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
+	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -13,7 +15,9 @@ import (
 	_ "time/tzdata" // the site's time zone, also where the OS has no zone database (Windows)
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 
 	"github.com/spf13/cobra"
 )
@@ -77,13 +81,14 @@ func fetchHealth(ctx context.Context, c *client.FrappeClient) (map[string]interf
 	return rep, nil
 }
 
-// healthAttention lists what the report says is wrong, worst first.
+// healthAttention lists what the report says is wrong, worst first. A
+// check that failed on the site left its fields unset: no alarm then.
 func healthAttention(rep map[string]interface{}) []string {
 	out := []string{}
-	if s := adminString(rep["background_jobs_check"]); s != "queued" {
+	if s := adminString(rep["background_jobs_check"]); s != "" && s != "queued" {
 		out = append(out, "the test job could not be queued: the background job queue (Redis) may be down")
 	}
-	if adminNumber(rep["total_background_workers"]) == 0 {
+	if _, ok := rep["total_background_workers"]; ok && adminNumber(rep["total_background_workers"]) == 0 {
 		out = append(out, "no background workers are running: background jobs and emails wait")
 	}
 	if s := adminString(rep["scheduler_status"]); s != "" && s != "Active" {
@@ -112,7 +117,7 @@ func healthAttention(rep map[string]interface{}) []string {
 
 func printHealth(rep map[string]interface{}) {
 	v := func(k string) string { return adminFormat(rep[k]) }
-	line := func(label, value string) { fmt.Printf("%-17s %s\n", label, value) }
+	line := func(label, value string) { fmt.Printf("%-17s %s\n", label, text.Sanitize(value)) }
 
 	line("Background jobs", fmt.Sprintf("%s workers, test job %s", v("total_background_workers"), cmpString(rep["background_jobs_check"], "not checked")))
 	for _, r := range adminRows(rep["background_workers"]) {
@@ -153,7 +158,7 @@ func printHealth(rep map[string]interface{}) {
 	}
 	fmt.Println("Needs attention:")
 	for _, a := range att {
-		fmt.Println("  - " + a)
+		fmt.Println("  - " + text.Sanitize(a))
 	}
 }
 
@@ -176,7 +181,8 @@ var jobsCmd = &cobra.Command{
 with its arguments and full traceback (-n).
 
 Needs the System Manager role. Redis keeps finished and failed jobs only for
-a while, so this is recent history, not a log.
+a while, so this is recent history, not a log. Frappe v15 lists at most 20
+jobs, and not necessarily the newest; filter with --status or --queue.
 
 Examples:
   ffc jobs
@@ -205,12 +211,16 @@ Examples:
 		if jbLimit < 1 || jbLimit > 500 {
 			return usageErrorf("--limit must be between 1 and 500")
 		}
-		rows, err := callSite(cmd, "Reading background jobs…", func(ctx context.Context, c *client.FrappeClient) ([]map[string]interface{}, error) {
-			return fetchJobs(ctx, c, jbStatus, jbQueue, jbLimit)
+		list, err := callSiteCfg(cmd, "Reading background jobs…", func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (jobList, error) {
+			return fetchJobs(ctx, c, cfg, jbStatus, jbQueue, jbLimit)
 		})
 		if err != nil {
 			return err
 		}
+		if list.warning != "" {
+			output.PrintWarning(list.warning)
+		}
+		rows := list.rows
 		return render(rows, nil, func() error {
 			table := make([]map[string]interface{}, len(rows))
 			for i, r := range rows {
@@ -223,26 +233,46 @@ Examples:
 	},
 }
 
+type jobList struct {
+	rows    []map[string]interface{}
+	warning string
+}
+
+// v15JobPage is what Frappe v15's RQ Job list returns at most.
+const v15JobPage = 20
+
 // fetchJobs lists RQ Jobs, newest first. RQ Job is a virtual DocType whose
 // get_list (rq_job.py) ignores fields, needs an order_by ("desc" in
 // order_by fails on None) and slices with page_length unconverted, so a
 // GET list (string query values) fails with a TypeError: the query is a
-// POST of frappe.client.get_list with a JSON number.
-func fetchJobs(ctx context.Context, c *client.FrappeClient, status, queue string, limit int) ([]map[string]interface{}, error) {
+// POST of frappe.client.get_list with a JSON number. v15's make_filter_dict
+// reads four-element filters only (a shorter one is an IndexError), and its
+// get_list reads page_length and start, which DatabaseQuery never passes:
+// it takes the first 20 matching job ids in queue and registry order, then
+// sorts those. So on v15 a full page is not the newest jobs (warning).
+func fetchJobs(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, status, queue string, limit int) (jobList, error) {
 	filters := []interface{}{}
 	if status != "" {
-		filters = append(filters, []interface{}{"status", "=", status})
+		filters = append(filters, []interface{}{"RQ Job", "status", "=", status})
 	}
 	if queue != "" {
-		filters = append(filters, []interface{}{"queue", "=", queue})
+		filters = append(filters, []interface{}{"RQ Job", "queue", "=", queue})
 	}
 	res, err := c.CallMethod(ctx, "frappe.client.get_list", map[string]interface{}{
 		"doctype": "RQ Job", "filters": filters, "order_by": "creation desc", "limit_page_length": limit,
 	}, false)
 	if err != nil {
-		return nil, err
+		return jobList{}, err
 	}
 	list, _ := res.([]interface{})
+	out := jobList{}
+	if len(list) >= v15JobPage && cfg != nil {
+		if info, _, err := serverInfo(ctx, c, cfg, false); err == nil {
+			if m := info.FrappeMajor(); m > 0 && m < 16 {
+				out.warning = fmt.Sprintf("Frappe v%d lists only %d jobs, not necessarily the newest: narrow with --status or --queue", m, v15JobPage)
+			}
+		}
+	}
 	rows := make([]map[string]interface{}, 0, len(list))
 	for _, r := range list {
 		if m, ok := r.(map[string]interface{}); ok {
@@ -252,7 +282,8 @@ func fetchJobs(ctx context.Context, c *client.FrappeClient, status, queue string
 	if len(rows) > limit {
 		rows = rows[:limit]
 	}
-	return rows, nil
+	out.rows = rows
+	return out, nil
 }
 
 // cleanJob drops what serialize_job fills in for the desk only.
@@ -342,7 +373,7 @@ Examples:
 		}
 		return render(rows, nil, func() error {
 			if len(rows) == 0 {
-				fmt.Println("No errors logged" + sinceText(since) + ".")
+				fmt.Fprintln(os.Stderr, "No errors logged"+sinceText(since)+".")
 				return nil
 			}
 			table := make([]map[string]interface{}, len(rows))
@@ -395,8 +426,11 @@ Examples:
 		if err != nil {
 			return err
 		}
+		if rep.Warning != "" {
+			output.PrintWarning(rep.Warning)
+		}
 		return render(rep, nil, func() error {
-			fmt.Printf("Scheduler: %s\n", rep.Status)
+			fmt.Printf("Scheduler: %s\n", text.Sanitize(rep.Status))
 			fmt.Printf("Job types: %d enabled, %d stopped\n", rep.Enabled, rep.Stopped)
 			if len(rep.Failures) == 0 {
 				fmt.Printf("No failed runs%s.\n", sinceText(since))
@@ -425,8 +459,9 @@ type schedulerReport struct {
 	Status   string             `json:"status"` // active or inactive
 	Enabled  int                `json:"enabled"`
 	Stopped  int                `json:"stopped"`
-	Since    string             `json:"since,omitempty"`
+	Since    string             `json:"since,omitempty"` // site time; absent without a bound
 	Failures []schedulerFailure `json:"failures"`
+	Warning  string             `json:"warning,omitempty"`
 }
 
 // schedulerFailureCap bounds the failed runs read.
@@ -481,9 +516,15 @@ func fetchScheduler(ctx context.Context, c *client.FrappeClient, since time.Dura
 	for _, t := range slices.Sorted(maps.Keys(byType)) {
 		rep.Failures = append(rep.Failures, *byType[t])
 	}
-	sort.SliceStable(rep.Failures, func(i, j int) bool { return rep.Failures[i].Count > rep.Failures[j].Count })
+	sort.SliceStable(rep.Failures, func(i, j int) bool {
+		a, b := rep.Failures[i], rep.Failures[j]
+		if a.Count != b.Count {
+			return a.Count > b.Count
+		}
+		return cmpString(a.Method, a.JobType) < cmpString(b.Method, b.JobType)
+	})
 	if len(logs) == schedulerFailureCap {
-		output.PrintWarning(fmt.Sprintf("only the newest %d failed runs were counted", schedulerFailureCap))
+		rep.Warning = fmt.Sprintf("only the newest %d failed runs were counted", schedulerFailureCap)
 	}
 	return rep, nil
 }
@@ -511,7 +552,7 @@ func init() {
 	errorsCmd.Flags().StringVar(&erSince, "since", "24h", `Only errors newer than this (e.g. 30m, 1h, 7d; "0" for all)`)
 	errorsCmd.Flags().IntVarP(&erLimit, "limit", "l", 20, "Most errors to list (1-500)")
 	errorsCmd.Flags().StringVarP(&erDoctype, "doctype", "d", "", "Only errors about this DocType (reference_doctype)")
-	errorsCmd.Flags().StringVar(&erMethod, "method", "", "Only errors whose title contains this text")
+	errorsCmd.Flags().StringVar(&erMethod, "method", "", "Only errors whose title contains this text (% and _ are wildcards)")
 	errorsCmd.Flags().StringVarP(&erName, "name", "n", "", "Show this Error Log entry with its traceback")
 
 	schedulerCmd.Flags().StringVar(&scSince, "since", "24h", `Count failed runs newer than this (e.g. 1h, 7d; "0" for all)`)
@@ -530,7 +571,7 @@ func parseSince(s string) (time.Duration, error) {
 	}
 	if days, ok := strings.CutSuffix(s, "d"); ok {
 		n, err := strconv.Atoi(days)
-		if err != nil || n < 0 {
+		if err != nil || n < 0 || n > int(math.MaxInt64/(24*time.Hour)) {
 			return 0, usageErrorf("--since %q: use a duration such as 30m, 1h or 7d", s)
 		}
 		return time.Duration(n) * 24 * time.Hour, nil
@@ -549,7 +590,10 @@ func sinceText(d time.Duration) string {
 	case d%(24*time.Hour) == 0:
 		return fmt.Sprintf(" in the last %dd", d/(24*time.Hour))
 	}
-	out := strings.TrimSuffix(d.String(), "0s") // 1h30m0s → 1h30m
+	out := d.String() // 1h30m0s → 1h30m, 2h0m0s → 2h; 30s and 1m30s stay
+	if m, ok := strings.CutSuffix(out, "m0s"); ok {
+		out = m + "m"
+	}
 	if h, ok := strings.CutSuffix(out, "h0m"); ok {
 		out = h + "h"
 	}
@@ -580,11 +624,11 @@ var adminNow = time.Now
 func printRecord(rec map[string]interface{}, fields []string, long string) {
 	for _, f := range fields {
 		if v, ok := rec[f]; ok && adminString(v) != "" {
-			fmt.Printf("%-18s %s\n", f, strings.TrimSpace(adminFormat(v)))
+			fmt.Printf("%-18s %s\n", f, text.Sanitize(strings.TrimSpace(adminFormat(v))))
 		}
 	}
 	if s := adminString(rec[long]); s != "" {
-		fmt.Printf("\n%s\n", strings.TrimRight(s, "\n"))
+		fmt.Printf("\n%s\n", text.Sanitize(strings.TrimRight(s, "\n")))
 	}
 }
 
