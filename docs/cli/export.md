@@ -1,6 +1,6 @@
 # Export and import templates
 
-`ffc export` writes the documents of a DocType with the rows of their child tables, in the layout of Frappe's Data Import. `ffc import-template` writes the header of such a file, ready to fill. Both read only; neither changes the site.
+`ffc export` writes the documents of a DocType with the rows of their child tables, in the layout of Frappe's Data Import. `ffc import-template` writes the header of such a file, ready to fill. Both read only; neither changes the site. [`ffc import`](import.md) reads such a file back (CSV, JSON or NDJSON).
 
 ## export
 
