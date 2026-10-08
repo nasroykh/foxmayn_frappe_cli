@@ -67,6 +67,10 @@ func TestSiteRemoveRevokesAccessToken(t *testing.T) {
 	}
 }
 
+// revokeHang is how long the "timeout" case's server holds the request
+// unless the client goes away first.
+const revokeHang = 30 * time.Second
+
 func TestSiteRemoveRevokeFailureStillRemoves(t *testing.T) {
 	old := revokeTimeout
 	revokeTimeout = 300 * time.Millisecond
@@ -81,7 +85,7 @@ func TestSiteRemoveRevokeFailureStillRemoves(t *testing.T) {
 			s.Handle("POST "+revokePath, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				select {
 				case <-r.Context().Done():
-				case <-time.After(5 * time.Second):
+				case <-time.After(revokeHang):
 				}
 			}))
 			return s.URL
@@ -100,7 +104,10 @@ func TestSiteRemoveRevokeFailureStillRemoves(t *testing.T) {
 			start := time.Now()
 			r := runFFC(t, cfg, "", "site", "remove", "t", "--yes")
 			wantCode(t, r, 0)
-			if d := time.Since(start); d > 3*time.Second {
+			// Removal must not wait for the server. The bound sits far
+			// below revokeHang but well above revokeTimeout: a busy
+			// windows-latest runner once took 4 s here (0.33 s locally).
+			if d := time.Since(start); d > 10*time.Second {
 				t.Errorf("removal took %s", d)
 			}
 			if _, ok := mustRead(t, cfg).Sites["t"]; ok {
