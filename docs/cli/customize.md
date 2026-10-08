@@ -80,21 +80,28 @@ ffc --site prod customize push customizations --types custom_field,property_sett
 | `-y, --yes` | Apply without asking. Without a terminal, push needs it. |
 | `--fail-fast` | Stop after the first document that fails. |
 
-Push reads every file first. A file it cannot trust stops it before any request (exit 2): a file whose name does not match the document's `name`, a file that is not JSON, or a `$file` reference that is not one of the document's own sidecars in the same folder.
+Push reads every file first. A file it cannot trust stops it before any request (exit 2):
+
+- a file whose name does not match the document's `name`;
+- a document whose name does not match the fields Frappe names it from (a Custom Field is named `dt-fieldname`, a Workflow by its `workflow_name`, and so on): Frappe would create it under the other name, and every push would try to create it again;
+- a file that is not JSON;
+- a `$file` reference that is not one of the document's own sidecars in the same folder;
+- a link, device or pipe instead of a regular file or folder (a cloned repository could hold a link to a secret elsewhere on the disk), or a file over 16 MiB.
 
 It then reads each document from the site and prints a plan: what it would create, what it would update with the fields that change, and how many are unchanged. It asks before writing.
 
 - **Matching.** A file matches the site's document with the same name. Names are the same on every site (a Custom Field is `DocType-fieldname`, a Property Setter `DocType-field-property`, a Workflow its workflow name, and so on).
 - **Only what is in the file.** Push compares and sends only the fields in the file. Pull leaves out empty (null) values, so a field that was cleared on the source site keeps its value on the target. Clear it there by hand.
-- **Child tables.** A table that differs is sent whole and replaces the site's rows, like Frappe's own save. A table counts as unchanged when every field in the file's rows matches; columns that only the site has (a newer Frappe version adds some) do not count.
-- **Fields the site does not have** are left out with a warning. This happens when pushing from a newer Frappe version to an older one.
+- **Child tables.** A table that differs is sent whole and replaces the site's rows, like Frappe's own save. A table counts as unchanged when every field in the file's rows matches; columns that only the site has (a newer Frappe version adds some) do not count. When a table is replaced, those columns go back to their defaults, and push warns.
+- **Fields the site does not have** are left out with a warning, unless the site's copy already has the same value. This happens when pushing from a newer Frappe version to an older one.
 - **Passwords** are never sent: an empty password field would delete the stored secret. A Webhook created with security on needs its secret set on the site.
 - **Order.** Workflow States and Actions come before Workflows, Custom Fields before Property Setters, and a Custom Field after the field it is inserted after. Print Formats come before Notifications.
 - **Concurrent changes.** Each update carries the modification time push read for the plan. A document that changed on the site after that is refused ("was changed on the server since the plan was made"), never overwritten. Run push again to see the new plan.
+- **Workflows.** Saving an active Workflow deactivates the other Workflows of its DocType (Frappe allows one active Workflow per DocType). Push warns when that would happen.
 - **Server Scripts.** Saving one needs only the Script Manager role, but it runs only when the site allows Server Scripts. Push warns when the site says they are disabled.
 
 Push never deletes. With `-d`, the plan lists the documents of those DocTypes that are on the site but not in the folder ("extras"), selected the same way pull selects them. Pass the `--types` you pulled with, or kinds you did not pull show up there too.
 
-Documents are written one at a time. When some fail, the others are still applied (unless `--fail-fast`), the report lists each result, and the exit code is 8. With `--json` the answer is `{plan, create, update, unchanged, extras, warnings}`, plus `applied`, `failed`, `skipped` and `results` when push wrote.
+Documents are written one at a time. When some fail, the others are still applied (unless `--fail-fast`), the report lists each result, and the exit code is 8. With `--json` the answer is `{plan, create, update, unchanged, extras, warnings}`, plus `applied`, `failed`, `skipped` and `results` when push wrote. If push asks first, the plan goes to stderr before the question.
 
 Push writes with your user's permissions: Custom Fields and Property Setters need System Manager, Server Scripts Script Manager.

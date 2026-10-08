@@ -94,6 +94,12 @@ func TestCustomizePush(t *testing.T) {
 
 	r = cmdTRun(t, s, "customize", "push", dir)
 	cmdTFail(t, r, "pass --yes")
+	// With --json the plan goes to stderr before the question.
+	r = cmdTRun(t, s, "--json", "customize", "push", dir)
+	cmdTFail(t, r, "pass --yes")
+	if !strings.Contains(r.Stderr, "update  client_script/ToDo Form: script") || r.Stdout != "" {
+		t.Errorf("--json without --yes: stdout %q stderr %q", r.Stdout, r.Stderr)
+	}
 
 	res := cmdTObj(t, cmdTOK(t, cmdTRun(t, s, "--json", "customize", "push", dir, "--yes")))
 	if res["applied"] != float64(2) || res["update"] != float64(2) || res["unchanged"] != float64(9) {
@@ -243,11 +249,14 @@ func TestCustomizePushConflict(t *testing.T) {
 // A folder push cannot trust stops it before any request.
 func TestCustomizePushBadFiles(t *testing.T) {
 	for name, tc := range map[string]struct{ file, content, want string }{
-		"name":    {"custom_field/Wrong.json", `{"name": "ToDo-x"}`, `the name "ToDo-x" belongs in ToDo-x.json`},
-		"no name": {"custom_field/x.json", `{"dt": "ToDo"}`, `no "name"`},
-		"json":    {"custom_field/y.json", `{"name": `, "not a JSON object"},
-		"sidecar": {"client_script/A.json", `{"name": "A", "script": {"$file": "../custom_field/ToDo-custom_ref.json"}}`, "is not a sidecar of this document"},
-		"missing": {"client_script/B.json", `{"name": "B", "script": {"$file": "B.script.js"}}`, "B.script.js"},
+		"name":       {"custom_field/Wrong.json", `{"name": "ToDo-x"}`, `the name "ToDo-x" belongs in ToDo-x.json`},
+		"no name":    {"custom_field/x.json", `{"dt": "ToDo"}`, `no "name"`},
+		"json":       {"custom_field/y.json", `{"name": `, "not a JSON object"},
+		"sidecar":    {"client_script/A.json", `{"name": "A", "script": {"$file": "../custom_field/ToDo-custom_ref.json"}}`, "is not a sidecar of this document"},
+		"missing":    {"client_script/B.json", `{"name": "B", "script": {"$file": "B.script.js"}}`, "B.script.js"},
+		"trailing":   {"client_script/C.json", `{"name": "C"}]`, "data after the JSON object"},
+		"derived":    {"custom_field/ToDo-y.json", `{"name": "ToDo-y", "dt": "ToDo", "fieldname": "z"}`, `Frappe names this document "ToDo-z" from its fields`},
+		"ps derived": {"property_setter/ToDo-x-label.json", `{"name": "ToDo-x-label", "doc_type": "ToDo", "property": "label"}`, `"ToDo-main-label"`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, dir := customTPulled(t)
@@ -285,5 +294,48 @@ func TestSameCustomValue(t *testing.T) {
 		if got := sameCustomValue(tc.local, tc.site); got != tc.same {
 			t.Errorf("%d: sameCustomValue(%v, %v) = %v", i, tc.local, tc.site, got)
 		}
+	}
+}
+
+// A sidecar or document that is a link is refused: a cloned repository
+// could point it at a secret, which push would send as a field.
+func TestCustomizePushSymlink(t *testing.T) {
+	s, dir := customTPulled(t)
+	secret := filepath.Join(t.TempDir(), "id_rsa")
+	customTWrite(t, filepath.Dir(secret), "id_rsa", "PRIVATE")
+	side := filepath.Join(dir, "client_script", "ToDo Form.script.js")
+	if err := os.Remove(side); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, side); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	n := len(s.Requests())
+	r := cmdTRun(t, s, "customize", "push", dir, "--yes")
+	cmdTFail(t, r, "ToDo Form.script.js is not a regular file")
+	if r.Code != 2 || len(s.Requests()) != n {
+		t.Errorf("code %d, %d requests", r.Code, len(s.Requests())-n)
+	}
+}
+
+// Saving an active Workflow deactivates the DocType's other active ones;
+// the plan says so.
+func TestCustomizePushWorkflowActive(t *testing.T) {
+	s, dir := customTPulled(t)
+	s.Add("Workflow", map[string]interface{}{"name": "Old Flow", "document_type": "ToDo", "is_active": 1})
+	s.DocField("Workflow", "is_active", "Check")
+	wf := strings.Replace(customTRead(t, dir, "workflow/ToDo Flow.json"), `"document_type": "ToDo"`, `"document_type": "ToDo", "is_active": 1`, 1)
+	customTWrite(t, dir, "workflow/ToDo Flow.json", wf)
+	r := cmdTOK(t, cmdTRun(t, s, "customize", "push", dir, "--types", "workflow", "--dry-run"))
+	if !strings.Contains(r.Stderr, "Workflow ToDo Flow is active: saving it deactivates Old Flow on ToDo") {
+		t.Errorf("stderr:\n%s", r.Stderr)
+	}
+}
+
+func TestSiteOnlyColumns(t *testing.T) {
+	local := []interface{}{map[string]interface{}{"a": "1"}}
+	site := []interface{}{map[string]interface{}{"a": "2", "b": "x", "c": json.Number("0"), "d": ""}, map[string]interface{}{"e": json.Number("1")}}
+	if got := strings.Join(siteOnlyColumns(local, site), ","); got != "b,e" {
+		t.Errorf("siteOnlyColumns = %s", got)
 	}
 }
