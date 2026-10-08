@@ -2,6 +2,15 @@ version: 2
 
 project_name: ffc
 
+# Completion scripts and man pages for the archives (tools/gendocs). They are
+# generated, not committed: completions/ and manpages/ are gitignored.
+# The commit time dates the man pages, so a rebuild of a tag gives the same
+# files. (A global env entry cannot carry it: GoReleaser renders those before
+# it reads git, so .CommitTimestamp is still zero there.)
+before:
+  hooks:
+    - go run ./tools/gendocs . {{ .Version }} {{ .CommitTimestamp }}
+
 builds:
   - id: ffc
     main: ./cmd/ffc
@@ -30,6 +39,8 @@ archives:
     files:
       - README.md
       - LICENSE
+      - completions/*
+      - manpages/*
 
 checksum:
   name_template: "checksums.txt"

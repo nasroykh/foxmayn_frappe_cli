@@ -43,7 +43,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-GitHub Actions will cross-compile for linux/darwin/windows × amd64/arm64, create a GitHub Release, upload the tarballs, and generate `checksums.txt` and its Ed25519 signature `checksums.txt.sig`.
+GitHub Actions will cross-compile for linux/darwin/windows × amd64/arm64, create a GitHub Release, upload the tarballs, and generate `checksums.txt` and its Ed25519 signature `checksums.txt.sig`. Each archive holds the binary, README.md, LICENSE, `completions/` (ffc.bash, ffc.zsh, ffc.fish, ffc.ps1) and `manpages/` (one section-1 page per command), written by the `before` hook `go run ./tools/gendocs . <version> <commit time>` (gitignored; the commit time dates the pages, since a global `env` entry would see `.CommitTimestamp` as zero).
 
 **Release signing.** GoReleaser's `signs` step runs `go run ./tools/relsign sign` with the `FFC_RELEASE_SIGNING_KEY` repository secret (base64 Ed25519 seed). `ffc update` verifies the signature against `internal/relsig/keys.go` and refuses a release without a valid one. relsign refuses a secret that does not match `ReleaseKeys`, and `TestReleaseKeysConfigured` fails while `ReleaseKeys` is empty. To rotate: generate a key with `go run ./tools/relsign keygen <file>`, add its public key to `ReleaseKeys` (and `RELEASE_KEYS` in install.sh) next to the old one, ship a release signed with the old key, then switch the secret. Never commit a private key.
 
@@ -63,7 +63,7 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 ```
 
 **Key files:**
-- `.goreleaser.yaml` — build matrix, archive naming, checksum config
+- `.goreleaser.yaml` — build matrix, archive naming and contents (gendocs hook), checksum config
 - `.github/workflows/release.yml` — triggers on `v*` tags; runs `go mod tidy -diff`, vet and tests, then GoReleaser and a build-provenance attestation. Actions are pinned to commit SHAs.
 - `.github/workflows/ci.yml` — gofmt, tidy check, vet, race tests, staticcheck, govulncheck, vet and tests on windows-latest (no -race), and a cross-build on every push/PR
 - `.github/workflows/desktop.yml` — desktop/ on windows-latest and macos-latest when desktop/, internal/ or go.mod change: npm ci, tsc + vite build, `go mod tidy -diff`, vet, tests, `wails3 build` (CLI version from desktop/go.mod), committed bindings and lockfile unchanged, govulncheck (macOS)
@@ -230,6 +230,7 @@ internal/release/            → prompt-free release code shared by `ffc update`
                                 Release.Target (asset for GOOS/GOARCH, checksums.txt, signature), Download (Fetch size-limited, Verify =
                                 relsig signature + SHA-256, Extract from zip/tar.gz; fails closed)
 tools/relsign/               → keygen / sign / verify for the release key (run by GoReleaser, not shipped)
+tools/gendocs/               → completion scripts and man pages for the release archives (cmd.Root, cobra/doc; run by GoReleaser, not shipped)
 internal/version/            → Build-time version variables (ldflags)
 desktop/                     → Foxmayn Frappe Desktop (Wails v3 + React 19 + shadcn/ui on Base UI), its own Go module nested under the ffc module path;
                                 services/ (AppService, SitesService, AssistantsService over sitesetup/mcpinstall; install.go installs ffc

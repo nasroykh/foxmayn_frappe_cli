@@ -4,6 +4,8 @@ Tab-complete commands, flags, site names, DocTypes, fields and report names in b
 
 ## Install
 
+The release archives already hold the scripts, in `completions/` (`ffc.bash`, `ffc.zsh`, `ffc.fish`, `ffc.ps1`), next to the man pages in `manpages/`. Copy one to the place below instead of generating it, if you prefer.
+
 | Shell | This session | Every session |
 | --- | --- | --- |
 | bash (needs the `bash-completion` package) | `source <(ffc completion bash)` | Linux: `ffc completion bash > /etc/bash_completion.d/ffc`; macOS: `ffc completion bash > $(brew --prefix)/etc/bash_completion.d/ffc` |
