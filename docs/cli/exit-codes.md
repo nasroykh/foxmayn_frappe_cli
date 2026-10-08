@@ -11,7 +11,7 @@ What each ffc exit code means, so scripts can react to the kind of failure.
 | 4 | Not found (404), including a DocType that does not exist. |
 | 5 | Permission denied (403), or `ffc can` found the permission is not held. |
 | 6 | Validation or conflict: Frappe validation errors (417, such as `ValidationError` or `LinkExistsError`), duplicates (409), 400, 422, 413, a document changed since you read it (`TimestampMismatchError`), or a document in the wrong state for the command. |
-| 7 | Network or server: no connection, timeout, 429, 5xx. |
+| 7 | Network or server: no connection, timeout, 429, 5xx; also a background job still running when `--wait` ran out (`run-report --prepared`, `import --server`). |
 | 8 | Partial failure: some items of a bulk command (or `workflow bulk-apply`, documents of `import`, or parts of `cache warm`) did not succeed. |
 | 130 | Interrupted (Ctrl+C). |
 
