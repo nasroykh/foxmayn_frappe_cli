@@ -192,7 +192,7 @@ func TestMCPToolsets(t *testing.T) {
 	if got := mcpTToolNames(t, mcpTToolsets(t, []string{"collab"})); !reflect.DeepEqual(got, collab) {
 		t.Errorf("collab = %v", got)
 	}
-	if got := mcpTToolNames(t, mcpTToolsets(t, []string{"admin"})); !reflect.DeepEqual(got, []string{"list_sites", "share_doc", "unshare_doc"}) {
+	if got := mcpTToolNames(t, mcpTToolsets(t, []string{"admin"})); !reflect.DeepEqual(got, []string{"list_errors", "list_jobs", "list_sites", "scheduler_status", "share_doc", "site_health", "unshare_doc"}) {
 		t.Errorf("admin = %v", got)
 	}
 	if n := len(mcpTToolNames(t, mcpTToolsets(t, knownToolsets))); n != len(toolSurface) {
@@ -253,7 +253,7 @@ func TestMCPInstructions(t *testing.T) {
 	s, _ := newMCPFake(t, false)
 	text := mcpTInstructions(t, s)
 	n := strings.Count(text, "\n")
-	if n < 15 || n > 25 {
+	if n < 15 || n > 26 {
 		t.Errorf("instructions have %d lines:\n%s", n, text)
 	}
 	for _, want := range []string{`one site, "test"`, `{"status":"Open","docstatus":1}`, `[["grand_total",">",1000]`, "like (with %)",

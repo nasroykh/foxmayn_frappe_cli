@@ -125,6 +125,7 @@ func registerAllTools(s *server.MCPServer, env *mcpEnv) {
 	registerLifecycleTools(s, env)
 	registerIdentityTools(s, env)
 	registerCollabTools(s, env)
+	registerAdminTools(s, env)
 	registerFileTools(s, env)
 }
 

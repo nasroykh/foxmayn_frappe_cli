@@ -151,10 +151,11 @@ internal/cmd/mcp_sites.go        → multi-site MCP: mcpSites (--sites/--all-sit
                                 list_sites (siteless), addSiteParam, anyAllows
 internal/cmd/mcp_confirm.go      → needsConfirm, mcpPolicy.confirm (MRTR elicitation), confirmer (HMAC request state),
                                 confirmMessage, cliEquivalent
-internal/cmd/mcp_tools.go        → 38 MCP tools (registerTools); lifecycle ones in mcp_lifecycle_tools.go, whoami and check_permission in mcp_identity_tools.go,
+internal/cmd/mcp_tools.go        → 42 MCP tools (registerTools); lifecycle ones in mcp_lifecycle_tools.go, whoami and check_permission in mcp_identity_tools.go,
                                  get_doc_context in mcp_doc_context.go (filterDocContext, trimDocContext), aggregate in mcp_aggregate.go,
                                  collab (comment/assign/tag) and admin (share) ones in mcp_collab_tools.go;
-                                 the files set (list_attachments, attach_file, get_print_html; opt-in) in mcp_files_tools.go
+                                 the files set (list_attachments, attach_file, get_print_html; opt-in) in mcp_files_tools.go;
+                                 the admin read views (site_health, list_jobs, list_errors, scheduler_status) in mcp_admin_tools.go
 internal/cmd/customize.go        → T3.3 `customize pull`: customTypes (kind, selector, module, exclude), customNames (-d: selector in;
                                 --module: selector in the module's DocTypes, plus own module), fetchCustomDocs (FormMetas give the Password fields),
                                 normalizeCustomDoc, splitSidecars ($file), writeCustomizations (stable files, stale list), customFileBase;
@@ -338,6 +339,7 @@ Env vars:
   - Error Log: a REST GET does not mark it seen (only getdoc's onload does). v16 adds `metadata` and `fingerprint`.
   - `frappe.utils.scheduler.get_scheduler_status` is whitelisted without a permission check and answers `{"status": "active"|"inactive"}`; inactive with maintenance_mode, pause_scheduler, or the scheduler disabled. Scheduled Job Type names are hashes on v16: show `method`.
   - Scheduled Job Log exists only for job types with `create_log`: validate forces it for every frequency except All and Cron, and update_scheduler_log returns without a log when it is 0, failures included. `scheduler` counts failed logs (newest `schedulerFailureCap` = 1000, warns at the cap); failures of All/Cron jobs without create_log show only in `jobs --status failed`.
+  - MCP (admin tool set, all actRead): `site_health`, `list_jobs`, `list_errors`, `scheduler_status` share fetchHealth/fetchJobs/fetchErrors/fetchScheduler. `adminDoctypes` adds the DocTypes each reads to the scope (System Settings for the time zone). Lists cap at `mcpAdminLimit` (100) and carry only the traceback's last line (`error`); `name` returns the whole record. site_health stays a read although it queues frappe.ping (as the desk page does; documented).
   - Fake: `adminTReport`/`adminTJobs` and `HandleMethod` for get_list (a GET or a missing order_by is the TypeError); `adminNow` is the clock seam. Contract: `contractAdmin` (contract_admin_test.go).
 - `list-docs --limit 0` means no limit; negative `--limit`/`--start` are rejected. `--filters` must be a JSON object or array.
 - `go.mod` has `go 1.26.0` and `toolchain go1.27.1`. CI and GoReleaser install Go from `go-version-file: go.mod`, which can resolve to the `go` line; the toolchain line guarantees the patched release either way (setup-go or `GOTOOLCHAIN=auto` switches to it). Without it, release binaries were once built with Go 1.25.0 and carried 30 reachable stdlib vulnerabilities. Bump the toolchain with each Go patch release and run `govulncheck ./...`.

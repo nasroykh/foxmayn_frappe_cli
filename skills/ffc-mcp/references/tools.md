@@ -1,6 +1,6 @@
 # MCP tools, resources and prompts
 
-38 tools. `*` = required argument. Tools in `collab`, `admin` and `files` appear only when `--toolsets` names their set. With several sites served, every tool except `list_sites` also takes a required `site`. "Doc tools" take `doctype*` and `name*`.
+42 tools. `*` = required argument. Tools in `collab`, `admin` and `files` appear only when `--toolsets` names their set. With several sites served, every tool except `list_sites` also takes a required `site`. "Doc tools" take `doctype*` and `name*`.
 
 ## core (default)
 
@@ -51,11 +51,15 @@
 | `remove_tag` | collab | write | `tags` |
 | `share_doc` | admin | write, confirmed | `user` or `everyone`, `write`, `submit`, `share`, `notify` |
 | `unshare_doc` | admin | write | `user` or `everyone` |
+| `site_health` | admin | read (queues one frappe.ping job) | none (no `doctype`/`name`) |
+| `list_jobs` | admin | read | `status`, `queue`, `limit` (1-100), `name` (a job_id); no `doctype` |
+| `list_errors` | admin | read | `since` (default 24h), `doctype` (reference_doctype), `method`, `limit` (1-100), `name` |
+| `scheduler_status` | admin | read | `since` (default 24h); no `doctype`/`name` |
 | `list_attachments` | files | read | `limit` (default 100) |
 | `attach_file` | files | write | `filename*`, `data*` (base64, or text with `encoding: text`; max 5 MiB), `encoding`, `is_private` (default true), `folder`, `field` |
 | `get_print_html` | files | read | `print_format`, `letterhead`, `no_letterhead`, `language`, `text_only` |
 
-`share_doc`/`unshare_doc` need `DocShare` in the site's `allow_doctypes`, and `attach_file` needs `File` there (both are sensitive DocTypes). No tool returns file bytes or PDFs: use `ffc download` / `ffc pdf`. `get_print_html` runs the DocType's `before_print` code even on a read-only server.
+The four admin read tools need the System Manager role; start with `site_health`, whose `attention` says what is wrong. `share_doc`/`unshare_doc` need `DocShare` in the site's `allow_doctypes`, and `attach_file` needs `File` there (both are sensitive DocTypes). No tool returns file bytes or PDFs: use `ffc download` / `ffc pdf`. `get_print_html` runs the DocType's `before_print` code even on a read-only server.
 
 ## Result shapes worth knowing
 

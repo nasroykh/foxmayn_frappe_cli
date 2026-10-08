@@ -1,13 +1,13 @@
 # MCP tools
 
-The 38 tools the ffc MCP server offers, how tool sets select them, their limits, and the resources, prompts and completion that come with them.
+The 42 tools the ffc MCP server offers, how tool sets select them, their limits, and the resources, prompts and completion that come with them.
 
 ## Tool sets
 
 ```bash
 ffc mcp --toolsets core                    # documents, schema, reports, search, bulk, call_method, ...
 ffc mcp --toolsets core,lifecycle,collab   # + comments, assignments, tags
-ffc mcp --toolsets core,admin              # + sharing
+ffc mcp --toolsets core,admin              # + sharing, site health, jobs, errors, scheduler
 ffc mcp --toolsets core,lifecycle,files    # + attachments and print HTML
 ```
 
@@ -68,6 +68,12 @@ R = read tool (kept by `--read-only`), W = writes, M = `call_method` (treated as
 | --- | --- | --- |
 | `share_doc` | W | Share a document (asks for confirmation). Refused unless the site's `allow_doctypes` lists `DocShare`. |
 | `unshare_doc` | W | Remove a share. Same `DocShare` rule. |
+| `site_health` | R | The System Health Report with `attention`, like `ffc health`. Loading it queues one `frappe.ping` job, as the desk's page does, even on a read-only server. |
+| `list_jobs` | R | Background jobs, newest first: `status`, `queue`, `limit` (1-100, default 20), or `name` for one job with its arguments and traceback. Answers `{jobs, warning?}`; each listed job carries `error`, the last line of its traceback. |
+| `list_errors` | R | The Error Log, newest first: `since` (default `24h`), `doctype`, `method`, `limit` (1-100), or `name` for one entry with its traceback. Listed entries carry the last line of the traceback as `error`. |
+| `scheduler_status` | R | The scheduler's status, enabled and stopped job types, and failed runs per job type within `since` (default `24h`), like `ffc scheduler`. |
+
+The four read tools need the System Manager role and read `RQ Job`, `Error Log`, `System Health Report`, `Scheduled Job Type`, `Scheduled Job Log` and `System Settings` (for the time zone), so the site's DocType rules for those apply. See [Site health and operations](../cli/admin.md).
 
 ### `files`
 
