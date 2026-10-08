@@ -20,6 +20,7 @@ Run `ffc <command> --help` for the full text of any command. This reference foll
 | Find documents, compute totals | `search`, `aggregate`, `count-docs --group-by` | [Search and aggregate](search-and-aggregate.md) |
 | Reports and server methods | `list-reports`, `run-report`, `call-method` | [Reports and methods](server-calls.md) |
 | Any other endpoint | `api` | [ffc api](api.md) |
+| Copy customizations to files | `customize pull` | [Customizations](customize.md) |
 | Files and PDFs | `upload`, `download`, `attachments`, `pdf` | [Files and PDF](files-and-pdf.md) |
 | Comments, assignments, tags, shares | `comment`, `assign`, `unassign`, `tag`, `untag`, `share`, `unshare` | [Collaboration](collaboration.md) |
 | DocTypes, schemas, local cache | `list-doctypes`, `get-schema`, `cache` | [Schema and cache](schema-and-cache.md) |

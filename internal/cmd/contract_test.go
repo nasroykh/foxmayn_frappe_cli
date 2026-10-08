@@ -103,6 +103,8 @@ func TestContract(t *testing.T) {
 	t.Run("files upload download pdf", func(t *testing.T) { contractFiles(t, c, sc) })
 	// Last: an active workflow changes how the DocType submits.
 	t.Run("workflow", func(t *testing.T) { contractWorkflow(t, c, sc) })
+	// After workflow, whose teardown would remove the Workflow this one makes.
+	t.Run("customize pull", func(t *testing.T) { contractCustomizePull(t, c, sc) })
 }
 
 func setupContract(t *testing.T, c *client.FrappeClient) {
@@ -187,14 +189,11 @@ func teardownContract(t *testing.T, c *client.FrappeClient) {
 			}
 		}
 	}
-	for _, dt := range []string{"Custom Field", "Property Setter"} {
-		filter := `{"dt":"` + contractDT + `"}`
-		if dt == "Property Setter" {
-			filter = `{"doc_type":"` + contractDT + `"}`
-		}
-		if rows, err := c.GetList(ctx, dt, client.ListOptions{Filters: filter, Limit: -1}); err == nil {
+	for _, cust := range [][2]string{{"Custom Field", "dt"}, {"Property Setter", "doc_type"}, {"Client Script", "dt"}} {
+		filter := `{"` + cust[1] + `":"` + contractDT + `"}`
+		if rows, err := c.GetList(ctx, cust[0], client.ListOptions{Filters: filter, Limit: -1}); err == nil {
 			for _, r := range rows {
-				_ = c.DeleteDoc(ctx, dt, fmt.Sprint(r["name"]))
+				_ = c.DeleteDoc(ctx, cust[0], fmt.Sprint(r["name"]))
 			}
 		}
 	}
