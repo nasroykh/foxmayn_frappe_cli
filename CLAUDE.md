@@ -133,7 +133,9 @@ internal/cmd/workflow.go         → workflow transitions / apply / bulk-apply (
 internal/cmd/collab.go           → T2.5 logic shared by CLI and MCP: addComment (commentHTML), assignUsers/unassignUsers,
                                 tagDoc/untagDoc (cleanTags), shareDoc/unshareDoc; each reads the state first
 internal/cmd/collab_cmds.go      → comment / assign / unassign / tag / untag / share (confirm or --yes) / unshare
-internal/cmd/update.go           → self-update: internal/release finds, downloads and verifies; update.go confirms and swaps the binary
+internal/cmd/update.go           → self-update: internal/release finds, downloads and verifies; update.go confirms and swaps the binary;
+                                a package manager's copy (`release.ManagedBy` on `executablePath`) is refused with its command,
+                                which the update notice and doctor's hint also use (`updateCommand`); seams `releasesURL`, `executablePath`
 internal/cmd/update_check.go     → background update check; owns rootCmd.PersistentPreRunE
 internal/cmd/mcp.go              → mcp subcommand, --read-only + policy flags (mcpFlags) + --toolsets, newMCPEnv (site per call, cached
                                 client), startMCP (credential check + registerTools filtered by policy)
@@ -228,7 +230,8 @@ internal/text/               → Sanitize: strips C0/C1 controls (terminal escap
 internal/relsig/             → Ed25519 sign/verify of checksums.txt (domain-separated); ReleaseKeys in keys.go
 internal/release/            → prompt-free release code shared by `ffc update` and the desktop installer: Latest (newest non-draft, non-prerelease `v<digit>` tag from releases?per_page=100, so desktop releases are skipped),
                                 Release.Target (asset for GOOS/GOARCH, checksums.txt, signature), Download (Fetch size-limited, Verify =
-                                relsig signature + SHA-256, Extract from zip/tar.gz; fails closed)
+                                relsig signature + SHA-256, Extract from zip/tar.gz; fails closed); managed.go ManagedBy (Homebrew Cellar/Caskroom,
+                                Scoop apps/ffc, winget Packages/Links path segments → Manager{Name, Command})
 tools/relsign/               → keygen / sign / verify for the release key (run by GoReleaser, not shipped)
 internal/version/            → Build-time version variables (ldflags)
 desktop/                     → Foxmayn Frappe Desktop (Wails v3 + React 19 + shadcn/ui on Base UI), its own Go module nested under the ffc module path;

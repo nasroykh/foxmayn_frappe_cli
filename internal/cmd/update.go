@@ -38,7 +38,9 @@ var updateCmd = &cobra.Command{
 	Short: "Update ffc to the latest version",
 	Long: `Check GitHub for the latest ffc release and replace the binary in place.
 
-Works regardless of how ffc was installed (curl, powershell, go install).
+Works for the install scripts (curl, powershell) and go install. A copy that
+Homebrew, Scoop or winget installed is updated through that package manager:
+ffc update then only says which command to run.
 
 Examples:
   ffc update           # Check and update (asks for confirmation)
@@ -104,7 +106,7 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	var rel *release.Release
 	var fetchErr error
 	if err := runSpinner("Checking for updates…", func() {
-		rel, fetchErr = release.Latest(ctx, release.ReleasesURL, 30*time.Second)
+		rel, fetchErr = release.Latest(ctx, releasesURL, 30*time.Second)
 	}); err != nil {
 		return err
 	}
@@ -128,6 +130,10 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 	if upCheckOnly {
 		return nil
+	}
+	// The package manager must keep knowing which version it installed.
+	if m := managedInstall(); m != nil {
+		return fmt.Errorf("ffc was installed with %s; update it with: %s", m.Name, m.Command)
 	}
 
 	// Find the matching release asset for this OS/arch, plus the checksums
@@ -182,16 +188,48 @@ func downloadAndInstall(ctx context.Context, target release.Target) error {
 	return replaceBinary(binData)
 }
 
-// replaceBinary writes newData to a temp file then atomically swaps it with
-// the currently running binary.
-func replaceBinary(newData []byte) error {
+// releasesURL is release.ReleasesURL; tests point it at a fake.
+var releasesURL = release.ReleasesURL
+
+// executablePath is the running binary with symlinks resolved: the file
+// ffc update replaces. Tests replace it.
+var executablePath = func() (string, error) {
 	exePath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("finding executable path: %w", err)
+		return "", fmt.Errorf("finding executable path: %w", err)
 	}
 	exePath, err = filepath.EvalSymlinks(exePath)
 	if err != nil {
-		return fmt.Errorf("resolving symlinks: %w", err)
+		return "", fmt.Errorf("resolving symlinks: %w", err)
+	}
+	return exePath, nil
+}
+
+// managedInstall returns the package manager that installed the running
+// binary, or nil (also when its path cannot be found).
+func managedInstall() *release.Manager {
+	p, err := executablePath()
+	if err != nil {
+		return nil
+	}
+	return release.ManagedBy(p)
+}
+
+// updateCommand is the command that updates this ffc: ffc update, or the
+// package manager's own.
+func updateCommand() string {
+	if m := managedInstall(); m != nil {
+		return m.Command
+	}
+	return "ffc update"
+}
+
+// replaceBinary writes newData to a temp file then atomically swaps it with
+// the currently running binary.
+func replaceBinary(newData []byte) error {
+	exePath, err := executablePath()
+	if err != nil {
+		return err
 	}
 
 	dir := filepath.Dir(exePath)

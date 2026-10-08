@@ -500,7 +500,7 @@ func (d *doctor) checkUpdate() {
 	case isDevBuild(cur):
 		d.add("update.check", checkPass, fmt.Sprintf("development build %s; latest release %s", cur, state.Latest), "")
 	case newerThan(cur, state.Latest):
-		d.add("update.check", checkWarn, fmt.Sprintf("ffc %s is available (running %s)", state.Latest, cur), "ffc update")
+		d.add("update.check", checkWarn, fmt.Sprintf("ffc %s is available (running %s)", state.Latest, cur), updateCommand())
 	default:
 		d.add("update.check", checkPass, fmt.Sprintf("ffc %s is the latest release (checked %s ago)", cur, doctorNow().Sub(state.CheckedAt).Round(time.Minute)), "")
 	}
