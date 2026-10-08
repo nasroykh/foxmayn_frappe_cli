@@ -323,8 +323,9 @@ func TestUpdateTarget(t *testing.T) {
 // TestFFCManaged: a package manager's ffc is neither updatable nor
 // installed over or next to; the app names the manager's command instead.
 func TestFFCManaged(t *testing.T) {
-	scoop := fakeLocator("windows", `C:\Users\me`, `C:\Users\me\scoop\shims\ffc.exe`, nil)
-	if info := scoop.Info(); info.Manager != "Scoop" || info.UpgradeCommand != "scoop update ffc" || info.Updatable {
+	if runtime.GOOS != "windows" {
+		t.Log("the Scoop case runs on Windows only (filepath.Abs of a Windows path)")
+	} else if info := fakeLocator("windows", `C:\Users\me`, `C:\Users\me\scoop\shims\ffc.exe`, nil).Info(); info.Manager != "Scoop" || info.UpgradeCommand != "scoop update ffc" || info.Updatable {
 		t.Errorf("scoop shim = %+v", info)
 	}
 

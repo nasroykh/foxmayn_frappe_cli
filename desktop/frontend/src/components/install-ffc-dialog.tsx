@@ -85,6 +85,8 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
       setError(e)
       setPhase(e.code === "cancelled" ? "confirm" : "failed")
       if (e.code === "cancelled") toast.add({ title: "Installation cancelled", type: "info" })
+      // Refused because a package manager owns the ffc found now: show it.
+      if (e.code === "unavailable") void reloadEnv()
     } finally {
       run.current = null
     }
@@ -103,10 +105,10 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
     >
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg" showCloseButton={!running}>
         <DialogHeader>
-          <DialogTitle>{manager ? "Update the ffc helper" : updating ? "Update the ffc helper" : "Install the ffc helper"}</DialogTitle>
+          <DialogTitle>{manager || updating ? "Update the ffc helper" : "Install the ffc helper"}</DialogTitle>
           <DialogDescription>
             {manager
-              ? `ffc was installed with ${manager}, so ${manager} updates it. Run this in a terminal, then restart your connected assistants so they use the new version.`
+              ? `ffc was installed with ${manager}, so ${manager} updates and reinstalls it, not this app.${installed?.upgradeCommand ? " Run this in a terminal, then restart your connected assistants so they use the new version." : ""}`
               : updating
               ? `This downloads the latest ffc release from GitHub, checks its signature and replaces the ffc ${installed?.version || ""} at ${installed?.path ?? ""}. A development build of ffc is left alone and a new copy is installed for your user instead.`
               : "Assistants use ffc, a small program from Foxmayn, to talk to your Frappe sites. This downloads the latest ffc release from GitHub, checks its signature and installs it for your user only."}

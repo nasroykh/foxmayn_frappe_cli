@@ -28,6 +28,7 @@ func TestManagedBy(t *testing.T) {
 		// Another app in the same managers is not ffc.
 		{"/opt/homebrew/Cellar/ffcx/1.0/bin/ffc", ""},
 		{`C:\Users\me\scoop\apps\other\1.0\ffc.exe`, ""},
+		{`C:\Users\me\scoop\shims\ffcx.exe`, ""},
 		{`D:\tools\scx\apps\ffc\1.0\ffc.exe`, ""},
 	}
 	for _, c := range cases {

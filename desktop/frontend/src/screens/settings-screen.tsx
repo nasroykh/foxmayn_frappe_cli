@@ -194,7 +194,10 @@ function FFCTab() {
                   <IconAlertTriangle />
                   <AlertTitle>ffc did not answer</AlertTitle>
                   <AlertDescription>
-                    Running it failed ({ffc.error}). Installing it again usually fixes this.
+                    Running it failed ({ffc.error}).{" "}
+                    {ffc.manager
+                      ? `Reinstalling it with ${ffc.manager} usually fixes this.`
+                      : "Installing it again usually fixes this."}
                   </AlertDescription>
                 </Alert>
               )}

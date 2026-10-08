@@ -36,7 +36,7 @@ var managedSegments = []struct {
 	{"/cellar/ffc/", homebrew},
 	{"/caskroom/ffc/", homebrew},
 	{"/scoop/apps/ffc/", scoop},
-	{"/scoop/shims/ffc", scoop},
+	{"/scoop/shims/ffc.", scoop}, // ffc.exe, ffc.shim, ffc.cmd, ffc.ps1
 	{"/winget/packages/", winget},
 	{"/winget/links/", winget},
 }
@@ -57,7 +57,7 @@ func ManagedBy(path string) *Manager {
 	for _, env := range []string{"SCOOP", "SCOOP_GLOBAL"} {
 		if root := os.Getenv(env); root != "" {
 			root = strings.TrimSuffix(slashLower(root), "/")
-			if strings.HasPrefix(p, root+"/apps/ffc/") || strings.HasPrefix(p, root+"/shims/ffc") {
+			if strings.HasPrefix(p, root+"/apps/ffc/") || strings.HasPrefix(p, root+"/shims/ffc.") {
 				m := scoop
 				return &m
 			}
