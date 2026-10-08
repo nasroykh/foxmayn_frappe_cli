@@ -76,15 +76,19 @@ export function FFCMissingAlert() {
       <AlertTitle>{ffc.found ? "The ffc helper does not answer" : "One more thing: install the ffc helper"}</AlertTitle>
       <AlertDescription>
         {ffc.found
-          ? "ffc was found but did not start. Installing it again usually fixes this."
+          ? ffc.manager
+            ? `ffc was found but did not start. Reinstalling it with ${ffc.manager} usually fixes this.`
+            : "ffc was found but did not start. Installing it again usually fixes this."
           : "Assistants use ffc, a small program from Foxmayn, to reach your sites. You can add sites without it, but assistants need it."}
       </AlertDescription>
-      <AlertAction>
-        <Button size="sm" onClick={installFFC}>
-          <IconDownload data-icon="inline-start" />
-          {ffc.found ? "Reinstall" : "Install ffc"}
-        </Button>
-      </AlertAction>
+      {!ffc.manager && (
+        <AlertAction>
+          <Button size="sm" onClick={installFFC}>
+            <IconDownload data-icon="inline-start" />
+            {ffc.found ? "Reinstall" : "Install ffc"}
+          </Button>
+        </AlertAction>
+      )}
     </Alert>
   )
 }

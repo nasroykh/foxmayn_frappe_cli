@@ -25,7 +25,8 @@ var (
 //     (/opt/homebrew, /usr/local or /home/linuxbrew/.linuxbrew), linked from
 //     <prefix>/bin;
 //   - Scoop installs to <root>/apps/ffc/<version>, by default ~/scoop and
-//     C:\ProgramData\scoop (see also $SCOOP and $SCOOP_GLOBAL);
+//     C:\ProgramData\scoop (see also $SCOOP and $SCOOP_GLOBAL), and puts a shim
+//     <root>/shims/ffc.exe on PATH (what the desktop app finds there);
 //   - winget unpacks a portable package under ...\WinGet\Packages and links it
 //     from ...\WinGet\Links.
 var managedSegments = []struct {
@@ -35,6 +36,7 @@ var managedSegments = []struct {
 	{"/cellar/ffc/", homebrew},
 	{"/caskroom/ffc/", homebrew},
 	{"/scoop/apps/ffc/", scoop},
+	{"/scoop/shims/ffc.", scoop}, // ffc.exe, ffc.shim, ffc.cmd, ffc.ps1
 	{"/winget/packages/", winget},
 	{"/winget/links/", winget},
 }
@@ -54,7 +56,8 @@ func ManagedBy(path string) *Manager {
 	// A Scoop root moved elsewhere need not be named "scoop".
 	for _, env := range []string{"SCOOP", "SCOOP_GLOBAL"} {
 		if root := os.Getenv(env); root != "" {
-			if strings.HasPrefix(p, strings.TrimSuffix(slashLower(root), "/")+"/apps/ffc/") {
+			root = strings.TrimSuffix(slashLower(root), "/")
+			if strings.HasPrefix(p, root+"/apps/ffc/") || strings.HasPrefix(p, root+"/shims/ffc.") {
 				m := scoop
 				return &m
 			}

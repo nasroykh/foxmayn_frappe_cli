@@ -319,3 +319,31 @@ func TestUpdateTarget(t *testing.T) {
 		})
 	}
 }
+
+// TestFFCManaged: a package manager's ffc is neither updatable nor
+// installed over or next to; the app names the manager's command instead.
+func TestFFCManaged(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Log("the Scoop case runs on Windows only (filepath.Abs of a Windows path)")
+	} else if info := fakeLocator("windows", `C:\Users\me`, `C:\Users\me\scoop\shims\ffc.exe`, nil).Info(); info.Manager != "Scoop" || info.UpgradeCommand != "scoop update ffc" || info.Updatable {
+		t.Errorf("scoop shim = %+v", info)
+	}
+
+	brew := fakeLocator("darwin", "/Users/me", "/opt/homebrew/bin/ffc", nil)
+	brew.resolve = func(string) (string, error) { return "/opt/homebrew/Caskroom/ffc/1.2.3/ffc", nil }
+	info := brew.Info()
+	if info.Manager != "Homebrew" || info.UpgradeCommand != "brew upgrade ffc" || info.Updatable || info.target != "" {
+		t.Errorf("homebrew link = %+v", info)
+	}
+
+	h := &fakeHost{}
+	s := NewAppService(h, "/Users/me/.config/ffc/config.yaml", brew)
+	s.goos = "darwin"
+	s.install = func(context.Context, string, func(string)) (string, error) {
+		t.Error("the installer ran for a Homebrew ffc")
+		return "", nil
+	}
+	if _, err := s.InstallFFC(context.Background()); code(err) != CodeUnavailable || !strings.Contains(err.Error(), "brew upgrade ffc") {
+		t.Errorf("InstallFFC over Homebrew: %v", err)
+	}
+}

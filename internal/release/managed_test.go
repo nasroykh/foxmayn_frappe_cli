@@ -15,6 +15,8 @@ func TestManagedBy(t *testing.T) {
 		{`C:\Users\me\scoop\apps\ffc\1.16.0\ffc.exe`, "Scoop"},
 		{`C:\ProgramData\scoop\apps\ffc\current\ffc.exe`, "Scoop"},
 		{`D:\tools\sc\apps\ffc\1.16.0\ffc.exe`, "Scoop"},
+		{`C:\Users\me\scoop\shims\ffc.exe`, "Scoop"},
+		{`D:\tools\sc\shims\ffc.exe`, "Scoop"},
 		{`C:\Users\me\AppData\Local\Microsoft\WinGet\Packages\Foxmayn.ffc_Microsoft.Winget.Source_8wekyb3d8bbwe\ffc.exe`, "winget"},
 		{`C:\Users\me\AppData\Local\Microsoft\WinGet\Links\ffc.exe`, "winget"},
 		{`C:\Program Files\WinGet\Packages\Foxmayn.ffc\ffc.exe`, "winget"},
@@ -26,6 +28,7 @@ func TestManagedBy(t *testing.T) {
 		// Another app in the same managers is not ffc.
 		{"/opt/homebrew/Cellar/ffcx/1.0/bin/ffc", ""},
 		{`C:\Users\me\scoop\apps\other\1.0\ffc.exe`, ""},
+		{`C:\Users\me\scoop\shims\ffcx.exe`, ""},
 		{`D:\tools\scx\apps\ffc\1.0\ffc.exe`, ""},
 	}
 	for _, c := range cases {

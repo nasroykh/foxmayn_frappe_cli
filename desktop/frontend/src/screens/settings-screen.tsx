@@ -194,7 +194,10 @@ function FFCTab() {
                   <IconAlertTriangle />
                   <AlertTitle>ffc did not answer</AlertTitle>
                   <AlertDescription>
-                    Running it failed ({ffc.error}). Installing it again usually fixes this.
+                    Running it failed ({ffc.error}).{" "}
+                    {ffc.manager
+                      ? `Reinstalling it with ${ffc.manager} usually fixes this.`
+                      : "Installing it again usually fixes this."}
                   </AlertDescription>
                 </Alert>
               )}
@@ -210,7 +213,10 @@ function FFCTab() {
               )}
               <p className="text-muted-foreground text-sm">
                 The app looks for a newer ffc once a day (Check for updates in About looks now). You can also run{" "}
-                <code className="bg-muted rounded px-1 py-0.5 font-mono text-xs">ffc update</code> in a terminal.
+                <code className="bg-muted rounded px-1 py-0.5 font-mono text-xs">
+                  {ffc.upgradeCommand || "ffc update"}
+                </code>{" "}
+                in a terminal.
               </p>
             </>
           ) : (
@@ -227,10 +233,12 @@ function FFCTab() {
               Update to {ffcUpdate.latest}
             </Button>
           ) : (
-            <Button onClick={installFFC} variant={ok ? "outline" : "default"}>
-              <IconDownload data-icon="inline-start" />
-              {ffc.found ? "Install again" : "Install ffc"}
-            </Button>
+            !ffc.manager && (
+              <Button onClick={installFFC} variant={ok ? "outline" : "default"}>
+                <IconDownload data-icon="inline-start" />
+                {ffc.found ? "Install again" : "Install ffc"}
+              </Button>
+            )
           )}
           <Button variant="outline" onClick={refresh} disabled={refreshing}>
             {refreshing ? <Spinner data-icon="inline-start" /> : <IconRefresh data-icon="inline-start" />}
