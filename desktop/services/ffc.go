@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/release"
 )
 
 // FFCInfo says whether the ffc binary is installed and where.
@@ -22,9 +24,14 @@ type FFCInfo struct {
 	Error string `json:"error,omitempty"`
 	// Updatable means installing replaces this binary where it is: a working
 	// release build (not "dev") whose file is ffc.exe on Windows, or ffc
-	// after symlinks elsewhere. Otherwise an install puts a new copy in the
-	// installer's own folder.
+	// after symlinks elsewhere, that no package manager owns. Otherwise an
+	// install puts a new copy in the installer's own folder.
 	Updatable bool `json:"updatable"`
+	// Manager names the package manager that installed this ffc (Homebrew,
+	// Scoop, winget) and UpgradeCommand the command that updates it. The app
+	// never installs over such a copy, nor next to it.
+	Manager        string `json:"manager,omitempty"`
+	UpgradeCommand string `json:"upgradeCommand,omitempty"`
 	// target is the file an in-place install writes (Path with symlinks
 	// resolved outside Windows); set when Updatable.
 	target string
@@ -131,11 +138,27 @@ func (l *FFCLocator) detect() FFCInfo {
 		info.Error = err.Error()
 	}
 	info.Version = v
+	if m := release.ManagedBy(l.managedPath(p)); m != nil {
+		info.Manager, info.UpgradeCommand = m.Name, m.Command
+		return info
+	}
 	if _, release := releaseVersion(v); release && err == nil {
 		info.target = l.inPlaceTarget(p)
 		info.Updatable = info.target != ""
 	}
 	return info
+}
+
+// managedPath is p as release.ManagedBy needs it: with symlinks resolved
+// outside Windows (Homebrew links <prefix>/bin/ffc into its Cellar or
+// Caskroom). Windows paths are matched as found (see inPlaceTarget).
+func (l *FFCLocator) managedPath(p string) string {
+	if l.goos != "windows" {
+		if r, err := l.resolve(p); err == nil {
+			return r
+		}
+	}
+	return p
 }
 
 // inPlaceTarget is the file an update of the ffc at p replaces, or "" when

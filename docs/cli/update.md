@@ -54,7 +54,7 @@ A package manager keeps track of the version it installed, so `ffc update` does 
 | Installed with | ffc lives under | Update with |
 | --- | --- | --- |
 | Homebrew | `<prefix>/Cellar/ffc/` or `<prefix>/Caskroom/ffc/` | `brew upgrade ffc` |
-| Scoop | `<scoop root>/apps/ffc/` (also `$SCOOP`, `$SCOOP_GLOBAL`) | `scoop update ffc` |
+| Scoop | `<scoop root>/apps/ffc/` or its shim `<scoop root>/shims/ffc.exe` (also `$SCOOP`, `$SCOOP_GLOBAL`) | `scoop update ffc` |
 | winget | `...\WinGet\Packages\...` or `...\WinGet\Links\` | `winget upgrade ffc` |
 
 `ffc update --check` works as usual, and the daily notice and `ffc doctor` name the same command.

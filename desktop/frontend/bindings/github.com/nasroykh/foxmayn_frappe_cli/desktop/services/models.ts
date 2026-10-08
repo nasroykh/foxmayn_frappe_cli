@@ -191,10 +191,18 @@ export interface FFCInfo {
     /**
      * Updatable means installing replaces this binary where it is: a working
      * release build (not "dev") whose file is ffc.exe on Windows, or ffc
-     * after symlinks elsewhere. Otherwise an install puts a new copy in the
-     * installer's own folder.
+     * after symlinks elsewhere, that no package manager owns. Otherwise an
+     * install puts a new copy in the installer's own folder.
      */
     "updatable": boolean;
+
+    /**
+     * Manager names the package manager that installed this ffc (Homebrew,
+     * Scoop, winget) and UpgradeCommand the command that updates it. The app
+     * never installs over such a copy, nor next to it.
+     */
+    "manager"?: string;
+    "upgradeCommand"?: string;
 }
 
 /**

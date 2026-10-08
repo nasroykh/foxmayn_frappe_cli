@@ -40,6 +40,9 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
   // wording follows. Fixed while the dialog runs.
   const [updating, setUpdating] = React.useState(false)
   const installed = env.data?.ffc
+  // A package manager's ffc is updated through it; the app offers its command
+  // instead of installing (the Go side refuses too).
+  const manager = installed?.found ? installed.manager : undefined
 
   React.useEffect(() => {
     if (open && phase !== "running") {
@@ -100,15 +103,21 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
     >
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg" showCloseButton={!running}>
         <DialogHeader>
-          <DialogTitle>{updating ? "Update the ffc helper" : "Install the ffc helper"}</DialogTitle>
+          <DialogTitle>{manager ? "Update the ffc helper" : updating ? "Update the ffc helper" : "Install the ffc helper"}</DialogTitle>
           <DialogDescription>
-            {updating
+            {manager
+              ? `ffc was installed with ${manager}, so ${manager} updates it. Run this in a terminal, then restart your connected assistants so they use the new version.`
+              : updating
               ? `This downloads the latest ffc release from GitHub, checks its signature and replaces the ffc ${installed?.version || ""} at ${installed?.path ?? ""}. A development build of ffc is left alone and a new copy is installed for your user instead.`
               : "Assistants use ffc, a small program from Foxmayn, to talk to your Frappe sites. This downloads the latest ffc release from GitHub, checks its signature and installs it for your user only."}
           </DialogDescription>
         </DialogHeader>
 
-        {phase === "confirm" && !updating && (
+        {phase === "confirm" && manager && installed?.upgradeCommand && (
+          <CopyField value={installed.upgradeCommand} label="Update command" copiedTitle="Command copied" />
+        )}
+
+        {phase === "confirm" && !updating && !manager && (
           <Collapsible>
             <CollapsibleTrigger render={<Button variant="link" size="sm" className="px-0" />}>
               Where it goes
@@ -176,7 +185,12 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
         )}
 
         <DialogFooter>
-          {phase === "confirm" && (
+          {phase === "confirm" && manager && (
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
+          )}
+          {phase === "confirm" && !manager && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Not now

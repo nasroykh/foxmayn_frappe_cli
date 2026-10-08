@@ -136,6 +136,12 @@ func (s *AppService) InstallFFC(ctx context.Context) (FFCInfo, error) {
 	}
 	defer s.installMu.Unlock()
 
+	// A package manager's ffc is updated through it: neither replaced nor
+	// shadowed by a second copy in the installer's folder.
+	if info := s.ffc.Refresh(); info.Manager != "" {
+		return info, &Error{Code: CodeUnavailable, Message: "ffc was installed with " + info.Manager + ". Update it in a terminal with: " + info.UpgradeCommand}
+	}
+
 	_, err := s.install(ctx, s.updateTarget(), func(line string) {
 		s.host.Emit(EventInstallerLog, InstallerLine{Line: line})
 	})
