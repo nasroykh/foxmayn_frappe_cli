@@ -10,7 +10,8 @@ import (
 type FormField struct {
 	Fieldname     string
 	Fieldtype     string
-	Options       string // the child DocType of a table field
+	Label         string
+	Options       string // the child DocType of a table field, a Link's DocType, a Select's choices
 	ReadOnly      bool
 	Hidden        bool
 	AllowOnSubmit bool
@@ -25,8 +26,10 @@ type FormField struct {
 
 // FormMeta is a DocType's form meta: its fields in form order.
 type FormMeta struct {
-	Name   string
-	Fields []FormField
+	Name          string
+	Autoname      string // naming rule: "prompt", "hash", "field:x", a series, ...
+	IsSubmittable bool
+	Fields        []FormField
 }
 
 // FormMetas reads the meta of a DocType and of its child tables, by
@@ -38,10 +41,13 @@ func (c *FrappeClient) FormMetas(ctx context.Context, doctype string) (map[strin
 		return nil, fmt.Errorf("reading the %s meta: %w", doctype, err)
 	}
 	var docs []struct {
-		Name   string `json:"name"`
-		Fields []struct {
+		Name          string      `json:"name"`
+		Autoname      interface{} `json:"autoname"`
+		IsSubmittable interface{} `json:"is_submittable"`
+		Fields        []struct {
 			Fieldname     string      `json:"fieldname"`
 			Fieldtype     string      `json:"fieldtype"`
+			Label         interface{} `json:"label"`
 			Options       interface{} `json:"options"`
 			ReadOnly      interface{} `json:"read_only"`
 			Hidden        interface{} `json:"hidden"`
@@ -66,10 +72,10 @@ func (c *FrappeClient) FormMetas(ctx context.Context, doctype string) (map[strin
 	}
 	out := make(map[string]*FormMeta, len(docs))
 	for _, d := range docs {
-		m := &FormMeta{Name: d.Name}
+		m := &FormMeta{Name: d.Name, Autoname: str(d.Autoname), IsSubmittable: truthy(d.IsSubmittable)}
 		for _, f := range d.Fields {
 			m.Fields = append(m.Fields, FormField{
-				Fieldname: f.Fieldname, Fieldtype: f.Fieldtype, Options: str(f.Options),
+				Fieldname: f.Fieldname, Fieldtype: f.Fieldtype, Label: str(f.Label), Options: str(f.Options),
 				ReadOnly: truthy(f.ReadOnly), Hidden: truthy(f.Hidden), AllowOnSubmit: truthy(f.AllowOnSubmit),
 				IsVirtual: truthy(f.IsVirtual), SetOnlyOnce: truthy(f.SetOnlyOnce),
 				FetchFrom: str(f.FetchFrom), FetchIfEmpty: truthy(f.FetchIfEmpty),

@@ -12,7 +12,7 @@ What each ffc exit code means, so scripts can react to the kind of failure.
 | 5 | Permission denied (403), or `ffc can` found the permission is not held. |
 | 6 | Validation or conflict: Frappe validation errors (417, such as `ValidationError` or `LinkExistsError`), duplicates (409), 400, 422, 413, a document changed since you read it (`TimestampMismatchError`), or a document in the wrong state for the command. |
 | 7 | Network or server: no connection, timeout, 429, 5xx. |
-| 8 | Partial failure: some items of a bulk command (or `workflow bulk-apply`, or parts of `cache warm`) did not succeed. |
+| 8 | Partial failure: some items of a bulk command (or `workflow bulk-apply`, documents of `import`, or parts of `cache warm`) did not succeed. |
 | 130 | Interrupted (Ctrl+C). |
 
 Before v1.7.0 every failure exited with 1. Scripts that test "non-zero" are unaffected; scripts that test `-eq 1` should test `-ne 0` instead.

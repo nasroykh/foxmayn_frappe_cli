@@ -17,6 +17,7 @@ Run `ffc <command> --help` for the full text of any command. This reference foll
 | Edit a document in your editor | `edit-doc` | [edit-doc](edit-doc.md) |
 | Change many documents at once | `bulk-create`, `bulk-update`, `bulk-delete` | [Bulk operations](bulk.md) |
 | Export documents with their child tables, import templates | `export`, `import-template` | [Export](export.md) |
+| Create or update documents from a CSV or JSON file | `import` | [Import](import.md) |
 | Submit, cancel, amend, workflows | `submit-doc`, `cancel-doc`, `amend-doc`, `copy-doc`, `rename-doc`, `restore-doc`, `discard-doc`, `workflow` | [Lifecycle and workflow](lifecycle-and-workflow.md) |
 | Find documents, compute totals | `search`, `aggregate`, `count-docs --group-by` | [Search and aggregate](search-and-aggregate.md) |
 | Reports and server methods | `list-reports`, `run-report`, `call-method` | [Reports and methods](server-calls.md) |
