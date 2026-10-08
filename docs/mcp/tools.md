@@ -70,10 +70,17 @@ R = read tool (kept by `--read-only`), W = writes, M = `call_method` (treated as
 | `unshare_doc` | W | Remove a share. Same `DocShare` rule. |
 | `site_health` | R | The System Health Report with `attention`, like `ffc health`. Loading it queues one `frappe.ping` job, as the desk's page does, even on a read-only server. |
 | `list_jobs` | R | Background jobs, newest first: `status`, `queue`, `limit` (1-100, default 20), or `name` for one job with its arguments and traceback. Answers `{jobs, warning?}`; each listed job carries `error`, the last line of its traceback. |
-| `list_errors` | R | The Error Log, newest first: `since` (default `24h`), `doctype`, `method`, `limit` (1-100), or `name` for one entry with its traceback. Listed entries carry the last line of the traceback as `error`. |
-| `scheduler_status` | R | The scheduler's status, enabled and stopped job types, and failed runs per job type within `since` (default `24h`), like `ffc scheduler`. |
+| `list_errors` | R | The Error Log, newest first: `since` (default `24h`), `doctype`, `method`, `limit` (1-100), or `name` for one entry with its traceback. Answers `{errors, hidden_by_policy}`; listed entries carry the last line of the traceback as `error`. |
+| `scheduler_status` | R | The scheduler's status, enabled and stopped job types, and failed runs per job type within `since` (default `24h`), like `ffc scheduler`, with the last line of each last error. |
 
-The four read tools need the System Manager role and read `RQ Job`, `Error Log`, `System Health Report`, `Scheduled Job Type`, `Scheduled Job Log` and `System Settings` (for the time zone), so the site's DocType rules for those apply. See [Site health and operations](../cli/admin.md).
+The four read tools need the System Manager role. The site's DocType rules apply to what each reads:
+
+- `site_health`: System Health Report, Scheduled Job Type, Error Log, RQ Job, Email Queue and User (the report is built from them);
+- `list_jobs`: RQ Job;
+- `list_errors`: Error Log and System Settings (the time zone), and each entry's `reference_doctype`: entries about a DocType the server may not read are left out (`hidden_by_policy`), and `name` of such an entry is refused;
+- `scheduler_status`: Scheduled Job Type, Scheduled Job Log and System Settings.
+
+A job's arguments and traceback (`list_jobs` with `name`) can hold data of any DocType; only RQ Job is checked. See [Site health and operations](../cli/admin.md).
 
 ### `files`
 

@@ -59,7 +59,7 @@
 | `attach_file` | files | write | `filename*`, `data*` (base64, or text with `encoding: text`; max 5 MiB), `encoding`, `is_private` (default true), `folder`, `field` |
 | `get_print_html` | files | read | `print_format`, `letterhead`, `no_letterhead`, `language`, `text_only` |
 
-The four admin read tools need the System Manager role; start with `site_health`, whose `attention` says what is wrong. `share_doc`/`unshare_doc` need `DocShare` in the site's `allow_doctypes`, and `attach_file` needs `File` there (both are sensitive DocTypes). No tool returns file bytes or PDFs: use `ffc download` / `ffc pdf`. `get_print_html` runs the DocType's `before_print` code even on a read-only server.
+The four admin read tools need the System Manager role; start with `site_health`, whose `attention` says what is wrong. `list_errors` answers `{errors, hidden_by_policy}` and leaves out entries about DocTypes the policy hides. `share_doc`/`unshare_doc` need `DocShare` in the site's `allow_doctypes`, and `attach_file` needs `File` there (both are sensitive DocTypes). No tool returns file bytes or PDFs: use `ffc download` / `ffc pdf`. `get_print_html` runs the DocType's `before_print` code even on a read-only server.
 
 ## Result shapes worth knowing
 

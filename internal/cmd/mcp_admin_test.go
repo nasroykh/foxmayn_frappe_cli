@@ -31,6 +31,7 @@ func TestMCPListJobs(t *testing.T) {
 	}
 	mcpTErr(t, s, "list_jobs", map[string]interface{}{"limit": 101}, "limit: between 1 and 100")
 	mcpTErr(t, s, "list_jobs", map[string]interface{}{"status": "broken"}, "status")
+	mcpTErr(t, s, "list_jobs", map[string]interface{}{"queue": 1}, "queue: expected a string")
 
 	site.Add("RQ Job", map[string]interface{}{"name": "site||j2", "job_id": "site||j2", "status": "failed", "exc_info": "Traceback\nKeyError: 'thumb'", "owner": "Administrator"})
 	job := mcpTObj(t, mcpTOK(t, s, "list_jobs", map[string]interface{}{"name": "site||j2"}))
@@ -47,14 +48,16 @@ func TestMCPListErrors(t *testing.T) {
 	site.Add("Error Log",
 		map[string]interface{}{"name": "e1", "creation": "2026-10-08 08:30:00", "method": "ValidationError", "seen": 0, "error": "Traceback\n  File x\nValidationError: bad"},
 		map[string]interface{}{"name": "e0", "creation": "2026-10-01 08:00:00", "method": "old", "seen": 1, "error": "x"})
-	rows := mcpTRows(t, mcpTOK(t, s, "list_errors", map[string]interface{}{"since": "1h"}))
-	if len(rows) != 1 || rows[0]["name"] != "e1" || rows[0]["error"] != "ValidationError: bad" {
-		t.Errorf("rows %v", rows)
+	out := mcpTObj(t, mcpTOK(t, s, "list_errors", map[string]interface{}{"since": "1h"}))
+	rows := out["errors"].([]interface{})
+	if row := rows[0].(map[string]interface{}); len(rows) != 1 || row["name"] != "e1" || row["error"] != "ValidationError: bad" || out["hidden_by_policy"] != float64(0) {
+		t.Errorf("errors %v", out)
 	}
-	if n := len(mcpTRows(t, mcpTOK(t, s, "list_errors", map[string]interface{}{"since": "0"}))); n != 2 {
+	if n := len(mcpTObj(t, mcpTOK(t, s, "list_errors", map[string]interface{}{"since": "0"}))["errors"].([]interface{})); n != 2 {
 		t.Errorf("since 0: %d rows", n)
 	}
-	mcpTErr(t, s, "list_errors", map[string]interface{}{"since": "yesterday"}, "use a duration")
+	mcpTErr(t, s, "list_errors", map[string]interface{}{"since": "yesterday"}, `since "yesterday": use a duration`)
+	mcpTErr(t, s, "list_errors", map[string]interface{}{"since": 0}, "since: expected a string")
 	rec := mcpTObj(t, mcpTOK(t, s, "list_errors", map[string]interface{}{"name": "e1"}))
 	if rec["error"] != "Traceback\n  File x\nValidationError: bad" || rec["creation"] == nil {
 		t.Errorf("entry %v", rec)
@@ -70,10 +73,11 @@ func TestMCPSchedulerStatus(t *testing.T) {
 	})
 	site.Add("Scheduled Job Type", map[string]interface{}{"name": "h1", "method": "app.a", "stopped": 0})
 	site.AddDocType("Scheduled Job Log", "status", "creation", "scheduled_job_type", "details")
-	site.Add("Scheduled Job Log", map[string]interface{}{"name": "l1", "status": "Failed", "scheduled_job_type": "h1", "creation": "2026-10-08 08:00:00", "details": "boom"})
+	site.Add("Scheduled Job Log", map[string]interface{}{"name": "l1", "status": "Failed", "scheduled_job_type": "h1", "creation": "2026-10-08 08:00:00", "details": "Traceback\n  File y\nboom"})
 	rep := mcpTObj(t, mcpTOK(t, s, "scheduler_status", map[string]interface{}{"since": "7d"}))
 	f := rep["failures"].([]interface{})
-	if rep["status"] != "active" || rep["enabled"] != float64(1) || len(f) != 1 || f[0].(map[string]interface{})["method"] != "app.a" {
+	if rep["status"] != "active" || rep["enabled"] != float64(1) || len(f) != 1 || f[0].(map[string]interface{})["method"] != "app.a" ||
+		f[0].(map[string]interface{})["error"] != "boom" {
 		t.Errorf("report %v", rep)
 	}
 }
@@ -81,18 +85,33 @@ func TestMCPSchedulerStatus(t *testing.T) {
 // The DocTypes each view reads are in its scope: a denied one refuses the
 // call before any request.
 func TestMCPAdminPolicy(t *testing.T) {
-	for tool, dt := range map[string]string{"site_health": "System Health Report", "list_jobs": "RQ Job",
-		"list_errors": "Error Log", "scheduler_status": "Scheduled Job Log"} {
-		s, site, _, _ := mcpTPolicy(t, &config.MCPPolicy{DenyDoctypes: []string{dt}}, config.MCPPolicy{})
-		mcpTErr(t, s, tool, nil, `DocType "`+dt+`" is denied`)
+	for _, c := range []struct{ tool, dt string }{
+		{"site_health", "System Health Report"}, {"site_health", "Error Log"}, {"site_health", "User"}, {"site_health", "Scheduled Job Type"},
+		{"list_jobs", "RQ Job"}, {"list_errors", "Error Log"}, {"list_errors", "System Settings"},
+		{"scheduler_status", "Scheduled Job Log"}, {"scheduler_status", "System Settings"},
+	} {
+		s, site, _, _ := mcpTPolicy(t, &config.MCPPolicy{DenyDoctypes: []string{c.dt}}, config.MCPPolicy{})
+		mcpTErr(t, s, c.tool, nil, `DocType "`+c.dt+`" is denied`)
 		if n := len(site.Requests()); n != 0 {
-			t.Errorf("%s: %d requests sent", tool, n)
+			t.Errorf("%s: %d requests sent", c.tool, n)
 		}
 	}
-	// list_errors reads System Settings for the time zone.
-	s, site, _, _ := mcpTPolicy(t, &config.MCPPolicy{DenyDoctypes: []string{"System Settings"}}, config.MCPPolicy{})
-	mcpTErr(t, s, "list_errors", nil, `"System Settings" is denied`)
-	if n := len(site.Requests()); n != 0 {
-		t.Errorf("%d requests sent", n)
+}
+
+// An Error Log entry about a DocType the policy hides is left out, and
+// reading it by name is refused.
+func TestMCPListErrorsPolicy(t *testing.T) {
+	s, site, _, _ := mcpTPolicy(t, &config.MCPPolicy{DenyDoctypes: []string{"ToDo"}}, config.MCPPolicy{})
+	site.AddDocType("Error Log", "name", "creation", "method", "reference_doctype", "reference_name", "seen", "error")
+	site.Add("Error Log",
+		map[string]interface{}{"name": "e1", "creation": "2026-10-08 08:30:00", "method": "a", "reference_doctype": "ToDo", "reference_name": "TD-1", "error": "x"},
+		map[string]interface{}{"name": "e2", "creation": "2026-10-08 08:20:00", "method": "b", "reference_doctype": "Note", "reference_name": "N1", "error": "y"},
+		map[string]interface{}{"name": "e3", "creation": "2026-10-08 08:10:00", "method": "c", "error": "z"})
+	out := mcpTObj(t, mcpTOK(t, s, "list_errors", map[string]interface{}{"since": "0"}))
+	rows := out["errors"].([]interface{})
+	if len(rows) != 2 || rows[0].(map[string]interface{})["name"] != "e2" || out["hidden_by_policy"] != float64(1) {
+		t.Errorf("errors %v", out)
 	}
+	mcpTErr(t, s, "list_errors", map[string]interface{}{"name": "e1"}, `DocType "ToDo" is denied`)
+	mcpTErr(t, s, "list_errors", map[string]interface{}{"doctype": "ToDo"}, `DocType "ToDo" is denied`)
 }

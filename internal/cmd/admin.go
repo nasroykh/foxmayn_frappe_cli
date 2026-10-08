@@ -269,7 +269,7 @@ func fetchJobs(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConf
 	if len(list) >= v15JobPage && cfg != nil {
 		if info, _, err := serverInfo(ctx, c, cfg, false); err == nil {
 			if m := info.FrappeMajor(); m > 0 && m < 16 {
-				out.warning = fmt.Sprintf("Frappe v%d lists only %d jobs, not necessarily the newest: narrow with --status or --queue", m, v15JobPage)
+				out.warning = fmt.Sprintf("Frappe v%d lists only %d jobs, not necessarily the newest: filter by status or queue", m, v15JobPage)
 			}
 		}
 	}
@@ -578,13 +578,13 @@ func parseSince(s string) (time.Duration, error) {
 	if days, ok := strings.CutSuffix(s, "d"); ok {
 		n, err := strconv.Atoi(days)
 		if err != nil || n < 0 || n > int(math.MaxInt64/(24*time.Hour)) {
-			return 0, usageErrorf("--since %q: use a duration such as 30m, 1h or 7d", s)
+			return 0, usageErrorf("since %q: use a duration such as 30m, 1h or 7d", s)
 		}
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil || d < 0 {
-		return 0, usageErrorf("--since %q: use a duration such as 30m, 1h or 7d", s)
+		return 0, usageErrorf("since %q: use a duration such as 30m, 1h or 7d", s)
 	}
 	return d, nil
 }
