@@ -112,6 +112,25 @@ func TestExportPaging(t *testing.T) {
 	if r.Code != 0 || r.Stdout != "name,customer\nO-1,'=cmd\nO-3,'@x\nO-2,Bob\n" {
 		t.Errorf("--order-by: exit %d %s\n%s", r.Code, r.Stderr, r.Stdout)
 	}
+	// Ties are broken by name, unless the order already sorts by it.
+	for order, want := range map[string]string{"customer asc": "customer asc, name asc", "`tabOrder`.`name` desc": "`tabOrder`.`name` desc", "customer_name asc": "customer_name asc, name asc"} {
+		before := len(s.RequestsTo("GET", "/api/resource/Order"))
+		cmdTRun(t, s, "export", "-d", "Order", "--no-tables", "--fields", "customer", "--order-by", order)
+		reqs := s.RequestsTo("GET", "/api/resource/Order")
+		if len(reqs) == before || reqs[before].Query.Get("order_by") != want {
+			t.Errorf("--order-by %q sent %q", order, reqs[len(reqs)-1].Query.Get("order_by"))
+		}
+	}
+}
+
+// FFC_OUTPUT is a default for other commands: export stays CSV.
+func TestExportIgnoresEnvFormat(t *testing.T) {
+	s := exportTSite(t)
+	t.Setenv("FFC_OUTPUT", "yaml")
+	r := cmdTRun(t, s, "export", "-d", "Order", "--no-tables", "--fields", "customer", "--limit", "1")
+	if r.Code != 0 || !strings.HasPrefix(r.Stdout, "name,customer\n") {
+		t.Errorf("exit %d %s\n%s", r.Code, r.Stderr, r.Stdout)
+	}
 }
 
 func TestExportFieldSelection(t *testing.T) {

@@ -124,6 +124,10 @@ Examples:
 		q := exportQuery{filters: filters, orderBy: exOrderBy, limit: exLimit, pageSize: exPageSize}
 		if q.orderBy == "" {
 			q.orderBy = "creation asc, name asc" // stable pages while documents change
+		} else if !sortsByName(q.orderBy) {
+			// Offset paging over equal sort keys can repeat or skip
+			// documents: name breaks the ties.
+			q.orderBy += ", name asc"
 		}
 		var n exportCount
 		write := func(w io.Writer, clean bool) error {
@@ -152,11 +156,33 @@ func plural(n int, word string) string {
 	return word + "s"
 }
 
-// exportFormat is the format export writes: --output, csv by default.
-// --jq and the table-shaped formats do not apply to a stream of documents.
+// sortsByName reports whether an order_by already sorts by name (bare,
+// backticked or qualified), so the pages have no ties.
+func sortsByName(orderBy string) bool {
+	for _, part := range strings.Split(orderBy, ",") {
+		f := strings.Fields(strings.TrimSpace(part))
+		if len(f) == 0 {
+			continue
+		}
+		col := strings.ReplaceAll(f[0], "`", "")
+		if col == "name" || strings.HasSuffix(col, ".name") {
+			return true
+		}
+	}
+	return false
+}
+
+// exportFormat is the format export writes: an explicit --output (or
+// --json), csv otherwise. FFC_OUTPUT is a default for other commands and
+// is ignored, as for --xlsx. --jq and the table-shaped formats do not
+// apply to a stream of documents.
 func exportFormat() (output.Format, error) {
 	if jqCode != nil {
 		return "", usageErrorf("--jq does not apply to export: pipe --output ndjson to jq instead")
+	}
+	flags := rootCmd.PersistentFlags()
+	if !flags.Changed("output") && !flags.Changed("json") {
+		return output.FormatCSV, nil
 	}
 	switch outFormat {
 	case output.FormatTable:
@@ -601,9 +627,12 @@ func exportChildren(ctx context.Context, c *client.FrappeClient, l exportLayout,
 	}
 	names := make([]string, 0, len(parents))
 	for _, p := range parents {
-		if n, ok := docName(p["name"]); ok {
-			names = append(names, n)
+		n, ok := docName(p["name"])
+		if !ok {
+			// Its row would have a blank name and read as a continuation.
+			return nil, fmt.Errorf("the site listed a %s without a name", l.doctype)
 		}
+		names = append(names, n)
 	}
 	out := make([]map[string][]map[string]interface{}, len(l.tables))
 	for i, t := range l.tables {
