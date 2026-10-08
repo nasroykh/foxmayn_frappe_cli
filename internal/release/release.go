@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,7 +25,11 @@ import (
 // ReleasesURL lists the repository's newest releases. The repository also
 // publishes desktop app releases, so GitHub's releases/latest may be one of
 // those; Latest picks the newest ffc release from this list instead.
-const ReleasesURL = "https://api.github.com/repos/nasroykh/foxmayn_frappe_cli/releases?per_page=100"
+const ReleasesURL = APIBase + "?per_page=100"
+
+// APIBase is the repository's releases endpoint; Tagged reads one release
+// below it.
+const APIBase = "https://api.github.com/repos/nasroykh/foxmayn_frappe_cli/releases"
 
 const (
 	// MaxArchiveBytes caps the downloaded archive and MaxBinaryBytes one
@@ -66,16 +71,10 @@ type Target struct {
 // gave before desktop releases existed.
 func Latest(ctx context.Context, url string, timeout time.Duration) (*Release, error) {
 	var rels []Release
-	resp, err := client.NewHTTPClient(timeout).R().
-		SetContext(ctx).
-		SetResult(&rels).
-		SetHeader("Accept", "application/vnd.github+json").
-		Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("fetching release info: %w", err)
-	}
-	if resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode())
+	if status, err := getJSON(ctx, url, timeout, &rels); err != nil {
+		return nil, err
+	} else if status != 200 {
+		return nil, fmt.Errorf("GitHub API returned HTTP %d", status)
 	}
 	for i := range rels {
 		if r := &rels[i]; !r.Draft && !r.Prerelease && IsCLITag(r.TagName) {
@@ -83,6 +82,41 @@ func Latest(ctx context.Context, url string, timeout time.Duration) (*Release, e
 		}
 	}
 	return nil, fmt.Errorf("no ffc release found on GitHub")
+}
+
+// Tagged returns the ffc release tagged tag from base (APIBase outside tests),
+// pre-releases included: naming one is the choice. A desktop tag, a draft and
+// a missing tag are errors.
+func Tagged(ctx context.Context, base, tag string, timeout time.Duration) (*Release, error) {
+	if !IsCLITag(tag) {
+		return nil, fmt.Errorf("%q is not an ffc release tag", tag)
+	}
+	var rel Release
+	status, err := getJSON(ctx, base+"/tags/"+url.PathEscape(tag), timeout, &rel)
+	switch {
+	case err != nil:
+		return nil, err
+	case status == 404:
+		return nil, fmt.Errorf("no ffc release %s on GitHub", tag)
+	case status != 200:
+		return nil, fmt.Errorf("GitHub API returned HTTP %d", status)
+	case rel.Draft || rel.TagName != tag:
+		return nil, fmt.Errorf("no ffc release %s on GitHub", tag)
+	}
+	return &rel, nil
+}
+
+// getJSON GETs a GitHub API url into out and returns the status.
+func getJSON(ctx context.Context, url string, timeout time.Duration, out any) (int, error) {
+	resp, err := client.NewHTTPClient(timeout).R().
+		SetContext(ctx).
+		SetResult(out).
+		SetHeader("Accept", "application/vnd.github+json").
+		Get(url)
+	if err != nil {
+		return 0, fmt.Errorf("fetching release info: %w", err)
+	}
+	return resp.StatusCode(), nil
 }
 
 // IsCLITag reports whether tag is an ffc CLI release tag: "v" then a digit.

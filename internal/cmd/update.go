@@ -2,8 +2,13 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -11,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/release"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
@@ -31,6 +37,8 @@ func isDevBuild(v string) bool {
 var (
 	upCheckOnly bool
 	upYes       bool
+	upVersion   string
+	upRollback  bool
 )
 
 var updateCmd = &cobra.Command{
@@ -42,10 +50,16 @@ Works for the install scripts (curl, powershell) and go install. A copy that
 Homebrew, Scoop or winget installed is updated through that package manager:
 ffc update then only says which command to run.
 
+Every update keeps the replaced binary next to it (ffc.prev, ffc.prev.exe on
+Windows); --rollback swaps the two back. A version from --version passes the
+same signature and checksum checks as the latest one.
+
 Examples:
-  ffc update           # Check and update (asks for confirmation)
-  ffc update --check   # Only check, do not install
-  ffc update --yes     # Update without asking for confirmation
+  ffc update                    # Check and update (asks for confirmation)
+  ffc update --check            # Only check, do not install
+  ffc update --yes              # Update without asking for confirmation
+  ffc update --version v1.15.0  # Install that release (also an older one)
+  ffc update --rollback         # Go back to the binary the last update replaced
 `,
 	RunE: runUpdate,
 }
@@ -100,13 +114,31 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if upRollback {
+		if upVersion != "" || upCheckOnly {
+			return usageErrorf("--rollback cannot be combined with --version or --check")
+		}
+		return runRollback(ctx)
+	}
+	pinned := ""
+	if upVersion != "" {
+		tag, err := versionTag(upVersion)
+		if err != nil {
+			return err
+		}
+		pinned = tag
+	}
 	current := version.Version
 
-	// Fetch latest release from GitHub.
+	// Fetch the latest (or the named) release from GitHub.
 	var rel *release.Release
 	var fetchErr error
 	if err := runSpinner("Checking for updates…", func() {
-		rel, fetchErr = release.Latest(ctx, releasesURL, 30*time.Second)
+		if pinned != "" {
+			rel, fetchErr = release.Tagged(ctx, releasesBase, pinned, 30*time.Second)
+		} else {
+			rel, fetchErr = release.Latest(ctx, releasesURL, 30*time.Second)
+		}
 	}); err != nil {
 		return err
 	}
@@ -116,13 +148,21 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 
 	latest := rel.TagName // e.g. "v0.2.0"
 	kind := classifyUpdate(current, latest)
-	switch kind {
-	case kindUpToDate:
+	if pinned != "" {
+		kind = classifyPin(current, latest)
+	}
+	switch {
+	case kind == kindUpToDate && pinned != "":
+		output.PrintSuccess(fmt.Sprintf("Already running %s", current))
+		return nil
+	case kind == kindUpToDate:
 		output.PrintSuccess(fmt.Sprintf("Already up to date (%s)", current))
 		return nil
-	case kindDev:
+	case pinned != "":
+		fmt.Fprintf(os.Stderr, "Release %s found (you run %s)\n", latest, current)
+	case kind == kindDev:
 		fmt.Fprintf(os.Stderr, "Running a dev build. Latest release: %s\n", latest)
-	case kindDowngrade:
+	case kind == kindDowngrade:
 		fmt.Fprintf(os.Stderr, "Downgrade: you run %s, which is newer than the latest release %s\n", current, latest)
 	default:
 		fmt.Fprintf(os.Stderr, "Update available: %s → %s\n", current, latest)
@@ -174,6 +214,185 @@ func runUpdate(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// pinnedVersionRE matches a --version value: a release or a pre-release.
+var pinnedVersionRE = regexp.MustCompile(`^v?\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$`)
+
+// versionTag turns a --version value into its tag ("1.2.3" → "v1.2.3").
+func versionTag(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if !pinnedVersionRE.MatchString(v) {
+		return "", usageErrorf("--version %q: want a release version such as v1.15.0", v)
+	}
+	return "v" + strings.TrimPrefix(v, "v"), nil
+}
+
+// classifyPin compares the running version with a release the user named:
+// the same version is up to date, else an update or a downgrade.
+func classifyPin(current, target string) updateKind {
+	current = strings.TrimSpace(current)
+	switch {
+	case !numericBaseRE.MatchString(current):
+		return kindDev
+	case strings.TrimPrefix(current, "v") == strings.TrimPrefix(target, "v"):
+		return kindUpToDate
+	case newerThan(current, target):
+		return kindUpdate
+	}
+	return kindDowngrade
+}
+
+// runRollback swaps the running binary with the one the last update replaced
+// (prevPath). The swap keeps the running one as the new previous binary, so a
+// second rollback undoes the first.
+func runRollback(ctx context.Context) error {
+	if m := managedInstall(); m != nil {
+		return fmt.Errorf("ffc was installed with %s; change versions with it (%s)", m.Name, m.Command)
+	}
+	exe, err := executablePath()
+	if err != nil {
+		return err
+	}
+	if isPrevCopy(exe) {
+		return prevCopyError(exe)
+	}
+	prev := prevPath(exe)
+	// Verified before it is run (for its version) or installed.
+	data, err := readPrevious(prev)
+	if err != nil {
+		return err
+	}
+	label := "the previous ffc"
+	if v := binaryVersion(ctx, prev); v != "" {
+		label = "ffc " + v
+	}
+	fmt.Fprintf(os.Stderr, "Roll back: %s → %s (%s)\n", version.Version, label, prev)
+	if !upYes {
+		if err := confirm(fmt.Sprintf("Roll back to %s?", label)); err != nil {
+			return err
+		}
+	}
+	if err := replaceBinary(data); err != nil {
+		return err
+	}
+	output.PrintSuccess(fmt.Sprintf("Rolled back to %s (ffc update --rollback again undoes it)", label))
+	return nil
+}
+
+// prevPath is where an update keeps the binary it replaced.
+// Windows keeps the .exe extension, so the copy still runs (ffc.prev.exe).
+func prevPath(exe string) string {
+	if ext := filepath.Ext(exe); strings.EqualFold(ext, ".exe") {
+		return strings.TrimSuffix(exe, ext) + ".prev" + ext
+	}
+	return exe + ".prev"
+}
+
+// prevSumPath holds the SHA-256 of the kept binary, written with it.
+func prevSumPath(prev string) string { return prev + ".sha256" }
+
+// isPrevCopy reports whether exe is a kept previous binary (ffc.prev,
+// ffc.prev.exe). Updating or rolling back from it would chain ffc.prev.prev.
+func isPrevCopy(exe string) bool {
+	name := strings.ToLower(filepath.Base(exe))
+	return strings.HasSuffix(strings.TrimSuffix(name, ".exe"), ".prev")
+}
+
+func prevCopyError(exe string) error {
+	return fmt.Errorf("%s is the copy ffc update keeps for --rollback; run ffc itself instead", exe)
+}
+
+// readPrevious reads the kept binary: a regular file within the bounds of an
+// extracted release binary whose SHA-256 matches the one recorded when it was
+// kept. Anything else (a truncated, replaced or foreign file) is refused, so a
+// rollback never installs a binary ffc did not put there.
+func readPrevious(prev string) ([]byte, error) {
+	fi, err := os.Lstat(prev)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("no previous version to roll back to: %s does not exist (each ffc update from this version on keeps one)", prev)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() == 0 || fi.Size() > release.MaxBinaryBytes {
+		return nil, fmt.Errorf("%s is not a usable ffc binary", prev)
+	}
+	data, err := os.ReadFile(prev)
+	if err != nil {
+		return nil, err
+	}
+	want, err := os.ReadFile(prevSumPath(prev))
+	if err != nil {
+		return nil, fmt.Errorf("refusing to roll back: %s has no readable checksum file: %w", prev, err)
+	}
+	sum := sha256.Sum256(data)
+	if !strings.EqualFold(strings.TrimSpace(string(want)), hex.EncodeToString(sum[:])) {
+		return nil, fmt.Errorf("refusing to roll back: %s changed since ffc update kept it (checksum mismatch)", prev)
+	}
+	return data, nil
+}
+
+var versionOutputRE = regexp.MustCompile(`^ffc version (\S+)`)
+
+// binaryVersion runs path --version, or returns "" when it does not answer
+// like ffc within a few seconds.
+func binaryVersion(ctx context.Context, path string) string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	c := exec.CommandContext(ctx, path, "--version")
+	c.Env = append(os.Environ(), "FFC_NO_UPDATE_CHECK=1")
+	out, err := c.Output()
+	if err != nil {
+		return ""
+	}
+	if m := versionOutputRE.FindSubmatch(out); m != nil {
+		return string(m[1])
+	}
+	return ""
+}
+
+// copyPrevious copies the binary at exe to a temp file next to it and returns
+// the copy's path and SHA-256. commitPrevious turns it into prevPath(exe) only
+// once the swap has succeeded, so a failed update keeps the older copy.
+func copyPrevious(exe string) (string, string, error) {
+	src, err := os.Open(exe)
+	if err != nil {
+		return "", "", err
+	}
+	defer src.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(exe), "ffc-prev-*")
+	if err != nil {
+		return "", "", err
+	}
+	h := sha256.New()
+	_, err = io.Copy(io.MultiWriter(tmp, h), src)
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(tmp.Name(), 0o755)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+		return "", "", err
+	}
+	return tmp.Name(), hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// commitPrevious moves the copy to prevPath(exe), then records its checksum.
+// Between the two steps the old checksum no longer matches, which
+// readPrevious refuses: an interruption never makes a wrong file trusted.
+func commitPrevious(exe, tmp, sum string) error {
+	prev := prevPath(exe)
+	if err := os.Rename(tmp, prev); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return config.WriteFileAtomic(prevSumPath(prev), []byte(sum+"\n"), 0o644)
+}
+
 // downloadAndInstall fetches and verifies the release archive (signed
 // checksums.txt, then SHA-256) and replaces the running binary.
 func downloadAndInstall(ctx context.Context, target release.Target) error {
@@ -188,8 +407,12 @@ func downloadAndInstall(ctx context.Context, target release.Target) error {
 	return replaceBinary(binData)
 }
 
-// releasesURL is release.ReleasesURL; tests point it at a fake.
-var releasesURL = release.ReleasesURL
+// releasesURL and releasesBase are release.ReleasesURL and release.APIBase;
+// tests point them at a fake.
+var (
+	releasesURL  = release.ReleasesURL
+	releasesBase = release.APIBase
+)
 
 // executablePath is the running binary with symlinks resolved: the file
 // ffc update replaces. Tests replace it.
@@ -231,6 +454,9 @@ func replaceBinary(newData []byte) error {
 	if err != nil {
 		return err
 	}
+	if isPrevCopy(exePath) {
+		return prevCopyError(exePath)
+	}
 
 	dir := filepath.Dir(exePath)
 	tmp, err := os.CreateTemp(dir, "ffc-update-*")
@@ -264,7 +490,22 @@ func replaceBinary(newData []byte) error {
 		return fmt.Errorf("setting permissions: %w", err)
 	}
 
-	return swapExecutable(exePath, tmpPath)
+	// Keep the running binary for --rollback. A failure costs only the
+	// rollback, not the update.
+	prevTmp, prevSum, prevErr := copyPrevious(exePath)
+	if err := swapExecutable(exePath, tmpPath); err != nil {
+		if prevErr == nil {
+			os.Remove(prevTmp)
+		}
+		return err
+	}
+	if prevErr == nil {
+		prevErr = commitPrevious(exePath, prevTmp, prevSum)
+	}
+	if prevErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not keep the previous binary for --rollback: %v\n", prevErr)
+	}
+	return nil
 }
 
 // swapExecutable replaces current with replacement.
@@ -355,5 +596,7 @@ func parseSemver(s string) []int {
 func init() {
 	updateCmd.Flags().BoolVar(&upCheckOnly, "check", false, "Only check for updates, do not install")
 	updateCmd.Flags().BoolVarP(&upYes, "yes", "y", false, "Skip confirmation prompt")
+	updateCmd.Flags().StringVar(&upVersion, "version", "", "Install this release (e.g. v1.15.0) instead of the latest")
+	updateCmd.Flags().BoolVar(&upRollback, "rollback", false, "Swap back to the binary the last update replaced")
 	rootCmd.AddCommand(updateCmd)
 }
