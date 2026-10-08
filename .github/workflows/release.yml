@@ -69,6 +69,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Ed25519 seed that signs checksums.txt (tools/relsign).
           FFC_RELEASE_SIGNING_KEY: ${{ secrets.FFC_RELEASE_SIGNING_KEY }}
+          # Fine-grained token that pushes the Homebrew cask and the Scoop
+          # manifest (Contents read/write on nasroykh/homebrew-tap and
+          # nasroykh/scoop-bucket only).
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
 
       # Signed, verifiable provenance for every published archive + checksums (M4).
       - name: Attest build provenance
