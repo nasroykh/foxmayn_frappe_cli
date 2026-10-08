@@ -20,6 +20,7 @@ type FormField struct {
 	FetchIfEmpty  bool
 	Permlevel     int
 	Mask          bool // v16: masked for roles without mask access
+	HideDays      bool // Duration: days counted as hours
 }
 
 // FormMeta is a DocType's form meta: its fields in form order.
@@ -51,6 +52,7 @@ func (c *FrappeClient) FormMetas(ctx context.Context, doctype string) (map[strin
 			FetchIfEmpty  interface{} `json:"fetch_if_empty"`
 			Permlevel     interface{} `json:"permlevel"`
 			Mask          interface{} `json:"mask"`
+			HideDays      interface{} `json:"hide_days"`
 		} `json:"fields"`
 	}
 	if err := convert(env["docs"], &docs); err != nil || len(docs) == 0 {
@@ -71,7 +73,7 @@ func (c *FrappeClient) FormMetas(ctx context.Context, doctype string) (map[strin
 				ReadOnly: truthy(f.ReadOnly), Hidden: truthy(f.Hidden), AllowOnSubmit: truthy(f.AllowOnSubmit),
 				IsVirtual: truthy(f.IsVirtual), SetOnlyOnce: truthy(f.SetOnlyOnce),
 				FetchFrom: str(f.FetchFrom), FetchIfEmpty: truthy(f.FetchIfEmpty),
-				Permlevel: permlevel(f.Permlevel), Mask: truthy(f.Mask),
+				Permlevel: permlevel(f.Permlevel), Mask: truthy(f.Mask), HideDays: truthy(f.HideDays),
 			})
 		}
 		out[d.Name] = m

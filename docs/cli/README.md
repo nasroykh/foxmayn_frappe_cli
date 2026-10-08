@@ -16,6 +16,7 @@ Run `ffc <command> --help` for the full text of any command. This reference foll
 | Read and write documents | `get-doc`, `list-docs`, `count-docs`, `create-doc`, `update-doc`, `delete-doc` | [Documents](documents.md) |
 | Edit a document in your editor | `edit-doc` | [edit-doc](edit-doc.md) |
 | Change many documents at once | `bulk-create`, `bulk-update`, `bulk-delete` | [Bulk operations](bulk.md) |
+| Export documents with their child tables, import templates | `export`, `import-template` | [Export](export.md) |
 | Submit, cancel, amend, workflows | `submit-doc`, `cancel-doc`, `amend-doc`, `copy-doc`, `rename-doc`, `restore-doc`, `discard-doc`, `workflow` | [Lifecycle and workflow](lifecycle-and-workflow.md) |
 | Find documents, compute totals | `search`, `aggregate`, `count-docs --group-by` | [Search and aggregate](search-and-aggregate.md) |
 | Reports and server methods | `list-reports`, `run-report`, `call-method` | [Reports and methods](server-calls.md) |
@@ -57,7 +58,7 @@ These work with every command.
 
 `FFC_SITE`, `FFC_CONFIG`, `FFC_TIMEOUT`, `FFC_OUTPUT` and `FFC_DEBUG` set the matching flag when the flag is not given. See [Configuration](../getting-started/configuration.md#environment-variables).
 
-> `-o` is never the output format. On `list-docs` it is `--order-by`; on `download` and `pdf` it is `--output-file`. Use `--output` for the format.
+> `-o` is never the output format. On `list-docs` it is `--order-by`; on `download`, `pdf`, `export` and `import-template` it is `--output-file`. Use `--output` for the format.
 
 ## Conventions shared by all commands
 
