@@ -3,15 +3,19 @@
 Update ffc in place to the latest signed release. A copy installed by a package manager is updated through that manager instead.
 
 ```bash
-ffc update           # check, show the new version, ask, install
-ffc update --check   # only say whether an update is available
-ffc update --yes     # install without asking
+ffc update                    # check, show the new version, ask, install
+ffc update --check            # only say whether an update is available
+ffc update --yes              # install without asking
+ffc update --version v1.15.0  # install that release, newer or older
+ffc update --rollback         # go back to the binary the last update replaced
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--check` | Only check; install nothing. |
+| `--check` | Only check; install nothing. With `--version`, check that the release exists. |
 | `-y, --yes` | Skip the confirmation. |
+| `--version VERSION` | Install this release (`v1.15.0` or `1.15.0`) instead of the latest. A pre-release is installed only when named. |
+| `--rollback` | Swap the running binary with the one the last update replaced. Not with `--version` or `--check`. |
 
 ## What it verifies
 
@@ -24,6 +28,16 @@ Anything else is refused. Someone who can replace the release files cannot also 
 
 The newest release is the newest non-draft, non-prerelease release tagged `v<number>...`; desktop app releases (`desktop-v...`) are never picked.
 
+`--version` goes through the same checks, so releases before 1.6.1, which have no signature, cannot be installed with it.
+
+## Rollback
+
+Every update keeps the binary it replaces next to the new one: `ffc.prev` (`ffc.prev.exe` on Windows). `ffc update --rollback` shows that binary's version, asks, then swaps the two, so the replaced binary becomes the new `ffc.prev` and a second `--rollback` undoes the first. It works offline.
+
+- Only the last replaced binary is kept. Updates made before this feature (1.16.0) kept none.
+- A version from before 1.16.0 has no `--rollback`: after rolling back to one, go forward again with `ffc update`.
+- The desktop app's ffc update does not keep a previous binary.
+
 ## Where it installs
 
 ffc replaces the running binary in its current location. On Windows the running `ffc.exe` is moved aside first, so updating works even while a detached MCP server runs. If ffc lives in a directory you cannot write to (for example `/usr/local/bin`), it says so; rerun with the needed rights (`sudo ffc update`).
@@ -32,7 +46,7 @@ Entries written by `ffc mcp install` keep working: they point at the same path.
 
 ## Package managers
 
-A package manager keeps track of the version it installed, so `ffc update` does not replace its copy. It still checks, then stops with the command to run:
+A package manager keeps track of the version it installed, so `ffc update` does not replace its copy (nor does `--version` or `--rollback`). It still checks, then stops with the command to run:
 
 | Installed with | ffc lives under | Update with |
 | --- | --- | --- |
