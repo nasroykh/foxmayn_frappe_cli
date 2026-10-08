@@ -26,6 +26,7 @@ Run `ffc <command> --help` for the full text of any command. This reference foll
 | DocTypes, schemas, local cache | `list-doctypes`, `get-schema`, `cache` | [Schema and cache](schema-and-cache.md) |
 | Who am I, what may I do, document history | `whoami`, `can`, `doc-info` | [Identity and permissions](identity-and-permissions.md) |
 | Check the setup | `doctor` | [doctor](doctor.md) |
+| Site health, background jobs, errors, scheduler | `health`, `jobs`, `errors`, `scheduler` | [Site health and operations](admin.md) |
 | Update ffc | `update` | [update](update.md) |
 | Shell completion | `completion` | [Completion](completion.md) |
 | MCP server for AI agents | `mcp` | [MCP server](../mcp/README.md) |
