@@ -105,9 +105,8 @@ func TestSiteRemoveRevokeFailureStillRemoves(t *testing.T) {
 			r := runFFC(t, cfg, "", "site", "remove", "t", "--yes")
 			wantCode(t, r, 0)
 			// Removal must not wait for the server. The bound sits far
-			// below revokeHang but well above revokeTimeout: the config
-			// write (fsync) and scheduling on a busy Windows runner once
-			// added more than 3 s.
+			// below revokeHang but well above revokeTimeout: a busy
+			// windows-latest runner once took 4 s here (0.33 s locally).
 			if d := time.Since(start); d > 10*time.Second {
 				t.Errorf("removal took %s", d)
 			}
