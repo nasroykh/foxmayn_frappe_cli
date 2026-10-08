@@ -42,6 +42,8 @@ var toolActions = map[string]toolAction{
 	"call_method": actMethod,
 
 	"list_attachments": actRead, "get_print_html": actRead, "attach_file": actWrite,
+
+	"site_health": actRead, "list_jobs": actRead, "list_errors": actRead, "scheduler_status": actRead,
 }
 
 // Tool sets (`ffc mcp --toolsets`). Without the flag only defaultToolsets
@@ -50,7 +52,7 @@ const (
 	toolsetCore      = "core"
 	toolsetLifecycle = "lifecycle"
 	toolsetCollab    = "collab" // comments, assignments, tags
-	toolsetAdmin     = "admin"  // sharing
+	toolsetAdmin     = "admin"  // sharing; site health, jobs, errors, scheduler
 	toolsetFiles     = "files"  // attachments, print HTML
 )
 
@@ -103,8 +105,12 @@ var toolSurface = map[string]struct {
 	"add_tag":           {toolsetCollab, "Add tags", false},
 	"remove_tag":        {toolsetCollab, "Remove tags", false},
 
-	"share_doc":   {toolsetAdmin, "Share document", false},
-	"unshare_doc": {toolsetAdmin, "Remove document share", false},
+	"share_doc":        {toolsetAdmin, "Share document", false},
+	"unshare_doc":      {toolsetAdmin, "Remove document share", false},
+	"site_health":      {toolsetAdmin, "Show site health", false},
+	"list_jobs":        {toolsetAdmin, "List background jobs", true},
+	"list_errors":      {toolsetAdmin, "List error log", true},
+	"scheduler_status": {toolsetAdmin, "Show scheduler status", true},
 
 	"list_attachments": {toolsetFiles, "List attachments", true},
 	"attach_file":      {toolsetFiles, "Attach file", false},
@@ -208,6 +214,7 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 	sc.FilterFields, sc.SelectFields = q.filterFields, q.selectFields
 	// The collab tools also write a Comment, ToDo, Tag Link or DocShare.
 	sc.Doctypes = append(sc.Doctypes, collabDoctypes[tool]...)
+	sc.Doctypes = append(sc.Doctypes, adminDoctypes[tool]...)
 	if len(sc.Doctypes) > 0 && commentSavesFiles(req, sc.Method) {
 		sc.Doctypes = append(sc.Doctypes, "File")
 	}

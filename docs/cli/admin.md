@@ -1,6 +1,6 @@
 # Site health and operations
 
-Four read-only commands show how a site is running: `health`, `jobs`, `errors` and `scheduler`. They need the System Manager role. A user without it gets a permission error (exit 5).
+Four read-only commands show how a site is running: `health`, `jobs`, `errors` and `scheduler`. They need the System Manager role. A user without it gets a permission error (exit 5). The MCP server offers the same views as `site_health`, `list_jobs`, `list_errors` and `scheduler_status` in its `admin` tool set ([MCP tools](../mcp/tools.md)).
 
 ## health
 

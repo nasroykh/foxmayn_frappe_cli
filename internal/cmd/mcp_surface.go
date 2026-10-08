@@ -231,6 +231,9 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 			line("When someone should act on a document, assign_to it rather than share_doc it.")
 		}
 	}
+	if w := which("site_health", "list_jobs", "list_errors", "scheduler_status"); w != "" {
+		line("Site operations (System Manager only): %s. Start with site_health: its attention list says what is wrong; then list_errors or list_jobs status=failed for the tracebacks.", w)
+	}
 	if w := which("list_attachments", "attach_file", "get_print_html"); w != "" {
 		line("Files: %s. No tool returns file contents or PDFs: the user downloads them with the CLI (ffc download, ffc pdf).", w)
 	}

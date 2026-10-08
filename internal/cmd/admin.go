@@ -269,7 +269,7 @@ func fetchJobs(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConf
 	if len(list) >= v15JobPage && cfg != nil {
 		if info, _, err := serverInfo(ctx, c, cfg, false); err == nil {
 			if m := info.FrappeMajor(); m > 0 && m < 16 {
-				out.warning = fmt.Sprintf("Frappe v%d lists only %d jobs, not necessarily the newest: narrow with --status or --queue", m, v15JobPage)
+				out.warning = fmt.Sprintf("Frappe v%d lists only %d jobs, not necessarily the newest: filter by status or queue", m, v15JobPage)
 			}
 		}
 	}
@@ -349,24 +349,7 @@ Examples:
 			return usageErrorf("--limit must be between 1 and 500")
 		}
 		rows, err := callSite(cmd, "Reading the Error Log…", func(ctx context.Context, c *client.FrappeClient) ([]map[string]interface{}, error) {
-			filters := [][]interface{}{}
-			if since > 0 {
-				from, err := siteTimeAgo(ctx, c, since)
-				if err != nil {
-					return nil, err
-				}
-				filters = append(filters, []interface{}{"creation", ">", from})
-			}
-			if erDoctype != "" {
-				filters = append(filters, []interface{}{"reference_doctype", "=", erDoctype})
-			}
-			if erMethod != "" {
-				filters = append(filters, []interface{}{"method", "like", "%" + erMethod + "%"})
-			}
-			return c.GetList(ctx, "Error Log", client.ListOptions{
-				Fields:  []string{"name", "creation", "method", "reference_doctype", "reference_name", "seen", "error"},
-				Filters: mustFilters(filters), OrderBy: "creation desc", Limit: erLimit,
-			})
+			return fetchErrors(ctx, c, since, erDoctype, erMethod, erLimit)
 		})
 		if err != nil {
 			return err
@@ -389,6 +372,29 @@ Examples:
 			return nil
 		})
 	},
+}
+
+// fetchErrors lists Error Log entries newer than since (0: all), newest
+// first, with their tracebacks (error).
+func fetchErrors(ctx context.Context, c *client.FrappeClient, since time.Duration, doctype, method string, limit int) ([]map[string]interface{}, error) {
+	filters := [][]interface{}{}
+	if since > 0 {
+		from, err := siteTimeAgo(ctx, c, since)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, []interface{}{"creation", ">", from})
+	}
+	if doctype != "" {
+		filters = append(filters, []interface{}{"reference_doctype", "=", doctype})
+	}
+	if method != "" {
+		filters = append(filters, []interface{}{"method", "like", "%" + method + "%"})
+	}
+	return c.GetList(ctx, "Error Log", client.ListOptions{
+		Fields:  []string{"name", "creation", "method", "reference_doctype", "reference_name", "seen", "error"},
+		Filters: mustFilters(filters), OrderBy: "creation desc", Limit: limit,
+	})
 }
 
 // ─── ffc scheduler ──────────────────────────────────────────────────────────
@@ -572,13 +578,13 @@ func parseSince(s string) (time.Duration, error) {
 	if days, ok := strings.CutSuffix(s, "d"); ok {
 		n, err := strconv.Atoi(days)
 		if err != nil || n < 0 || n > int(math.MaxInt64/(24*time.Hour)) {
-			return 0, usageErrorf("--since %q: use a duration such as 30m, 1h or 7d", s)
+			return 0, usageErrorf("since %q: use a duration such as 30m, 1h or 7d", s)
 		}
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil || d < 0 {
-		return 0, usageErrorf("--since %q: use a duration such as 30m, 1h or 7d", s)
+		return 0, usageErrorf("since %q: use a duration such as 30m, 1h or 7d", s)
 	}
 	return d, nil
 }
