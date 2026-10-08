@@ -240,6 +240,12 @@ func (s *ListStream) write(list []interface{}) error {
 	return nil
 }
 
+// Record writes one CSV/TSV record as given: no columns from a first
+// batch, no header. Commands that lay out their own rows (export) use it.
+func (s *ListStream) Record(cells []string) error {
+	return s.record(cells)
+}
+
 func (s *ListStream) record(fields []string) error {
 	if s.clean {
 		for i := range fields {
@@ -303,6 +309,9 @@ func columns(list []interface{}, fields []string) []string {
 	sort.Strings(cols)
 	return cols
 }
+
+// Cell is a value as CSV/TSV text, as ListStream writes it.
+func Cell(v interface{}) string { return cell(v) }
 
 // cell is a value as CSV/TSV text: numbers as sent, nested values as JSON,
 // null as empty. No locale formatting: this is data, not display.

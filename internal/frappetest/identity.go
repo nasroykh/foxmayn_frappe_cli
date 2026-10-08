@@ -251,8 +251,9 @@ func (s *Site) getDocPermissions(_ *http.Request, args map[string]interface{}) (
 }
 
 // getList answers frappe.client.get_list: "Has Role" lists the roles set
-// with SetUser, any other DocType its documents, narrowed by filters, with
-// the requested fields.
+// with SetUser, a child DocType with `parent` its table rows (childList),
+// any other DocType its documents, narrowed by filters, with the requested
+// fields.
 func (s *Site) getList(_ *http.Request, args map[string]interface{}) (interface{}, error) {
 	doctype := argString(args, "doctype")
 	if doctype == "Has Role" {
@@ -265,6 +266,9 @@ func (s *Site) getList(_ *http.Request, args map[string]interface{}) (interface{
 			rows = append(rows, map[string]interface{}{"role": r})
 		}
 		return rows, nil
+	}
+	if parent := argString(args, "parent"); parent != "" {
+		return s.childList(doctype, parent, args)
 	}
 	rows, err := s.query(doctype, args["filters"])
 	if err != nil {

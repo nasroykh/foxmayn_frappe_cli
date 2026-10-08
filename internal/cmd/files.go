@@ -334,48 +334,64 @@ func saveDownload(resp *client.RawResponse, out string, force bool, perm os.File
 }
 
 // saveAtomic streams body into a temporary file next to path and moves it
-// into place: an interrupted download never leaves a partial file at path.
-// Without force an existing path is never replaced, even one created while
-// the download ran (the move is a hard link, which fails when path exists).
-// The file is created with perm less the umask (os.CreateTemp would force
-// 0600), so it is never more open than the user's other files.
+// into place (see writeAtomic).
 func saveAtomic(body io.Reader, dst string, force bool, perm os.FileMode) (int64, error) {
+	var n int64
+	err := writeAtomic(dst, force, perm, func(w io.Writer) error {
+		var err error
+		if n, err = io.Copy(w, body); err != nil {
+			return fmt.Errorf("saving to %s: %w", dst, err)
+		}
+		return nil
+	})
+	return n, err
+}
+
+// writeAtomic lets write fill a temporary file next to dst and moves it
+// into place: an interrupted or failed write never leaves a partial file
+// at dst. write's error is returned as is. Without force an existing dst is
+// never replaced, even one created while write ran (the move is a hard
+// link, which fails when dst exists). The file is created with perm less
+// the umask (os.CreateTemp would force 0600), so it is never more open than
+// the user's other files.
+func writeAtomic(dst string, force bool, perm os.FileMode, write func(io.Writer) error) error {
 	tmp, err := createTemp(filepath.Dir(dst), perm)
 	if err != nil {
-		return 0, fmt.Errorf("creating the output file: %w", err)
+		return fmt.Errorf("creating the output file: %w", err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // no-op after a rename
-	n, err := io.Copy(tmp, body)
-	if err == nil {
-		err = tmp.Sync()
+	if err := write(tmp); err != nil {
+		_ = tmp.Close()
+		return err
 	}
+	err = tmp.Sync()
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
-		return 0, fmt.Errorf("saving to %s: %w", dst, err)
+		return fmt.Errorf("saving to %s: %w", dst, err)
 	}
 	if force {
 		if err := os.Rename(tmpName, dst); err != nil {
-			return 0, fmt.Errorf("saving to %s: %w", dst, err)
+			return fmt.Errorf("saving to %s: %w", dst, err)
 		}
-		return n, nil
+		return nil
 	}
 	switch err := os.Link(tmpName, dst); {
 	case err == nil:
-		return n, nil
+		return nil
 	case errors.Is(err, fs.ErrExist):
-		return 0, usageErrorf("%s exists: pass --force to replace it", dst)
+		return usageErrorf("%s exists: pass --force to replace it", dst)
 	}
 	// No hard links on this file system: check, then rename.
 	if _, err := os.Lstat(dst); err == nil {
-		return 0, usageErrorf("%s exists: pass --force to replace it", dst)
+		return usageErrorf("%s exists: pass --force to replace it", dst)
 	}
 	if err := os.Rename(tmpName, dst); err != nil {
-		return 0, fmt.Errorf("saving to %s: %w", dst, err)
+		return fmt.Errorf("saving to %s: %w", dst, err)
 	}
-	return n, nil
+	return nil
 }
 
 // createTemp is os.CreateTemp with a mode: a new hidden file in dir, created
