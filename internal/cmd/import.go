@@ -71,13 +71,23 @@ the documents an update would change, and shows the writes it would send.
 --submit submits each document after writing it (a draft only); the
 DocType must be submittable and have no active workflow.
 
+--server hands the file (CSV or .xlsx) to Frappe's own Data Import instead:
+ffc creates a Data Import, uploads the file, stops on Frappe's warnings,
+starts the background job (the site's scheduler must be enabled and a
+worker running) and waits up to --wait, then prints Frappe's log for each
+document. --preview stops before the job starts; --resume NAME starts a
+Data Import that was not started yet, or waits again for one still
+running. Data Import needs the System Manager role.
+
 Examples:
   ffc export -d Customer -o customers.csv && ffc import -d Customer customers.csv --mode update
   ffc import -d "Sales Invoice" invoices.csv --mode insert --submit
   ffc import -d Item items.json --mode update --dry-run
   cat todo.ndjson | ffc import -d ToDo - --format ndjson --mode insert --json
+  ffc import -d Item items.xlsx --mode insert --server
+  ffc import --server --resume "Item Import on 2026-10-08 10:15:02.123456" --wait 30m
 `,
-	Args: cobra.ExactArgs(1),
+	Args: importArgs,
 	RunE: runImport,
 }
 
@@ -105,17 +115,29 @@ func importFormat(file, flag string) (string, error) {
 	case "tsv":
 		return "", usageErrorf("TSV is not imported: ffc export escapes backslashes, tabs and line breaks in TSV cells, so the values would not come back as they were; export with --output csv (the default) or json")
 	case "xlsx", "xls", "excel":
-		return "", usageErrorf("Excel files are not read by ffc import yet (a later --server mode will hand them to Frappe's Data Import): save the sheet as CSV UTF-8")
+		return "", usageErrorf("Excel files are read only by Frappe's Data Import: add --server, or save the sheet as CSV UTF-8")
 	}
 	return "", usageErrorf("--format must be csv, json or ndjson, not %q", flag)
 }
 
 func runImport(cmd *cobra.Command, args []string) error {
+	if err := checkImportServerFlags(cmd); err != nil {
+		return err
+	}
+	if imDoctype == "" && imResume == "" {
+		return usageErrorf(`required flag(s) "doctype" not set`)
+	}
+	if imServer || imResume != "" {
+		return runImportServer(cmd, args)
+	}
 	file := args[0]
 	if file == "" {
 		return usageErrorf("FILE is empty: give a path, or - for stdin")
 	}
 	mode := strings.ToLower(imMode)
+	if mode == "" {
+		return usageErrorf(`required flag(s) "mode" not set`)
+	}
 	if mode != "insert" && mode != "update" {
 		return usageErrorf("--mode must be insert or update")
 	}
@@ -945,13 +967,11 @@ func printImportReport(r importReport, dryRun bool) error {
 }
 
 func init() {
-	importCmd.Flags().StringVarP(&imDoctype, "doctype", "d", "", "DocType to import into (required)")
-	importCmd.Flags().StringVar(&imMode, "mode", "", "insert (create every document) or update (change documents found by name) (required)")
-	importCmd.Flags().StringVar(&imFormat, "format", "", "File format: csv, json or ndjson (default: from the extension, else csv)")
+	importCmd.Flags().StringVarP(&imDoctype, "doctype", "d", "", "DocType to import into (required, except with --resume)")
+	importCmd.Flags().StringVar(&imMode, "mode", "", "insert (create every document) or update (change documents found by name) (required, except with --resume)")
+	importCmd.Flags().StringVar(&imFormat, "format", "", "File format: csv, json or ndjson; with --server csv or xlsx (default: from the extension, else csv)")
 	importCmd.Flags().BoolVar(&imSubmit, "submit", false, "Submit each document after writing it (submittable DocTypes)")
 	imBulk.register(importCmd)
-	_ = importCmd.MarkFlagRequired("doctype")
-	_ = importCmd.MarkFlagRequired("mode")
 	addDryRun(importCmd, false)
 	rootCmd.AddCommand(importCmd)
 }

@@ -104,6 +104,7 @@ func TestContract(t *testing.T) {
 	t.Run("admin views", func(t *testing.T) { contractAdmin(t, c, sc) })
 	t.Run("export", func(t *testing.T) { contractExport(t, c, sc) })
 	t.Run("import", func(t *testing.T) { contractImport(t, c, sc) })
+	t.Run("import --server", func(t *testing.T) { contractImportServer(t, c, sc) })
 	// Last: an active workflow changes how the DocType submits.
 	t.Run("workflow", func(t *testing.T) { contractWorkflow(t, c, sc) })
 	// After workflow, whose teardown would remove the Workflow this one makes.
@@ -128,7 +129,7 @@ func setupContract(t *testing.T, c *client.FrappeClient) {
 	})
 	mustCreate("DocType", map[string]interface{}{
 		"name": contractDT, "module": "Custom", "custom": 1, "is_submittable": 1, "autoname": "hash", "description": contractMarker,
-		"allow_rename": 1, "track_changes": 1,
+		"allow_rename": 1, "track_changes": 1, "allow_import": 1,
 		"fields": []interface{}{
 			map[string]interface{}{"fieldname": "title", "label": "Title", "fieldtype": "Data"},
 			map[string]interface{}{"fieldname": "ref_no", "label": "Ref No", "fieldtype": "Data", "no_copy": 1},
@@ -141,7 +142,7 @@ func setupContract(t *testing.T, c *client.FrappeClient) {
 		},
 		"permissions": []interface{}{map[string]interface{}{
 			"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1,
-			"submit": 1, "cancel": 1, "amend": 1,
+			"submit": 1, "cancel": 1, "amend": 1, "import": 1,
 		}},
 	})
 	mustCreate("Custom Field", map[string]interface{}{
@@ -200,7 +201,8 @@ func teardownContract(t *testing.T, c *client.FrappeClient) {
 			}
 		}
 	}
-	teardownPrepared(ctx, t, c) // its Report links the fixture DocType
+	teardownPrepared(ctx, t, c)           // its Report links the fixture DocType
+	cleanupContractDataImports(ctx, t, c) // so do Data Imports (import --server)
 	for _, dt := range []string{contractDT, contractChild} {
 		if err := c.DeleteDoc(ctx, "DocType", dt); err != nil && !strings.Contains(err.Error(), "404") {
 			t.Logf("teardown: delete DocType %s: %v", dt, err)

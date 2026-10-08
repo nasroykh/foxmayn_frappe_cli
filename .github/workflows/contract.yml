@@ -59,6 +59,12 @@ jobs:
           docker compose -f pwd.yml logs --tail 100 create-site backend frontend
           exit 1
 
+      - name: Enable the scheduler
+        # bench new-site leaves it disabled (installer.py) and pwd.yml runs no
+        # setup wizard; Frappe's Data Import (import --server) does not start
+        # without it.
+        run: docker compose -f pwd.yml exec -T backend bench --site frontend enable-scheduler
+
       - name: Contract tests
         env:
           FFC_CONTRACT_URL: http://localhost:8080

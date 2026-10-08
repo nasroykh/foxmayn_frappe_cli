@@ -234,7 +234,7 @@ func TestImportUsageErrors(t *testing.T) {
 		{"h.csv", "subject,nope,lines,Subject\nA,1,2,3\n", nil,
 			[]string{`column 2 "nope" is not a field of Ticket`, `column 3 "lines" is a table`, `columns 1 "subject" and 4 "Subject" both set subject`}},
 		{"t.tsv", "subject\nA\n", nil, []string{"TSV is not imported"}},
-		{"t.xlsx", "PK", nil, []string{"Excel files are not read"}},
+		{"t.xlsx", "PK", nil, []string{"Excel files are read only by Frappe"}},
 		{"t.csv", "subject\nA\n", []string{"--format", "yaml"}, []string{"--format must be csv, json or ndjson"}},
 		{"u.csv", "subject\nA\n", []string{"--mode", "update"}, []string{"needs a name (or ID) column"}},
 		{"e.csv", "subject\n", nil, []string{"has no documents"}},

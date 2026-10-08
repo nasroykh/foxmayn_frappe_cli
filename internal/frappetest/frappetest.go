@@ -114,6 +114,11 @@ type Site struct {
 	maxFileSize int
 	printHTML   string
 	printStyle  string
+	// dataimport.go
+	saveHooks  map[string]saveHook // DocType → check run on create and update
+	dataImport *DataImportRun
+	importJobs map[string]int                      // Data Import → status checks left (< 0: no worker)
+	importLogs map[string][]map[string]interface{} // Data Import → its logs
 }
 
 // New starts a fake site, closed when the test ends.
@@ -697,6 +702,12 @@ func (s *Site) create(w http.ResponseWriter, doctype string, body []byte, user s
 	}
 	d["name"] = name
 	d["owner"] = user
+	if hook := s.saveHooks[doctype]; hook != nil {
+		if e := hook(nil, d); e != nil {
+			writeError(w, e)
+			return
+		}
+	}
 	s.stampRows(doctype, d)
 	doc := s.stamp(doctype, d, true)
 	s.doctypes[doctype][name] = doc
@@ -723,6 +734,12 @@ func (s *Site) update(w http.ResponseWriter, doctype, name string, body []byte, 
 			"Error: %s (%s) has been modified after you have opened it (%v, %v). Please refresh to get the latest document.",
 			name, doctype, doc["modified"], m)})
 		return
+	}
+	if hook := s.saveHooks[doctype]; hook != nil {
+		if e := hook(doc, patch); e != nil {
+			writeError(w, e)
+			return
+		}
 	}
 	s.keepNoWriteAccess(doctype, doc, patch)
 	if fmt.Sprint(doc["docstatus"]) != "0" {
