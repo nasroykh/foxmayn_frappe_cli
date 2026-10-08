@@ -306,7 +306,12 @@ Env vars:
   - Saving a Server Script checks only the Script Manager role (`only_for`, server_script.py:88). `server_script_enabled` is read only when a script runs (safe_exec.py).
   - A Password field sent empty deletes the stored secret (base_document.py:1361), so a push must never send one. Pull drops Password fields (found in FormMetas, child tables included) and warns when one had a value (Webhook `webhook_secret`).
   - File format: one JSON file per document; sorted keys; no nulls, stamps or `_` keys; LF and a final newline; no HTML escaping. Child rows keep their order and lose their identity.
-  - A multi-line top-level string goes to a sidecar file `<base>.<field>.<ext>`, referenced as `{"$file": name}`. Sidecars that the previous version referenced and this one does not are removed.
+  - A multi-line top-level string goes to a sidecar file `<base>.<field>.<ext>`, referenced as `{"$file": name}`. Only fields with a `client.ValidIdentifier` name get one. The extension is never `.json` (`webhook_json` is `.jinja`), so sidecars and document files are disjoint.
+  - Sidecars that the previous version referenced and this one does not are removed after the writes. The old file may have been edited, so only names matching `isSidecarOf` are removed: `<base>.<identifier>.<known ext>`. Another document's files never match: they end in .json or have one more dotted part.
+  - Every file name is checked for case-insensitive clashes before anything is written.
+  - Child-row passwords are found through the table field's Options, not the row's `doctype`.
+  - Webhook header keys that look like credentials produce a warning (they are Data fields and are written).
+  - In module mode the `in` lists go in chunks of 50 (a GET URL). Stale detection also counts files whose target DocType is in the module.
   - `.gitattributes` (`* text eol=lf`) is written when missing, so a Windows checkout keeps sidecars LF.
   - Pull never deletes a JSON file; stale ones in the selection are listed. Names that differ only in case are refused.
   - Push (PR 2, decided):

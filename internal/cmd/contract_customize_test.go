@@ -16,7 +16,7 @@ import (
 // contractCustomizePull pins customize pull on a real site: the fixture's
 // Custom Field and Property Setter (made through /api/resource, so not
 // system generated), a Client Script whose script lands in a sidecar file
-// byte for byte, the Workflow with its states and action, no stamps in any
+// byte for byte, a Workflow with its states and action, no stamps in any
 // file, and a second pull that writes nothing.
 func contractCustomizePull(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
 	ctx := contractCtx(t)
@@ -25,6 +25,30 @@ func contractCustomizePull(t *testing.T, c *client.FrappeClient, sc *config.Site
 		"name": contractDT + " Form", "dt": contractDT, "view": "Form", "enabled": 0, "script": script,
 	}); err != nil {
 		t.Fatalf("create Client Script: %v", err)
+	}
+	// An inactive Workflow (the workflow subtest removes its own), so the
+	// DocType keeps submitting as before.
+	draft, done, action := contractWF+" Draft", contractWF+" Done", contractWF+" Finish"
+	t.Cleanup(func() { teardownWorkflow(contractCtx(t), t, c) })
+	for _, st := range []string{draft, done} {
+		if _, err := c.CreateDoc(ctx, "Workflow State", map[string]interface{}{"workflow_state_name": st}); err != nil {
+			t.Fatalf("Workflow State: %v", err)
+		}
+	}
+	if _, err := c.CreateDoc(ctx, "Workflow Action Master", map[string]interface{}{"workflow_action_name": action}); err != nil {
+		t.Fatalf("Workflow Action Master: %v", err)
+	}
+	if _, err := c.CreateDoc(ctx, "Workflow", map[string]interface{}{
+		"workflow_name": contractWF, "document_type": contractDT, "is_active": 0, "send_email_alert": 0,
+		"states": []interface{}{
+			map[string]interface{}{"state": draft, "doc_status": "0", "allow_edit": "System Manager"},
+			map[string]interface{}{"state": done, "doc_status": "0", "allow_edit": "System Manager"},
+		},
+		"transitions": []interface{}{
+			map[string]interface{}{"state": draft, "action": action, "next_state": done, "allowed": "System Manager", "allow_self_approval": 1},
+		},
+	}); err != nil {
+		t.Fatalf("Workflow: %v", err)
 	}
 	dir := t.TempDir()
 	cfg := contractConfig(t, sc)
@@ -68,7 +92,8 @@ func contractCustomizePull(t *testing.T, c *client.FrappeClient, sc *config.Site
 		return nil
 	})
 	again := runFFC(t, cfg, "", "--json", "customize", "pull", "-d", contractDT, "--out", dir)
-	if again.Err != nil || !strings.Contains(again.Stdout, `"written": 0`) {
+	var res struct{ Written, Unchanged int }
+	if again.Err != nil || json.Unmarshal([]byte(again.Stdout), &res) != nil || res.Written != 0 || res.Unchanged < 6 {
 		t.Errorf("second pull changed files: %v\n%s", again.Err, again.Stdout)
 	}
 }

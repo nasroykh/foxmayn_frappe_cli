@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
@@ -120,7 +121,7 @@ Examples:
 			return usageErrorf("--out %s is a file, not a folder", cpOut)
 		}
 		docs, err := callSite(cmd, "Reading customizations…", func(ctx context.Context, c *client.FrappeClient) ([]customDoc, error) {
-			return pullCustomizations(ctx, c, sel)
+			return pullCustomizations(ctx, c, &sel)
 		})
 		if err != nil {
 			return err
@@ -165,6 +166,8 @@ type customSel struct {
 	Module        string
 	Types         []customType
 	IncludeSystem bool
+	// ModuleDoctypes are the DocTypes of Module, read by the pull.
+	ModuleDoctypes []string
 }
 
 func customSelection(doctypes, module, types string, includeSystem bool) (customSel, error) {
@@ -184,7 +187,9 @@ func customSelection(doctypes, module, types string, includeSystem bool) (custom
 		if i < 0 {
 			return sel, usageErrorf("--types: unknown kind %q (one of %s)", slug, strings.Join(customTypeSlugs(), ", "))
 		}
-		sel.Types = append(sel.Types, customTypes[i])
+		if !slices.ContainsFunc(sel.Types, func(t customType) bool { return t.slug == slug }) {
+			sel.Types = append(sel.Types, customTypes[i])
+		}
 	}
 	return sel, nil
 }
@@ -194,27 +199,27 @@ type customDoc struct {
 	Type customType
 	Name string
 	Doc  map[string]interface{}
-	// Warning names a value left out of the file (a password).
-	Warning string
+	// Warnings name values left out of the file (passwords) or written
+	// though they look secret (Webhook headers).
+	Warnings []string
 }
 
 // pullCustomizations reads the selected documents: their names by list
 // queries, then each document (child tables included), normalized.
-func pullCustomizations(ctx context.Context, c *client.FrappeClient, sel customSel) ([]customDoc, error) {
-	var moduleDoctypes []string
+func pullCustomizations(ctx context.Context, c *client.FrappeClient, sel *customSel) ([]customDoc, error) {
 	if sel.Module != "" {
 		rows, err := c.GetList(ctx, "DocType", client.ListOptions{Fields: []string{"name"}, Filters: mustFilters([][]interface{}{{"module", "=", sel.Module}}), Limit: -1})
 		if err != nil {
 			return nil, fmt.Errorf("listing the DocTypes of module %s: %w", sel.Module, err)
 		}
 		for _, r := range rows {
-			moduleDoctypes = append(moduleDoctypes, fmt.Sprint(r["name"]))
+			sel.ModuleDoctypes = append(sel.ModuleDoctypes, fmt.Sprint(r["name"]))
 		}
 	}
 	var out []customDoc
 	states, actions := map[string]bool{}, map[string]bool{}
 	for _, t := range sel.Types {
-		names, err := customNames(ctx, c, t, sel, moduleDoctypes)
+		names, err := customNames(ctx, c, t, sel)
 		if err != nil {
 			return nil, err
 		}
@@ -249,15 +254,18 @@ func pullCustomizations(ctx context.Context, c *client.FrappeClient, sel customS
 }
 
 // customNames lists the names of t's documents in the selection, sorted.
-func customNames(ctx context.Context, c *client.FrappeClient, t customType, sel customSel, moduleDoctypes []string) ([]string, error) {
+func customNames(ctx context.Context, c *client.FrappeClient, t customType, sel *customSel) ([]string, error) {
 	var queries [][][]interface{}
-	switch {
-	case len(sel.Doctypes) > 0:
-		queries = append(queries, [][]interface{}{{t.selector, "in", sel.Doctypes}})
-	default:
-		if len(moduleDoctypes) > 0 {
-			queries = append(queries, [][]interface{}{{t.selector, "in", moduleDoctypes}})
-		}
+	// A list query is a GET: a module's few hundred DocTypes go in chunks,
+	// so the URL stays well under a proxy's limit.
+	targets := sel.Doctypes
+	if len(targets) == 0 {
+		targets = sel.ModuleDoctypes
+	}
+	for chunk := range slices.Chunk(targets, customInChunk) {
+		queries = append(queries, [][]interface{}{{t.selector, "in", chunk}})
+	}
+	if len(sel.Doctypes) == 0 {
 		if t.module != "" {
 			queries = append(queries, [][]interface{}{{t.module, "=", sel.Module}})
 		}
@@ -278,12 +286,23 @@ func customNames(ctx context.Context, c *client.FrappeClient, t customType, sel 
 	return slices.Sorted(maps.Keys(names)), nil
 }
 
+// customInChunk is the most names one "in" filter carries.
+const customInChunk = 50
+
 // fetchCustomDocs reads and normalizes t's documents; the meta (child
 // tables included) says which fields are passwords.
 func fetchCustomDocs(ctx context.Context, c *client.FrappeClient, t customType, names []string) ([]customDoc, error) {
 	metas, err := c.FormMetas(ctx, t.doctype)
 	if err != nil {
 		return nil, err
+	}
+	tables := map[string]string{} // table field → child DocType
+	if m := metas[t.doctype]; m != nil {
+		for _, f := range m.Fields {
+			if f.Options != "" && (f.Fieldtype == "Table" || f.Fieldtype == "Table MultiSelect") {
+				tables[f.Fieldname] = f.Options
+			}
+		}
 	}
 	secret := map[string]map[string]bool{}
 	for dt, m := range metas {
@@ -302,10 +321,13 @@ func fetchCustomDocs(ctx context.Context, c *client.FrappeClient, t customType, 
 		if err != nil {
 			return nil, fmt.Errorf("reading %s %s: %w", t.doctype, name, err)
 		}
-		norm, dropped := normalizeCustomDoc(doc, t.doctype, secret)
+		norm, dropped := normalizeCustomDoc(doc, t.doctype, secret, tables)
 		d := customDoc{Type: t, Name: name, Doc: norm}
 		if len(dropped) > 0 {
-			d.Warning = fmt.Sprintf("%s %s: %s not written (password); set it on each site", t.doctype, name, strings.Join(dropped, ", "))
+			d.Warnings = append(d.Warnings, fmt.Sprintf("%s %s: %s not written (password); set it on each site", t.doctype, name, strings.Join(dropped, ", ")))
+		}
+		if keys := credentialHeaders(norm); len(keys) > 0 {
+			d.Warnings = append(d.Warnings, fmt.Sprintf("%s %s: header %s looks like a credential and is in the file; keep it out of shared repositories", t.doctype, name, strings.Join(keys, ", ")))
 		}
 		out = append(out, d)
 	}
@@ -325,8 +347,9 @@ var (
 // "_" keys (_user_tags, _comments, _assign, _liked_by, _seen, __last_sync_on),
 // no password values, and child rows without their identity (a PUT
 // replaces child tables, so row names are not kept across sites). It
-// returns the password fields left out that had a value.
-func normalizeCustomDoc(doc map[string]interface{}, doctype string, secret map[string]map[string]bool) (map[string]interface{}, []string) {
+// returns the password fields left out that had a value. tables maps a
+// table field to its child DocType (a row's own "doctype" may be missing).
+func normalizeCustomDoc(doc map[string]interface{}, doctype string, secret map[string]map[string]bool, tables map[string]string) (map[string]interface{}, []string) {
 	var dropped []string
 	out := map[string]interface{}{}
 	for k, v := range doc {
@@ -340,15 +363,23 @@ func normalizeCustomDoc(doc map[string]interface{}, doctype string, secret map[s
 			continue
 		}
 		if rows, ok := v.([]interface{}); ok {
-			v = normalizeCustomRows(rows, secret)
+			var rowDropped []string
+			v, rowDropped = normalizeCustomRows(rows, tables[k], secret)
+			for _, f := range rowDropped {
+				dropped = append(dropped, k+"."+f)
+			}
 		}
 		out[k] = v
 	}
 	sort.Strings(dropped)
+	dropped = slices.Compact(dropped)
 	return out, dropped
 }
 
-func normalizeCustomRows(rows []interface{}, secret map[string]map[string]bool) []interface{} {
+// normalizeCustomRows strips row identity and password fields; child is
+// the table's DocType from the meta, else the row's own.
+func normalizeCustomRows(rows []interface{}, child string, secret map[string]map[string]bool) ([]interface{}, []string) {
+	var dropped []string
 	out := make([]interface{}, 0, len(rows))
 	for _, r := range rows {
 		row, ok := r.(map[string]interface{})
@@ -356,15 +387,43 @@ func normalizeCustomRows(rows []interface{}, secret map[string]map[string]bool) 
 			out = append(out, r)
 			continue
 		}
-		dt, _ := row["doctype"].(string)
+		dt := child
+		if dt == "" {
+			dt, _ = row["doctype"].(string)
+		}
 		clean := map[string]interface{}{}
 		for k, v := range row {
-			if v == nil || customDropRowKeys[k] || strings.HasPrefix(k, "_") || secret[dt][k] {
+			if v == nil || customDropRowKeys[k] || strings.HasPrefix(k, "_") {
+				continue
+			}
+			if secret[dt][k] {
+				if s, _ := v.(string); s != "" {
+					dropped = append(dropped, k)
+				}
 				continue
 			}
 			clean[k] = v
 		}
 		out = append(out, clean)
+	}
+	return out, dropped
+}
+
+// credentialHeaders names the Webhook headers whose key looks like it
+// carries a credential (Data fields, so they are written).
+func credentialHeaders(doc map[string]interface{}) []string {
+	rows, _ := doc["webhook_headers"].([]interface{})
+	var out []string
+	for _, r := range rows {
+		row, _ := r.(map[string]interface{})
+		key, _ := row["key"].(string)
+		lower := strings.ToLower(key)
+		for _, w := range []string{"auth", "token", "key", "secret", "password", "cookie", "signature"} {
+			if strings.Contains(lower, w) {
+				out = append(out, key)
+				break
+			}
+		}
 	}
 	return out
 }
@@ -412,66 +471,80 @@ type customPullResult struct {
 // ones.
 func writeCustomizations(dir string, sel customSel, docs []customDoc) (*customPullResult, error) {
 	res := &customPullResult{Out: dir, Documents: map[string]int{}, Stale: []string{}}
-	written := map[string]bool{}  // relative paths
-	folded := map[string]string{} // case-folded path → name
+	written := map[string]bool{} // relative paths
+	type planned struct {
+		d        customDoc
+		base     string
+		json     []byte
+		sidecars map[string]string
+	}
+	// Every file is named before any is written, so a clash stops the pull
+	// with nothing changed.
+	folded := map[string]string{} // case-folded path → document
+	plan := make([]planned, 0, len(docs))
+	for _, d := range docs {
+		base := customFileBase(d.Name)
+		doc, sidecars := splitSidecars(d.Doc, d.Type.doctype, base)
+		files := []string{d.Type.slug + "/" + base + ".json"}
+		for name := range sidecars {
+			files = append(files, d.Type.slug+"/"+name)
+		}
+		for _, f := range files {
+			key := strings.ToLower(f)
+			who := d.Type.doctype + " " + strconv.Quote(d.Name)
+			if other, ok := folded[key]; ok && other != who {
+				return nil, fmt.Errorf("%s and %s would both be written to %s (file names ignore case on Windows and macOS)", other, who, f)
+			}
+			folded[key] = who
+		}
+		b, err := marshalCustomDoc(doc)
+		if err != nil {
+			return nil, fmt.Errorf("encoding %s %s: %w", d.Type.doctype, d.Name, err)
+		}
+		plan = append(plan, planned{d, base, b, sidecars})
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating %s: %w", dir, err)
 	}
 	if err := writeGitattributes(dir); err != nil {
 		return nil, err
 	}
-	for _, d := range docs {
-		base := customFileBase(d.Name)
-		rel := d.Type.slug + "/" + base + ".json"
-		doc, sidecars := splitSidecars(d.Doc, d.Type.doctype, base)
-		files := map[string]string{rel: ""}
-		for name := range sidecars {
-			files[d.Type.slug+"/"+name] = ""
-		}
-		for f := range files {
-			key := strings.ToLower(f)
-			if other, ok := folded[key]; ok {
-				return nil, fmt.Errorf("%s %q and %q need files that differ only in case, which one folder cannot hold on Windows or macOS", d.Type.doctype, other, d.Name)
-			}
-			folded[key] = d.Name
-		}
-		b, err := marshalCustomDoc(doc)
-		if err != nil {
-			return nil, fmt.Errorf("encoding %s %s: %w", d.Type.doctype, d.Name, err)
-		}
+	for _, p := range plan {
+		d, base := p.d, p.base
 		folder := filepath.Join(dir, d.Type.slug)
 		if err := os.MkdirAll(folder, 0o755); err != nil {
 			return nil, fmt.Errorf("creating %s: %w", folder, err)
 		}
-		// Sidecars the previous version referenced and this one does not.
 		path := filepath.Join(folder, base+".json")
-		for _, old := range sidecarRefs(path) {
-			if _, keep := sidecars[old]; !keep && strings.HasPrefix(old, base+".") && !strings.ContainsAny(old, `/\`) {
-				_ = os.Remove(filepath.Join(folder, old))
-			}
-		}
+		oldRefs := sidecarRefs(path)
 		changed := false
-		for name, content := range sidecars {
+		for name, content := range p.sidecars {
 			w, err := writeIfChanged(filepath.Join(folder, name), content)
 			if err != nil {
 				return nil, err
 			}
 			changed = changed || w
 		}
-		w, err := writeIfChanged(path, string(b))
+		w, err := writeIfChanged(path, string(p.json))
 		if err != nil {
 			return nil, err
+		}
+		// Sidecars the previous version referenced and this one does not.
+		// The old file may have been edited, so only a name this document's
+		// sidecars could have is removed.
+		for _, old := range oldRefs {
+			if _, keep := p.sidecars[old]; !keep && isSidecarOf(old, base) {
+				_ = os.Remove(filepath.Join(folder, old))
+			}
 		}
 		if changed || w {
 			res.Written++
 		} else {
 			res.Unchanged++
 		}
-		written[rel] = true
+		written[d.Type.slug+"/"+base+".json"] = true
 		res.Documents[d.Type.slug]++
-		if d.Warning != "" {
-			res.Warnings = append(res.Warnings, d.Warning)
-		}
+		res.Warnings = append(res.Warnings, d.Warnings...)
 	}
 	stale, err := staleCustomFiles(dir, sel, written)
 	if err != nil {
@@ -486,7 +559,7 @@ func writeCustomizations(dir string, sel customSel, docs []customDoc) (*customPu
 // Workflow States and Actions are shared between Workflows and never listed.
 func staleCustomFiles(dir string, sel customSel, written map[string]bool) ([]string, error) {
 	in := map[string]bool{}
-	for _, dt := range sel.Doctypes {
+	for _, dt := range append(slices.Clone(sel.Doctypes), sel.ModuleDoctypes...) {
 		in[dt] = true
 	}
 	stale := []string{}
@@ -553,7 +626,7 @@ func splitSidecars(doc map[string]interface{}, doctype, base string) (map[string
 	out := make(map[string]interface{}, len(doc))
 	sidecars := map[string]string{}
 	for k, v := range doc {
-		if s, ok := v.(string); ok && strings.Contains(s, "\n") {
+		if s, ok := v.(string); ok && strings.Contains(s, "\n") && client.ValidIdentifier(k) {
 			name := base + "." + k + "." + sidecarExt(doctype, k, doc)
 			sidecars[name] = s
 			out[k] = map[string]interface{}{sidecarFileKey: name}
@@ -583,7 +656,7 @@ func sidecarExt(doctype, field string, doc map[string]interface{}) string {
 	case "css":
 		return "css"
 	case "webhook_json":
-		return "json"
+		return "jinja" // a template; never .json, which names documents
 	case "message":
 		switch doc["message_type"] {
 		case "HTML":
@@ -593,6 +666,21 @@ func sidecarExt(doctype, field string, doc map[string]interface{}) string {
 		}
 	}
 	return "txt"
+}
+
+// sidecarExts are the extensions sidecarExt gives.
+var sidecarExts = map[string]bool{"js": true, "py": true, "sql": true, "html": true, "css": true, "jinja": true, "md": true, "txt": true}
+
+// isSidecarOf says whether name is one base's sidecars could have:
+// <base>.<field>.<ext>. Another document's file never matches: its JSON
+// ends in .json, and its sidecars have one more dot-separated part.
+func isSidecarOf(name, base string) bool {
+	rest, ok := strings.CutPrefix(name, base+".")
+	if !ok {
+		return false
+	}
+	field, ext, ok := strings.Cut(rest, ".")
+	return ok && client.ValidIdentifier(field) && sidecarExts[ext]
 }
 
 // sidecarRefs lists the sidecar names a document file references.

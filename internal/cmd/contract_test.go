@@ -103,7 +103,7 @@ func TestContract(t *testing.T) {
 	t.Run("files upload download pdf", func(t *testing.T) { contractFiles(t, c, sc) })
 	// Last: an active workflow changes how the DocType submits.
 	t.Run("workflow", func(t *testing.T) { contractWorkflow(t, c, sc) })
-	// After workflow, so the pull includes the Workflow and its states.
+	// After workflow, whose teardown would remove the Workflow this one makes.
 	t.Run("customize pull", func(t *testing.T) { contractCustomizePull(t, c, sc) })
 }
 
