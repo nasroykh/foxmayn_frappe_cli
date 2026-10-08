@@ -59,6 +59,48 @@ signs:
     args: ["run", "./tools/relsign", "sign", "${artifact}", "${signature}"]
     signature: "${artifact}.sig"
 
+# Package managers (T3.5). Both push to their own repository with
+# TAP_GITHUB_TOKEN (a fine-grained token: Contents read/write on
+# nasroykh/homebrew-tap and nasroykh/scoop-bucket only; the workflow's
+# GITHUB_TOKEN cannot write another repository). skip_upload: auto keeps rc
+# tags out. ffc update refuses to replace either copy (release.ManagedBy).
+homebrew_casks:
+  - name: ffc
+    binaries: [ffc]
+    manpages:
+      - manpages/*.1
+    completions:
+      bash: completions/ffc.bash
+      zsh: completions/ffc.zsh
+      fish: completions/ffc.fish
+    homepage: https://github.com/nasroykh/foxmayn_frappe_cli
+    description: Command-line client and MCP server for Frappe and ERPNext sites
+    license: MIT
+    skip_upload: auto
+    repository:
+      owner: nasroykh
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    # The binary is not signed or notarized (no Apple Developer ID). Without
+    # this, macOS refuses to run a quarantined download from a cask.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/ffc"]
+          end
+
+scoops:
+  - name: ffc
+    homepage: https://github.com/nasroykh/foxmayn_frappe_cli
+    description: Command-line client and MCP server for Frappe and ERPNext sites
+    license: MIT
+    skip_upload: auto
+    repository:
+      owner: nasroykh
+      name: scoop-bucket
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+
 release:
   prerelease: auto # a tag like v1.6.0-rc1 must not become /releases/latest
 

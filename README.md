@@ -26,6 +26,8 @@ curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/in
 powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/main/install.ps1 | iex"
 ```
 
+Or with a package manager: `brew install nasroykh/tap/ffc` (macOS, Linux), or `scoop bucket add foxmayn https://github.com/nasroykh/scoop-bucket` then `scoop install ffc` (Windows).
+
 Both scripts download the latest release for your platform and check its SHA-256 checksum. Manual downloads, building from source, signature checks, updating (`ffc update`) and uninstalling: [Installation](docs/getting-started/installation.md).
 
 **Desktop app:** beta builds are not signed yet, so install them from a terminal to skip the macOS and Windows warnings (the scripts check the download):

@@ -63,7 +63,7 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 ```
 
 **Key files:**
-- `.goreleaser.yaml` — build matrix, archive naming and contents (gendocs hook), checksum config
+- `.goreleaser.yaml` — build matrix, archive naming and contents (gendocs hook), checksum config, `homebrew_casks` (tap nasroykh/homebrew-tap; post-install hook strips the quarantine flag, since the binary is not notarized) and `scoops` (bucket nasroykh/scoop-bucket), both `skip_upload: auto` (no rc) and pushed with the `TAP_GITHUB_TOKEN` secret (fine-grained, Contents read/write on those two repos only; the release fails without it)
 - `.github/workflows/release.yml` — triggers on `v*` tags; runs `go mod tidy -diff`, vet and tests, then GoReleaser and a build-provenance attestation. Actions are pinned to commit SHAs.
 - `.github/workflows/ci.yml` — gofmt, tidy check, vet, race tests, staticcheck, govulncheck, vet and tests on windows-latest (no -race), and a cross-build on every push/PR
 - `.github/workflows/desktop.yml` — desktop/ on windows-latest and macos-latest when desktop/, internal/ or go.mod change: npm ci, tsc + vite build, `go mod tidy -diff`, vet, tests, `wails3 build` (CLI version from desktop/go.mod), committed bindings and lockfile unchanged, govulncheck (macOS)

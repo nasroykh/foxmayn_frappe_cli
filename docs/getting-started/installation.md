@@ -33,6 +33,23 @@ macOS ships LibreSSL, not OpenSSL 3, so `install.sh` skips the signature check t
 
 `install.sh` honours two escape hatches, at your own risk: `FFC_SKIP_SIGNATURE=1` skips the signature check, and `FFC_SKIP_CHECKSUM=1` allows installing when no SHA-256 tool is found.
 
+## Homebrew (macOS, Linux)
+
+```bash
+brew install nasroykh/tap/ffc
+```
+
+This installs from Foxmayn's own tap (not homebrew-core), with the shell completions and man pages. Homebrew checks the archive's SHA-256 from the tap; it does not check the release signature. The binary is not notarized yet, so the cask removes macOS's quarantine flag after installing, the same state a `curl` download is in. Update with `brew upgrade ffc`; `ffc update` leaves a Homebrew copy alone.
+
+## Scoop (Windows)
+
+```powershell
+scoop bucket add foxmayn https://github.com/nasroykh/scoop-bucket
+scoop install ffc
+```
+
+Scoop checks the archive's SHA-256 from the bucket, not the release signature. Update with `scoop update ffc`; `ffc update` leaves a Scoop copy alone.
+
 ## Manual download
 
 1. Download the archive for your platform from the [Releases page](https://github.com/nasroykh/foxmayn_frappe_cli/releases): `ffc_<version>_<os>_<arch>.tar.gz` (Linux, macOS) or `.zip` (Windows), plus `checksums.txt` and `checksums.txt.sig`.
@@ -74,13 +91,13 @@ Next: [Quickstart](quickstart.md).
 ffc update
 ```
 
-This works however ffc was installed. Running the install script again also updates. See [update](../cli/update.md).
+This works for the install scripts, a manual download and `go install`. Homebrew and Scoop copies update through them (`brew upgrade ffc`, `scoop update ffc`); `ffc update` says so. Running the install script again also updates. See [update](../cli/update.md).
 
 ## Uninstall
 
 1. Optional: remove MCP entries you added, for each client: `ffc mcp uninstall --client <client>`. Stop a detached MCP server with `ffc mcp stop`.
 2. Optional: remove OAuth sites with `ffc site remove <name>`, which revokes their tokens on the server.
-3. Delete the binary:
+3. Delete the binary (Homebrew: `brew uninstall ffc`; Scoop: `scoop uninstall ffc`), or:
    - Linux/macOS: `rm "$(command -v ffc)"` (usually `/usr/local/bin/ffc` or `~/.local/bin/ffc`).
    - Windows: delete `%LOCALAPPDATA%\Programs\ffc` and remove it from your user `PATH` (Settings > System > About > Advanced system settings > Environment Variables).
 4. Delete your settings and credentials: the `~/.config/ffc` directory (`%USERPROFILE%\.config\ffc` on Windows). It holds `config.yaml`, the MCP audit log and state files. The desktop app uses the same directory.
