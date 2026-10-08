@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/release"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/version"
@@ -249,7 +252,11 @@ func runRollback(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if isPrevCopy(exe) {
+		return prevCopyError(exe)
+	}
 	prev := prevPath(exe)
+	// Verified before it is run (for its version) or installed.
 	data, err := readPrevious(prev)
 	if err != nil {
 		return err
@@ -280,23 +287,46 @@ func prevPath(exe string) string {
 	return exe + ".prev"
 }
 
-// readPrevious reads the kept binary, refusing a missing, empty or oversized
-// file (the bounds of an extracted release binary).
+// prevSumPath holds the SHA-256 of the kept binary, written with it.
+func prevSumPath(prev string) string { return prev + ".sha256" }
+
+// isPrevCopy reports whether exe is a kept previous binary (ffc.prev,
+// ffc.prev.exe). Updating or rolling back from it would chain ffc.prev.prev.
+func isPrevCopy(exe string) bool {
+	name := strings.ToLower(filepath.Base(exe))
+	return strings.HasSuffix(strings.TrimSuffix(name, ".exe"), ".prev")
+}
+
+func prevCopyError(exe string) error {
+	return fmt.Errorf("%s is the copy ffc update keeps for --rollback; run ffc itself instead", exe)
+}
+
+// readPrevious reads the kept binary: a regular file within the bounds of an
+// extracted release binary whose SHA-256 matches the one recorded when it was
+// kept. Anything else (a truncated, replaced or foreign file) is refused, so a
+// rollback never installs a binary ffc did not put there.
 func readPrevious(prev string) ([]byte, error) {
-	f, err := os.Open(prev)
+	fi, err := os.Lstat(prev)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("no previous version to roll back to: %s does not exist (each ffc update from this version on keeps one)", prev)
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, release.MaxBinaryBytes+1))
+	if !fi.Mode().IsRegular() || fi.Size() == 0 || fi.Size() > release.MaxBinaryBytes {
+		return nil, fmt.Errorf("%s is not a usable ffc binary", prev)
+	}
+	data, err := os.ReadFile(prev)
 	if err != nil {
 		return nil, err
 	}
-	if len(data) == 0 || int64(len(data)) > release.MaxBinaryBytes {
-		return nil, fmt.Errorf("%s is not a usable ffc binary (%d bytes)", prev, len(data))
+	want, err := os.ReadFile(prevSumPath(prev))
+	if err != nil {
+		return nil, fmt.Errorf("refusing to roll back: %s has no readable checksum file: %w", prev, err)
+	}
+	sum := sha256.Sum256(data)
+	if !strings.EqualFold(strings.TrimSpace(string(want)), hex.EncodeToString(sum[:])) {
+		return nil, fmt.Errorf("refusing to roll back: %s changed since ffc update kept it (checksum mismatch)", prev)
 	}
 	return data, nil
 }
@@ -320,19 +350,21 @@ func binaryVersion(ctx context.Context, path string) string {
 	return ""
 }
 
-// keepPrevious copies the binary at exe to prevPath(exe) through a temp file,
-// replacing an older copy, so --rollback can restore it.
-func keepPrevious(exe string) error {
+// copyPrevious copies the binary at exe to a temp file next to it and returns
+// the copy's path and SHA-256. commitPrevious turns it into prevPath(exe) only
+// once the swap has succeeded, so a failed update keeps the older copy.
+func copyPrevious(exe string) (string, string, error) {
 	src, err := os.Open(exe)
 	if err != nil {
-		return err
+		return "", "", err
 	}
 	defer src.Close()
 	tmp, err := os.CreateTemp(filepath.Dir(exe), "ffc-prev-*")
 	if err != nil {
-		return err
+		return "", "", err
 	}
-	_, err = io.Copy(tmp, src)
+	h := sha256.New()
+	_, err = io.Copy(io.MultiWriter(tmp, h), src)
 	if err == nil {
 		err = tmp.Sync()
 	}
@@ -342,13 +374,23 @@ func keepPrevious(exe string) error {
 	if err == nil {
 		err = os.Chmod(tmp.Name(), 0o755)
 	}
-	if err == nil {
-		err = os.Rename(tmp.Name(), prevPath(exe))
-	}
 	if err != nil {
 		os.Remove(tmp.Name())
+		return "", "", err
 	}
-	return err
+	return tmp.Name(), hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// commitPrevious moves the copy to prevPath(exe), then records its checksum.
+// Between the two steps the old checksum no longer matches, which
+// readPrevious refuses: an interruption never makes a wrong file trusted.
+func commitPrevious(exe, tmp, sum string) error {
+	prev := prevPath(exe)
+	if err := os.Rename(tmp, prev); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return config.WriteFileAtomic(prevSumPath(prev), []byte(sum+"\n"), 0o644)
 }
 
 // downloadAndInstall fetches and verifies the release archive (signed
@@ -412,6 +454,9 @@ func replaceBinary(newData []byte) error {
 	if err != nil {
 		return err
 	}
+	if isPrevCopy(exePath) {
+		return prevCopyError(exePath)
+	}
 
 	dir := filepath.Dir(exePath)
 	tmp, err := os.CreateTemp(dir, "ffc-update-*")
@@ -445,12 +490,22 @@ func replaceBinary(newData []byte) error {
 		return fmt.Errorf("setting permissions: %w", err)
 	}
 
-	// A failure here costs only the rollback, not the update.
-	if err := keepPrevious(exePath); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not keep the current binary for --rollback: %v\n", err)
+	// Keep the running binary for --rollback. A failure costs only the
+	// rollback, not the update.
+	prevTmp, prevSum, prevErr := copyPrevious(exePath)
+	if err := swapExecutable(exePath, tmpPath); err != nil {
+		if prevErr == nil {
+			os.Remove(prevTmp)
+		}
+		return err
 	}
-
-	return swapExecutable(exePath, tmpPath)
+	if prevErr == nil {
+		prevErr = commitPrevious(exePath, prevTmp, prevSum)
+	}
+	if prevErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not keep the previous binary for --rollback: %v\n", prevErr)
+	}
+	return nil
 }
 
 // swapExecutable replaces current with replacement.

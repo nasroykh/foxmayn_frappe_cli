@@ -141,6 +141,35 @@ func TestUpdateRollback(t *testing.T) {
 		}
 	}
 
+	// A kept file that changed, or lost its checksum, is never installed.
+	prev := prevPath(exe)
+	if err := os.WriteFile(prev, []byte("tampered"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r = runFFC(t, cfg, "", "update", "--rollback", "--yes")
+	if r.Code == exitOK || !strings.Contains(r.Stderr, "checksum mismatch") || read(exe) != "new build" {
+		t.Errorf("tampered prev: code %d, stderr %q, exe %q", r.Code, r.Stderr, read(exe))
+	}
+	if err := os.Remove(prevSumPath(prev)); err != nil {
+		t.Fatal(err)
+	}
+	r = runFFC(t, cfg, "", "update", "--rollback", "--yes")
+	if r.Code == exitOK || !strings.Contains(r.Stderr, "no readable checksum file") || read(exe) != "new build" {
+		t.Errorf("no checksum: code %d, stderr %q, exe %q", r.Code, r.Stderr, read(exe))
+	}
+
+	// Running the kept copy itself: no update, no rollback.
+	executablePath = func() (string, error) { return prev, nil }
+	for _, args := range [][]string{{"update", "--rollback", "--yes"}} {
+		if r = runFFC(t, cfg, "", args...); r.Code == exitOK || !strings.Contains(r.Stderr, "is the copy ffc update keeps") {
+			t.Errorf("%v from the kept copy: code %d, stderr %q", args, r.Code, r.Stderr)
+		}
+	}
+	if err := replaceBinary([]byte("x")); err == nil || !strings.Contains(err.Error(), "is the copy ffc update keeps") {
+		t.Errorf("replaceBinary from the kept copy: %v", err)
+	}
+	executablePath = func() (string, error) { return exe, nil }
+
 	if r = runFFC(t, cfg, "", "update", "--rollback", "--version", "v1.0.0"); r.Code != exitUsage {
 		t.Errorf("--rollback --version: code %d", r.Code)
 	}
@@ -148,5 +177,20 @@ func TestUpdateRollback(t *testing.T) {
 	updateTEnv(t, "v1.1.0", "v1.1.0", `C:\Users\me\scoop\apps\ffc\1.1.0\ffc.exe`)
 	if r = runFFC(t, cfg, "", "update", "--rollback", "--yes"); r.Code != exitGeneric || !strings.Contains(r.Stderr, "scoop update ffc") {
 		t.Errorf("managed rollback: code %d, stderr %q", r.Code, r.Stderr)
+	}
+}
+
+func TestIsPrevCopy(t *testing.T) {
+	for p, want := range map[string]bool{
+		"/usr/local/bin/ffc.prev":      true,
+		`C:\Programs\ffc\ffc.prev.exe`: true,
+		`C:\Programs\ffc\FFC.PREV.EXE`: true,
+		"/usr/local/bin/ffc":           false,
+		`C:\Programs\ffc\ffc.exe`:      false,
+		"/opt/preview/ffc":             false,
+	} {
+		if got := isPrevCopy(p); got != want {
+			t.Errorf("isPrevCopy(%q) = %v", p, got)
+		}
 	}
 }

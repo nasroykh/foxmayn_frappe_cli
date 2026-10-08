@@ -136,8 +136,11 @@ internal/cmd/collab_cmds.go      → comment / assign / unassign / tag / untag /
 internal/cmd/update.go           → self-update: internal/release finds, downloads and verifies; update.go confirms and swaps the binary;
                                 a package manager's copy (`release.ManagedBy` on `executablePath`) is refused with its command,
                                 which the update notice and doctor's hint also use (`updateCommand`); `--version` (versionTag, release.Tagged,
-                                classifyPin) and `--rollback` (runRollback: prevPath ffc.prev / ffc.prev.exe, written by keepPrevious in
-                                replaceBinary before every swap; a failed copy only warns); seams `releasesURL`, `releasesBase`, `executablePath`
+                                classifyPin) and `--rollback` (runRollback: prevPath ffc.prev / ffc.prev.exe plus prevSumPath `.sha256`;
+                                replaceBinary copies the running binary to a temp file (copyPrevious) and commitPrevious renames it
+                                into place only after a successful swap, then writes the checksum; readPrevious refuses a non-regular,
+                                oversized or checksum-mismatched file before running `<prev> --version` or installing it; isPrevCopy
+                                refuses running either from the kept copy; a failed copy only warns); seams `releasesURL`, `releasesBase`, `executablePath`
 internal/cmd/update_check.go     → background update check; owns rootCmd.PersistentPreRunE
 internal/cmd/mcp.go              → mcp subcommand, --read-only + policy flags (mcpFlags) + --toolsets, newMCPEnv (site per call, cached
                                 client), startMCP (credential check + registerTools filtered by policy)

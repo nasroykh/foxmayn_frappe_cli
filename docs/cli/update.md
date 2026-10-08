@@ -32,7 +32,10 @@ The newest release is the newest non-draft, non-prerelease release tagged `v<num
 
 ## Rollback
 
-Every update keeps the binary it replaces next to the new one: `ffc.prev` (`ffc.prev.exe` on Windows). `ffc update --rollback` shows that binary's version, asks, then swaps the two, so the replaced binary becomes the new `ffc.prev` and a second `--rollback` undoes the first. It works offline.
+Every successful update keeps the binary it replaced next to the new one: `ffc.prev` (`ffc.prev.exe` on Windows), with its SHA-256 in `ffc.prev.sha256` (`ffc.prev.exe.sha256`). `ffc update --rollback` checks that checksum, shows the kept binary's version, asks, then swaps the two, so the replaced binary becomes the new `ffc.prev` and a second `--rollback` undoes the first. It works offline.
+
+- A kept file that changed, or whose checksum file is missing, is refused: rollback only installs what ffc kept. (Someone who can write to that folder can replace ffc itself as well.)
+- Run it as `ffc`, never as `ffc.prev`: updating or rolling back from the kept copy is refused.
 
 - Only the last replaced binary is kept. Updates made before this feature (1.16.0) kept none.
 - A version from before 1.16.0 has no `--rollback`: after rolling back to one, go forward again with `ffc update`.
