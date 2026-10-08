@@ -141,12 +141,16 @@ What happens:
 
 Anything that fails before the import starts (the file, the preview's warnings) deletes the Data Import again; Frappe deletes its file with it. Once started, the Data Import stays on the site, as one made in the desk does.
 
-**`--preview`** stops after step 3: it prints the number of file rows and documents Frappe found and the warnings, and leaves the Data Import in place (also when it has warnings, exit 6 then) with the command that starts it: `ffc import --server --resume <name>`. **`--resume NAME`** reads that Data Import (`-d` may be given; it must match), and:
+**`--preview`** stops after step 3: it prints the number of file rows and documents Frappe found and the warnings, and leaves the Data Import in place (also when it has warnings, exit 6 then; `--json` reports its real status, `Pending`) with the command that starts it: `ffc import --server --resume <name>`, or, with warnings, the command that deletes it. **`--resume NAME`** reads that Data Import (`-d` may be given; it must match), and:
 
 - when it was not started (status Pending), starts it, then waits. Frappe never queues the same Data Import twice, so resuming one that is already queued or running only waits for it;
 - when it is running, waits for it;
 - when it has finished, prints its log again; nothing is restarted (retry the failed rows from the desk);
-- when Frappe stopped it on warnings found by the job, prints them (exit 6).
+- when Frappe stopped it on warnings found by the job, prints them (exit 6). ffc does not start it again: when the cause was data on the site (a missing Link target, say) and that is fixed now, start it from the desk, which clears the warnings and checks again.
+
+`--resume` does not check who created the Data Import: any System Manager may start or read anyone's, as in the desk.
+
+Ctrl+C stops the waiting, not the import: the job keeps running on the site, and ffc prints the `--resume` command.
 
 `--resume` takes no file and none of `--mode`, `--submit`, `--mute-emails`, `--preview`, `--format`: the Data Import keeps what it was created with. `--dry-run` is refused with `--server`, because creating the Data Import is already a write; `--preview` is the server-side check. `--concurrency` and `--fail-fast` apply only without `--server`. ffc does not check the header or the values itself in this mode: Frappe's preview reports them. Frappe ignores `--submit` for a DocType that is not submittable.
 
@@ -164,4 +168,5 @@ Requirements and caveats:
 
 - **Scheduler and worker.** Frappe refuses to start a Data Import while the site's scheduler is inactive (disabled in System Settings, paused, or in maintenance mode), except in developer mode, where it runs the import inside the request (a long import may then need a larger `--timeout`). ffc then exits 6, keeps the Data Import, and says how to enable the scheduler (`bench --site <site> enable-scheduler`) and resume. A site with no worker on the `default` queue never runs the job: the wait runs out (exit 7).
 - Before v16.51 a running import reads `Pending`, then `Partial Success` after its first document, until the end; ffc takes the run as over when every document has a log, or the status is `Success`, `Error` or `Timed Out`. From v16.51 a running import reads `In Progress`, and the import type `Insert or Update Records` exists (ffc does not create it; `--resume` reports such a Data Import).
+- Frappe ends a run `Pending` when some documents got no log and either none failed or none succeeded (importer.py). Such a run never changes again, and ffc cannot tell it from one still running: the wait runs out (exit 7) with a message saying so.
 - Frappe returns at most 5000 logs (1000 from v16.51); beyond that the rows are cut and the counts are the site's, with a warning.

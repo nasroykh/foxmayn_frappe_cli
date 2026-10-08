@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -130,7 +131,7 @@ func DataImportWarnings(stored string) []DataImportWarning {
 		if strings.TrimSpace(stored) == "" {
 			return nil
 		}
-		return []DataImportWarning{{Message: stripHTML(stored)}}
+		return []DataImportWarning{{Message: htmlText(stored)}}
 	}
 	return dataImportWarnings(v)
 }
@@ -140,10 +141,10 @@ func dataImportWarnings(raw []interface{}) []DataImportWarning {
 	for _, item := range raw {
 		m, ok := item.(map[string]interface{})
 		if !ok {
-			out = append(out, DataImportWarning{Message: stripHTML(fmt.Sprint(item))})
+			out = append(out, DataImportWarning{Message: htmlText(fmt.Sprint(item))})
 			continue
 		}
-		w := DataImportWarning{Row: intOf(m["row"]), Col: intOf(m["col"]), Message: stripHTML(fmt.Sprint(m["message"]))}
+		w := DataImportWarning{Row: intOf(m["row"]), Col: intOf(m["col"]), Message: htmlText(fmt.Sprint(m["message"]))}
 		w.Type, _ = m["type"].(string)
 		if rows, ok := m["rows"].([]interface{}); ok {
 			for _, r := range rows {
@@ -301,6 +302,12 @@ func (e *DataImportWaitError) Error() string {
 	if e.Status.Total > 0 && e.Status.Success+e.Status.Failed > 0 {
 		done = fmt.Sprintf(", %d of %d documents done", e.Status.Success+e.Status.Failed, e.Status.Total)
 	}
+	if e.Status.Status == "Pending" && done != "" {
+		// importer.py also ends a run Pending when some documents have no
+		// log and either none failed or none succeeded; it then stays so.
+		return fmt.Sprintf("Data Import %s still reads Pending after %s%s: either it is still running, or Frappe finished it without logging every document (check it in the desk)",
+			e.Name, e.Waited, done)
+	}
 	return fmt.Sprintf("Data Import %s is still queued or running after %s (status %s%s)", e.Name, e.Waited, e.Status.Status, done)
 }
 
@@ -406,7 +413,7 @@ func logMessages(v interface{}) []string {
 				walk(inner, depth+1)
 				return
 			}
-			if s := stripHTML(x); s != "" {
+			if s := htmlText(x); s != "" {
 				out = append(out, s)
 			}
 		case []interface{}:
@@ -421,4 +428,14 @@ func logMessages(v interface{}) []string {
 	}
 	walk(v, 0)
 	return out
+}
+
+// htmlBreakRE matches the tags that end a line in Frappe's messages
+// (value_mapping joins its lines with <br>).
+var htmlBreakRE = regexp.MustCompile(`(?i)(\s*(<br\s*/?>|</p>|</li>|</div>)\s*)+`)
+
+// htmlText is stripHTML with line breaks kept apart as "; ".
+func htmlText(s string) string {
+	s = strings.Trim(strings.TrimSpace(htmlBreakRE.ReplaceAllString(s, "; ")), "; ")
+	return stripHTML(s)
 }

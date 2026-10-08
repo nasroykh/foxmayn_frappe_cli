@@ -162,7 +162,7 @@ func TestImportServerWarnings(t *testing.T) {
 		Status     string                     `json:"status"`
 		Warnings   []client.DataImportWarning `json:"warnings"`
 	}
-	if err := json.Unmarshal([]byte(r.Stdout), &out); err != nil || r.Code != exitValidation || out.Status != "Blocked" || len(out.Warnings) != 1 || out.Warnings[0].Row != 3 {
+	if err := json.Unmarshal([]byte(r.Stdout), &out); err != nil || r.Code != exitValidation || out.Status != "Pending" || !strings.Contains(r.Stderr, "delete-doc") || len(out.Warnings) != 1 || out.Warnings[0].Row != 3 {
 		t.Fatalf("exit %d %v: %s\n%s", r.Code, err, r.Stdout, r.Stderr)
 	}
 	if _, ok := s.Doc("Data Import", out.DataImport); !ok {
@@ -292,6 +292,8 @@ func TestImportServerUsage(t *testing.T) {
 		{[]string{"--resume", "DI-1", "--mode", "insert"}, "--mode cannot be used with --resume"},
 		{[]string{"-d", "Ticket", csv, "--server"}, `"mode"`},
 		{[]string{csv, "--mode", "insert", "--server"}, `"doctype"`},
+		{[]string{csv}, `"doctype", "mode"`},
+		{[]string{"-d", "Ticket", writeImportFile(t, "book.csv", "PK\x03\x04rest"), "--mode", "insert", "--server"}, "--format xlsx"},
 		{[]string{"-d", "Ticket", writeImportFile(t, "t.xlsx", "PK"), "--mode", "insert"}, "add --server"},
 	} {
 		r := cmdTRun(t, s, append([]string{"import"}, c.args...)...)

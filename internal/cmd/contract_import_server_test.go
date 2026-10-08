@@ -129,7 +129,8 @@ func contractImportServer(t *testing.T, c *client.FrappeClient, sc *config.SiteC
 	}
 	before := len(contractDataImports(ctx, t, c))
 	r = run("import", "-d", contractDT, bad, "--mode", "insert", "--server")
-	if r.Code != exitValidation || !strings.Contains(r.Stderr, "row 2") || count() != 2 {
+	// Frappe reports an invalid Select value per column, not per row.
+	if r.Code != exitValidation || !strings.Contains(r.Stderr, "Bogus") || count() != 2 {
 		t.Errorf("bad Select: exit %d, %d documents\n%s", r.Code, count(), r.Stderr)
 	}
 	if after := len(contractDataImports(ctx, t, c)); after != before {

@@ -181,6 +181,9 @@ func runImportServer(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if format == "csv" && isZip(u) {
+		return usageErrorf("%s is an Excel workbook (or another zip file), not CSV: give --format xlsx", file)
+	}
 
 	// Create the Data Import, upload the file to it, save it (Frappe
 	// parses the file) and read the preview's warnings.
@@ -190,11 +193,20 @@ func runImportServer(cmd *cobra.Command, args []string) error {
 	var stepErr error
 	spinErr := runSpinner(fmt.Sprintf("Uploading %s to a new Data Import for %s…", u.Filename, imDoctype), func() {
 		di, err := c.NewDataImport(ctx, imDoctype, importType, imSubmit, imMuteEmails)
+		var api *client.APIError
+		if err != nil && !errors.As(err, &api) {
+			// The site may have saved it before the answer was lost.
+			err = fmt.Errorf("%w (a Data Import may have been created: ffc list-docs -d \"Data Import\" --filters '{\"reference_doctype\": %q}')", err, imDoctype)
+		}
 		if err != nil {
 			stepErr = err
 			return
 		}
-		name = fmt.Sprint(di["name"])
+		name, _ = di["name"].(string)
+		if name == "" {
+			stepErr = fmt.Errorf("the site created a Data Import but did not answer its name")
+			return
+		}
 		u.Doctype, u.Docname = "Data Import", name
 		f, err := c.UploadFile(ctx, u)
 		if err != nil {
@@ -228,12 +240,17 @@ func runImportServer(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if len(blocking) > 0 {
-		if err := printDataImportWarnings(name, imDoctype, blocking); err != nil {
+		status := "Blocked"
+		if imPreview {
+			status = "Pending"
+		}
+		if err := printDataImportWarnings(name, imDoctype, status, blocking); err != nil {
 			return err
 		}
 		n := len(blocking)
 		if imPreview {
-			return &client.StateError{Message: fmt.Sprintf("%d %s in %s: Frappe would import nothing; Data Import %s was kept for --preview", n, plural(n, "warning"), file, name)}
+			return &client.StateError{Message: fmt.Sprintf("%d %s in %s: Frappe would import nothing; Data Import %s was kept for --preview (delete it with: ffc delete-doc -d \"Data Import\" -n %s)",
+				n, plural(n, "warning"), file, name, shellQuote(name))}
 		}
 		return discardDataImport(c, name, &client.StateError{Message: fmt.Sprintf("%d %s in %s: Frappe imports nothing while they remain; nothing was imported", n, plural(n, "warning"), file)})
 	}
@@ -278,10 +295,10 @@ func resumeDataImport(cmd *cobra.Command, c *client.FrappeClient, name string) e
 	if start {
 		if tw, _ := doc["template_warnings"].(string); strings.TrimSpace(tw) != "" {
 			ws := client.DataImportWarnings(tw)
-			if err := printDataImportWarnings(name, doctype, ws); err != nil {
+			if err := printDataImportWarnings(name, doctype, "Blocked", ws); err != nil {
 				return err
 			}
-			return &client.StateError{Message: fmt.Sprintf("Frappe stopped Data Import %s on %d %s in its file; nothing was imported. Fix the file and import it again", name, len(ws), plural(len(ws), "warning"))}
+			return &client.StateError{Message: fmt.Sprintf("Frappe stopped Data Import %s on %d %s in its file; nothing was imported. Fix the file and import it again, or, when the cause was data on the site, start it again from the desk", name, len(ws), plural(len(ws), "warning"))}
 		}
 		if f, _ := doc["import_file"].(string); f == "" {
 			return &client.StateError{Message: fmt.Sprintf("Data Import %s has no file to import", name)}
@@ -292,11 +309,17 @@ func resumeDataImport(cmd *cobra.Command, c *client.FrappeClient, name string) e
 
 // runDataImport starts the job (when start is set), waits for it and
 // reports the run.
-func runDataImport(cmd *cobra.Command, c *client.FrappeClient, name, doctype, importType string, start bool) error {
+func runDataImport(cmd *cobra.Command, c *client.FrappeClient, name, doctype, importType string, start bool) (err error) {
 	ctx := cmd.Context()
+	defer func() {
+		// An interrupt replaces the error's text (execute), so the
+		// command to pick the import up again goes to stderr here.
+		if err != nil && (ctx.Err() != nil || errors.Is(err, errAborted)) {
+			fmt.Fprintf(os.Stderr, "Data Import %s may still be running on the site; pick it up with: %s\n", name, resumeHint(name))
+		}
+	}()
 	if start {
 		var started bool
-		var err error
 		if spinErr := runSpinner(fmt.Sprintf("Starting Data Import %s…", name), func() { started, err = c.StartDataImport(ctx, name) }); spinErr != nil && err == nil {
 			return errAborted
 		}
@@ -313,7 +336,6 @@ func runDataImport(cmd *cobra.Command, c *client.FrappeClient, name, doctype, im
 	}
 
 	var st client.DataImportStatus
-	var err error
 	progress := func(client.DataImportStatus) {}
 	if !spinnerEnabled() && !quiet {
 		last := ""
@@ -334,7 +356,7 @@ func runDataImport(cmd *cobra.Command, c *client.FrappeClient, name, doctype, im
 	}
 	var wait *client.DataImportWaitError
 	if errors.As(err, &wait) {
-		return &codeError{exitNetwork, fmt.Sprintf("%s. Is a worker running on the site's \"default\" queue? It is still running; pick it up with: %s --wait 30m",
+		return &codeError{exitNetwork, fmt.Sprintf("%s. If it stays queued, check that a worker runs the site's \"default\" queue. Pick it up with: %s --wait 30m",
 			wait.Error(), resumeHint(name))}
 	}
 	if err != nil {
@@ -367,7 +389,7 @@ type dataImportResult struct {
 // job itself failed) or was stopped by warnings exits 6.
 func reportDataImport(ctx context.Context, c *client.FrappeClient, name, doctype, importType string, st client.DataImportStatus) error {
 	if st.Blocked {
-		if err := printDataImportWarnings(name, doctype, st.Warnings); err != nil {
+		if err := printDataImportWarnings(name, doctype, "Blocked", st.Warnings); err != nil {
 			return err
 		}
 		n := len(st.Warnings)
@@ -475,9 +497,9 @@ func warningText(w client.DataImportWarning) string {
 
 // printDataImportWarnings lists the warnings that stop an import: stdout
 // data in machine output, stderr lines otherwise.
-func printDataImportWarnings(name, doctype string, ws []client.DataImportWarning) error {
+func printDataImportWarnings(name, doctype, status string, ws []client.DataImportWarning) error {
 	if machineOutput() {
-		return printResult(map[string]interface{}{"data_import": name, "doctype": doctype, "status": "Blocked", "warnings": ws})
+		return printResult(map[string]interface{}{"data_import": name, "doctype": doctype, "status": status, "warnings": ws})
 	}
 	for _, w := range ws {
 		output.PrintWarning(warningText(w))
@@ -510,4 +532,19 @@ func init() {
 	importCmd.Flags().BoolVar(&imMuteEmails, "mute-emails", false, "With --server: send no emails while importing")
 	importCmd.Flags().DurationVar(&imWait, "wait", 10*time.Minute, "With --server: how long to wait for the import job")
 	importCmd.Flags().StringVar(&imResume, "resume", "", "Start (if not yet started) and wait for this Data Import, made by an earlier --server run")
+}
+
+// isZip reports whether the upload starts with a zip signature (.xlsx).
+func isZip(u client.FileUpload) bool {
+	head := make([]byte, 4)
+	if u.File != nil {
+		if n, _ := u.File.ReadAt(head, 0); n < 4 {
+			return false
+		}
+	} else if len(u.Content) < 4 {
+		return false
+	} else {
+		copy(head, u.Content)
+	}
+	return string(head) == "PK\x03\x04"
 }

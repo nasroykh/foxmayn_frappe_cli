@@ -124,8 +124,17 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if err := checkImportServerFlags(cmd); err != nil {
 		return err
 	}
-	if imDoctype == "" && imResume == "" {
-		return usageErrorf(`required flag(s) "doctype" not set`)
+	if imResume == "" {
+		var missing []string
+		if imDoctype == "" {
+			missing = append(missing, `"doctype"`)
+		}
+		if imMode == "" {
+			missing = append(missing, `"mode"`)
+		}
+		if len(missing) > 0 {
+			return usageErrorf("required flag(s) %s not set", strings.Join(missing, ", "))
+		}
 	}
 	if imServer || imResume != "" {
 		return runImportServer(cmd, args)
@@ -135,9 +144,6 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return usageErrorf("FILE is empty: give a path, or - for stdin")
 	}
 	mode := strings.ToLower(imMode)
-	if mode == "" {
-		return usageErrorf(`required flag(s) "mode" not set`)
-	}
 	if mode != "insert" && mode != "update" {
 		return usageErrorf("--mode must be insert or update")
 	}

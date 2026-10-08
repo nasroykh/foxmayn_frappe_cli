@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 	"github.com/spf13/cobra"
 )
 
@@ -131,12 +132,14 @@ type errorJSON struct {
 // exit code.
 func reportError(w io.Writer, err error, asJSON bool) int {
 	code, kind := classify(err)
+	// Messages can carry server text (names, statuses).
+	msg := text.Sanitize(err.Error())
 	if !asJSON {
-		fmt.Fprintln(w, err)
+		fmt.Fprintln(w, msg)
 		return code
 	}
 	var out errorJSON
-	out.Error.Code, out.Error.ExitCode, out.Error.Message = kind, code, err.Error()
+	out.Error.Code, out.Error.ExitCode, out.Error.Message = kind, code, msg
 	var api *client.APIError
 	if errors.As(err, &api) {
 		out.Error.Status, out.Error.ExcType = api.Status, api.ExcType
