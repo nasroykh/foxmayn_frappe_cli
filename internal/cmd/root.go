@@ -63,6 +63,10 @@ Example config:
 	SilenceErrors: true,
 }
 
+// Root returns the root command, for tools/gendocs (completion scripts and man
+// pages for the release archives).
+func Root() *cobra.Command { return rootCmd }
+
 // Execute is the single entry point called from main.
 func Execute() {
 	if os.Getenv(jqChildEnv) == jqChildOn {

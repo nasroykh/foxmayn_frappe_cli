@@ -48,6 +48,7 @@ internal/text/           sanitising server text for the terminal
 internal/frappetest/     in-memory fake Frappe site for tests
 internal/version/        build-time version variables
 tools/relsign/           release key generation, signing, verification (not shipped)
+tools/gendocs/           completion scripts and man pages for the release archives (not shipped)
 desktop/                 Foxmayn Frappe Desktop (separate Go module; see desktop.md)
 skills/                  agent skills for ffc users and contributors
 ```
