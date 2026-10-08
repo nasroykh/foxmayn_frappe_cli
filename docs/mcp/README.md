@@ -35,6 +35,7 @@ All of this is in [Safety](safety.md).
 | Page | What it covers |
 | --- | --- |
 | [Setup](setup.md) | `ffc mcp install` / `uninstall` for each client, config file locations, manual config. |
+| [Claude Desktop extension](bundle.md) | The `.mcpb` bundle from each release: one-file install, its three settings, platforms. |
 | [Running the server](running.md) | stdio, HTTP and the detached background server; several sites in one server. |
 | [Tools](tools.md) | Every tool, tool sets, limits, `jq`, resources, prompts and completion. |
 | [Safety](safety.md) | Read-only mode, per-site policy, sensitive DocTypes, confirmations, audit log. |

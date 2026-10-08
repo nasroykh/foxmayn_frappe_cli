@@ -30,8 +30,22 @@ builds:
       - -X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Commit={{ .Commit }}
       - -X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Date={{ .Date }}
 
+# The macOS universal binary only feeds the Claude Desktop bundle: replace:
+# false keeps the per-arch builds, and the archive below lists ids: [ffc] so no
+# darwin_all archive (and no cask or scoop entry for it) appears. The pipe runs
+# after every build, so the Windows binary exists when tools/mcpb packs
+# dist/ffc_<version>.mcpb; the checksum and release sections pick that file up.
+universal_binaries:
+  - id: ffc_universal
+    ids: [ffc]
+    replace: false
+    name_template: ffc
+    hooks:
+      post: go run ./tools/mcpb {{ .Path }} {{ .Version }}
+
 archives:
   - id: ffc
+    ids: [ffc]
     name_template: "ffc_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
@@ -44,6 +58,8 @@ archives:
 
 checksum:
   name_template: "checksums.txt"
+  extra_files:
+    - glob: ./dist/*.mcpb
 
 # Sign checksums.txt with the release key (tools/relsign, Ed25519). ffc update
 # refuses a release without a valid checksums.txt.sig. relsign reads
@@ -103,6 +119,8 @@ scoops:
 
 release:
   prerelease: auto # a tag like v1.6.0-rc1 must not become /releases/latest
+  extra_files:
+    - glob: ./dist/*.mcpb
 
 changelog:
   sort: asc

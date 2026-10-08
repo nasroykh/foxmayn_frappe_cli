@@ -81,5 +81,6 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.mcpb
             dist/checksums.txt
             dist/checksums.txt.sig
