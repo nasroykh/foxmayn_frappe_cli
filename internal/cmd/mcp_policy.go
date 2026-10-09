@@ -34,6 +34,7 @@ var toolActions = map[string]toolAction{
 	"create_doc": actWrite, "update_doc": actWrite, "delete_doc": actWrite,
 	"bulk_create": actWrite, "bulk_update": actWrite, "bulk_delete": actWrite,
 	"submit_doc": actWrite, "cancel_doc": actWrite, "amend_doc": actWrite,
+	"bulk_submit": actWrite, "bulk_cancel": actWrite,
 	"copy_doc": actWrite, "rename_doc": actWrite, "apply_workflow": actWrite,
 
 	"add_comment": actWrite, "assign_to": actWrite, "remove_assignment": actWrite,
@@ -93,6 +94,8 @@ var toolSurface = map[string]struct {
 
 	"submit_doc":      {toolsetLifecycle, "Submit document", false},
 	"cancel_doc":      {toolsetLifecycle, "Cancel document", false},
+	"bulk_submit":     {toolsetLifecycle, "Submit documents in bulk", false},
+	"bulk_cancel":     {toolsetLifecycle, "Cancel documents in bulk", false},
 	"amend_doc":       {toolsetLifecycle, "Amend cancelled document", false},
 	"copy_doc":        {toolsetLifecycle, "Duplicate document", false},
 	"rename_doc":      {toolsetLifecycle, "Rename or merge document", false},
@@ -159,6 +162,10 @@ type toolScope struct {
 	FilterFields, SelectFields []string
 }
 
+// optionalDoctype are the tools for which an empty doctype means no DocType
+// (search is then global, list_errors unfiltered).
+var optionalDoctype = map[string]bool{"search": true, "list_errors": true}
+
 // scopeOf reads what a tool call touches from its arguments. The tool's own
 // parse step has already validated them.
 func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
@@ -173,12 +180,20 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 	if dt := str("doctype"); dt != "" {
 		sc.Doctypes = append(sc.Doctypes, dt)
 	}
+	// An empty DocType would add nothing to the scope and so skip the
+	// allow/deny rules. Only where it means "none" may it be empty.
+	if _, present := args["doctype"]; present && strings.TrimSpace(str("doctype")) == "" && !optionalDoctype[tool] {
+		return sc, fmt.Errorf("policy: the doctype argument is empty")
+	}
 	if n, ok := docName(args["name"]); ok {
 		sc.Names = append(sc.Names, n)
 	}
 	switch tool {
-	case "bulk_delete":
-		sc.Names, _ = stringsArg(req, "names")
+	case "bulk_delete", "bulk_submit", "bulk_cancel":
+		// Numbers are names too, as parseNames takes them.
+		if raw, err := rawArg(req, "names"); err == nil {
+			sc.Names, _ = parseNames(raw)
+		}
 	case "bulk_update":
 		var rows []map[string]interface{}
 		if _, err := jsonArg(req, "data", &rows); err == nil {

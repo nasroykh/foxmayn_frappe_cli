@@ -21,8 +21,8 @@ import (
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 )
 
-// Destructive MCP calls (delete_doc, bulk_delete, cancel_doc, a merging
-// rename_doc and the call_method equivalents) ask the user through MCP
+// Destructive MCP calls (delete_doc, bulk_delete, cancel_doc, bulk_submit,
+// bulk_cancel, a merging rename_doc and the call_method equivalents) ask the user through MCP
 // elicitation before anything is sent to the site (T1.4c). The question is
 // a multi round-trip input request: the client asks the user and calls the
 // tool again with the answer and the request state ffc issued, which binds
@@ -106,7 +106,7 @@ var mergeMethods = []string{"frappe.client.rename_doc", "frappe.model.rename_doc
 // who cannot read it).
 func needsConfirm(req mcp.CallToolRequest, method string) bool {
 	switch req.Params.Name {
-	case "delete_doc", "bulk_delete", "cancel_doc", "apply_workflow", "share_doc", "assign_to":
+	case "delete_doc", "bulk_delete", "cancel_doc", "bulk_submit", "bulk_cancel", "apply_workflow", "share_doc", "assign_to":
 		return true
 	case "rename_doc":
 		return req.GetBool("merge", false) // as the tool reads it
@@ -403,7 +403,7 @@ func confirmMessage(site string, req mcp.CallToolRequest, sc toolScope) string {
 		what = fmt.Sprintf("Delete %s %s.", dt, name(0))
 	case "cancel_doc":
 		what = fmt.Sprintf("Cancel %s %s.", dt, name(0))
-	case "bulk_delete":
+	case "bulk_delete", "bulk_submit", "bulk_cancel":
 		const show = 10
 		list := make([]string, 0, show)
 		for i := range sc.Names {
@@ -412,11 +412,16 @@ func confirmMessage(site string, req mcp.CallToolRequest, sc toolScope) string {
 			}
 			list = append(list, name(i))
 		}
-		what = fmt.Sprintf("Delete %d %s documents: %s", len(sc.Names), dt, strings.Join(list, ", "))
+		verb := map[string]string{"bulk_delete": "Delete", "bulk_submit": "Submit", "bulk_cancel": "Cancel"}[req.Params.Name]
+		what = fmt.Sprintf("%s %d %s documents: %s", verb, len(sc.Names), dt, strings.Join(list, ", "))
 		if more := len(sc.Names) - show; more > 0 {
 			what += fmt.Sprintf(" and %d more", more)
 		}
 		what += "."
+		if req.Params.Name == "bulk_submit" {
+			// Cancelling a submitted document is possible; editing it is not.
+			return fmt.Sprintf("An AI agent asks to change site %s. %s A submitted document can only be cancelled, not edited.", confirmSite(site), what)
+		}
 	case "rename_doc":
 		to, _ := docName(args["new_name"])
 		what = fmt.Sprintf("Merge %s %s into %s. %s will no longer exist.", dt, name(0), quoted(to, 140), name(0))
@@ -483,13 +488,13 @@ func cliEquivalent(site string, req mcp.CallToolRequest, sc toolScope) string {
 	switch req.Params.Name {
 	case "delete_doc", "cancel_doc":
 		parts = append(parts, strings.ReplaceAll(req.Params.Name, "_", "-"), "--doctype", q(dt), "--name", q(sc.Names[0]))
-	case "bulk_delete":
+	case "bulk_delete", "bulk_submit", "bulk_cancel":
 		for _, n := range sc.Names {
 			if strings.Contains(n, ",") || strings.TrimSpace(n) != n {
 				return cmdName
 			}
 		}
-		parts = append(parts, "bulk-delete", "--doctype", q(dt), "--names", q(strings.Join(sc.Names, ",")))
+		parts = append(parts, strings.ReplaceAll(req.Params.Name, "_", "-"), "--doctype", q(dt), "--names", q(strings.Join(sc.Names, ",")))
 	case "rename_doc":
 		to, _ := docName(args["new_name"])
 		parts = append(parts, "rename-doc", "--doctype", q(dt), "--name", q(sc.Names[0]), "--to", q(to), "--merge")

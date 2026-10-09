@@ -884,7 +884,7 @@ func mcpTToolNames(t *testing.T, s *server.MCPServer) []string {
 func TestMCPFakeToolSets(t *testing.T) {
 	read := []string{"aggregate", "check_permission", "count_docs", "get_doc", "get_doc_context", "get_print_html", "get_schema", "get_transitions", "list_attachments", "list_docs", "list_doctypes", "list_errors", "list_jobs", "list_reports", "list_sites", "ping", "run_report",
 		"scheduler_status", "search", "site_health", "whoami"}
-	write := []string{"amend_doc", "apply_workflow", "attach_file", "bulk_create", "bulk_delete", "bulk_update", "call_method", "cancel_doc",
+	write := []string{"amend_doc", "apply_workflow", "attach_file", "bulk_cancel", "bulk_create", "bulk_delete", "bulk_submit", "bulk_update", "call_method", "cancel_doc",
 		"copy_doc", "create_doc", "delete_doc", "rename_doc", "submit_doc", "update_doc",
 		"add_comment", "assign_to", "remove_assignment", "add_tag", "remove_tag", "share_doc", "unshare_doc"}
 	all := append(append([]string(nil), read...), write...)
@@ -905,7 +905,7 @@ func TestMCPFakeToolSets(t *testing.T) {
 	}
 
 	s, _ = newMCPFake(t, false)
-	if got := mcpTToolNames(t, s); !reflect.DeepEqual(got, all) || len(got) != 42 {
+	if got := mcpTToolNames(t, s); !reflect.DeepEqual(got, all) || len(got) != 44 {
 		t.Errorf("full tools = %v, want %v", got, all)
 	}
 }

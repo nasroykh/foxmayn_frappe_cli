@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -680,26 +681,69 @@ func registerCallMethod(s *server.MCPServer, env *mcpEnv) {
 	}))
 }
 
-// bulkTool runs a validated bulk operation for an MCP tool.
-func bulkTool(n int, done string, op func(ctx context.Context, c *client.FrappeClient, i int) (string, error)) (toolCall, error) {
+// bulkTool runs a validated bulk operation for an MCP tool with the given
+// number of workers. Results stay in input order whatever the workers do.
+func bulkTool(n, workers int, done string, op func(ctx context.Context, c *client.FrappeClient, i int) (string, error)) (toolCall, error) {
 	if n > maxMCPBulkItems {
 		return nil, fmt.Errorf("too many items (%d): a single call may touch at most %d documents", n, maxMCPBulkItems)
 	}
 	return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
-		finished := 0 // one worker: items finish in order
-		rep := runBulk(ctx, n, 1, false, done, func(ctx context.Context, i int) (string, error) {
+		// Count and notify under one lock, so the progress values a client
+		// sees only go up.
+		var mu sync.Mutex
+		finished := 0
+		rep := runBulk(ctx, n, workers, false, done, func(ctx context.Context, i int) (string, error) {
 			name, err := op(ctx, c, i)
+			mu.Lock()
 			finished++
 			notifyProgress(ctx, finished, n)
+			mu.Unlock()
 			return name, err
 		})
 		return rep.JSON(), nil
 	}, nil
 }
 
+// concurrencyArg reads the optional concurrency of a bulk tool, 1 to
+// maxMCPBulkWorkers. The default, 1, runs the items in input order, one at a
+// time: parallel items must not depend on each other (links between them, a
+// shared parent), which only the caller knows.
+func concurrencyArg(req mcp.CallToolRequest) (int, error) {
+	n, err := intArg(req, "concurrency", 1)
+	if err != nil {
+		return 0, usageErrorf("%v", err)
+	}
+	if n < 1 || n > maxMCPBulkWorkers {
+		return 0, usageErrorf("concurrency: expected 1 to %d, got %d", maxMCPBulkWorkers, n)
+	}
+	return n, nil
+}
+
+// concurrencyParam declares the concurrency argument of a bulk tool.
+func concurrencyParam() mcp.ToolOption {
+	return mcp.WithNumber("concurrency",
+		mcp.Description(fmt.Sprintf("Items to run at once, 1 to %d. Default 1: in input order, one at a time. Raise it only when the items do not depend on each other; order is then not kept.", maxMCPBulkWorkers)),
+	)
+}
+
+// refuseDuplicateNames is a usage error when two items name the same
+// document: with several workers their writes would race. Frappe compares
+// names case-insensitively on MariaDB, so so does this.
+func refuseDuplicateNames(names []string) error {
+	seen := make(map[string]int, len(names))
+	for i, n := range names {
+		key := strings.ToLower(strings.TrimSpace(n))
+		if first, ok := seen[key]; ok {
+			return usageErrorf("items %d and %d name the same document, %q: with concurrency above 1 items run in parallel, so name each document once per call", first, i+1, n)
+		}
+		seen[key] = i + 1
+	}
+	return nil
+}
+
 func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_create",
-		mcp.WithDescription(fmt.Sprintf("Create multiple Frappe documents in one call (at most %d). Each element of the data array is an object of field values for one document. Returns per-item results with created names or error messages. Processing continues on individual failures.", maxMCPBulkItems)),
+		mcp.WithDescription(fmt.Sprintf("Create multiple Frappe documents in one call (at most %d). Each element of the data array is an object of field values for one document. Returns per-item results with created names or error messages. Items are created in input order, one at a time, unless you set concurrency (up to %d) for items that do not depend on each other (no links between them, no tree parent among them); order is then not kept. Processing continues on individual failures.", maxMCPBulkItems, maxMCPBulkWorkers)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithOpenWorldHintAnnotation(true),
@@ -708,6 +752,7 @@ func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 			mcp.Description("The Frappe DocType, e.g. 'ToDo', 'Note'"),
 		),
 		jsonParam("data", `Array of field-value objects, e.g. [{"description":"Task 1"},{"description":"Task 2"}]`, mcp.Required()),
+		concurrencyParam(),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
@@ -722,7 +767,11 @@ func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 		if err != nil {
 			return nil, fmt.Errorf("data: %w", err)
 		}
-		return bulkTool(len(items), "created", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
+		workers, err := concurrencyArg(req)
+		if err != nil {
+			return nil, err
+		}
+		return bulkTool(len(items), workers, "created", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
 			doc, err := c.CreateDoc(ctx, doctype, items[i])
 			if err != nil {
 				return "", err
@@ -735,7 +784,7 @@ func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 
 func registerBulkUpdate(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_update",
-		mcp.WithDescription(fmt.Sprintf("Update multiple Frappe documents in one call (at most %d). Each element of the data array must include a \"name\" field identifying the document plus any fields to change. Returns per-item results. Processing continues on individual failures.", maxMCPBulkItems)),
+		mcp.WithDescription(fmt.Sprintf("Update multiple Frappe documents in one call (at most %d). Each element of the data array must include a \"name\" field identifying the document plus any fields to change. Returns per-item results. Items are updated in input order, one at a time, unless you set concurrency (up to %d) for items that do not depend on each other (no shared parent); order is then not kept and each document may be named only once. Processing continues on individual failures.", maxMCPBulkItems, maxMCPBulkWorkers)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -745,6 +794,7 @@ func registerBulkUpdate(s *server.MCPServer, env *mcpEnv) {
 			mcp.Description("The Frappe DocType"),
 		),
 		jsonParam("data", `Array of objects; each must include "name" plus fields to update, e.g. [{"name":"TD-0001","status":"Closed"}]`, mcp.Required()),
+		concurrencyParam(),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
@@ -763,7 +813,16 @@ func registerBulkUpdate(s *server.MCPServer, env *mcpEnv) {
 		if err != nil {
 			return nil, fmt.Errorf("data: %w", err)
 		}
-		return bulkTool(len(items), "updated", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
+		workers, err := concurrencyArg(req)
+		if err != nil {
+			return nil, err
+		}
+		if workers > 1 {
+			if err := refuseDuplicateNames(names); err != nil {
+				return nil, err
+			}
+		}
+		return bulkTool(len(items), workers, "updated", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
 			_, err := c.UpdateDoc(ctx, doctype, names[i], payloads[i])
 			return names[i], err
 		})
@@ -772,7 +831,7 @@ func registerBulkUpdate(s *server.MCPServer, env *mcpEnv) {
 
 func registerBulkDelete(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_delete",
-		mcp.WithDescription(fmt.Sprintf("Permanently delete multiple Frappe documents in one call (at most %d). Provide document names as an array. Returns per-item results. Processing continues on individual failures. This action cannot be undone.", maxMCPBulkItems)),
+		mcp.WithDescription(fmt.Sprintf("Permanently delete multiple Frappe documents in one call (at most %d). Provide document names as an array. Returns per-item results. Documents are deleted in the order given, one at a time (delete a document that links to another one first), unless you set concurrency (up to %d) for documents that are not linked to each other; order is then not kept and each may be named only once. Processing continues on individual failures. This action cannot be undone.", maxMCPBulkItems, maxMCPBulkWorkers)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -782,6 +841,7 @@ func registerBulkDelete(s *server.MCPServer, env *mcpEnv) {
 			mcp.Description("The Frappe DocType"),
 		),
 		jsonParam("names", `Array of document names to delete, e.g. ["TD-0001","TD-0002"]`, mcp.Required()),
+		concurrencyParam(),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
@@ -796,7 +856,16 @@ func registerBulkDelete(s *server.MCPServer, env *mcpEnv) {
 		if err != nil {
 			return nil, fmt.Errorf("names: %w", err)
 		}
-		return bulkTool(len(names), "deleted", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
+		workers, err := concurrencyArg(req)
+		if err != nil {
+			return nil, err
+		}
+		if workers > 1 {
+			if err := refuseDuplicateNames(names); err != nil {
+				return nil, err
+			}
+		}
+		return bulkTool(len(names), workers, "deleted", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
 			return names[i], c.DeleteDoc(ctx, doctype, names[i])
 		})
 	}))

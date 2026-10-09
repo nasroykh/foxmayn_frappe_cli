@@ -23,6 +23,12 @@ const maxToolResultBytes = 512 << 10
 // maxMCPBulkItems caps the items a single bulk_* tool call may touch.
 const maxMCPBulkItems = 200
 
+// maxMCPBulkWorkers is how many items bulk_create, bulk_update and
+// bulk_delete have in flight at once. bulk_submit and bulk_cancel run one at
+// a time: concurrent submits can deadlock on ERPNext's GL and stock
+// postings, and cancels must follow the order given (links).
+const maxMCPBulkWorkers = 4
+
 // toolCall is the site work of a tool, run once its arguments are valid.
 type toolCall func(ctx context.Context, c *client.FrappeClient) (interface{}, error)
 
