@@ -67,7 +67,21 @@ type Config struct {
 	// App names the app on the success page: "You can close this tab and
 	// return to <App>."
 	App string
+	// AcceptStatelessError ends the flow as denied on a redirect that
+	// carries an error, no code and no state at all (not a wrong one), when
+	// it is a browser's top-level navigation (Sec-Fetch-Mode: navigate):
+	// for a provider that drops the state on a refusal (OpenRouter). It can
+	// only end a login, never complete one.
+	AcceptStatelessError bool
 }
+
+// Errors Wait returns, wrapped (errors.Is).
+var (
+	// ErrDenied: the provider redirected with an error (the user refused).
+	ErrDenied = errors.New("authorization denied")
+	// ErrTimeout: no redirect came in time.
+	ErrTimeout = errors.New("timed out waiting for browser authorization")
+)
 
 type result struct {
 	code string
@@ -126,10 +140,15 @@ func Start(cfg Config) (*Server, error) {
 		host:   host,
 		path:   path,
 		result: make(chan result, 1),
-		srv:    &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second},
-		lns:    lns,
+		srv: &http.Server{
+			Handler:           mux,
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       30 * time.Second,
+			MaxHeaderBytes:    16 << 10,
+		},
+		lns: lns,
 	}
-	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) { s.handle(w, r, cfg.App) })
+	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) { s.handle(w, r, cfg) })
 
 	for _, ln := range lns {
 		go func(ln net.Listener) {
@@ -185,7 +204,8 @@ func listen(host string, ports []int) ([]net.Listener, error) {
 	return nil, err
 }
 
-// hasIPv6Loopback reports whether ::1 can be bound at all.
+// hasIPv6Loopback reports whether ::1 can be bound at all. A false
+// negative leaves [::1]:port to others; PKCE keeps a stolen code useless.
 func hasIPv6Loopback() bool {
 	ln, err := net.Listen("tcp", "[::1]:0")
 	if err != nil {
@@ -201,13 +221,36 @@ func closeAll(lns []net.Listener) {
 	}
 }
 
-func (s *Server) handle(w http.ResponseWriter, r *http.Request, app string) {
+// loopbackHost reports whether a request's Host names this server: a page
+// on another origin whose name resolves to 127.0.0.1 (DNS rebinding) sends
+// its own name.
+func (s *Server) loopbackHost(host string) bool {
+	h, p, err := net.SplitHostPort(host)
+	if err != nil || p != fmt.Sprint(s.port) {
+		return false
+	}
+	return h == HostIP || h == HostLocalhost || h == "::1"
+}
+
+func (s *Server) handle(w http.ResponseWriter, r *http.Request, cfg Config) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.loopbackHost(r.Host) {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Invalid request</h2></body></html>")
+		return
+	}
 	q := r.URL.Query()
+	stateless := cfg.AcceptStatelessError && !q.Has("state") && q.Get("error") != "" && !q.Has("code") &&
+		r.Header.Get("Sec-Fetch-Mode") == "navigate"
 	// Verify state first — a mismatch keeps the server listening for the
 	// legitimate redirect.
-	if q.Get("state") != s.state {
+	if q.Get("state") != s.state && !stateless {
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Invalid request</h2><p>State mismatch; ignoring.</p></body></html>")
+		fmt.Fprint(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Invalid request</h2><p>This page does not belong to the sign-in in progress, so it was ignored. Return to the app and press Cancel to stop that sign-in.</p></body></html>")
 		return
 	}
 	var res result
@@ -218,7 +261,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, app string) {
 		if desc := q.Get("error_description"); desc != "" {
 			msg += ": " + desc
 		}
-		res.err = fmt.Errorf("authorization denied: %s", msg)
+		res.err = fmt.Errorf("%w: %s", ErrDenied, msg)
 	case q.Get("code") == "":
 		msg = "No code received."
 		res.err = errors.New("no authorization code in callback URL")
@@ -240,7 +283,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request, app string) {
 	fmt.Fprintf(w, `<html><body style="font-family:sans-serif;padding:2rem;text-align:center">
 <h2>&#10003; Authorization successful</h2>
 <p>You can close this tab and return to %s.</p>
-</body></html>`, html.EscapeString(app))
+</body></html>`, html.EscapeString(cfg.App))
 }
 
 // deliver records the first callback outcome. Later callbacks (page reloads,
@@ -310,6 +353,6 @@ func (s *Server) Wait(ctx context.Context, timeout time.Duration) (string, error
 		// user can't abort the browser flow.
 		return "", ctx.Err()
 	case <-timer.C:
-		return "", fmt.Errorf("timed out waiting for browser authorization (%s)", timeout)
+		return "", fmt.Errorf("%w (%s)", ErrTimeout, timeout)
 	}
 }

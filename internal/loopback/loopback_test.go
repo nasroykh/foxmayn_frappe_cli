@@ -240,3 +240,100 @@ func TestOtherPathsAre404(t *testing.T) {
 		t.Errorf("status %d", st)
 	}
 }
+
+func do(t *testing.T, method, rawURL, host string, hdr map[string]string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(method, rawURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != "" {
+		req.Host = host
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, rawURL, err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
+func TestErrorsWrapSentinels(t *testing.T) {
+	s := start(t, Config{})
+	get(t, callback(s, url.Values{"error": {"access_denied"}, "state": {s.State()}}))
+	if _, err := s.Wait(context.Background(), time.Second); !errors.Is(err, ErrDenied) || err.Error() != "authorization denied: access_denied" {
+		t.Errorf("denied err = %v", err)
+	}
+	s2 := start(t, Config{})
+	if _, err := s2.Wait(context.Background(), 20*time.Millisecond); !errors.Is(err, ErrTimeout) || !strings.HasPrefix(err.Error(), "timed out waiting for browser authorization (") {
+		t.Errorf("timeout err = %v", err)
+	}
+}
+
+// A refusal without any state ends the flow only with AcceptStatelessError,
+// only as a browser navigation, and never with a wrong state or a code.
+func TestStatelessError(t *testing.T) {
+	nav := map[string]string{"Sec-Fetch-Mode": "navigate"}
+	off := start(t, Config{})
+	if st, _ := do(t, "GET", callback(off, url.Values{"error": {"access_denied"}}), "", nav); st != http.StatusBadRequest {
+		t.Errorf("option off: %d", st)
+	}
+
+	s := start(t, Config{AcceptStatelessError: true})
+	for _, c := range []struct {
+		q   url.Values
+		hdr map[string]string
+	}{
+		{url.Values{"error": {"access_denied"}}, nil},                                         // not a navigation
+		{url.Values{"error": {"access_denied"}}, map[string]string{"Sec-Fetch-Mode": "cors"}}, // a script's fetch
+		{url.Values{"error": {"access_denied"}, "state": {"wrong"}}, nav},                     // wrong state
+		{url.Values{"error": {"access_denied"}, "state": {""}}, nav},                          // empty state is not absent
+		{url.Values{"error": {"access_denied"}, "code": {"x"}}, nav},                          // a code
+		{url.Values{"code": {"x"}}, nav},                                                      // no error
+	} {
+		st, body := do(t, "GET", callback(s, c.q), "", c.hdr)
+		if st != http.StatusBadRequest || !strings.Contains(body, "press Cancel") {
+			t.Errorf("%v %v: status %d, body %s", c.q, c.hdr, st, body)
+		}
+	}
+	if st, _ := do(t, "GET", callback(s, url.Values{"error": {"access_denied"}}), "", nav); st != http.StatusBadRequest {
+		t.Errorf("stateless refusal: %d", st)
+	}
+	if _, err := s.Wait(context.Background(), time.Second); !errors.Is(err, ErrDenied) {
+		t.Errorf("Wait err = %v", err)
+	}
+}
+
+func TestOnlyLoopbackHostAndGET(t *testing.T) {
+	s := start(t, Config{})
+	good := callback(s, url.Values{"code": {"good"}, "state": {s.State()}})
+	port := fmt.Sprint(s.Port())
+	for _, h := range []string{"evil.example:" + port, "127.0.0.1:1", "localhost", "127.0.0.2:" + port} {
+		if st, _ := do(t, "GET", good, h, nil); st != http.StatusBadRequest {
+			t.Errorf("Host %q: %d", h, st)
+		}
+	}
+	for _, m := range []string{"POST", "PUT", "HEAD"} {
+		if st, _ := do(t, m, good, "", nil); st != http.StatusMethodNotAllowed {
+			t.Errorf("%s: %d", m, st)
+		}
+	}
+	for _, h := range []string{"localhost:" + port, "[::1]:" + port} {
+		s2 := start(t, Config{})
+		u := callback(s2, url.Values{"code": {"good"}, "state": {s2.State()}})
+		if st, _ := do(t, "GET", u, strings.Replace(h, port, fmt.Sprint(s2.Port()), 1), nil); st != http.StatusOK {
+			t.Errorf("Host %q: %d", h, st)
+		}
+	}
+	// None of the refused requests used the flow.
+	if st, _ := do(t, "GET", good, "", nil); st != http.StatusOK {
+		t.Errorf("good callback: %d", st)
+	}
+	if code, err := s.Wait(context.Background(), time.Second); err != nil || code != "good" {
+		t.Errorf("Wait = %q, %v", code, err)
+	}
+}
