@@ -42,7 +42,9 @@ func usageTurn(u llm.Usage, text string) llmtest.Turn {
 
 func approx(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
-// send runs one message and waits for the doneN-th chat:done.
+// send runs one message, waits for the doneN-th chat:done and then for the
+// run goroutines to exit (autoTitle runs after chat:done), so a test may
+// change runner fields afterwards without racing them.
 func (g *assistantRig) send(t *testing.T, convID, text string, doneN int) string {
 	t.Helper()
 	runID, err := g.a.Send(convID, text)
@@ -50,6 +52,7 @@ func (g *assistantRig) send(t *testing.T, convID, text string, doneN int) string
 		t.Fatal(err)
 	}
 	g.done(t, doneN)
+	g.a.run.wg.Wait()
 	return runID
 }
 
