@@ -217,7 +217,11 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 	}
 	line("docstatus on submittable DocTypes: 0 = draft (editable), 1 = submitted (final; only fields marked Allow on Submit can change), 2 = cancelled.")
 	if has("submit_doc", "cancel_doc", "amend_doc") {
-		line("Lifecycle: submit_doc (0 to 1), cancel_doc (1 to 2, cannot be undone), amend_doc (a new draft <name>-1 from a cancelled document).")
+		bulk := ""
+		if has("bulk_submit", "bulk_cancel") {
+			bulk = fmt.Sprintf(" bulk_submit and bulk_cancel do the first two for up to %d documents of one DocType, one at a time in the order given.", maxMCPBulkItems)
+		}
+		line("Lifecycle: submit_doc (0 to 1), cancel_doc (1 to 2, cannot be undone), amend_doc (a new draft <name>-1 from a cancelled document).%s", bulk)
 	}
 	if has("get_transitions", "apply_workflow") {
 		line("A DocType with an active workflow cannot be submitted or cancelled directly: call get_transitions, then apply_workflow with one of its actions.")
@@ -531,7 +535,10 @@ var mcpPrompts = []mcpPrompt{
 				undo = " To undo, bulk_delete the created names."
 			}
 			submit := ""
-			if has("submit_doc") {
+			switch {
+			case has("bulk_submit"):
+				submit = " bulk_create makes drafts; submitting is a separate step (bulk_submit, or submit_doc per document)."
+			case has("submit_doc"):
 				submit = " bulk_create makes drafts; submitting is a separate step (submit_doc per document)."
 			}
 			return fmt.Sprintf("Import %[2]s into the Frappe DocType %[1]s safely with the ffc tools.\n\n", dt, src) + steps(

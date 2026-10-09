@@ -29,7 +29,7 @@ A refused call returns an error starting with `policy:` naming the setting, and 
 
 ## Confirmation
 
-Confirmed calls: `delete_doc`, `bulk_delete`, `cancel_doc`, `apply_workflow`, `share_doc`, `assign_to`, `rename_doc` with `merge`, and the matching `call_method` methods (`frappe.client.delete`, `frappe.client.cancel`, workflow apply, sharing and assignment methods, ...).
+Confirmed calls: `delete_doc`, `bulk_delete`, `cancel_doc`, `bulk_submit`, `bulk_cancel`, `apply_workflow`, `share_doc`, `assign_to`, `rename_doc` with `merge`, and the matching `call_method` methods (`frappe.client.delete`, `frappe.client.cancel`, workflow apply, sharing and assignment methods, ...).
 
 - `if-supported` (default): ask through the client (MCP elicitation) when it can, otherwise proceed.
 - `always`: ask, and refuse when the client cannot ask; the error names the `ffc` command to run in a terminal instead.

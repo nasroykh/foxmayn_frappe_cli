@@ -45,7 +45,7 @@ HTTP binds 127.0.0.1 only and requires `Authorization: Bearer <token>` (printed 
 | `--sites A,B` / `--all-sites` | serve several sites; every call then needs a `site` argument |
 | `-p, --port`, `-d, --detach` | HTTP transport; background |
 
-Tool sets: `core` (documents, reports, search, aggregate, bulk, `call_method`, whoami, check_permission), `lifecycle` (submit, cancel, amend, copy, rename, workflow), `collab` (comments, assignments, tags), `admin` (share, unshare, site_health, list_jobs, list_errors, scheduler_status), `files` (list_attachments, attach_file, get_print_html). `list_sites` is always there.
+Tool sets: `core` (documents, reports, search, aggregate, bulk, `call_method`, whoami, check_permission), `lifecycle` (submit, cancel, bulk_submit, bulk_cancel, amend, copy, rename, workflow), `collab` (comments, assignments, tags), `admin` (share, unshare, site_health, list_jobs, list_errors, scheduler_status), `files` (list_attachments, attach_file, get_print_html). `list_sites` is always there.
 
 The durable way is a `mcp:` block under the site in `config.yaml`, read on every call:
 

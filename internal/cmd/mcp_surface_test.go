@@ -129,7 +129,7 @@ func TestMCPToolSurface(t *testing.T) {
 		}
 	}
 	sort.Strings(lifecycle)
-	if want := []string{"amend_doc", "apply_workflow", "cancel_doc", "copy_doc", "get_transitions", "rename_doc", "submit_doc"}; !reflect.DeepEqual(lifecycle, want) {
+	if want := []string{"amend_doc", "apply_workflow", "bulk_cancel", "bulk_submit", "cancel_doc", "copy_doc", "get_transitions", "rename_doc", "submit_doc"}; !reflect.DeepEqual(lifecycle, want) {
 		t.Errorf("lifecycle = %v, want %v", lifecycle, want)
 	}
 
@@ -169,7 +169,7 @@ func TestMCPToolSurface(t *testing.T) {
 func TestMCPToolsets(t *testing.T) {
 	core := []string{"aggregate", "bulk_create", "bulk_delete", "bulk_update", "call_method", "check_permission", "count_docs", "create_doc", "delete_doc",
 		"get_doc", "get_doc_context", "get_schema", "list_docs", "list_doctypes", "list_reports", "list_sites", "ping", "run_report", "search", "update_doc", "whoami"}
-	lifecycle := []string{"amend_doc", "apply_workflow", "cancel_doc", "copy_doc", "get_transitions", "list_sites", "rename_doc", "submit_doc"}
+	lifecycle := []string{"amend_doc", "apply_workflow", "bulk_cancel", "bulk_submit", "cancel_doc", "copy_doc", "get_transitions", "list_sites", "rename_doc", "submit_doc"}
 	if got := mcpTToolNames(t, mcpTToolsets(t, []string{"core"})); !reflect.DeepEqual(got, core) {
 		t.Errorf("core = %v", got)
 	}
@@ -672,33 +672,49 @@ func TestMCPBulkProgress(t *testing.T) {
 
 func TestMCPBulkCancel(t *testing.T) {
 	s, site := newMCPFake(t, false)
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 8; i++ {
 		site.Add("ToDo", map[string]interface{}{"name": fmt.Sprintf("TD-%d", i)})
 	}
 	c := mcpTClient(t, s, nil, false)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	// The second delete cancels the call, as a client's cancellation would.
+	// Four workers take TD-1 to TD-4. TD-2 cancels the call, as a client's
+	// cancellation would; the others wait for that, so no worker is free to
+	// start TD-5 before it.
+	cancelled := make(chan struct{})
 	site.Handle("DELETE /api/resource/ToDo/TD-2", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		cancel()
+		close(cancelled)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"message":"ok"}`))
 	}))
+	for _, n := range []string{"TD-1", "TD-3", "TD-4"} {
+		site.Handle("DELETE /api/resource/ToDo/"+n, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-cancelled:
+			case <-r.Context().Done():
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"message":"ok"}`))
+		}))
+	}
 	req := mcp.CallToolRequest{}
 	req.Params.Name = "bulk_delete"
-	req.Params.Arguments = map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"TD-1", "TD-2", "TD-3", "TD-4", "TD-5"}}
+	req.Params.Arguments = map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"TD-1", "TD-2", "TD-3", "TD-4", "TD-5", "TD-6", "TD-7", "TD-8"}}
 	_, _ = c.CallTool(ctx, req)
-	var deleted []string
+	deleted := map[string]bool{}
 	for _, r := range site.Requests() {
 		if r.Method == http.MethodDelete {
-			deleted = append(deleted, strings.TrimPrefix(r.Path, "/api/resource/ToDo/"))
+			deleted[strings.TrimPrefix(r.Path, "/api/resource/ToDo/")] = true
 		}
 	}
-	if !reflect.DeepEqual(deleted, []string{"TD-1", "TD-2"}) {
-		t.Errorf("deletes after cancel = %v, want TD-1 TD-2 only", deleted)
+	if !deleted["TD-2"] {
+		t.Errorf("the cancelling delete never arrived: %v", deleted)
 	}
-	if site.Count("ToDo") != 4 { // TD-2's override deleted nothing
-		t.Errorf("ToDo count = %d", site.Count("ToDo"))
+	for _, late := range []string{"TD-5", "TD-6", "TD-7", "TD-8"} {
+		if deleted[late] {
+			t.Errorf("%s was started after the call was cancelled: %v", late, deleted)
+		}
 	}
 }
 

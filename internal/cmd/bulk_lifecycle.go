@@ -159,7 +159,7 @@ func (l *lifecycleBulk) run(cmd *cobra.Command) error {
 	if err := l.confirm(cmd, names); err != nil {
 		return err
 	}
-	rep, err := l.bulk.runOn(cmd, c, fmt.Sprintf("%s %d %s documents…", l.progress, len(names), l.doctype), len(names), l.done, l.op(names))
+	rep, err := l.bulk.runOn(cmd, c, fmt.Sprintf("%s %d %s documents…", l.progress, len(names), l.doctype), len(names), l.done, l.op(l.doctype, names))
 	if err != nil {
 		return err
 	}
@@ -175,21 +175,21 @@ func (l *lifecycleBulk) confirm(cmd *cobra.Command, names []string) error {
 		text.Sanitize(capitalize(l.verb)), len(names), text.Sanitize(l.doctype), namePreview(names), l.caution))
 }
 
-// op acts on names[i]. The document is read first, so one that is not in the
-// state the command needs gets a clear result instead of the server's
-// DocstatusTransitionError. A dry run stops at the first such document
-// (planAll), as docs/cli/bulk.md says.
-func (l *lifecycleBulk) op(names []string) func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
+// op acts on names[i] of doctype (the MCP tools share it). The document is
+// read first, so one that is not in the state the command needs gets a clear
+// result instead of the server's DocstatusTransitionError. A dry run stops
+// at the first such document (planAll), as docs/cli/bulk.md says.
+func (l *lifecycleBulk) op(doctype string, names []string) func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
 	return func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
 		name := names[i]
-		doc, err := c.GetDoc(ctx, l.doctype, name)
+		doc, err := c.GetDoc(ctx, doctype, name)
 		if err != nil {
 			return name, err
 		}
 		if why, ok := l.blocked[fmt.Sprint(doc["docstatus"])]; ok {
 			return name, &client.StateError{Message: fmt.Sprintf("%s is %s", name, why)}
 		}
-		return name, l.act(ctx, c, l.doctype, name)
+		return name, l.act(ctx, c, doctype, name)
 	}
 }
 

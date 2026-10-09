@@ -79,7 +79,7 @@ These apply whatever the config says, unless the config explicitly lists the ite
 
 Before these calls, ffc asks the user through the MCP client (elicitation), showing what will happen. Nothing is sent to the site unless the user confirms:
 
-- `delete_doc`, `bulk_delete`, `cancel_doc`, `rename_doc` with `merge`;
+- `delete_doc`, `bulk_delete`, `cancel_doc`, `bulk_submit`, `bulk_cancel`, `rename_doc` with `merge`;
 - `apply_workflow` (an action may submit or cancel);
 - `share_doc` and `assign_to` (they can give users access to a document);
 - the `call_method` equivalents (`frappe.client.delete` and `cancel`, `frappe.desk.reportview.delete_items`, the form cancel and discard methods, workflow apply methods, renames with merge, `frappe.share.add`, `frappe.share.set_permission` granting access, `frappe.desk.form.assign_to.add`).

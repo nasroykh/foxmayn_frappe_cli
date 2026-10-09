@@ -230,6 +230,8 @@ func TestNeedsConfirm(t *testing.T) {
 	}{
 		{"delete_doc", nil, true},
 		{"bulk_delete", nil, true},
+		{"bulk_submit", nil, true},
+		{"bulk_cancel", nil, true},
 		{"cancel_doc", nil, true},
 		{"update_doc", nil, false},
 		{"submit_doc", nil, false},
@@ -316,7 +318,11 @@ func TestCLIEquivalent(t *testing.T) {
 		{"rename_doc", map[string]interface{}{"doctype": "ToDo", "name": "a", "new_name": "it's", "merge": true}, `ffc --site prod rename-doc --doctype ToDo --name a --to 'it'\''s' --merge`},
 		{"call_method", map[string]interface{}{"method": "frappe.client.delete", "args": map[string]interface{}{"doctype": "ToDo", "name": "a"}}, `ffc --site prod call-method --method frappe.client.delete --args '{"doctype":"ToDo","name":"a"}'`},
 		{"delete_doc", map[string]interface{}{"doctype": "ToDo", "name": "a\x1b[2J"}, "ffc delete-doc"},
+		{"bulk_submit", map[string]interface{}{"doctype": "Sales Invoice", "names": []interface{}{"SINV-1", float64(2)}}, "ffc --site prod bulk-submit --doctype 'Sales Invoice' --names 'SINV-1,2'"},
+		{"bulk_cancel", map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"a", "b c"}}, "ffc --site prod bulk-cancel --doctype ToDo --names 'a,b c'"},
 		{"bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"A,B"}}, "ffc bulk-delete"},
+		{"bulk_submit", map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"A,B"}}, "ffc bulk-submit"},
+		{"bulk_cancel", map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"a", " b"}}, "ffc bulk-cancel"},
 		{"bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"a", " b"}}, "ffc bulk-delete"},
 		{"apply_workflow", map[string]interface{}{"doctype": "ToDo", "name": "a", "action": "Reject it"}, "ffc --site prod workflow apply --doctype ToDo --name a --action 'Reject it'"},
 	} {

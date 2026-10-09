@@ -3,9 +3,12 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -266,7 +269,7 @@ func TestMCPBulkDeleteTooMany(t *testing.T) {
 	s, fs := newMCPTestServer(t)
 	names := make([]interface{}, maxMCPBulkItems+1)
 	for i := range names {
-		names[i] = "N"
+		names[i] = fmt.Sprintf("N%d", i)
 	}
 	res := callTool(t, s, "bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": names})
 	if !res.IsError || !strings.Contains(resultText(t, res), "too many") {
@@ -283,9 +286,17 @@ func TestMCPBulkDeleteWorks(t *testing.T) {
 	if res.IsError {
 		t.Fatal(resultText(t, res))
 	}
-	reqs := fs.all()
-	if len(reqs) != 2 || reqs[0].Method != http.MethodDelete || reqs[0].Path != "/api/resource/ToDo/A" || reqs[1].Path != "/api/resource/ToDo/2" {
-		t.Errorf("reqs = %+v", reqs)
+	// Two items run in parallel: both deletes arrive, in either order.
+	var paths []string
+	for _, r := range fs.all() {
+		if r.Method != http.MethodDelete {
+			t.Errorf("req = %+v", r)
+		}
+		paths = append(paths, r.Path)
+	}
+	sort.Strings(paths)
+	if !reflect.DeepEqual(paths, []string{"/api/resource/ToDo/2", "/api/resource/ToDo/A"}) {
+		t.Errorf("paths = %v", paths)
 	}
 }
 

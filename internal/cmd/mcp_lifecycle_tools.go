@@ -2,14 +2,15 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 )
 
-// Document lifecycle tools: submit, cancel, amend, copy, rename and
-// workflow actions. Only get_transitions is read-only.
+// Document lifecycle tools: submit, cancel (one document or many), amend,
+// copy, rename and workflow actions. Only get_transitions is read-only.
 
 // docTool declares a tool that acts on one document (doctype + name).
 func docTool(name, desc string, readOnly, destructive bool, extra ...mcp.ToolOption) mcp.Tool {
@@ -67,6 +68,8 @@ func registerLifecycleTools(s *server.MCPServer, env *mcpEnv) {
 				return c.CancelDoc(ctx, doctype, name)
 			}, nil
 		}))
+
+	registerBulkLifecycle(s, env)
 
 	overrides := jsonParam("data", `Optional object of fields to override in the copy, e.g. {"posting_date":"2026-10-01"}`)
 	s.AddTool(docTool("amend_doc",
@@ -130,6 +133,54 @@ func registerLifecycleTools(s *server.MCPServer, env *mcpEnv) {
 				return c.ApplyWorkflow(ctx, doctype, name, action)
 			}, nil
 		}))
+}
+
+// registerBulkLifecycle adds bulk_submit and bulk_cancel: the CLI's
+// per-document step (lifecycleBulk.op: read, check docstatus, act) over a
+// list of names, one at a time.
+func registerBulkLifecycle(s *server.MCPServer, env *mcpEnv) {
+	for _, t := range []struct {
+		name, desc string
+		l          *lifecycleBulk
+	}{
+		{"bulk_submit", fmt.Sprintf("Submit multiple draft documents of a submittable DocType in one call (at most %d), docstatus 0 to 1: a submitted document can only be cancelled, not edited. Each document is read first, and one that is not a draft fails on its own. They are submitted one at a time, in the order given. Refused for DocTypes with an active Workflow (use apply_workflow). Returns per-item results. Processing continues on individual failures.", maxMCPBulkItems), bulkSubmit},
+		{"bulk_cancel", fmt.Sprintf("Cancel multiple submitted documents in one call (at most %d), docstatus 1 to 2. This cannot be undone; amend_doc makes a corrected copy. Each document is read first, and one that is not submitted fails on its own. They are cancelled one at a time, in the order given, so list submitted documents that link to another one first: they block its cancel. Refused for DocTypes with an active Workflow (use apply_workflow). Returns per-item results. Processing continues on individual failures.", maxMCPBulkItems), bulkCancel},
+	} {
+		l := t.l
+		tool := mcp.NewTool(t.name,
+			mcp.WithDescription(t.desc),
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(true),
+			mcp.WithIdempotentHintAnnotation(false),
+			mcp.WithOpenWorldHintAnnotation(true),
+			mcp.WithString("doctype", mcp.Required(), mcp.Description("The Frappe DocType")),
+			jsonParam("names", `Array of document names, e.g. ["ACC-SINV-2026-00001","ACC-SINV-2026-00002"]`, mcp.Required()),
+		)
+		s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
+			doctype, err := req.RequireString("doctype")
+			if err != nil {
+				return nil, err
+			}
+			raw, err := rawArg(req, "names")
+			if err != nil {
+				return nil, err
+			}
+			names, err := parseNames(raw)
+			if err != nil {
+				return nil, fmt.Errorf("names: %w", err)
+			}
+			run, err := bulkTool(len(names), 1, l.done, l.op(doctype, names))
+			if err != nil {
+				return nil, err
+			}
+			return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
+				if err := refuseWorkflow(ctx, c, doctype, ""); err != nil {
+					return nil, err
+				}
+				return run(ctx, c)
+			}, nil
+		}))
+	}
 }
 
 func registerGetTransitions(s *server.MCPServer, env *mcpEnv) {

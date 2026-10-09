@@ -1,6 +1,6 @@
 # MCP tools, resources and prompts
 
-42 tools. `*` = required argument. Tools in `collab`, `admin` and `files` appear only when `--toolsets` names their set. With several sites served, every tool except `list_sites` also takes a required `site`. "Doc tools" take `doctype*` and `name*`.
+44 tools. `*` = required argument. Tools in `collab`, `admin` and `files` appear only when `--toolsets` names their set. With several sites served, every tool except `list_sites` also takes a required `site`. "Doc tools" take `doctype*` and `name*`.
 
 ## core (default)
 
@@ -23,9 +23,9 @@
 | `create_doc` | write | `doctype*`, `data*` | `ffc create-doc` |
 | `update_doc` | write | `doctype*`, `name`, `data*`, `if_unmodified` | `ffc update-doc` |
 | `delete_doc` | write, confirmed | `doctype*`, `name*` | `ffc delete-doc` |
-| `bulk_create` | write | `doctype*`, `data*` (array, max 200) | `ffc bulk-create` |
-| `bulk_update` | write | `doctype*`, `data*` (array with `name`, max 200) | `ffc bulk-update` |
-| `bulk_delete` | write, confirmed | `doctype*`, `names*` (max 200) | `ffc bulk-delete` |
+| `bulk_create` | write | `doctype*`, `data*` (array, max 200; 4 at a time) | `ffc bulk-create` |
+| `bulk_update` | write | `doctype*`, `data*` (array with `name`, max 200; 4 at a time; a name twice is refused) | `ffc bulk-update` |
+| `bulk_delete` | write, confirmed | `doctype*`, `names*` (max 200; 4 at a time; a name twice is refused) | `ffc bulk-delete` |
 | `call_method` | method | `method*`, `args`, `get`, `full_response` | `ffc call-method` |
 
 ## lifecycle (default)
@@ -34,6 +34,8 @@
 | --- | --- | --- |
 | `submit_doc` | write | none |
 | `cancel_doc` | write, confirmed | none (no `--check` equivalent) |
+| `bulk_submit` | write, confirmed | `doctype*`, `names*` instead of `name` (max 200, one at a time in the order given; `ffc bulk-submit`) |
+| `bulk_cancel` | write, confirmed | `doctype*`, `names*` instead of `name` (max 200, one at a time in the order given; `ffc bulk-cancel`) |
 | `amend_doc` | write | `data` (overrides) |
 | `copy_doc` | write | `data` (overrides) |
 | `rename_doc` | write, confirmed with `merge` | `new_name*`, `merge` |

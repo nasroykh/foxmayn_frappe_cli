@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -680,26 +681,47 @@ func registerCallMethod(s *server.MCPServer, env *mcpEnv) {
 	}))
 }
 
-// bulkTool runs a validated bulk operation for an MCP tool.
-func bulkTool(n int, done string, op func(ctx context.Context, c *client.FrappeClient, i int) (string, error)) (toolCall, error) {
+// bulkTool runs a validated bulk operation for an MCP tool with the given
+// number of workers. Results stay in input order whatever the workers do.
+func bulkTool(n, workers int, done string, op func(ctx context.Context, c *client.FrappeClient, i int) (string, error)) (toolCall, error) {
 	if n > maxMCPBulkItems {
 		return nil, fmt.Errorf("too many items (%d): a single call may touch at most %d documents", n, maxMCPBulkItems)
 	}
 	return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
-		finished := 0 // one worker: items finish in order
-		rep := runBulk(ctx, n, 1, false, done, func(ctx context.Context, i int) (string, error) {
+		// Count and notify under one lock, so the progress values a client
+		// sees only go up.
+		var mu sync.Mutex
+		finished := 0
+		rep := runBulk(ctx, n, workers, false, done, func(ctx context.Context, i int) (string, error) {
 			name, err := op(ctx, c, i)
+			mu.Lock()
 			finished++
 			notifyProgress(ctx, finished, n)
+			mu.Unlock()
 			return name, err
 		})
 		return rep.JSON(), nil
 	}, nil
 }
 
+// refuseDuplicateNames is a usage error when two items name the same
+// document: with several workers their writes would race. Frappe compares
+// names case-insensitively on MariaDB, so so does this.
+func refuseDuplicateNames(names []string) error {
+	seen := make(map[string]int, len(names))
+	for i, n := range names {
+		key := strings.ToLower(strings.TrimSpace(n))
+		if first, ok := seen[key]; ok {
+			return usageErrorf("items %d and %d name the same document, %q: items run in parallel, so name each document once per call", first, i+1, n)
+		}
+		seen[key] = i + 1
+	}
+	return nil
+}
+
 func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_create",
-		mcp.WithDescription(fmt.Sprintf("Create multiple Frappe documents in one call (at most %d). Each element of the data array is an object of field values for one document. Returns per-item results with created names or error messages. Processing continues on individual failures.", maxMCPBulkItems)),
+		mcp.WithDescription(fmt.Sprintf("Create multiple Frappe documents in one call (at most %d). Each element of the data array is an object of field values for one document. Returns per-item results with created names or error messages. Up to %d items run at once, so the order they are created in is not fixed. Processing continues on individual failures.", maxMCPBulkItems, maxMCPBulkWorkers)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithOpenWorldHintAnnotation(true),
@@ -722,7 +744,7 @@ func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 		if err != nil {
 			return nil, fmt.Errorf("data: %w", err)
 		}
-		return bulkTool(len(items), "created", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
+		return bulkTool(len(items), maxMCPBulkWorkers, "created", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
 			doc, err := c.CreateDoc(ctx, doctype, items[i])
 			if err != nil {
 				return "", err
@@ -735,7 +757,7 @@ func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 
 func registerBulkUpdate(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_update",
-		mcp.WithDescription(fmt.Sprintf("Update multiple Frappe documents in one call (at most %d). Each element of the data array must include a \"name\" field identifying the document plus any fields to change. Returns per-item results. Processing continues on individual failures.", maxMCPBulkItems)),
+		mcp.WithDescription(fmt.Sprintf("Update multiple Frappe documents in one call (at most %d). Each element of the data array must include a \"name\" field identifying the document plus any fields to change. Name each document once. Up to %d items run at once. Returns per-item results. Processing continues on individual failures.", maxMCPBulkItems, maxMCPBulkWorkers)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -763,7 +785,10 @@ func registerBulkUpdate(s *server.MCPServer, env *mcpEnv) {
 		if err != nil {
 			return nil, fmt.Errorf("data: %w", err)
 		}
-		return bulkTool(len(items), "updated", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
+		if err := refuseDuplicateNames(names); err != nil {
+			return nil, err
+		}
+		return bulkTool(len(items), maxMCPBulkWorkers, "updated", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
 			_, err := c.UpdateDoc(ctx, doctype, names[i], payloads[i])
 			return names[i], err
 		})
@@ -772,7 +797,7 @@ func registerBulkUpdate(s *server.MCPServer, env *mcpEnv) {
 
 func registerBulkDelete(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_delete",
-		mcp.WithDescription(fmt.Sprintf("Permanently delete multiple Frappe documents in one call (at most %d). Provide document names as an array. Returns per-item results. Processing continues on individual failures. This action cannot be undone.", maxMCPBulkItems)),
+		mcp.WithDescription(fmt.Sprintf("Permanently delete multiple Frappe documents in one call (at most %d). Provide document names as an array, each once. Up to %d items run at once. Returns per-item results. Processing continues on individual failures. This action cannot be undone.", maxMCPBulkItems, maxMCPBulkWorkers)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -796,7 +821,10 @@ func registerBulkDelete(s *server.MCPServer, env *mcpEnv) {
 		if err != nil {
 			return nil, fmt.Errorf("names: %w", err)
 		}
-		return bulkTool(len(names), "deleted", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
+		if err := refuseDuplicateNames(names); err != nil {
+			return nil, err
+		}
+		return bulkTool(len(names), maxMCPBulkWorkers, "deleted", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
 			return names[i], c.DeleteDoc(ctx, doctype, names[i])
 		})
 	}))
