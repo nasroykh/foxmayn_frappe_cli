@@ -162,6 +162,10 @@ type toolScope struct {
 	FilterFields, SelectFields []string
 }
 
+// optionalDoctype are the tools for which an empty doctype means no DocType
+// (search is then global, list_errors unfiltered).
+var optionalDoctype = map[string]bool{"search": true, "list_errors": true}
+
 // scopeOf reads what a tool call touches from its arguments. The tool's own
 // parse step has already validated them.
 func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
@@ -175,6 +179,11 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 	str := func(k string) string { s, _ := args[k].(string); return s }
 	if dt := str("doctype"); dt != "" {
 		sc.Doctypes = append(sc.Doctypes, dt)
+	}
+	// An empty DocType would add nothing to the scope and so skip the
+	// allow/deny rules. Only where it means "none" may it be empty.
+	if _, present := args["doctype"]; present && strings.TrimSpace(str("doctype")) == "" && !optionalDoctype[tool] {
+		return sc, fmt.Errorf("policy: the doctype argument is empty")
 	}
 	if n, ok := docName(args["name"]); ok {
 		sc.Names = append(sc.Names, n)

@@ -50,7 +50,7 @@ func registerLifecycleTools(s *server.MCPServer, env *mcpEnv) {
 		false, true),
 		docHandler(env, func(_ mcp.CallToolRequest, doctype, name string) (toolCall, error) {
 			return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
-				if err := refuseWorkflow(ctx, c, doctype, name); err != nil {
+				if err := refuseWorkflowFor(ctx, c, doctype, name, true); err != nil {
 					return nil, err
 				}
 				return c.SubmitDoc(ctx, doctype, name)
@@ -62,7 +62,7 @@ func registerLifecycleTools(s *server.MCPServer, env *mcpEnv) {
 		false, true),
 		docHandler(env, func(_ mcp.CallToolRequest, doctype, name string) (toolCall, error) {
 			return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
-				if err := refuseWorkflow(ctx, c, doctype, name); err != nil {
+				if err := refuseWorkflowFor(ctx, c, doctype, name, true); err != nil {
 					return nil, err
 				}
 				return c.CancelDoc(ctx, doctype, name)
@@ -169,12 +169,12 @@ func registerBulkLifecycle(s *server.MCPServer, env *mcpEnv) {
 			if err != nil {
 				return nil, fmt.Errorf("names: %w", err)
 			}
-			run, err := bulkTool(len(names), 1, l.done, l.op(doctype, names))
+			run, err := bulkTool(len(names), 1, l.done, l.op(doctype, names, true))
 			if err != nil {
 				return nil, err
 			}
 			return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
-				if err := refuseWorkflow(ctx, c, doctype, ""); err != nil {
+				if err := refuseWorkflowFor(ctx, c, doctype, "", true); err != nil {
 					return nil, err
 				}
 				return run(ctx, c)

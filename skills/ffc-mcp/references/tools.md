@@ -23,9 +23,9 @@
 | `create_doc` | write | `doctype*`, `data*` | `ffc create-doc` |
 | `update_doc` | write | `doctype*`, `name`, `data*`, `if_unmodified` | `ffc update-doc` |
 | `delete_doc` | write, confirmed | `doctype*`, `name*` | `ffc delete-doc` |
-| `bulk_create` | write | `doctype*`, `data*` (array, max 200; 4 at a time) | `ffc bulk-create` |
-| `bulk_update` | write | `doctype*`, `data*` (array with `name`, max 200; 4 at a time; a name twice is refused) | `ffc bulk-update` |
-| `bulk_delete` | write, confirmed | `doctype*`, `names*` (max 200; 4 at a time; a name twice is refused) | `ffc bulk-delete` |
+| `bulk_create` | write | `doctype*`, `data*` (array, max 200), `concurrency` (1-4, default 1: in order; more only for independent items) | `ffc bulk-create` |
+| `bulk_update` | write | `doctype*`, `data*` (array with `name`, max 200), `concurrency` (as above; a name twice is refused above 1) | `ffc bulk-update` |
+| `bulk_delete` | write, confirmed | `doctype*`, `names*` (max 200), `concurrency` (as above; a name twice is refused above 1) | `ffc bulk-delete` |
 | `call_method` | method | `method*`, `args`, `get`, `full_response` | `ffc call-method` |
 
 ## lifecycle (default)

@@ -61,11 +61,92 @@ func mcpTSlowDeletes(site *frappetest.Site, names []interface{}) *atomic.Int32 {
 	return &peak
 }
 
+// mcpTTrackDeletes answers every DELETE of names itself and records the order
+// they arrive in and the highest number in flight.
+func mcpTTrackDeletes(site *frappetest.Site, names []interface{}) (peak *atomic.Int32, order func() []string) {
+	var (
+		inflight atomic.Int32
+		mu       sync.Mutex
+		seen     []string
+	)
+	peak = new(atomic.Int32)
+	for _, n := range names {
+		name := n.(string)
+		site.Handle("DELETE /api/resource/ToDo/"+name, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			cur := inflight.Add(1)
+			defer inflight.Add(-1)
+			for {
+				p := peak.Load()
+				if cur <= p || peak.CompareAndSwap(p, cur) {
+					break
+				}
+			}
+			mu.Lock()
+			seen = append(seen, name)
+			mu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"message":"ok"}`))
+		}))
+	}
+	return peak, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), seen...)
+	}
+}
+
+// Without concurrency, items run in input order, one at a time.
+func TestMCPBulkDefaultSequential(t *testing.T) {
+	s, site := newMCPFake(t, false)
+	names := mcpTBulkNames(8)
+	peak, order := mcpTTrackDeletes(site, names)
+	m := mcpTObj(t, mcpTOK(t, s, "bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": names}))
+	if m["deleted"] != 8.0 {
+		t.Fatalf("report = %v", m)
+	}
+	if got := peak.Load(); got != 1 {
+		t.Errorf("peak requests in flight = %d, want 1", got)
+	}
+	want := make([]string, len(names))
+	for i, n := range names {
+		want[i] = n.(string)
+	}
+	if got := order(); !reflect.DeepEqual(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+	// An explicit 1 is the same.
+	peak, _ = mcpTTrackDeletes(site, names)
+	mcpTOK(t, s, "bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": names, "concurrency": "1"})
+	if got := peak.Load(); got != 1 {
+		t.Errorf("peak with concurrency 1 = %d", got)
+	}
+}
+
+func TestMCPBulkConcurrencyRefused(t *testing.T) {
+	s, site := newMCPFake(t, false)
+	site.AddDocType("ToDo")
+	one := []interface{}{map[string]interface{}{"name": "TD-1", "status": "Open"}}
+	for _, c := range []interface{}{0, 5, "x", -1, 2.5, "0"} {
+		for tool, args := range map[string]map[string]interface{}{
+			"bulk_create": {"doctype": "ToDo", "data": []interface{}{map[string]interface{}{"description": "a"}}},
+			"bulk_update": {"doctype": "ToDo", "data": one},
+			"bulk_delete": {"doctype": "ToDo", "names": []interface{}{"TD-1"}},
+		} {
+			args["concurrency"] = c
+			mcpTErr(t, s, tool, args, "concurrency")
+		}
+	}
+	if n := len(site.Requests()); n != 0 {
+		t.Errorf("%d requests reached the site", n)
+	}
+}
+
 func TestMCPBulkParallel(t *testing.T) {
 	s, site := newMCPFake(t, false)
 	names := mcpTBulkNames(12)
 	peak := mcpTSlowDeletes(site, names)
-	m := mcpTObj(t, mcpTOK(t, s, "bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": names}))
+	m := mcpTObj(t, mcpTOK(t, s, "bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": names, "concurrency": maxMCPBulkWorkers}))
 	if got := peak.Load(); got != maxMCPBulkWorkers {
 		t.Errorf("peak requests in flight = %d, want %d", got, maxMCPBulkWorkers)
 	}
@@ -88,7 +169,7 @@ func TestMCPBulkCreateUpdateParallel(t *testing.T) {
 	for i := range items {
 		items[i] = map[string]interface{}{"description": "task " + strconv.Itoa(i)}
 	}
-	m := mcpTObj(t, mcpTOK(t, s, "bulk_create", map[string]interface{}{"doctype": "ToDo", "data": items}))
+	m := mcpTObj(t, mcpTOK(t, s, "bulk_create", map[string]interface{}{"doctype": "ToDo", "data": items, "concurrency": 4}))
 	if m["created"] != 20.0 || site.Count("ToDo") != 20 {
 		t.Fatalf("created %v, count %d", m["created"], site.Count("ToDo"))
 	}
@@ -105,7 +186,7 @@ func TestMCPBulkCreateUpdateParallel(t *testing.T) {
 		}
 		upd = append(upd, map[string]interface{}{"name": got["name"], "status": "Closed"})
 	}
-	m = mcpTObj(t, mcpTOK(t, s, "bulk_update", map[string]interface{}{"doctype": "ToDo", "data": upd}))
+	m = mcpTObj(t, mcpTOK(t, s, "bulk_update", map[string]interface{}{"doctype": "ToDo", "data": upd, "concurrency": 4}))
 	if m["updated"] != 20.0 || m["failed"] != 0.0 {
 		t.Errorf("update report = %v", m)
 	}
@@ -131,7 +212,7 @@ func TestMCPBulkProgressParallel(t *testing.T) {
 	})
 	req := mcp.CallToolRequest{}
 	req.Params.Name = "bulk_delete"
-	req.Params.Arguments = map[string]interface{}{"doctype": "ToDo", "names": names}
+	req.Params.Arguments = map[string]interface{}{"doctype": "ToDo", "names": names, "concurrency": 4}
 	req.Params.Meta = &mcp.Meta{ProgressToken: "p"}
 	if res, err := c.CallTool(t.Context(), req); err != nil || res.IsError {
 		t.Fatalf("bulk_delete: %v %+v", err, res)
@@ -160,20 +241,35 @@ func TestMCPBulkProgressParallel(t *testing.T) {
 func TestMCPBulkDuplicateNames(t *testing.T) {
 	s, site := newMCPFake(t, false)
 	mcpTSeedTodos(site)
-	mcpTErr(t, s, "bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"TD-1", "TD-2", "TD-1"}}, `items 1 and 3 name the same document, "TD-1"`)
+	par := func(args map[string]interface{}) map[string]interface{} { args["concurrency"] = 2; return args }
+	mcpTErr(t, s, "bulk_delete", par(map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"TD-1", "TD-2", "TD-1"}}), `items 1 and 3 name the same document, "TD-1"`)
 	// Frappe names are case-insensitive, and a number is its string.
-	mcpTErr(t, s, "bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"td-1", "TD-1"}}, "name the same document")
-	mcpTErr(t, s, "bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"7", 7.0}}, "name the same document")
-	mcpTErr(t, s, "bulk_update", map[string]interface{}{"doctype": "ToDo", "data": []interface{}{
+	mcpTErr(t, s, "bulk_delete", par(map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"td-1", "TD-1"}}), "name the same document")
+	mcpTErr(t, s, "bulk_delete", par(map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"7", 7.0}}), "name the same document")
+	updates := []interface{}{
 		map[string]interface{}{"name": "TD-1", "status": "Open"},
 		map[string]interface{}{"name": "TD-2", "status": "Open"},
 		map[string]interface{}{"name": "TD-1", "status": "Closed"},
-	}}, `items 1 and 3 name the same document, "TD-1"`)
+	}
+	mcpTErr(t, s, "bulk_update", par(map[string]interface{}{"doctype": "ToDo", "data": updates}), `items 1 and 3 name the same document, "TD-1"`)
 	if n := len(site.Requests()); n != 0 {
 		t.Errorf("%d requests reached the site", n)
 	}
 	if site.Count("ToDo") != 3 {
 		t.Errorf("count = %d", site.Count("ToDo"))
+	}
+
+	// One at a time, a name twice is fine: the items run in order.
+	m := mcpTObj(t, mcpTOK(t, s, "bulk_update", map[string]interface{}{"doctype": "ToDo", "data": updates}))
+	if m["updated"] != 3.0 {
+		t.Errorf("update report = %v", m)
+	}
+	if d, _ := site.Doc("ToDo", "TD-1"); d["status"] != "Closed" {
+		t.Errorf("TD-1 = %v, want the last update to win", d)
+	}
+	m = mcpTObj(t, mcpTOK(t, s, "bulk_delete", map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"TD-3", "TD-3"}}))
+	if m["deleted"] != 1.0 || m["failed"] != 1.0 {
+		t.Errorf("delete report = %v", m)
 	}
 }
 
@@ -203,7 +299,7 @@ func TestMCPBulkSubmit(t *testing.T) {
 	want := []struct{ name, status, err string }{
 		{"SO-1", "submitted", ""},
 		{"SO-2", "error", "SO-2 is already submitted"},
-		{"SO-3", "error", "SO-3 is cancelled and cannot be submitted again"},
+		{"SO-3", "error", "SO-3 is cancelled and cannot be submitted again; amend it with amend_doc"},
 		{"SO-4", "submitted", ""},
 		{"missing", "error", "not found"},
 	}
@@ -285,6 +381,7 @@ func TestMCPBulkLifecycleRefusals(t *testing.T) {
 			// An active Workflow is refused once, before any document is read.
 			site.Add("Workflow", map[string]interface{}{"name": "SO Approval", "document_type": "Sales Order", "is_active": json.Number("1")})
 			mcpTErr(t, s, tool, args, `workflow "SO Approval"`)
+			mcpTErr(t, s, tool, args, "apply_workflow")
 			for _, r := range site.Requests() {
 				if r.Method != http.MethodGet || strings.HasPrefix(r.Path, "/api/resource/Sales Order") {
 					t.Errorf("request after the workflow check: %s %s", r.Method, r.Path)
@@ -317,6 +414,37 @@ func TestMCPBulkLifecyclePolicy(t *testing.T) {
 				t.Errorf("Purchase Order refused: %s", resultText(t, res))
 			}
 		})
+	}
+}
+
+// An empty DocType would add nothing to the scope and skip the allow list.
+func TestMCPEmptyDoctypeRefused(t *testing.T) {
+	s, site, _, _ := mcpTPolicy(t, &config.MCPPolicy{AllowDoctypes: []string{"ToDo"}}, config.MCPPolicy{})
+	mcpTLifecycleSite(site)
+	for _, tc := range []struct {
+		tool string
+		args map[string]interface{}
+	}{
+		{"submit_doc", map[string]interface{}{"name": "SO-1"}},
+		{"cancel_doc", map[string]interface{}{"name": "SO-2"}},
+		{"bulk_submit", map[string]interface{}{"names": []interface{}{"SO-1"}}},
+		{"bulk_cancel", map[string]interface{}{"names": []interface{}{"SO-2"}}},
+		{"get_doc", map[string]interface{}{"name": "SO-1"}},
+	} {
+		for _, dt := range []string{"", "  "} {
+			tc.args["doctype"] = dt
+			mcpTErr(t, s, tc.tool, tc.args, "policy:")
+		}
+	}
+	if n := len(site.Requests()); n != 0 {
+		t.Errorf("%d requests reached the site", n)
+	}
+	if mcpTDocstatus(site, "SO-1") != "0" || mcpTDocstatus(site, "SO-2") != "1" {
+		t.Error("a document changed")
+	}
+	// Where no DocType means none, an empty one stays valid.
+	if res := callTool(t, s, "search", map[string]interface{}{"text": "x", "doctype": ""}); res.IsError && strings.Contains(resultText(t, res), "doctype argument is empty") {
+		t.Errorf("search with an empty doctype refused: %s", resultText(t, res))
 	}
 }
 

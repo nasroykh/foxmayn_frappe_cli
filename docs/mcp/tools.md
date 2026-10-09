@@ -38,7 +38,7 @@ R = read tool (kept by `--read-only`), W = writes, M = `call_method` (treated as
 | `create_doc` | W | Create a document. | `ffc create-doc` |
 | `update_doc` | W | Update fields; `if_unmodified` fails if the document was saved since it was read. | `ffc update-doc` |
 | `delete_doc` | W | Delete a document (asks for confirmation). | `ffc delete-doc` |
-| `bulk_create`, `bulk_update`, `bulk_delete` | W | Up to 200 items per call, 4 at a time; progress notifications; `bulk_delete` asks for confirmation. | `ffc bulk-*` |
+| `bulk_create`, `bulk_update`, `bulk_delete` | W | Up to 200 items per call, in order one at a time (optional `concurrency` 1-4); progress notifications; `bulk_delete` asks for confirmation. | `ffc bulk-*` |
 | `call_method` | M | Call a whitelisted method; `full_response: true` returns the whole response object. | `ffc call-method` |
 
 ### `lifecycle`
@@ -103,7 +103,7 @@ No tool returns file contents or PDFs.
 - `get_doc_context` returns at most 50 comments, emails and workflow log entries, 100 attachments, assignments, shares and tags, 50 changes per version and 100 timeline entries; the rest is counted in `omitted`.
 - `count_docs`, `whoami` and `list_sites` also return structured content with an output schema.
 - `count_docs` with `at_least: N` only answers whether N or more documents match: the site stops counting at N. It returns `result` (true/false) and `count` (exact below N, N otherwise); both are `null`, with a `warning`, when Frappe v16 on MariaDB gave up counting after 1 second.
-- `bulk_create`, `bulk_update` and `bulk_delete` run up to 4 items at a time, so items may be handled in any order, but results keep the order of the input. `bulk_update` and `bulk_delete` refuse a call that names the same document twice (names compare without regard to case). `bulk_submit` and `bulk_cancel` run one at a time, because concurrent submits can deadlock on ERPNext's ledger postings and cancels must follow the order given.
+- `bulk_create`, `bulk_update` and `bulk_delete` run their items in input order, one at a time. The optional `concurrency` argument (1 to 4, default 1) runs that many at once; set it only when the items do not depend on each other (no links between them, no tree parent or shared parent, no delete that must follow another), because the order is then not kept. Results always keep the order of the input. With `concurrency` above 1, `bulk_update` and `bulk_delete` refuse a call that names the same document twice (names compare without regard to case). `bulk_submit` and `bulk_cancel` have no such argument: they always run one at a time, because concurrent submits can deadlock on ERPNext's ledger postings and cancels must follow the order given.
 - The bulk tools send progress notifications when the call carries a progress token; cancelling the call stops new items.
 
 ## `jq` on read tools

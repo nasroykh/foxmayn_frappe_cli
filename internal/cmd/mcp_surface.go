@@ -549,7 +549,7 @@ var mcpPrompts = []mcpPrompt{
 				when(has("check_permission"), fmt.Sprintf("check_permission doctype=%[1]s perm_type=create confirms the user may create them.", dt)),
 				"Show the user the mapping and the counts (to create, duplicates skipped, invalid rows) and wait for a go-ahead.",
 				"Trial: bulk_create with the first 1-3 rows only"+when(has("get_doc"), ", then get_doc one created name and compare it with the source")+".",
-				"Import the rest with bulk_create, at most 200 items per call. Each item is reported as created or error and the call goes on after an error. Retry only the failed items after fixing them, never a whole batch: that would create duplicates.",
+				"Import the rest with bulk_create, at most 200 items per call. Keep the default concurrency (rows are created in order, one at a time); if rows refer to each other (a tree parent, a Link to a row of the same file), create the referenced rows in an earlier call. Each item is reported as created or error and the call goes on after an error. Retry only the failed items after fixing them, never a whole batch: that would create duplicates.",
 				"Finish with count_docs and a summary."+submit+undo,
 			)
 		},

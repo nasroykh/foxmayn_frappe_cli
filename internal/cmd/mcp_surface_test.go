@@ -678,7 +678,7 @@ func TestMCPBulkCancel(t *testing.T) {
 	c := mcpTClient(t, s, nil, false)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	// Four workers take TD-1 to TD-4. TD-2 cancels the call, as a client's
+	// With concurrency 4, four workers take TD-1 to TD-4. TD-2 cancels the call, as a client's
 	// cancellation would; the others wait for that, so no worker is free to
 	// start TD-5 before it.
 	cancelled := make(chan struct{})
@@ -700,7 +700,7 @@ func TestMCPBulkCancel(t *testing.T) {
 	}
 	req := mcp.CallToolRequest{}
 	req.Params.Name = "bulk_delete"
-	req.Params.Arguments = map[string]interface{}{"doctype": "ToDo", "names": []interface{}{"TD-1", "TD-2", "TD-3", "TD-4", "TD-5", "TD-6", "TD-7", "TD-8"}}
+	req.Params.Arguments = map[string]interface{}{"doctype": "ToDo", "concurrency": 4, "names": []interface{}{"TD-1", "TD-2", "TD-3", "TD-4", "TD-5", "TD-6", "TD-7", "TD-8"}}
 	_, _ = c.CallTool(ctx, req)
 	deleted := map[string]bool{}
 	for _, r := range site.Requests() {

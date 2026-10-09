@@ -56,12 +56,21 @@ Examples:
 // for a bulk run, which refuses the DocType before touching any document.
 // When the user may not read Workflows, the server's own checks decide.
 func refuseWorkflow(ctx context.Context, c *client.FrappeClient, doctype, name string) error {
+	return refuseWorkflowFor(ctx, c, doctype, name, false)
+}
+
+// refuseWorkflowFor is refuseWorkflow; with mcp the hint names the MCP tools
+// instead of ffc commands.
+func refuseWorkflowFor(ctx context.Context, c *client.FrappeClient, doctype, name string, mcp bool) error {
 	wf, _, err := c.ActiveWorkflow(ctx, doctype)
 	if err != nil {
 		return err
 	}
 	if wf == "" {
 		return nil
+	}
+	if mcp {
+		return &client.StateError{Message: fmt.Sprintf("%s uses the workflow %q: apply workflow actions to its documents with apply_workflow (get_transitions lists a document's actions)", doctype, wf)}
 	}
 	if name == "" {
 		return &client.StateError{Message: fmt.Sprintf("%s uses the workflow %q: move its documents with 'ffc workflow bulk-apply -d %q --action ACTION' ('ffc workflow transitions' lists a document's actions)", doctype, wf, doctype)}
