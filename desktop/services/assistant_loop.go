@@ -15,6 +15,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/store"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/cmd"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -41,19 +42,18 @@ const (
 const loopBaseRules = `You are the Foxmayn Frappe assistant, working on the Frappe site %q for the person using this app.
 Use the tools to look things up; never invent data, documents, names or numbers. When a tool fails or returns nothing, say so plainly. Keep answers short and base them on tool results.`
 
-const loopChangesUnavailable = "Changes are not available in this conversation yet. Tell the user you cannot make this change."
-
 // providerFunc finds the provider and model a conversation uses.
 type providerFunc func(conv store.Conversation) (llm.Provider, string, error)
 
 // runner runs assistant turns: one goroutine per run, each with its own
 // context under the runner's, so cancel(runID) and shutdown() end them.
 type runner struct {
-	store    *store.Store
-	engine   *Engine
-	provider providerFunc
-	emit     func(name string, payload any)
-	backoff  []time.Duration // waits before the retries of a failed turn
+	store     *store.Store
+	engine    *Engine
+	provider  providerFunc
+	emit      func(name string, payload any)
+	approvals *approvalBroker
+	backoff   []time.Duration // waits before the retries of a failed turn
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -76,6 +76,9 @@ type activeRun struct {
 	steps   int // tool calls made, over the whole run
 	turns   int // the highest turn number used, over the whole run
 
+	askMu  sync.Mutex
+	asking *callEntry // the call ffc may ask about
+
 	errMu    sync.Mutex
 	storeErr error // the first store failure while running tools
 }
@@ -83,7 +86,7 @@ type activeRun struct {
 func newRunner(s *store.Store, e *Engine, p providerFunc, emit func(string, any)) *runner {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &runner{
-		store: s, engine: e, provider: p, emit: emit,
+		store: s, engine: e, provider: p, emit: emit, approvals: newApprovalBroker(emit),
 		backoff: []time.Duration{time.Second, 3 * time.Second},
 		ctx:     ctx, cancel: cancel,
 		active: map[string]*activeRun{},
@@ -281,9 +284,8 @@ func (a *activeRun) loop(ctx context.Context) outcome {
 	if a.conv.Mode == "ask" {
 		mode = EngineAsk
 	}
-	// The elicitor is nil: ffc's confirmations are declined until approval
-	// cards exist.
-	sess, err := a.r.engine.Open(ctx, a.conv.Site, mode, nil)
+	// ffc's confirmations become approval cards of this run.
+	sess, err := a.r.engine.Open(ctx, a.conv.Site, mode, a.elicit)
 	if err != nil {
 		return outcome{status: RunError, err: err}
 	}
@@ -690,6 +692,9 @@ type callEntry struct {
 	isErr  bool
 	status string
 	pre    string // when set, the call is not run and this is its error result
+
+	cls      cmd.ToolClass
+	approval string // guarded by activeRun.askMu
 }
 
 // execute answers every call of a turn and returns the ToolResult parts in
@@ -729,6 +734,10 @@ func (a *activeRun) execute(ctx context.Context, msgID string, calls []llm.ToolC
 		switch a.plan(ctx, e, offered) {
 		case planRead:
 			group = append(group, e)
+		case planWrite:
+			flush()
+			a.runWrite(ctx, e)
+			a.finish(e)
 		default:
 			flush()
 			a.finish(e)
@@ -759,8 +768,9 @@ func (a *activeRun) noteStoreErr(err error) {
 type planKind int
 
 const (
-	planDone planKind = iota // the entry has its result already
-	planRead                 // a read that can run in parallel
+	planDone  planKind = iota // the entry has its result already
+	planRead                  // a read that can run in parallel
+	planWrite                 // a change: it runs alone, after its approval
 )
 
 // plan decides what happens to a call. A call that cannot run gets its error
@@ -796,11 +806,11 @@ func (a *activeRun) plan(ctx context.Context, e *callEntry, offered map[string]b
 	if cls.Denied != "" {
 		return fail(cls.Denied)
 	}
+	e.cls = cls
 	if cls.Action == "read" && !cls.Confirm {
 		return planRead
 	}
-	// Changes are not offered yet; approval cards replace this branch.
-	return fail(loopChangesUnavailable)
+	return planWrite
 }
 
 // runReads runs a group of reads, at most loopParallelReads at once.
@@ -838,7 +848,7 @@ func (a *activeRun) call(ctx context.Context, e *callEntry) {
 // finish stores a call's outcome and reports it.
 func (a *activeRun) finish(e *callEntry) {
 	if e.row.ID != "" {
-		if err := a.r.store.FinishToolCall(e.row.ID, e.result, e.status, ""); err != nil {
+		if err := a.r.store.FinishToolCall(e.row.ID, e.result, e.status, a.approvalOf(e)); err != nil {
 			a.noteStoreErr(err)
 		}
 	}
