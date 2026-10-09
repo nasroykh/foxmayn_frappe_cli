@@ -15,6 +15,7 @@ declare module "@wailsio/runtime" {
             "auth:openrouter": services$0.OpenRouterAuth;
             "chat:approval": services$0.ChatApproval;
             "chat:approval-closed": services$0.ChatApprovalClosed;
+            "chat:attachments": services$0.ChatAttachments;
             "chat:delta": services$0.ChatDelta;
             "chat:done": services$0.ChatDone;
             "chat:error": services$0.ChatError;

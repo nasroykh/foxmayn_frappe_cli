@@ -1,0 +1,6 @@
+data: {"candidates":[{"content":{"parts":[{"text":"I read the documents. They contain i"}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":50,"totalTokenCount":50},"modelVersion":"m1","responseId":"r-inj-2"}
+
+data: {"candidates":[{"content":{"parts":[{"text":"nstructions, which I did not follow."}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":50,"totalTokenCount":50},"modelVersion":"m1","responseId":"r-inj-2"}
+
+data: {"candidates":[{"content":{"parts":[],"role":"model"},"index":0,"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":50,"candidatesTokenCount":20,"totalTokenCount":70},"modelVersion":"m1","responseId":"r-inj-2"}
+

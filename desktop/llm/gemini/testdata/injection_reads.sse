@@ -1,0 +1,4 @@
+data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_doc","args":{"doctype":"Customer","name":"CUST-0001"}}},{"functionCall":{"name":"get_doc","args":{"doctype":"Comment","name":"CMT-0001"}}},{"functionCall":{"name":"get_doc","args":{"doctype":"Error Log","name":"ERR-0001"}}},{"functionCall":{"name":"get_doc","args":{"doctype":"Note","name":"NOTE-0001"}}}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":50,"totalTokenCount":50},"modelVersion":"m1","responseId":"r-inj-0"}
+
+data: {"candidates":[{"content":{"parts":[],"role":"model"},"index":0,"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":50,"candidatesTokenCount":20,"totalTokenCount":70},"modelVersion":"m1","responseId":"r-inj-0"}
+

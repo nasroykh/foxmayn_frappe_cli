@@ -123,7 +123,19 @@ describe("profile editor", () => {
       callMethod: false,
       denyTools: ["delete_doc", "bulk_delete"],
       stepLimit: 10,
+      keepHistory: true,
     })
+  })
+
+  it("sends keepHistory off when the switch is turned off", async () => {
+    b.saveProfile.mockImplementation(async (p: Profile) => ({ ...p, id: "new" }))
+    render(<ProfileSettings />)
+    fireEvent.click(await screen.findByRole("button", { name: "New profile" }))
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Scratch" } })
+    fireEvent.click(screen.getByRole("switch", { name: "Keep history" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(b.saveProfile).toHaveBeenCalledTimes(1))
+    expect(b.saveProfile.mock.calls[0][0]).toMatchObject({ name: "Scratch", keepHistory: false })
   })
 
   it("keeps the editor open with the error when saving is refused", async () => {

@@ -19,6 +19,8 @@ func TestPartsRoundTrip(t *testing.T) {
 		Thinking{Provider: ProviderOpenAI, Signature: "rs_1", Data: "gAAAA=="},
 		Thinking{Provider: ProviderGemini, Signature: "c2ln"},
 		Image{AttachmentID: "att-1", MediaType: "image/png"},
+		Text{Text: "<attachment name=\"a.csv\">\na,b\n</attachment>", AttachmentID: "att-2"},
+		Text{AttachmentID: "att-3"},
 	}
 	s, err := MarshalParts(in)
 	if err != nil {
@@ -113,7 +115,14 @@ func TestPartsDecode020Rows(t *testing.T) {
 }
 
 func TestPartsNewKeysStayOutOfText(t *testing.T) {
-	s, _ := MarshalParts([]Part{Image{AttachmentID: "a1", MediaType: "image/jpeg"}, Thinking{Provider: ProviderGemini, Signature: "c2ln"}})
+	s, _ := MarshalParts([]Part{Image{AttachmentID: "a1", MediaType: "image/jpeg"}, Thinking{Provider: ProviderGemini, Signature: "c2ln"},
+		Text{Text: "file words", AttachmentID: "a2"}})
+	if !strings.Contains(s, `{"type":"attachment","content":"file words","attachment_id":"a2"}`) {
+		t.Errorf("attachment text shape: %s", s)
+	}
+	if _, err := UnmarshalParts(`[{"type":"attachment","content":"x"}]`); err == nil {
+		t.Error("an attachment part without an id should not decode")
+	}
 	if strings.Contains(s, `"text"`) {
 		t.Errorf("image or thinking carries a text key: %s", s)
 	}

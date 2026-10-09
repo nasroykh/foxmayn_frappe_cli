@@ -311,6 +311,17 @@ export function ProfileEditor({ initial, onSaved }: { initial: Profile; onSaved:
             aria-label={t("profile.field.callMethod")}
           />
         </Field>
+        <Field orientation="horizontal">
+          <FieldContent>
+            <FieldTitle>{t("profile.field.keepHistory")}</FieldTitle>
+            <FieldDescription>{t("profile.keepHistoryHelp")}</FieldDescription>
+          </FieldContent>
+          <Switch
+            checked={p.keepHistory}
+            onCheckedChange={(v) => set("keepHistory", v)}
+            aria-label={t("profile.field.keepHistory")}
+          />
+        </Field>
         <Field>
           <FieldLabel htmlFor="profile-steps">{t("profile.field.stepLimit")}</FieldLabel>
           <Input id="profile-steps" type="number" min={1} max={100} value={steps} onChange={(e) => setSteps(e.target.value)} />

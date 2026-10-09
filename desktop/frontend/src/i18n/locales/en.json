@@ -125,7 +125,17 @@
       "sendLabel": "Send message",
       "stop": "Stop",
       "stopLabel": "Stop the assistant",
-      "hint": "Enter sends, Shift+Enter adds a line. Esc stops the assistant."
+      "hint": "Enter sends, Shift+Enter adds a line. Esc stops the assistant.",
+      "attach": "Attach",
+      "attachLabel": "Attach files (text, CSV, JSON, XLSX or images)",
+      "attachHint": "You can also drop files here or paste an image.",
+      "attachFailed": "Not attached",
+      "pasteTooBig": "The pasted image is larger than 5 MB.",
+      "staged": "Files for the next message",
+      "remove": "Remove {{name}}"
+    },
+    "attachments": {
+      "label": "Attached files"
     },
     "approval": {
       "label": "Approval needed",
@@ -280,6 +290,7 @@
     "modeHelp": "The stricter of this and the conversation's switch applies.",
     "toolsetsHelp": "None checked means the default tool sets (core and lifecycle).",
     "callMethodHelp": "Lets the assistant call server methods, only when the conversation asks before changes and the site allows it.",
+    "keepHistoryHelp": "Off: conversations with this profile are not kept and are removed when the app next starts.",
     "field": {
       "name": "Name",
       "toolsets": "Tool sets",
@@ -290,6 +301,7 @@
       "allowMethods": "Only these methods",
       "denyMethods": "Methods to refuse",
       "callMethod": "Server methods",
+      "keepHistory": "Keep history",
       "stepLimit": "Step limit (1 to 100)",
       "instructions": "Instructions"
     },

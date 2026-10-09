@@ -9,6 +9,7 @@ import {
 } from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services"
 import type * as wire from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services/models"
 import type {
+  AttachmentKind,
   Backend,
   Cancellable,
   ChatApproval,
@@ -17,6 +18,7 @@ import type {
   OpenRouterAuth,
   Profile,
   PromptPreview,
+  StagedAttachment,
   Toolset,
 } from "@/lib/backend-types"
 
@@ -54,11 +56,16 @@ function approval(a: wire.ChatApproval): ChatApproval {
   }
 }
 
+function staged(a: wire.StagedAttachment): StagedAttachment {
+  return { ...a, kind: (a.kind === "image" ? "image" : "text") as AttachmentKind }
+}
+
 function detail(d: wire.ConversationDetail): ConversationDetail {
   const messages: ChatMessage[] = (d.messages ?? []).map((m) => ({
     ...m,
     role: m.role === "assistant" ? "assistant" : "user",
     tools: m.tools ?? [],
+    attachments: (m.attachments ?? []).map(staged),
   }))
   return { ...d, messages, runUsage: d.runUsage ?? [] }
 }
@@ -110,7 +117,14 @@ export const backend: Backend = {
   previewDisconnect: (client) => AssistantsService.PreviewDisconnect(client),
   disconnect: (client) => AssistantsService.Disconnect(client),
 
-  sendMessage: (convID, text) => AssistantService.Send(convID, text),
+  sendMessage: (convID, text, attachmentIDs) => AssistantService.Send(convID, text, attachmentIDs ?? []),
+  addAttachment: async (convID) => {
+    const r = await AssistantService.AddAttachment(convID)
+    return { attachments: (r.attachments ?? []).map(staged), errors: r.errors ?? [], cancelled: r.cancelled ?? false }
+  },
+  addPastedImage: async (convID, base64) => staged(await AssistantService.AddPastedImage(convID, base64)),
+  removeAttachment: (convID, id) => AssistantService.RemoveAttachment(convID, id),
+  listAttachments: async (convID) => ((await AssistantService.ListAttachments(convID)) ?? []).map(staged),
   cancelRun: (runID) => AssistantService.Cancel(runID),
   answerApproval: (convID, approvalID, approve) => AssistantService.Answer(convID, approvalID, approve),
   continueRun: (runID) => AssistantService.Continue(runID),
@@ -160,6 +174,10 @@ export const backend: Backend = {
   onChatTitle: (cb) => Events.On("chat:title", (ev) => cb(ev.data)),
   onChatDone: (cb) => Events.On("chat:done", (ev) => cb(ev.data)),
   onChatError: (cb) => Events.On("chat:error", (ev) => cb(ev.data)),
+  onChatAttachments: (cb) =>
+    Events.On("chat:attachments", (ev) =>
+      cb({ ...ev.data, attachments: (ev.data.attachments ?? []).map(staged), errors: ev.data.errors ?? [] }),
+    ),
   onOpenRouterAuth: (cb) => Events.On("auth:openrouter", (ev) => cb(ev.data as OpenRouterAuth)),
 
   onConfigChanged: (cb) => Events.On("config:changed", (ev) => cb(ev.data)),

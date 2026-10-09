@@ -217,9 +217,14 @@ func TestAttachmentsCascade(t *testing.T) {
 	if err := s.DeleteMessage(m.ID); err != nil {
 		t.Fatal(err)
 	}
+	// A deleted message takes its attachments with it (they must not turn
+	// back into staged ones).
 	var msg sql.NullString
-	if err := s.db.QueryRow(`SELECT msg_id FROM attachments WHERE id='a1'`).Scan(&msg); err != nil || msg.Valid {
-		t.Fatalf("msg_id after message delete = %v, %v", msg, err)
+	if err := s.db.QueryRow(`SELECT msg_id FROM attachments WHERE id='a1'`).Scan(&msg); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("attachment after message delete = %v, %v", msg, err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO attachments(id,conv_id,msg_id,name,mime,size,sha256,created) VALUES('a2',?,NULL,'g.csv','text/csv',3,'y',1)`, c.ID); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.DeleteConversation(c.ID); err != nil {
 		t.Fatal(err)

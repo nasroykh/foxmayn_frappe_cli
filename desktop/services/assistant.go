@@ -12,6 +12,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/attach"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/anthropic"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/gemini"
@@ -131,6 +132,8 @@ type ChatMessage struct {
 	Text    string         `json:"text"`
 	Tools   []ChatToolCall `json:"tools"`
 	Created time.Time      `json:"created"`
+	// Attachments are the files sent with a user message, in order.
+	Attachments []StagedAttachment `json:"attachments"`
 }
 
 // ConversationDetail is a conversation with its messages.
@@ -217,6 +220,7 @@ func (a *AssistantService) open() error {
 	r := newRunner(st, eng, a.providerFor, a.host.Emit)
 	r.check = a.checkRun
 	r.titles = !a.noTitles
+	r.images = func(conv store.Conversation) bool { return a.convTakesImages(st, conv) }
 	ctx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
 	a.st, a.engine, a.run = st, eng, r
@@ -288,8 +292,11 @@ func (a *AssistantService) ready() (*runner, *store.Store, error) {
 }
 
 // Send adds the user's message to a conversation and starts a run. It returns
-// the run's id at once; the answer arrives as chat:* events.
-func (a *AssistantService) Send(convID, text string) (string, error) {
+// the run's id at once; the answer arrives as chat:* events. attachmentIDs
+// are attachments staged in this conversation (AddAttachment,
+// AddPastedImage); an id of another conversation, or one already sent, is
+// refused. The text may be empty when there are attachments.
+func (a *AssistantService) Send(convID, text string, attachmentIDs []string) (string, error) {
 	r, st, done, err := a.enter()
 	if err != nil {
 		return "", err
@@ -302,12 +309,44 @@ func (a *AssistantService) Send(convID, text string) (string, error) {
 	if err != nil {
 		return "", wrapStoreErr(err)
 	}
-	runID, err := r.start(convID, text)
+	var parts []llm.Part
+	firstName := ""
+	if len(attachmentIDs) > 0 {
+		if len(attachmentIDs) > attach.MaxPerMessage {
+			return "", invalid("attachments", fmt.Sprintf("A message can carry at most %d attachments.", attach.MaxPerMessage))
+		}
+		seen := map[string]bool{}
+		for _, id := range attachmentIDs {
+			if seen[id] {
+				return "", invalid("attachments", "The same attachment is listed twice.")
+			}
+			seen[id] = true
+		}
+		atts, err := st.StagedByID(convID, attachmentIDs)
+		if errors.Is(err, store.ErrNotFound) {
+			return "", invalid("attachments", "An attachment is no longer there. Attach the file again.")
+		}
+		if err != nil {
+			return "", wrapStoreErr(err)
+		}
+		if parts, err = attachmentParts(atts, a.convTakesImages(st, conv)); err != nil {
+			return "", err
+		}
+		firstName = atts[0].Name
+	}
+	if strings.TrimSpace(text) != "" || len(parts) == 0 {
+		parts = append(parts, llm.Text{Text: text})
+	}
+	runID, err := r.startParts(convID, text, parts, attachmentIDs)
 	if err != nil {
 		return "", err
 	}
 	if conv.Title == "" {
-		_ = st.SetFallbackTitle(convID, clip(firstLine(text), titleChars))
+		title := firstLine(text)
+		if strings.TrimSpace(title) == "" {
+			title = firstName
+		}
+		_ = st.SetFallbackTitle(convID, clip(title, titleChars))
 	}
 	return runID, nil
 }
@@ -463,6 +502,10 @@ func (a *AssistantService) GetConversation(id string) (ConversationDetail, error
 			byMsg[tc.MsgID] = append(byMsg[tc.MsgID], tc)
 		}
 	}
+	atts, err := st.MessageAttachments(id)
+	if err != nil {
+		return ConversationDetail{}, wrapStoreErr(err)
+	}
 	d := ConversationDetail{Conversation: toConversation(c), Messages: []ChatMessage{}, ActiveRunID: active}
 	if n := len(runs); n > 0 && runs[n-1].Status == RunPaused && active == "" {
 		d.PausedRunID = runs[n-1].ID
@@ -472,13 +515,23 @@ func (a *AssistantService) GetConversation(id string) (ConversationDetail, error
 		if err != nil {
 			return ConversationDetail{}, newError(CodeFailed, "A saved message could not be read.", err)
 		}
-		cm := ChatMessage{ID: m.ID, Role: m.Role, Tools: []ChatToolCall{}, Created: m.Created}
+		cm := ChatMessage{ID: m.ID, Role: m.Role, Tools: []ChatToolCall{}, Created: m.Created, Attachments: []StagedAttachment{}}
+		rows := map[string]store.Attachment{}
+		for _, at := range atts[m.ID] {
+			rows[at.ID] = at
+		}
 		var text []string
 		next := 0
 		for _, p := range parts {
 			switch v := p.(type) {
 			case llm.Text:
+				if v.AttachmentID != "" {
+					cm.Attachments = append(cm.Attachments, chatAttachment(rows, v.AttachmentID, attachmentName(v.Text), "text/plain"))
+					continue
+				}
 				text = append(text, v.Text)
+			case llm.Image:
+				cm.Attachments = append(cm.Attachments, chatAttachment(rows, v.AttachmentID, "image", v.MediaType))
 			case llm.ToolUse:
 				rows := byMsg[m.ID]
 				tc := ChatToolCall{Tool: v.Name, Site: c.Site, Status: ToolStopped}
@@ -490,7 +543,7 @@ func (a *AssistantService) GetConversation(id string) (ConversationDetail, error
 			}
 		}
 		cm.Text = strings.Join(text, "")
-		if cm.Text == "" && len(cm.Tools) == 0 {
+		if cm.Text == "" && len(cm.Tools) == 0 && len(cm.Attachments) == 0 {
 			continue // tool results and thinking only
 		}
 		d.Messages = append(d.Messages, cm)

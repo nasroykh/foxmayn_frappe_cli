@@ -168,7 +168,7 @@ func TestAssistantSendReadsAndLeaksNoKey(t *testing.T) {
 	if c.Mode != ModeRead || c.Model != "m1" || c.Title != "" {
 		t.Fatalf("conv = %+v", c)
 	}
-	runID, err := g.a.Send(c.ID, "what is TD-1?")
+	runID, err := g.a.Send(c.ID, "what is TD-1?", nil)
 	if err != nil || runID == "" {
 		t.Fatalf("Send = %q, %v", runID, err)
 	}
@@ -210,7 +210,7 @@ func TestAssistantProviderErrorsLeakNoKey(t *testing.T) {
 	g.a.mk = func(_ store.Provider, key string) (llm.Provider, error) {
 		return llmtest.New(llmtest.Turn{StreamErr: &llm.APIError{Status: 401, Message: "bad key " + key}}), nil
 	}
-	if _, err := g.a.Send(c.ID, "hi"); err != nil {
+	if _, err := g.a.Send(c.ID, "hi", nil); err != nil {
 		t.Fatal(err)
 	}
 	if d := g.done(t, 1); d.Status != RunError {
@@ -384,7 +384,7 @@ func TestAssistantModeSwitchRefusedDuringRun(t *testing.T) {
 		}
 	}))
 	c := g.conv(t, ModeRead)
-	runID, err := g.a.Send(c.ID, "go")
+	runID, err := g.a.Send(c.ID, "go", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestAssistantModeSwitchRefusedDuringRun(t *testing.T) {
 	if err := g.a.DeleteConversation(c.ID); errorCode(t, err) != CodeInvalid {
 		t.Errorf("delete during a run: %v", err)
 	}
-	if _, err := g.a.Send(c.ID, "again"); errorCode(t, err) != CodeInvalid {
+	if _, err := g.a.Send(c.ID, "again", nil); errorCode(t, err) != CodeInvalid {
 		t.Errorf("second send: %v", err)
 	}
 	det, _ := g.a.GetConversation(c.ID)
@@ -437,7 +437,7 @@ func TestAssistantAnswerChecksTheConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.a.Send(c.ID, "add a todo"); err != nil {
+	if _, err := g.a.Send(c.ID, "add a todo", nil); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return len(g.h.named(EventChatApproval)) == 1 })
@@ -473,7 +473,7 @@ func TestAssistantAnswerChecksTheConversation(t *testing.T) {
 func TestAssistantContinueNeedsAPausedRun(t *testing.T) {
 	g := newAssistantRig(t, textTurn("hi"))
 	c := g.conv(t, ModeRead)
-	runID, err := g.a.Send(c.ID, "hello")
+	runID, err := g.a.Send(c.ID, "hello", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,10 +484,10 @@ func TestAssistantContinueNeedsAPausedRun(t *testing.T) {
 	if err := g.a.Continue("nope"); errorCode(t, err) != CodeNotFound {
 		t.Errorf("continue an unknown run: %v", err)
 	}
-	if _, err := g.a.Send(c.ID, strings.Repeat("x", maxSendChars+1)); errorCode(t, err) != CodeInvalid {
+	if _, err := g.a.Send(c.ID, strings.Repeat("x", maxSendChars+1), nil); errorCode(t, err) != CodeInvalid {
 		t.Errorf("long message: %v", err)
 	}
-	if _, err := g.a.Send("nope", "hi"); errorCode(t, err) != CodeNotFound {
+	if _, err := g.a.Send("nope", "hi", nil); errorCode(t, err) != CodeNotFound {
 		t.Errorf("unknown conversation: %v", err)
 	}
 }
@@ -539,7 +539,7 @@ func TestAssistantRemovedProviderFailsTheRun(t *testing.T) {
 	if err := g.a.DeleteProvider("p1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.a.Send(c.ID, "hi"); err != nil {
+	if _, err := g.a.Send(c.ID, "hi", nil); err != nil {
 		t.Fatal(err)
 	}
 	if d := g.done(t, 1); d.Status != RunError {
@@ -554,7 +554,7 @@ func TestAssistantRemovedProviderFailsTheRun(t *testing.T) {
 func TestAssistantConfigChangedInvalidatesTheEngine(t *testing.T) {
 	g := newAssistantRig(t, textTurn("hi"), textTurn("again"))
 	c := g.conv(t, ModeRead)
-	if _, err := g.a.Send(c.ID, "one"); err != nil {
+	if _, err := g.a.Send(c.ID, "one", nil); err != nil {
 		t.Fatal(err)
 	}
 	g.done(t, 1)
@@ -570,7 +570,7 @@ func TestAssistantConfigChangedInvalidatesTheEngine(t *testing.T) {
 	if count() != 0 {
 		t.Error("config:changed left the cached servers")
 	}
-	if _, err := g.a.Send(c.ID, "two"); err != nil {
+	if _, err := g.a.Send(c.ID, "two", nil); err != nil {
 		t.Fatal(err)
 	}
 	if d := g.done(t, 2); d.Status != RunDone {
@@ -587,7 +587,7 @@ func TestAssistantUnavailableWithoutAStore(t *testing.T) {
 	if _, err := a.ListConversations(); errorCode(t, err) != CodeUnavailable {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := a.Send("c", "hi"); errorCode(t, err) != CodeUnavailable {
+	if _, err := a.Send("c", "hi", nil); errorCode(t, err) != CodeUnavailable {
 		t.Errorf("err = %v", err)
 	}
 	if p := a.PendingApprovals("c"); p == nil || len(p) != 0 {

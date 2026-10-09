@@ -67,6 +67,13 @@ func renderMarkdown(f exportFile) string {
 		for _, p := range parts {
 			switch v := p.(type) {
 			case llm.Text:
+				if v.AttachmentID != "" {
+					// The attachment's text as stored (wrapped as data).
+					f := fence(v.Text)
+					fmt.Fprintf(&body, "<details>\n<summary>Attachment: %s</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n",
+						htmlEscape(oneLine(attachmentName(v.Text))), f, v.Text, f)
+					continue
+				}
 				if strings.TrimSpace(v.Text) != "" {
 					body.WriteString(strings.TrimSpace(v.Text) + "\n\n")
 				}

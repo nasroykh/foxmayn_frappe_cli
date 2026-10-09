@@ -7,9 +7,11 @@ import type {
   ApplyResult,
   Assistant,
   AssistantList,
+  AttachResult as GeneratedAttachResult,
   BrowserSignInRequest,
   ChatApproval as GeneratedChatApproval,
   ChatApprovalClosed,
+  ChatAttachments as GeneratedChatAttachments,
   ChatDelta,
   ChatDone,
   ChatError,
@@ -44,6 +46,7 @@ import type {
   Site,
   SiteList,
   SiteSettings,
+  StagedAttachment as GeneratedStagedAttachment,
   UpdateInfo,
   UsageTotals,
   Validation,
@@ -133,9 +136,33 @@ export interface ChatApproval
 }
 
 /** A visible message. Tool results and thinking are never sent. */
-export interface ChatMessage extends Omit<GeneratedChatMessage, "role" | "tools"> {
+export interface ChatMessage extends Omit<GeneratedChatMessage, "role" | "tools" | "attachments"> {
   role: "user" | "assistant"
   tools: ChatToolCall[]
+  /** The files sent with a user message; backend.ts always fills it. */
+  attachments?: StagedAttachment[]
+}
+
+/** "text" for text, CSV, JSON and XLSX files, "image" for pictures. */
+export type AttachmentKind = "text" | "image"
+
+/** A file attached to the next message (staged) or to a sent one. */
+export interface StagedAttachment extends Omit<GeneratedStagedAttachment, "kind"> {
+  kind: AttachmentKind
+}
+
+/** What attaching files gave: the staged files and, one per refused file, why. */
+export interface AttachResult extends Omit<GeneratedAttachResult, "attachments" | "errors" | "cancelled"> {
+  attachments: StagedAttachment[]
+  errors: string[]
+  /** The person closed the file dialog. */
+  cancelled: boolean
+}
+
+/** chat:attachments: files dropped on a conversation's composer, read by Go. */
+export interface ChatAttachments extends Omit<GeneratedChatAttachments, "attachments" | "errors"> {
+  attachments: StagedAttachment[]
+  errors: string[]
 }
 
 export interface ConversationDetail extends Omit<GeneratedConversationDetail, "messages" | "runUsage"> {
@@ -214,8 +241,20 @@ export interface Backend {
 
   // Assistant. Failures are *services.Error (code, message, ...); read them
   // with appError. No call ever returns an API key.
-  /** Adds the message and starts a run; answers with the run id at once. */
-  sendMessage(convID: string, text: string): Promise<string>
+  /**
+   * Adds the message and starts a run; answers with the run id at once.
+   * attachmentIDs are files staged in this conversation; the text may be
+   * empty when there are some.
+   */
+  sendMessage(convID: string, text: string, attachmentIDs?: string[]): Promise<string>
+  /** Opens a file dialog (Go reads the files) and stages what it may. */
+  addAttachment(convID: string): Promise<AttachResult>
+  /** Stages a pasted image (base64 or a data URL, at most 5 MB). */
+  addPastedImage(convID: string, base64: string): Promise<StagedAttachment>
+  /** Refused (not_found) for a file already sent or of another conversation. */
+  removeAttachment(convID: string, id: string): Promise<void>
+  /** The files staged for the next message. */
+  listAttachments(convID: string): Promise<StagedAttachment[]>
   /** Stops a run (an open card counts as declined). */
   cancelRun(runID: string): Promise<void>
   /** Settles a card; refused (not_found) for a card of another conversation. */
@@ -288,6 +327,8 @@ export interface Backend {
   onChatTitle(cb: (ev: ChatTitle) => void): () => void
   onChatDone(cb: (ev: ChatDone) => void): () => void
   onChatError(cb: (ev: ChatError) => void): () => void
+  /** Files dropped on a composer (marked data-file-drop-target, data-conv-id). */
+  onChatAttachments(cb: (ev: ChatAttachments) => void): () => void
   onOpenRouterAuth(cb: (ev: OpenRouterAuth) => void): () => void
 
   onConfigChanged(cb: (ev: ConfigChanged) => void): () => void

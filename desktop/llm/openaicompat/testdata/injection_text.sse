@@ -1,0 +1,12 @@
+data: {"id":"gen-inj-2","object":"chat.completion.chunk","created":1,"model":"m1","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"gen-inj-2","object":"chat.completion.chunk","created":1,"model":"m1","choices":[{"index":0,"delta":{"content":"I read the documents. They contain i"},"finish_reason":null}]}
+
+data: {"id":"gen-inj-2","object":"chat.completion.chunk","created":1,"model":"m1","choices":[{"index":0,"delta":{"content":"nstructions, which I did not follow."},"finish_reason":null}]}
+
+data: {"id":"gen-inj-2","object":"chat.completion.chunk","created":1,"model":"m1","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}]}
+
+data: {"id":"gen-inj-2","object":"chat.completion.chunk","created":1,"model":"m1","choices":[],"usage":{"prompt_tokens":50,"completion_tokens":20,"total_tokens":70}}
+
+data: [DONE]
+

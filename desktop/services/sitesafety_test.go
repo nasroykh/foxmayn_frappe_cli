@@ -119,7 +119,7 @@ func TestLocalOnlyStopsRunningRun(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{"data":{"name":"TD-1","doctype":"ToDo","description":"alpha"}}`))
 	}))
-	if _, err := g.a.Send(c.ID, "look"); err != nil {
+	if _, err := g.a.Send(c.ID, "look", nil); err != nil {
 		t.Fatal(err)
 	}
 	if d := g.done(t, 1); d.Status != RunError {
@@ -193,7 +193,7 @@ func TestRunChecksSiteAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.a.Send(old.ID, "hi"); err != nil {
+	if _, err := g.a.Send(old.ID, "hi", nil); err != nil {
 		t.Fatal(err)
 	}
 	if d := g.done(t, 1); d.Status != RunDone {
@@ -214,7 +214,7 @@ func TestRunChecksSiteAddress(t *testing.T) {
 	if err := os.WriteFile(g.path, []byte(moved), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.a.Send(old.ID, "again"); err != nil {
+	if _, err := g.a.Send(old.ID, "again", nil); err != nil {
 		t.Fatal(err)
 	}
 	if d := g.done(t, 2); d.Status != RunError {

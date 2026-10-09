@@ -97,6 +97,17 @@ export interface AssistantList {
 }
 
 /**
+ * AttachResult is the outcome of attaching files: the files staged and, for
+ * each one refused, why (shown one by one). Cancelled means the person closed
+ * the dialog.
+ */
+export interface AttachResult {
+    "attachments": StagedAttachment[] | null;
+    "errors": string[] | null;
+    "cancelled"?: boolean;
+}
+
+/**
  * BrowserSignInRequest adds a site through the OAuth browser sign-in.
  */
 export interface BrowserSignInRequest {
@@ -171,6 +182,16 @@ export interface ChatApprovalClosed {
 }
 
 /**
+ * ChatAttachments is the payload of EventChatAttachments: what AddAttachment
+ * would answer, for the conversation the files were dropped on.
+ */
+export interface ChatAttachments {
+    "convID": string;
+    "attachments": StagedAttachment[] | null;
+    "errors": string[] | null;
+}
+
+/**
  * ChatDelta is the payload of EventChatDelta.
  */
 export interface ChatDelta {
@@ -222,6 +243,11 @@ export interface ChatMessage {
     "text": string;
     "tools": ChatToolCall[] | null;
     "created": string;
+
+    /**
+     * Attachments are the files sent with a user message, in order.
+     */
+    "attachments": StagedAttachment[] | null;
 }
 
 /**
@@ -899,6 +925,18 @@ export interface SiteSettings {
      * Such a site stays local only until those settings are changed.
      */
     "localOnlyFrom"?: string;
+}
+
+/**
+ * StagedAttachment is a file attached to a conversation's next message, or
+ * (in ChatMessage) to a sent one. Kind is "text" or "image".
+ */
+export interface StagedAttachment {
+    "id": string;
+    "name": string;
+    "mime": string;
+    "size": number;
+    "kind": string;
 }
 
 /**

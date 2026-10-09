@@ -1,0 +1,66 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_inj_0","object":"response","status":"in_progress","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"fc_inj_0_0","type":"function_call","status":"in_progress","arguments":"","call_id":"call_inj_0_0","name":"get_doc"}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","sequence_number":2,"item_id":"fc_inj_0_0","output_index":0,"delta":"{\"doctype\":\"Customer"}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","sequence_number":3,"item_id":"fc_inj_0_0","output_index":0,"delta":"\",\"name\":\"CUST-0001\"}"}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","sequence_number":4,"item_id":"fc_inj_0_0","output_index":0,"arguments":"{\"doctype\":\"Customer\",\"name\":\"CUST-0001\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":5,"output_index":0,"item":{"id":"fc_inj_0_0","type":"function_call","status":"completed","arguments":"{\"doctype\":\"Customer\",\"name\":\"CUST-0001\"}","call_id":"call_inj_0_0","name":"get_doc"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":6,"output_index":1,"item":{"id":"fc_inj_0_1","type":"function_call","status":"in_progress","arguments":"","call_id":"call_inj_0_1","name":"get_doc"}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","sequence_number":7,"item_id":"fc_inj_0_1","output_index":1,"delta":"{\"doctype\":\"Comment"}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","sequence_number":8,"item_id":"fc_inj_0_1","output_index":1,"delta":"\",\"name\":\"CMT-0001\"}"}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","sequence_number":9,"item_id":"fc_inj_0_1","output_index":1,"arguments":"{\"doctype\":\"Comment\",\"name\":\"CMT-0001\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":10,"output_index":1,"item":{"id":"fc_inj_0_1","type":"function_call","status":"completed","arguments":"{\"doctype\":\"Comment\",\"name\":\"CMT-0001\"}","call_id":"call_inj_0_1","name":"get_doc"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":11,"output_index":2,"item":{"id":"fc_inj_0_2","type":"function_call","status":"in_progress","arguments":"","call_id":"call_inj_0_2","name":"get_doc"}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","sequence_number":12,"item_id":"fc_inj_0_2","output_index":2,"delta":"{\"doctype\":\"Error Lo"}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","sequence_number":13,"item_id":"fc_inj_0_2","output_index":2,"delta":"g\",\"name\":\"ERR-0001\"}"}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","sequence_number":14,"item_id":"fc_inj_0_2","output_index":2,"arguments":"{\"doctype\":\"Error Log\",\"name\":\"ERR-0001\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":15,"output_index":2,"item":{"id":"fc_inj_0_2","type":"function_call","status":"completed","arguments":"{\"doctype\":\"Error Log\",\"name\":\"ERR-0001\"}","call_id":"call_inj_0_2","name":"get_doc"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":16,"output_index":3,"item":{"id":"fc_inj_0_3","type":"function_call","status":"in_progress","arguments":"","call_id":"call_inj_0_3","name":"get_doc"}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","sequence_number":17,"item_id":"fc_inj_0_3","output_index":3,"delta":"{\"doctype\":\"Note\","}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","sequence_number":18,"item_id":"fc_inj_0_3","output_index":3,"delta":"\"name\":\"NOTE-0001\"}"}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","sequence_number":19,"item_id":"fc_inj_0_3","output_index":3,"arguments":"{\"doctype\":\"Note\",\"name\":\"NOTE-0001\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":20,"output_index":3,"item":{"id":"fc_inj_0_3","type":"function_call","status":"completed","arguments":"{\"doctype\":\"Note\",\"name\":\"NOTE-0001\"}","call_id":"call_inj_0_3","name":"get_doc"}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":21,"response":{"id":"resp_inj_0","object":"response","status":"completed","output":[],"usage":{"input_tokens":50,"input_tokens_details":{"cached_tokens":0},"output_tokens":20,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":70}}}
+

@@ -570,7 +570,7 @@ func TestLocalOnlyRefusesCloudEverywhere(t *testing.T) {
 	}
 
 	// Run start: the conversation from before the switch was turned on.
-	if _, err := g.a.Send(old.ID, "hello"); err != nil {
+	if _, err := g.a.Send(old.ID, "hello", nil); err != nil {
 		t.Fatal(err)
 	}
 	if d := g.done(t, 1); d.Status != RunError {
@@ -585,7 +585,7 @@ func TestLocalOnlyRefusesCloudEverywhere(t *testing.T) {
 	}
 
 	// A local run works and gets the site's instructions last.
-	if _, err := g.a.Send(local.ID, "hello"); err != nil {
+	if _, err := g.a.Send(local.ID, "hello", nil); err != nil {
 		t.Fatal(err)
 	}
 	if d := g.done(t, 2); d.Status != RunDone {

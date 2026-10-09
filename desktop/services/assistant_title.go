@@ -290,7 +290,7 @@ func firstExchange(st *store.Store, convID string) (user, reply string) {
 		}
 		var sb strings.Builder
 		for _, p := range parts {
-			if t, ok := p.(llm.Text); ok {
+			if t, ok := p.(llm.Text); ok && t.AttachmentID == "" {
 				sb.WriteString(t.Text)
 			}
 		}

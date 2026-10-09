@@ -17,6 +17,23 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * AddAttachment opens a file dialog and attaches the chosen files to the
+ * next message of a conversation. Each file is checked (see package attach);
+ * one refused does not stop the others.
+ */
+export function AddAttachment(convID: string): $CancellablePromise<$models.AttachResult> {
+    return $Call.ByID(1976682501, convID);
+}
+
+/**
+ * AddPastedImage attaches an image pasted in the composer: base64 (a data:
+ * URL prefix is allowed), at most 5 MB decoded, PNG, JPEG, WebP or GIF.
+ */
+export function AddPastedImage(convID: string, b64: string): $CancellablePromise<$models.StagedAttachment> {
+    return $Call.ByID(848951434, convID, b64);
+}
+
+/**
  * Answer settles an approval card of a conversation.
  */
 export function Answer(convID: string, approvalID: string, approve: boolean): $CancellablePromise<void> {
@@ -138,6 +155,14 @@ export function KeyStatus(providerID: string): $CancellablePromise<$models.KeySt
 }
 
 /**
+ * ListAttachments returns the attachments staged for a conversation's next
+ * message.
+ */
+export function ListAttachments(convID: string): $CancellablePromise<$models.StagedAttachment[] | null> {
+    return $Call.ByID(4075104777, convID);
+}
+
+/**
  * ListConversations returns every conversation, most recent first.
  */
 export function ListConversations(): $CancellablePromise<$models.Conversation[] | null> {
@@ -206,6 +231,13 @@ export function PromptPreview(convID: string): $CancellablePromise<$models.Promp
 }
 
 /**
+ * RemoveAttachment removes a staged attachment of a conversation.
+ */
+export function RemoveAttachment(convID: string, id: string): $CancellablePromise<void> {
+    return $Call.ByID(2298776804, convID, id);
+}
+
+/**
  * Rename sets the title of a conversation. A title the user chose is kept: no
  * automatic title replaces it.
  */
@@ -256,10 +288,13 @@ export function Search(query: string, filter: $models.SearchFilter, limit: numbe
 
 /**
  * Send adds the user's message to a conversation and starts a run. It returns
- * the run's id at once; the answer arrives as chat:* events.
+ * the run's id at once; the answer arrives as chat:* events. attachmentIDs
+ * are attachments staged in this conversation (AddAttachment,
+ * AddPastedImage); an id of another conversation, or one already sent, is
+ * refused. The text may be empty when there are attachments.
  */
-export function Send(convID: string, text: string): $CancellablePromise<string> {
-    return $Call.ByID(2635608883, convID, text);
+export function Send(convID: string, text: string, attachmentIDs: string[] | null): $CancellablePromise<string> {
+    return $Call.ByID(2635608883, convID, text, attachmentIDs);
 }
 
 /**

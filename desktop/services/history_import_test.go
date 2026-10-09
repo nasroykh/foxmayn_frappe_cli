@@ -70,7 +70,7 @@ func TestImportNeverTakesTheSiteContext(t *testing.T) {
 	if err != nil || stored.SiteContext != "" || stored.SiteContextKey != "" {
 		t.Fatalf("stored context: %+v %v", stored, err)
 	}
-	if _, err := g.a.Send(c.ID, "hello"); err != nil {
+	if _, err := g.a.Send(c.ID, "hello", nil); err != nil {
 		t.Fatal(err)
 	}
 	g.done(t, 1)
@@ -115,7 +115,7 @@ func TestImportedHistoryIsOneUntrustedBlock(t *testing.T) {
 		}
 	}
 
-	if _, err := g.a.Send(c.ID, "and now?"); err != nil {
+	if _, err := g.a.Send(c.ID, "and now?", nil); err != nil {
 		t.Fatal(err)
 	}
 	g.done(t, 1)
@@ -253,7 +253,7 @@ func TestExportFailsClosedWhenKeysCannotBeChecked(t *testing.T) {
 func TestExportRedactsKeyShapedText(t *testing.T) {
 	g, dh := historyRig(t, textTurn("ok"))
 	c := g.conv(t, "read")
-	if _, err := g.a.Send(c.ID, "other key sk-ant-api03-AAAAAAAAAAAAAAAAAAAA and Bearer abcdefghijklmnop1234"); err != nil {
+	if _, err := g.a.Send(c.ID, "other key sk-ant-api03-AAAAAAAAAAAAAAAAAAAA and Bearer abcdefghijklmnop1234", nil); err != nil {
 		t.Fatal(err)
 	}
 	g.done(t, 1)
@@ -341,7 +341,7 @@ func TestImportedTitleIsTheUsersAndNeverRetitled(t *testing.T) {
 	if u, r := firstExchange(g.a.st, c.ID); u != "" || r != "" {
 		t.Errorf("firstExchange read imported rows: %q %q", u, r)
 	}
-	if _, err := g.a.Send(c.ID, "new question"); err != nil {
+	if _, err := g.a.Send(c.ID, "new question", nil); err != nil {
 		t.Fatal(err)
 	}
 	g.done(t, 1)
