@@ -13,7 +13,7 @@ import { backend } from "@/lib/backend"
 import type { Conversation, ProviderInfo, Site } from "@/lib/backend-types"
 import { appError, type AppError } from "@/lib/errors"
 import { NewConversationForm } from "@/screens/assistant/new-conversation-form"
-import { blankProvider, KeyForm, ModelPicker, needsKey, usable } from "@/screens/assistant/provider-parts"
+import { blankProvider, KeyForm, ModelPicker, needsKey, OpenRouterSignIn, usable } from "@/screens/assistant/provider-parts"
 
 type Step = "choose" | "custom" | "key" | "model" | "conversation"
 
@@ -228,6 +228,16 @@ export function AssistantOnboarding({
 
       {step === "key" && provider && (
         <div className="flex flex-col gap-4">
+          {provider.kind === "openrouter" && (
+            <OpenRouterSignIn
+              providerID={provider.id}
+              onSignedIn={(p) => {
+                setProvider({ ...provider, keySet: p.keySet, keyLast4: p.keyLast4 })
+                onProvidersChanged()
+                setStep("model")
+              }}
+            />
+          )}
           <KeyForm
             providerID={provider.id}
             providerLabel={provider.label || provider.id}

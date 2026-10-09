@@ -31,6 +31,13 @@ export function Cancel(runID: string): $CancellablePromise<void> {
 }
 
 /**
+ * CancelSignIn stops the OpenRouter sign-in in progress, if any.
+ */
+export function CancelSignIn(): $CancellablePromise<void> {
+    return $Call.ByID(2033421221);
+}
+
+/**
  * Continue resumes a paused run with a fresh step budget.
  */
 export function Continue(runID: string): $CancellablePromise<void> {
@@ -218,4 +225,17 @@ export function SetConversationProfile(convID: string, profileID: string): $Canc
  */
 export function SetKey(providerID: string, key: string): $CancellablePromise<void> {
     return $Call.ByID(313735678, providerID, key);
+}
+
+/**
+ * SignInOpenRouter gets an OpenRouter key through the browser (OAuth PKCE):
+ * it opens OpenRouter's sign-in page, waits for the redirect to a local
+ * callback (at most 5 minutes), trades the code for a key, checks the key
+ * like SetKey and saves it in the OS keychain. The key goes nowhere else:
+ * the result and the "auth:openrouter" events carry the status only.
+ * CancelSignIn, or cancelling the call, stops it; a new call replaces a
+ * sign-in in progress. The provider must exist and be of kind openrouter.
+ */
+export function SignInOpenRouter(providerID: string): $CancellablePromise<$models.ProviderInfo> {
+    return $Call.ByID(4028737366, providerID);
 }

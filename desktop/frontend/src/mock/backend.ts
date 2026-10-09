@@ -46,6 +46,7 @@ import type {
   Environment,
   FFCInfo,
   KeyStatus,
+  OpenRouterAuth,
   Preview,
   Profile,
   ProviderInfo,
@@ -82,6 +83,7 @@ type Listener<T> = Set<(v: T) => void>
 const configListeners: Listener<ConfigChanged> = new Set()
 const signInListeners: Listener<SignInProgress> = new Set()
 const installListeners: Listener<string> = new Set()
+const openRouterListeners: Listener<OpenRouterAuth> = new Set()
 
 function on<T>(set: Listener<T>, cb: (v: T) => void) {
   set.add(cb)
@@ -267,6 +269,7 @@ function cancellable<T>(run: (signal: AbortSignal) => Promise<T>): Cancellable<T
 }
 
 let signIn: AbortController | null = null
+let openRouterSignIn: AbortController | null = null
 
 // ---- The assistant ----
 // A scripted model. What the user writes picks the script (a conversation in
@@ -1142,6 +1145,50 @@ export const backend: Backend = {
     p.keySet = true
     p.keyLast4 = k.length >= 12 ? k.slice(-4) : ""
   },
+  // ?openrouter=denied ends the browser step with a refusal; the key the
+  // mock "creates" never leaves this file (only its end, as the real one).
+  async signInOpenRouter(providerID) {
+    const p = findProvider(providerID)
+    if (p.kind !== "openrouter") fail("invalid", "Browser sign-in works with OpenRouter only.", { field: "provider" })
+    openRouterSignIn?.abort()
+    const ctl = new AbortController()
+    openRouterSignIn = ctl
+    const send = (ev: Omit<OpenRouterAuth, "providerID">) => {
+      for (const cb of openRouterListeners) cb({ ...ev, providerID })
+    }
+    const step = async (ev: Omit<OpenRouterAuth, "providerID">, ms: number) => {
+      send(ev)
+      await wait(ms)
+      if (ctl.signal.aborted) {
+        send({ status: "cancelled" })
+        fail("cancelled", "The sign-in was cancelled.")
+      }
+    }
+    await step(
+      {
+        status: "browser",
+        authURL: "https://openrouter.ai/auth?callback_url=http%3A%2F%2Flocalhost%3A51423%2Fcallback&code_challenge_method=S256",
+      },
+      3000,
+    )
+    if (params.get("openrouter") === "denied") {
+      send({ status: "failed" })
+      fail("auth", "OpenRouter did not give the app a key.", { detail: "authorization denied: access_denied" })
+    }
+    await step({ status: "exchanging" }, 500)
+    await step({ status: "verifying" }, 500)
+    const key = "sk-or-v1-mock0000000000c0de"
+    keys.set(p.id, key)
+    p.keySet = true
+    p.keyLast4 = key.slice(-4)
+    openRouterSignIn = null
+    send({ status: "done" })
+    return { ...p }
+  },
+  async cancelOpenRouterSignIn() {
+    openRouterSignIn?.abort()
+    openRouterSignIn = null
+  },
   async keyStatus(providerID) {
     const p = findProvider(providerID)
     return { set: p.keySet, last4: p.keyLast4 || undefined } as KeyStatus
@@ -1275,6 +1322,7 @@ export const backend: Backend = {
   onChatUsage: (cb) => on(chat.usage, cb),
   onChatDone: (cb) => on(chat.done, cb),
   onChatError: (cb) => on(chat.error, cb),
+  onOpenRouterAuth: (cb) => on(openRouterListeners, cb),
 
   onConfigChanged: (cb) => on(configListeners, cb),
   onSignInProgress: (cb) => on(signInListeners, cb),

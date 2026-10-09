@@ -159,6 +159,7 @@ type AssistantService struct {
 	engine   *Engine
 	run      *runner
 	startErr error
+	or       orAuth // the OpenRouter browser sign-in (openrouter_auth.go)
 }
 
 // NewAssistantService returns the service over the ffc config file at
@@ -828,6 +829,16 @@ func (a *AssistantService) SetKey(providerID, key string) error {
 	if err != nil {
 		return err
 	}
+	ctx, cancel := a.callCtx()
+	defer cancel()
+	return a.verifyAndSaveKey(ctx, p, key)
+}
+
+// verifyAndSaveKey is SetKey's check and save, for a key typed in or one
+// from a browser sign-in: the provider must accept the key (a Models call
+// within ctx) before it goes to the keychain. The caller holds
+// lockProvider(p.ID).
+func (a *AssistantService) verifyAndSaveKey(ctx context.Context, p store.Provider, key string) error {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return invalid("key", "Paste the API key.")
@@ -839,8 +850,6 @@ func (a *AssistantService) SetKey(providerID, key string) error {
 	if err != nil {
 		return scrubKey(toServiceError(err), key)
 	}
-	ctx, cancel := a.callCtx()
-	defer cancel()
 	if _, err := prov.Models(ctx); err != nil {
 		var se *Error
 		switch {
@@ -853,7 +862,7 @@ func (a *AssistantService) SetKey(providerID, key string) error {
 		}
 		return scrubKey(se, key)
 	}
-	return a.keys.Set(providerID, key)
+	return a.keys.Set(p.ID, key)
 }
 
 // scrubKey removes the key from an error's text, whatever it holds.

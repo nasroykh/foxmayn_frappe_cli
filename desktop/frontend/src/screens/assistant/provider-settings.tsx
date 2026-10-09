@@ -26,7 +26,15 @@ import { toast } from "@/components/ui/toast"
 import { backend } from "@/lib/backend"
 import type { ProviderInfo, ProviderKind } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
-import { blankProvider, KeyForm, ModelPicker, needsKey, SavedLine, usable } from "@/screens/assistant/provider-parts"
+import {
+  blankProvider,
+  KeyForm,
+  ModelPicker,
+  needsKey,
+  OpenRouterSignIn,
+  SavedLine,
+  usable,
+} from "@/screens/assistant/provider-parts"
 
 const KINDS: ProviderKind[] = ["anthropic", "openai", "gemini", "openrouter", "ollama", "lmstudio", "custom"]
 
@@ -277,6 +285,15 @@ function ProviderDialog({
                 <IconAlertTriangle />
                 <AlertDescription>{t("provider.keyCleared")}</AlertDescription>
               </Alert>
+            )}
+            {d.p.kind === "openrouter" && (
+              <OpenRouterSignIn
+                providerID={d.p.id}
+                onSignedIn={() => {
+                  onChanged()
+                  onClose()
+                }}
+              />
             )}
             <KeyForm
               providerID={d.p.id}

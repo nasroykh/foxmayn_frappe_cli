@@ -14,6 +14,7 @@ import type {
   ChatApproval,
   ChatMessage,
   ConversationDetail,
+  OpenRouterAuth,
   Profile,
   PromptPreview,
   Toolset,
@@ -125,6 +126,8 @@ export const backend: Backend = {
   deleteProvider: (id) => AssistantService.DeleteProvider(id),
   setKey: (providerID, key) => AssistantService.SetKey(providerID, key),
   keyStatus: (providerID) => AssistantService.KeyStatus(providerID),
+  signInOpenRouter: (providerID) => AssistantService.SignInOpenRouter(providerID),
+  cancelOpenRouterSignIn: () => AssistantService.CancelSignIn(),
   detectLocal: async () => (await AssistantService.DetectLocal()) ?? [],
   listModels: async (providerID) => (await AssistantService.ListModels(providerID)) ?? [],
 
@@ -144,6 +147,7 @@ export const backend: Backend = {
   onChatUsage: (cb) => Events.On("chat:usage", (ev) => cb(ev.data)),
   onChatDone: (cb) => Events.On("chat:done", (ev) => cb(ev.data)),
   onChatError: (cb) => Events.On("chat:error", (ev) => cb(ev.data)),
+  onOpenRouterAuth: (cb) => Events.On("auth:openrouter", (ev) => cb(ev.data as OpenRouterAuth)),
 
   onConfigChanged: (cb) => Events.On("config:changed", (ev) => cb(ev.data)),
   onSignInProgress: (cb) => Events.On("signin:progress", (ev) => cb(ev.data)),

@@ -28,6 +28,7 @@ import type {
   FFCUpdate,
   KeyStatus,
   Model,
+  OpenRouterAuth as GeneratedOpenRouterAuth,
   PasswordRequest,
   Preview,
   Profile as GeneratedProfile,
@@ -153,6 +154,14 @@ export interface PromptPreview extends Omit<GeneratedPromptPreview, "mode" | "to
   tools: string[]
 }
 
+/** An OpenRouter browser sign-in step; the last one is done, cancelled or failed. */
+export type OpenRouterAuthStatus = "browser" | "exchanging" | "verifying" | "done" | "cancelled" | "failed"
+
+/** auth:openrouter. It never carries the key. */
+export interface OpenRouterAuth extends Omit<GeneratedOpenRouterAuth, "status"> {
+  status: OpenRouterAuthStatus
+}
+
 /** A promise the caller can cancel (the Go side sees its context end). */
 export type Cancellable<T> = Promise<T> & { cancel(): void }
 
@@ -210,6 +219,13 @@ export interface Backend {
   /** Saves the key in the OS keychain and checks it; a rejected key is not kept (code "auth"). */
   setKey(providerID: string, key: string): Promise<void>
   keyStatus(providerID: string): Promise<KeyStatus>
+  /**
+   * Gets an OpenRouter key through the browser (PKCE), checks it like setKey
+   * and saves it in the keychain; progress comes as onOpenRouterAuth.
+   * Cancelled (code "cancelled") by cancelOpenRouterSignIn.
+   */
+  signInOpenRouter(providerID: string): Promise<ProviderInfo>
+  cancelOpenRouterSignIn(): Promise<void>
   /** Looks for Ollama and LM Studio on this computer; saves nothing. */
   detectLocal(): Promise<ProviderInfo[]>
   listModels(providerID: string): Promise<Model[]>
@@ -236,6 +252,7 @@ export interface Backend {
   onChatUsage(cb: (ev: ChatUsage) => void): () => void
   onChatDone(cb: (ev: ChatDone) => void): () => void
   onChatError(cb: (ev: ChatError) => void): () => void
+  onOpenRouterAuth(cb: (ev: OpenRouterAuth) => void): () => void
 
   onConfigChanged(cb: (ev: ConfigChanged) => void): () => void
   onSignInProgress(cb: (ev: SignInProgress) => void): () => void

@@ -41,6 +41,7 @@ export type {
     InstallerLine,
     KeyStatus,
     Model,
+    OpenRouterAuth,
     PasswordRequest,
     Preview,
     Profile,

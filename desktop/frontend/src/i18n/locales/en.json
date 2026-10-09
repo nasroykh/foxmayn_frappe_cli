@@ -174,7 +174,19 @@
       "none": "This provider lists no models.",
       "defaultFlag": "{{name}} (default)"
     },
-    "keyCleared": "The address changed, so the saved key was removed. Enter it again."
+    "keyCleared": "The address changed, so the saved key was removed. Enter it again.",
+    "openrouter": {
+      "signIn": "Sign in with OpenRouter",
+      "hint": "Opens OpenRouter in your browser to create a key for this app. The key is saved in this computer's keychain.",
+      "browser": "Continue in your browser…",
+      "exchanging": "Getting the key…",
+      "verifying": "Checking the key…",
+      "cancel": "Cancel sign-in",
+      "browserFailed": "The browser did not open. Open this page yourself:",
+      "pageLabel": "OpenRouter sign-in page",
+      "failed": "The sign-in did not finish",
+      "orPaste": "Or paste a key"
+    }
   },
   "diff": {
     "none": "No changes.",

@@ -1,18 +1,19 @@
 // Small pieces shared by the assistant onboarding, the new-conversation form
 // and the provider settings: the key form, the model picker and the helpers
 // that say what a provider needs.
-import { IconAlertTriangle, IconCircleCheck } from "@tabler/icons-react"
+import { IconAlertTriangle, IconCircleCheck, IconExternalLink } from "@tabler/icons-react"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { CopyField } from "@/components/copy-field"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner"
 import { backend } from "@/lib/backend"
-import type { KeyStatus, Model, ProviderInfo, ProviderKind } from "@/lib/backend-types"
+import type { KeyStatus, Model, OpenRouterAuthStatus, ProviderInfo, ProviderKind } from "@/lib/backend-types"
 import { appError, type AppError } from "@/lib/errors"
 
 /** Anthropic, OpenAI, Gemini and OpenRouter cannot be used without a key; the others may run without one. */
@@ -127,6 +128,112 @@ export function KeyForm({
         </Alert>
       )}
     </form>
+  )
+}
+
+/**
+ * "Sign in with OpenRouter": the browser sign-in that creates a key for the
+ * app. The key never reaches the page; onSignedIn gets the provider with its
+ * key status. Leaving the screen cancels a sign-in in progress.
+ */
+export function OpenRouterSignIn({
+  providerID,
+  onSignedIn,
+}: {
+  providerID: string
+  onSignedIn?: (p: ProviderInfo) => void
+}) {
+  const { t } = useTranslation()
+  const [busy, setBusy] = React.useState(false)
+  const [status, setStatus] = React.useState<OpenRouterAuthStatus | null>(null)
+  const [page, setPage] = React.useState({ url: "", browserError: "" })
+  const [error, setError] = React.useState<AppError | null>(null)
+  const busyRef = React.useRef(false)
+  const live = React.useRef(true)
+
+  React.useEffect(
+    () =>
+      backend.onOpenRouterAuth((ev) => {
+        if (ev.providerID !== providerID || !busyRef.current) return
+        setStatus(ev.status)
+        if (ev.status === "browser") setPage({ url: ev.authURL ?? "", browserError: ev.browserError ?? "" })
+      }),
+    [providerID],
+  )
+  React.useEffect(() => {
+    live.current = true
+    return () => {
+      live.current = false
+      if (busyRef.current) void backend.cancelOpenRouterSignIn()
+    }
+  }, [])
+
+  async function start() {
+    busyRef.current = true
+    setBusy(true)
+    setStatus(null)
+    setPage({ url: "", browserError: "" })
+    setError(null)
+    try {
+      const p = await backend.signInOpenRouter(providerID)
+      if (live.current) onSignedIn?.(p)
+    } catch (err) {
+      const e = appError(err)
+      if (live.current && e.code !== "cancelled") setError(e)
+    } finally {
+      busyRef.current = false
+      if (live.current) {
+        setBusy(false)
+        setStatus(null)
+      }
+    }
+  }
+
+  const step =
+    status === "exchanging"
+      ? t("provider.openrouter.exchanging")
+      : status === "verifying"
+        ? t("provider.openrouter.verifying")
+        : t("provider.openrouter.browser")
+
+  return (
+    <div className="flex flex-col gap-3">
+      {busy ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-muted-foreground flex items-center gap-2 text-sm" role="status">
+            <Spinner /> {step}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => void backend.cancelOpenRouterSignIn()}>
+            {t("provider.openrouter.cancel")}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <Button className="self-start" onClick={() => void start()}>
+            <IconExternalLink data-icon="inline-start" />
+            {t("provider.openrouter.signIn")}
+          </Button>
+          <p className="text-muted-foreground text-xs">{t("provider.openrouter.hint")}</p>
+        </div>
+      )}
+      {busy && page.browserError && page.url && (
+        <Alert role="alert">
+          <IconAlertTriangle />
+          <AlertDescription className="flex flex-col gap-2">
+            {t("provider.openrouter.browserFailed")}
+            <CopyField value={page.url} label={t("provider.openrouter.pageLabel")} />
+          </AlertDescription>
+        </Alert>
+      )}
+      {error && (
+        <Alert variant="destructive" role="alert">
+          <IconAlertTriangle />
+          <AlertTitle>{t("provider.openrouter.failed")}</AlertTitle>
+          <AlertDescription>{error.message}</AlertDescription>
+        </Alert>
+      )}
+      <p className="text-muted-foreground text-xs font-medium">{t("provider.openrouter.orPaste")}</p>
+    </div>
   )
 }
 

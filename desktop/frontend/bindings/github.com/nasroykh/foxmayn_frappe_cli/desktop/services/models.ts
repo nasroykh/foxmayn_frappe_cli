@@ -492,6 +492,26 @@ export interface Model {
 }
 
 /**
+ * OpenRouterAuth is the payload of EventOpenRouterAuth.
+ */
+export interface OpenRouterAuth {
+    "providerID": string;
+    "status": string;
+
+    /**
+     * AuthURL is OpenRouter's sign-in page (status "browser"), so the UI can
+     * offer to copy it when the browser did not open. It carries no secret:
+     * the PKCE verifier stays in Go.
+     */
+    "authURL"?: string;
+
+    /**
+     * BrowserError is set when the browser could not be opened.
+     */
+    "browserError"?: string;
+}
+
+/**
  * PasswordRequest adds a site with a username (or email) and password.
  */
 export interface PasswordRequest {
