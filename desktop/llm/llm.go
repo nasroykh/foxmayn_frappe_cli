@@ -142,8 +142,9 @@ type ToolResult struct {
 // What the fields hold per provider:
 //   - Anthropic: Text and Signature, or Redacted with Data.
 //   - OpenAI: Signature is the reasoning item id, Data its encrypted_content.
-//   - Gemini: Signature is a thought signature (standard base64 of the bytes)
-//     that belongs to the part right after it.
+//   - Gemini: Signature is a thought signature (the base64 string as
+//     received) that belongs to the part right after it; with Data
+//     "unattached" it belongs to no part and is never replayed.
 type Thinking struct {
 	Provider  string
 	Text      string
@@ -246,6 +247,10 @@ func (Stop) isEvent()      {}
 type APIError struct {
 	Status  int
 	Message string
+	// Category is set when the model ended its turn without a usable answer
+	// (a lower-case finish reason such as "malformed_function_call"); Message
+	// then says why, in words a user understands.
+	Category string
 }
 
 func (e *APIError) Error() string {

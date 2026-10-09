@@ -669,3 +669,183 @@ func TestRetryBeforeStream(t *testing.T) {
 		t.Fatalf("attempts %d events %#v", n, got)
 	}
 }
+
+// Text after a signed text part is its own part: its signature covers only
+// its own text.
+func TestSignedTextNotMerged(t *testing.T) {
+	p, _ := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"candidates":[{"content":{"parts":[{"text":"A","thoughtSignature":"c2ln"}],"role":"model"}}]}`+"\n\n"+
+			`data: {"candidates":[{"content":{"parts":[{"text":"B"}],"role":"model"},"finishReason":"STOP"}]}`+"\n\n")
+	}))
+	s, err := p.Stream(context.Background(), hi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := collect(t, s)
+	want := asst(sig("c2ln"), llm.Text{Text: "A"}, llm.Text{Text: "B"})
+	if stop := got[len(got)-1].(llm.Stop); !reflect.DeepEqual(stop.Message, want) {
+		t.Fatalf("stop %#v", stop.Message)
+	}
+}
+
+// A signature with no part of its own (on a thought, or a second one for a
+// run) is kept but never replayed onto another part.
+func TestOrphanSignatureNotReplayed(t *testing.T) {
+	p, _ := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"candidates":[{"content":{"parts":[{"text":"plan","thought":true,"thoughtSignature":"VEhPVUdIVA=="}],"role":"model"}}]}`+"\n\n"+
+			`data: {"candidates":[{"content":{"parts":[{"text":"A","thoughtSignature":"Rmlyc3Q="},{"text":"","thoughtSignature":"U2Vjb25k"}],"role":"model"}}]}`+"\n\n"+
+			`data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"whoami","args":{}}}],"role":"model"},"finishReason":"STOP"}]}`+"\n\n")
+	}))
+	s, err := p.Stream(context.Background(), hi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := collect(t, s)
+	stop := got[len(got)-1].(llm.Stop)
+	var call llm.ToolUse
+	for _, pt := range stop.Message.Parts {
+		if u, ok := pt.(llm.ToolUse); ok {
+			call = u
+		}
+	}
+	orphan := func(b64 string) llm.Thinking {
+		return llm.Thinking{Provider: llm.ProviderGemini, Signature: b64, Data: unattached}
+	}
+	want := asst(orphan("VEhPVUdIVA=="), sig("Rmlyc3Q="), llm.Text{Text: "A"}, orphan("U2Vjb25k"), call)
+	if !reflect.DeepEqual(stop.Message, want) {
+		t.Fatalf("stop\n got %#v\nwant %#v", stop.Message, want)
+	}
+	stored, err := llm.MarshalParts(stop.Message.Parts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts, err := llm.UnmarshalParts(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := hi()
+	req.Messages = append(req.Messages, llm.Message{Role: llm.RoleAssistant, Parts: parts},
+		llm.Message{Role: llm.RoleUser, Parts: []llm.Part{llm.ToolResult{ID: call.ID, Text: "me"}}})
+	b, raw := sent(t, req)
+	if strings.Contains(raw, "VEhPVUdIVA==") || strings.Contains(raw, "U2Vjb25k") {
+		t.Fatalf("orphan signature replayed: %s", raw)
+	}
+	m := b.Contents[1].Parts
+	if len(m) != 2 || m[0]["thoughtSignature"] != "Rmlyc3Q=" || m[1]["thoughtSignature"] != nil {
+		t.Fatalf("model parts %v", m)
+	}
+}
+
+// Finish reasons with no usable answer end the stream with an error that
+// says why.
+func TestFailFinishReasons(t *testing.T) {
+	for r := range failReasons {
+		p, _ := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, `data: {"candidates":[{"content":{"parts":[{"text":"x"}],"role":"model"},"finishReason":"`+r+`"}]}`+"\n\n")
+		}))
+		s, err := p.Stream(context.Background(), hi())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var last error
+		for {
+			_, err := s.Next()
+			if err != nil {
+				last = err
+				break
+			}
+		}
+		s.Close()
+		var ae *llm.APIError
+		if !errors.As(last, &ae) || ae.Status != 502 || ae.Category != strings.ToLower(r) || ae.Message == "" || !llm.IsRetryable(last) {
+			t.Fatalf("%s: %v", r, last)
+		}
+	}
+}
+
+// Calls stored without an id are answered by the results without one, in
+// order, on both sides.
+func TestIDlessCallsAndResults(t *testing.T) {
+	req := hi()
+	req.Messages = append(req.Messages,
+		asst(llm.ToolUse{Name: "a"}, llm.ToolUse{Name: "b"}),
+		llm.Message{Role: llm.RoleUser, Parts: []llm.Part{llm.ToolResult{Text: "ra"}, llm.ToolResult{Text: "rb", IsError: true}}})
+	b, raw := sent(t, req)
+	u := b.Contents[2].Parts
+	if len(u) != 2 {
+		t.Fatalf("user turn %s", raw)
+	}
+	r0, _ := u[0]["functionResponse"].(map[string]any)
+	r1, _ := u[1]["functionResponse"].(map[string]any)
+	if r0["name"] != "a" || r0["response"].(map[string]any)["output"] != "ra" ||
+		r1["name"] != "b" || r1["response"].(map[string]any)["error"] != "rb" {
+		t.Fatalf("responses %s", raw)
+	}
+}
+
+// An error body after the events is read only up to maxErrorBody.
+func TestBareErrorBounded(t *testing.T) {
+	p, _ := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"candidates":[{"content":{"parts":[{"text":"x"}],"role":"model"}}]}`+"\n\n")
+		_, _ = io.WriteString(w, `{"error":{"code":503,"message":"`+strings.Repeat("y", 3*maxErrorBody)+`"}}`+"\n")
+	}))
+	s, err := p.Stream(context.Background(), hi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for {
+		_, err := s.Next()
+		if err != nil {
+			var ae *llm.APIError
+			if !errors.As(err, &ae) || ae.Status != 502 {
+				t.Fatalf("err %v", err)
+			}
+			return
+		}
+	}
+}
+
+// SSE allows CRLF, LF and bare CR line endings, and an event's data may be
+// spread over several data lines (joined with a newline).
+func TestLineEndings(t *testing.T) {
+	crlf, err := os.ReadFile(filepath.Join("testdata", "crlf.sse"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(crlf), "\r\n") {
+		t.Fatal("crlf.sse lost its CRLF line endings (see testdata/.gitattributes)")
+	}
+	lf := strings.ReplaceAll(string(crlf), "\r\n", "\n")
+	two := "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello, world\"}],\"role\":\"model\"},\n" +
+		"data: \"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":5,\"candidatesTokenCount\":2}}\n\n"
+	for name, body := range map[string]string{
+		"crlf":      string(crlf),
+		"bare cr":   strings.ReplaceAll(lf, "\n", "\r"),
+		"two lines": two,
+	} {
+		p, _ := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, body)
+		}))
+		s, err := p.Stream(context.Background(), hi())
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got := collect(t, s)
+		var text strings.Builder
+		for _, ev := range got {
+			if d, ok := ev.(llm.TextDelta); ok {
+				text.WriteString(d.Text)
+			}
+		}
+		stop, ok := got[len(got)-1].(llm.Stop)
+		if text.String() != "Hello, world" || !ok || stop.Reason != llm.StopEndTurn {
+			t.Fatalf("%s: %#v", name, got)
+		}
+	}
+}

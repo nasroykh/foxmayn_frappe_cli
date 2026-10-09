@@ -11,10 +11,18 @@
 //     The adapter stores the string as received in llm.Thinking{Provider:
 //     gemini, Signature} right before the part it belongs to, so ToolUse and
 //     Text keep their shape, and puts it back on that part, byte for byte,
-//     when it replays the history. A signature that arrives on an empty text
-//     part belongs to the text before it and is put there; one with no part
-//     to sit on (nothing but the signature) is stored but not sent back,
-//     since a part with no data is not valid input.
+//     when it replays the history. Text after a signed text part starts a new
+//     part, so signed and unsigned text are never merged. A signature on an
+//     empty text part belongs to the text run right before it when that run
+//     has none. Any other signature (on a thought part, a second one for the
+//     same run, one with no run before it) has no part to sit on: it is
+//     stored with Data "unattached" and never sent back, neither alone (a
+//     part with no data is not valid input) nor on another part.
+//   - Finish reasons that mean "no usable answer" (MALFORMED_FUNCTION_CALL,
+//     UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MISSING_THOUGHT_SIGNATURE,
+//     MALFORMED_RESPONSE, OTHER, LANGUAGE) end the stream with an
+//     *llm.APIError (502, Category the lower-case reason) instead of a Stop,
+//     so the user is told why there is no reply.
 //   - Function calls arrive whole (the Gemini API does not stream partial
 //     arguments; partialArgs is Vertex only), possibly several per chunk and
 //     over several chunks. The API usually gives no call id: the adapter makes
@@ -70,7 +78,22 @@ const (
 	// maxRetryAfter is the longest Retry-After waited for; a longer one is
 	// returned as the error.
 	maxRetryAfter = 10 * time.Second
+	// unattached marks (in Thinking.Data) a signature that belongs to no
+	// part; it is stored but never replayed.
+	unattached = "unattached"
 )
+
+// failReasons are the finish reasons that leave no usable answer, with what
+// the user is told.
+var failReasons = map[string]string{
+	"MALFORMED_FUNCTION_CALL":   "the model produced a tool call that could not be read",
+	"UNEXPECTED_TOOL_CALL":      "the model called a tool that was not offered",
+	"TOO_MANY_TOOL_CALLS":       "the model made too many tool calls in one turn",
+	"MISSING_THOUGHT_SIGNATURE": "the API asked for a thought signature the conversation does not have",
+	"MALFORMED_RESPONSE":        "the model's answer could not be read",
+	"OTHER":                     "the model stopped for a reason it did not give",
+	"LANGUAGE":                  "the model does not support the language of the conversation",
+}
 
 // modelID is what a model id may look like once "models/" is cut off.
 var modelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -537,6 +560,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, err
 	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64<<10), maxLine)
+	sc.Split(scanLines)
 	s := &stream{ctx: ctx, p: p, body: resp.Body, sc: sc}
 	ev, err := s.event()
 	if err == io.EOF {
@@ -597,7 +621,8 @@ type pendingCall struct{ id, name string }
 //   - The next user turn starts with one function response per call of that
 //     model turn, in call order, named after the call (the API wants as many
 //     responses as calls). A call with no result gets an error response; a
-//     result that matches no call is dropped. Its text and images follow.
+//     result that matches no call is dropped; a result with an empty id
+//     answers the next call that had none. Its text and images follow.
 func buildContents(ctx context.Context, images llm.ImageResolver, in []llm.Message) ([]content, error) {
 	var out []content
 	var pending []pendingCall
@@ -611,9 +636,12 @@ func buildContents(ctx context.Context, images llm.ImageResolver, in []llm.Messa
 			continue
 		}
 		results := map[string]llm.ToolResult{}
+		var anon []llm.ToolResult // results with an empty id, in order
 		for _, pt := range m.Parts {
 			if r, ok := pt.(llm.ToolResult); ok {
-				if _, dup := results[r.ID]; !dup {
+				if r.ID == "" {
+					anon = append(anon, r)
+				} else if _, dup := results[r.ID]; !dup {
 					results[r.ID] = r
 				}
 			}
@@ -621,6 +649,10 @@ func buildContents(ctx context.Context, images llm.ImageResolver, in []llm.Messa
 		var parts []part
 		for _, c := range pending {
 			r, ok := results[c.id]
+			if !ok && c.id == "" && len(anon) > 0 {
+				// A call stored without an id takes the next result without one.
+				r, ok, anon = anon[0], true, anon[1:]
+			}
 			if !ok {
 				r = llm.ToolResult{ID: c.id, Text: "no result", IsError: true}
 			}
@@ -663,7 +695,7 @@ func modelParts(m llm.Message) ([]part, []pendingCall) {
 	for _, pt := range m.Parts {
 		switch p := pt.(type) {
 		case llm.Thinking:
-			if llm.ForeignThinking(p, llm.ProviderGemini) {
+			if llm.ForeignThinking(p, llm.ProviderGemini) || p.Data == unattached {
 				continue
 			}
 			if p.Signature != "" {
@@ -722,9 +754,10 @@ func newCallID() string {
 // element is one model part being built: a text run or a function call,
 // with the thought signature that came on it.
 type element struct {
-	call *functionCall
-	text strings.Builder
-	sig  string
+	call   *functionCall
+	text   strings.Builder
+	sig    string
+	orphan bool // a signature with no part (stored with Data unattached)
 }
 
 type stream struct {
@@ -738,6 +771,7 @@ type stream struct {
 	usage    llm.Usage
 	reason   string
 	category string
+	fail     *llm.APIError // a finish reason with no usable answer
 	done     bool
 	closed   bool
 }
@@ -770,6 +804,10 @@ func (s *stream) Next() (llm.Event, error) {
 				s.done = true
 				return nil, &llm.APIError{Status: 502, Message: "stream ended before finishReason"}
 			}
+			if s.fail != nil {
+				s.done = true
+				return nil, s.fail
+			}
 			s.stop()
 			continue
 		}
@@ -781,6 +819,33 @@ func (s *stream) Next() (llm.Event, error) {
 			return nil, err
 		}
 	}
+}
+
+// scanLines splits at CRLF, LF or a bare CR, the three SSE line endings.
+func scanLines(data []byte, atEOF bool) (int, []byte, error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	if i := bytes.IndexAny(data, "\r\n"); i >= 0 {
+		if data[i] == '\n' {
+			return i + 1, data[:i], nil
+		}
+		if i+1 < len(data) {
+			if data[i+1] == '\n' {
+				return i + 2, data[:i], nil
+			}
+			return i + 1, data[:i], nil
+		}
+		if atEOF {
+			return i + 1, data[:i], nil
+		}
+		// A CR at the end of the buffer: an LF may follow.
+		return 0, nil, nil
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
 // event reads the next SSE event and decodes its data. It returns io.EOF at
@@ -839,6 +904,9 @@ func (s *stream) bareError(first []byte) error {
 	for len(buf) < maxErrorBody && s.sc.Scan() {
 		buf = append(buf, '\n')
 		buf = append(buf, s.sc.Bytes()...)
+	}
+	if len(buf) > maxErrorBody {
+		buf = buf[:maxErrorBody]
 	}
 	if s.ctx.Err() != nil {
 		return s.ctx.Err()
@@ -904,26 +972,43 @@ func (s *stream) part(p *part) {
 		}
 		s.elems = append(s.elems, &element{call: &fc, sig: sig})
 		s.textRun = nil
-	case p.Text != "" && !p.Thought:
-		if s.textRun == nil || sig != "" {
+	case p.Thought:
+		// A thought summary is not shown or replayed; a signature on it
+		// belongs to no part the adapter sends back.
+		if sig != "" {
+			s.orphan(sig)
+		}
+	case p.Text != "":
+		// Never merge into a signed run: its signature covers its own text.
+		if s.textRun == nil || sig != "" || s.textRun.sig != "" {
 			s.textRun = &element{sig: sig}
 			s.elems = append(s.elems, s.textRun)
 		}
 		s.textRun.text.WriteString(p.Text)
 		s.queue = append(s.queue, llm.TextDelta{Text: p.Text})
 	case sig != "":
-		// A signature on its own (empty text or a thought summary): it
-		// belongs to the text run before it when that has none.
+		// A signature on an empty text part belongs to the text run right
+		// before it when that has none.
 		if s.textRun != nil && s.textRun.sig == "" {
 			s.textRun.sig = sig
 			return
 		}
-		s.elems = append(s.elems, &element{sig: sig})
-		s.textRun = nil
+		s.orphan(sig)
 	}
 }
 
+// orphan keeps a signature that belongs to no part.
+func (s *stream) orphan(sig string) {
+	s.elems = append(s.elems, &element{sig: sig, orphan: true})
+	s.textRun = nil
+}
+
 func (s *stream) finishReason(r string) {
+	if msg, ok := failReasons[r]; ok {
+		s.reason = strings.ToLower(r)
+		s.fail = &llm.APIError{Status: 502, Category: strings.ToLower(r), Message: msg}
+		return
+	}
 	switch r {
 	case "STOP":
 		s.reason = llm.StopEndTurn
@@ -944,6 +1029,10 @@ func (s *stream) stop() {
 	var parts []llm.Part
 	var calls []llm.ToolCall
 	for _, e := range s.elems {
+		if e.orphan {
+			parts = append(parts, llm.Thinking{Provider: llm.ProviderGemini, Signature: e.sig, Data: unattached})
+			continue
+		}
 		if e.sig != "" {
 			parts = append(parts, llm.Thinking{Provider: llm.ProviderGemini, Signature: e.sig})
 		}
