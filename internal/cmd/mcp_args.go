@@ -122,6 +122,22 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 	if err := policy.checkReport(ctx, c, scope); err != nil {
 		return fail(auditDenied, err)
 	}
+	if scope.Restore != nil {
+		id, dt, name, err := policy.checkRestore(ctx, c, scope)
+		if dt != "" {
+			rec.Doctypes = append(append([]string(nil), rec.Doctypes...), dt)
+		}
+		if name != "" {
+			rec.Names = append(append([]string(nil), rec.Names...), name)
+		}
+		if err != nil {
+			if strings.HasPrefix(err.Error(), "policy:") {
+				return fail(auditDenied, err)
+			}
+			return fail(auditError, err)
+		}
+		ctx = withRestoreID(ctx, id)
+	}
 	if err := checkCommentAuthor(ctx, c, policy, req, scope); err != nil {
 		return fail(auditDenied, err)
 	}

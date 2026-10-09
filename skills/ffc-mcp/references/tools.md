@@ -1,6 +1,6 @@
 # MCP tools, resources and prompts
 
-49 tools. `*` = required argument. Tools in `collab`, `admin`, `files` and `erp` appear only when `--toolsets` names their set. With several sites served, every tool except `list_sites` also takes a required `site`. "Doc tools" take `doctype*` and `name*`.
+50 tools. `*` = required argument. Tools in `collab`, `admin`, `files` and `erp` appear only when `--toolsets` names their set. With several sites served, every tool except `list_sites` also takes a required `site`. "Doc tools" take `doctype*` and `name*`.
 
 ## core (default)
 
@@ -39,6 +39,7 @@
 | `amend_doc` | write | `data` (overrides) |
 | `copy_doc` | write | `data` (overrides) |
 | `rename_doc` | write, confirmed with `merge` | `new_name*`, `merge` |
+| `restore_doc` | write | `deleted_document`, or `doctype` and `name` instead of both (exactly one form; `ffc restore-doc`); the DocType rules apply to the deleted document's own DocType |
 | `apply_workflow` | write, confirmed | `action*` |
 | `get_transitions` | read | none |
 

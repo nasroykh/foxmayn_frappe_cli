@@ -65,6 +65,7 @@ These apply whatever the config says, unless the config explicitly lists the ite
   - Settings and credentials: System Settings, OAuth Client, OAuth Provider Settings, OAuth Bearer Token, OAuth Authorization Code, Connected App, Token Cache, Social Login Key, LDAP Settings, Email Account.
   - Code and automation: Server Script, Client Script, Report, Print Format, Website Script, Web Page, Web Form, Custom HTML Block, Webhook, Notification, Auto Email Report, Assignment Rule, Energy Point Rule, Scheduled Job Type, System Console.
   - Bulk paths and files: Data Import, File.
+- `restore_doc` is checked against the DocType of the deleted document, which it reads from the Deleted Document record, as well as against Deleted Document itself: restoring a deleted Server Script, User or Webhook needs `allow_doctypes` to list that DocType (and Deleted Document if the list is set), and `deny_doctypes` applies to it. A Deleted Document without a DocType is refused. The audit line lists both DocTypes.
 - **Denied methods** in `call_method` unless `allow_methods` lists them: the System Console's `execute_code`, `generate_keys` (rotates a user's API keys), and the Frappe Cloud app installer (`frappe.integrations.frappe_providers.*`).
 - `call_method` refuses method names containing `/` or spaces, and a `frappe.client` or form-save call that names no DocType.
 - A comment posted through `call_method` must be authored by the signed-in user.

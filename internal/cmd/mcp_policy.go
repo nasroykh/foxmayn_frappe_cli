@@ -36,7 +36,7 @@ var toolActions = map[string]toolAction{
 	"bulk_create": actWrite, "bulk_update": actWrite, "bulk_delete": actWrite,
 	"submit_doc": actWrite, "cancel_doc": actWrite, "amend_doc": actWrite,
 	"bulk_submit": actWrite, "bulk_cancel": actWrite,
-	"copy_doc": actWrite, "rename_doc": actWrite, "apply_workflow": actWrite,
+	"copy_doc": actWrite, "rename_doc": actWrite, "apply_workflow": actWrite, "restore_doc": actWrite,
 
 	"add_comment": actWrite, "assign_to": actWrite, "remove_assignment": actWrite,
 	"add_tag": actWrite, "remove_tag": actWrite, "share_doc": actWrite, "unshare_doc": actWrite,
@@ -104,6 +104,7 @@ var toolSurface = map[string]struct {
 	"copy_doc":        {toolsetLifecycle, "Duplicate document", false},
 	"rename_doc":      {toolsetLifecycle, "Rename or merge document", false},
 	"apply_workflow":  {toolsetLifecycle, "Apply workflow action", false},
+	"restore_doc":     {toolsetLifecycle, "Restore deleted document", false},
 	"get_transitions": {toolsetLifecycle, "Get workflow transitions", false},
 
 	"add_comment":       {toolsetCollab, "Add comment", false},
@@ -169,15 +170,20 @@ type toolScope struct {
 	// Bypass are the permission-bypass arguments (bypassArgs) a call_method
 	// call carries, as written. check refuses the call.
 	Bypass  []string
-	Report  string // run_report: checked through the report's ref_doctype
-	Confirm bool   // destroys or merges documents: ask the user first
+	Report  string        // run_report: checked through the report's ref_doctype
+	Restore *restoreScope // restore_doc: checked through the Deleted Document's deleted_doctype
+	Confirm bool          // destroys or merges documents: ask the user first
 	// Field references of filters, fields and order_by (queryScope).
 	FilterFields, SelectFields []string
 }
 
 // optionalDoctype are the tools for which an empty doctype means no DocType
 // (search is then global, list_errors unfiltered).
-var optionalDoctype = map[string]bool{"search": true, "list_errors": true, "erp_item": true, "erp_party": true}
+var optionalDoctype = map[string]bool{"search": true, "list_errors": true, "erp_item": true, "erp_party": true, "restore_doc": true}
+
+// restoreScope is what a restore_doc call names: a Deleted Document, or the
+// DocType and name of the document it deleted.
+type restoreScope struct{ Deleted, Doctype, Name string }
 
 // scopeOf reads what a tool call touches from its arguments. The tool's own
 // parse step has already validated them.
@@ -226,6 +232,19 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 		sc.Doctypes = append(sc.Doctypes, "File")
 	case "run_report":
 		sc.Report = str("report_name")
+	case "restore_doc":
+		// The write lands on the deleted document's own DocType, which only
+		// the Deleted Document record tells (checkRestore). Writing a
+		// Deleted Document is not sensitive by itself.
+		rs := &restoreScope{Deleted: strings.TrimSpace(str("deleted_document")), Doctype: strings.TrimSpace(str("doctype"))}
+		if n, ok := docName(args["name"]); ok {
+			rs.Name = n
+		}
+		sc.Restore = rs
+		sc.Doctypes = append(sc.Doctypes, "Deleted Document")
+		if rs.Deleted != "" {
+			sc.Names = append(sc.Names, rs.Deleted)
+		}
 	case "call_method":
 		sc.Method = str("method")
 		sc.Bypass = callBypass(sc.Method, args["args"])
@@ -543,6 +562,47 @@ func (p mcpPolicy) checkReport(ctx context.Context, c *client.FrappeClient, sc t
 		return fmt.Errorf("policy: report %q has no ref_doctype, so the DocType rules cannot be checked", sc.Report)
 	}
 	return p.doctypeAllowed(dt, false)
+}
+
+// checkRestore applies the DocType write rules to restore_doc through the
+// DocType the Deleted Document was made from, which only the site knows.
+// Without it a restore scoped to "Deleted Document" could re-create a Server
+// Script, User or Webhook the policy would not let MCP write. It returns the
+// Deleted Document to restore (the call restores exactly that one) and, even
+// with an error, the original DocType and name once they are known, for the
+// audit line.
+func (p mcpPolicy) checkRestore(ctx context.Context, c *client.FrappeClient, sc toolScope) (id, dt, name string, err error) {
+	rs := sc.Restore
+	if rs == nil {
+		return "", "", "", nil
+	}
+	if id, err = resolveDeleted(ctx, c, rs.Deleted, rs.Doctype, rs.Name); err != nil {
+		return "", "", "", fmt.Errorf("policy: finding the Deleted Document to restore: %w", err)
+	}
+	d, err := c.GetDoc(ctx, "Deleted Document", id)
+	if err != nil {
+		return "", "", "", fmt.Errorf("policy: reading the DocType of Deleted Document %q: %w", id, err)
+	}
+	dt, _ = d["deleted_doctype"].(string)
+	dt = strings.TrimSpace(dt)
+	name, _ = docName(d["deleted_name"])
+	switch {
+	case dt == "":
+		return "", "", name, fmt.Errorf("policy: Deleted Document %q has no deleted_doctype, so the DocType rules cannot be checked", id)
+	case rs.Doctype != "" && !strings.EqualFold(rs.Doctype, dt):
+		return "", dt, name, fmt.Errorf("policy: Deleted Document %q is a deleted %s, not a %s", id, dt, rs.Doctype)
+	}
+	if err := p.doctypeAllowed(dt, true); err != nil {
+		return "", dt, name, err
+	}
+	return id, dt, name, nil
+}
+
+type restoreCtxKey struct{}
+
+// withRestoreID hands the Deleted Document checkRestore approved to the call.
+func withRestoreID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, restoreCtxKey{}, id)
 }
 
 type policyCtxKey struct{}
