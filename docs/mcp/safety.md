@@ -68,6 +68,7 @@ These apply whatever the config says, unless the config explicitly lists the ite
 - **Denied methods** in `call_method` unless `allow_methods` lists them: the System Console's `execute_code`, `generate_keys` (rotates a user's API keys), and the Frappe Cloud app installer (`frappe.integrations.frappe_providers.*`).
 - `call_method` refuses method names containing `/` or spaces, and a `frappe.client` or form-save call that names no DocType.
 - A comment posted through `call_method` must be authored by the signed-in user.
+- `call_method` refuses a call whose `args` has a top-level `ignore_permissions` or `ignore_user_permissions`, whatever its value (even `false` or `0`). Some whitelisted methods take these straight from the request (for example ERPNext's `make_sales_invoice`, `create_dunning`, `make_timesheet` and `employee_query`) and then skip the site's permission checks for the signed-in user, which a prompt-injected client must not be able to do. No setting allows it. The CLI (`ffc api`, `ffc call-method`) is you acting with your own credentials and is unchanged.
 
 ### Limits of these checks
 
