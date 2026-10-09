@@ -42,12 +42,27 @@ type fakeHost struct {
 	files   []string
 	themes  []bool
 	openURL func(string) error
+	subs    map[string][]func(any)
 }
 
 func (h *fakeHost) Emit(name string, data any) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.events = append(h.events, event{name, data})
+	subs := append([]func(any){}, h.subs[name]...)
+	h.mu.Unlock()
+	for _, fn := range subs {
+		fn(data)
+	}
+}
+
+// Subscribe is WailsHost.Subscribe.
+func (h *fakeHost) Subscribe(name string, fn func(any)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.subs == nil {
+		h.subs = map[string][]func(any){}
+	}
+	h.subs[name] = append(h.subs[name], fn)
 }
 
 func (h *fakeHost) OpenURL(u string) error {

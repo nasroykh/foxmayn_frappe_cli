@@ -6,8 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
+	"math"
 	"reflect"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -17,6 +21,7 @@ import (
 const (
 	approvalDeclinedResult  = "The user declined this change. Nothing was changed."
 	approvalCancelledResult = "Stopped by the user before this change ran."
+	approvalUnaskedWarning  = "Warning: this change was applied without the confirmation the app expects."
 	approvalConflictHint    = "\nThe document changed after the user was shown this change, so nothing was saved. Read it again with get_doc and tell the user what changed before trying anything else; do not retry on your own."
 )
 
@@ -45,6 +50,7 @@ func newApprovalBroker(emit func(string, any)) *approvalBroker {
 func (b *approvalBroker) open(convID string, card ChatApproval) *pendingApproval {
 	var raw [12]byte
 	_, _ = rand.Read(raw[:])
+	card.ConvID = convID
 	card.ApprovalID = hex.EncodeToString(raw[:])
 	p := &pendingApproval{convID: convID, card: card, ch: make(chan bool, 1)}
 	b.mu.Lock()
@@ -63,7 +69,10 @@ func (b *approvalBroker) wait(ctx context.Context, p *pendingApproval) string {
 	select {
 	case ok := <-p.ch:
 		outcome = ApprovalDeclined
-		if ok {
+		// An approve that raced with a cancel must not run the call.
+		if ok && ctx.Err() != nil {
+			outcome = ApprovalCancelled
+		} else if ok {
 			outcome = ApprovalApproved
 		}
 	case <-ctx.Done():
@@ -71,17 +80,17 @@ func (b *approvalBroker) wait(ctx context.Context, p *pendingApproval) string {
 		delete(b.pending, p.card.ApprovalID)
 		b.mu.Unlock()
 	}
-	b.emit(EventChatApprovalClosed, ChatApprovalClosed{RunID: p.card.RunID, ApprovalID: p.card.ApprovalID, Outcome: outcome})
+	b.emit(EventChatApprovalClosed, ChatApprovalClosed{ConvID: p.convID, RunID: p.card.RunID, ApprovalID: p.card.ApprovalID, Outcome: outcome})
 	return outcome
 }
 
-// answer settles an open card. An unknown id, or one answered already, is an
-// error.
-func (b *approvalBroker) answer(id string, approve bool) error {
+// answer settles an open card of conversation convID. An unknown id, one
+// answered already and one of another conversation are errors.
+func (b *approvalBroker) answer(convID, id string, approve bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	p, ok := b.pending[id]
-	if !ok {
+	if !ok || p.convID != convID {
 		return &Error{Code: CodeNotFound, Message: "This request was already answered or has ended."}
 	}
 	delete(b.pending, id)
@@ -107,9 +116,9 @@ func (b *approvalBroker) list(convID string) []ChatApproval {
 	return out
 }
 
-// answer settles the approval card approvalID.
-func (r *runner) answer(approvalID string, approve bool) error {
-	return r.approvals.answer(approvalID, approve)
+// answer settles the approval card approvalID of conversation convID.
+func (r *runner) answer(convID, approvalID string, approve bool) error {
+	return r.approvals.answer(convID, approvalID, approve)
 }
 
 // pendingApprovals lists the open cards of a conversation, so the UI can show
@@ -184,6 +193,7 @@ func (a *activeRun) runWrite(ctx context.Context, e *callEntry) {
 			if diff, msg = a.prepareUpdate(ctx, e); msg != "" {
 				if ctx.Err() != nil {
 					e.result, e.isErr, e.status = approvalCancelledResult, true, ToolStopped
+					a.setApproval(e, ApprovalCancelled)
 					return
 				}
 				fail(msg)
@@ -203,6 +213,7 @@ func (a *activeRun) runWrite(ctx context.Context, e *callEntry) {
 		if !e.cls.WillAsk {
 			card := a.card(e, ApprovalApp)
 			card.Diff = diff
+			card.NoChanges = e.call.Name == "update_doc" && len(diff) == 0
 			switch a.r.approvals.wait(ctx, a.r.approvals.open(a.conv.ID, card)) {
 			case ApprovalDeclined:
 				a.setApproval(e, ApprovalDeclined)
@@ -223,6 +234,23 @@ func (a *activeRun) runWrite(ctx context.Context, e *callEntry) {
 	a.askMu.Lock()
 	a.asking = nil
 	a.askMu.Unlock()
+	if ctx.Err() != nil && a.approvalOf(e) == "" {
+		a.setApproval(e, ApprovalCancelled)
+	}
+	// Defense in depth: a call that had to be asked about must not succeed
+	// unless ffc asked and the user said yes.
+	if a.r.afterCall != nil {
+		a.r.afterCall(e)
+	}
+	if e.cls.WillAsk && !e.isErr && a.approvalOf(e) != ApprovalFFCApproved {
+		// The change is done; say so, keep the real result, and end the run.
+		log.Printf("assistant: %s on %s ran without ffc asking for confirmation (run %s)", e.call.Name, a.conv.Site, a.runID)
+		e.result = approvalUnaskedWarning + "\n" + e.result
+		e.isErr, e.status = true, ToolError
+		a.errMu.Lock()
+		a.violation = "A change to " + a.conv.Site + " (" + e.call.Name + ") was applied without the confirmation the app expects. The assistant was stopped. Check the document before going on."
+		a.errMu.Unlock()
+	}
 	if e.isErr && isConflict(e.result) {
 		e.result += approvalConflictHint
 	}
@@ -283,11 +311,71 @@ func diffFields(doc, data map[string]any) []DiffField {
 			continue
 		}
 		ov := doc[k]
-		if reflect.DeepEqual(ov, nv) {
+		if sameValue(ov, nv) {
 			continue
 		}
 		out = append(out, DiffField{Field: k, Old: ov, New: nv})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Field < out[j].Field })
 	return out
+}
+
+// sameValue is DeepEqual after the differences Frappe hides: a flag as true or
+// 1, a number as 5 or "5".
+func sameValue(a, b any) bool {
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	// Two strings are never compared as numbers ("0123" is not "123"): at
+	// least one side must be a bool or a JSON number.
+	if !isFlagOrNumber(a) && !isFlagOrNumber(b) {
+		return false
+	}
+	x, okx := asNumber(a)
+	y, oky := asNumber(b)
+	return okx && oky && math.Abs(x-y) < 1e-9
+}
+
+func isFlagOrNumber(v any) bool {
+	switch v.(type) {
+	case bool, float64, int, int64, json.Number:
+		return true
+	}
+	return false
+}
+
+// plainNumber is a string that is only a number: no spaces, no exponent.
+var plainNumber = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
+
+// asNumber reads a bool, number or numeric string as a number.
+func asNumber(v any) (float64, bool) {
+	switch t := v.(type) {
+	case bool:
+		if t {
+			return 1, true
+		}
+		return 0, true
+	case float64:
+		return t, true
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case json.Number:
+		f, err := t.Float64()
+		return f, err == nil
+	case string:
+		if !plainNumber.MatchString(t) {
+			return 0, false
+		}
+		f, err := strconv.ParseFloat(t, 64)
+		return f, err == nil
+	}
+	return 0, false
+}
+
+func (a *activeRun) violationText() string {
+	a.errMu.Lock()
+	defer a.errMu.Unlock()
+	return a.violation
 }

@@ -664,3 +664,24 @@ func TestResumeRunOnce(t *testing.T) {
 		t.Errorf("run = %+v", got)
 	}
 }
+
+func TestSetConversationModeAndListRuns(t *testing.T) {
+	s, _ := openTemp(t)
+	c := mustConv(t, s, "t")
+	if err := s.SetConversationMode(c.ID, "ask"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetConversation(c.ID)
+	if err != nil || got.Mode != "ask" || !got.Updated.Equal(c.Updated) {
+		t.Fatalf("conv = %+v, %v", got, err)
+	}
+	if err := s.SetConversationMode("nope", "ask"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown conversation: %v", err)
+	}
+	r1, _ := s.CreateRun(c.ID)
+	r2, _ := s.CreateRun(c.ID)
+	runs, err := s.ListRuns(c.ID)
+	if err != nil || len(runs) != 2 || runs[0].ID != r1.ID || runs[1].ID != r2.ID {
+		t.Errorf("runs = %+v, %v", runs, err)
+	}
+}

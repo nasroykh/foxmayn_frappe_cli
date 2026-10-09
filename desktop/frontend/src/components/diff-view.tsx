@@ -1,16 +1,27 @@
+import { useTranslation } from "react-i18next"
 import { cn } from "cn"
 
 /** A unified diff with added and removed lines marked. */
-export function DiffView({ diff }: { diff: string }) {
-  if (!diff) return <p className="text-muted-foreground pt-2 text-xs">No changes.</p>
+export function DiffView({
+  diff,
+  label,
+  headers = true,
+}: {
+  diff: string
+  label?: string
+  /** True for a file diff, whose "+++" and "---" lines are headers, not changes. */
+  headers?: boolean
+}) {
+  const { t } = useTranslation()
+  if (!diff) return <p className="text-muted-foreground pt-2 text-xs">{t("diff.none")}</p>
   return (
     <pre
       className="bg-muted mt-2 max-h-56 overflow-auto rounded-lg py-2 font-mono text-xs leading-relaxed"
-      aria-label="Changes to the settings file"
+      aria-label={label ?? t("diff.settingsLabel")}
     >
       {diff.split("\n").map((line, i) => {
-        const added = line.startsWith("+") && !line.startsWith("+++")
-        const removed = line.startsWith("-") && !line.startsWith("---")
+        const added = line.startsWith("+") && !(headers && line.startsWith("+++"))
+        const removed = line.startsWith("-") && !(headers && line.startsWith("---"))
         return (
           <div
             key={i}
@@ -21,7 +32,7 @@ export function DiffView({ diff }: { diff: string }) {
               !added && !removed && "text-muted-foreground",
             )}
           >
-            <span className="sr-only">{added ? "Added: " : removed ? "Removed: " : ""}</span>
+            <span className="sr-only">{added ? t("diff.added") : removed ? t("diff.removed") : ""}</span>
             {line}
           </div>
         )

@@ -438,3 +438,35 @@ func (s *Store) AbandonPausedRuns(convID string) error {
 	}
 	return nil
 }
+
+// SetConversationMode changes a conversation's write mode without touching
+// the updated time.
+func (s *Store) SetConversationMode(id, mode string) error {
+	return execOne("set conversation mode", s.db, `UPDATE conversations SET mode=? WHERE id=?`, mode, id)
+}
+
+// ListRuns returns a conversation's runs, oldest first.
+func (s *Store) ListRuns(convID string) ([]Run, error) {
+	rows, err := s.db.Query(`SELECT id,conv_id,status,steps,error,started,ended FROM runs WHERE conv_id=? ORDER BY started, rowid`, convID)
+	if err != nil {
+		return nil, fmt.Errorf("list runs: %w", err)
+	}
+	defer rows.Close()
+	var out []Run
+	for rows.Next() {
+		var r Run
+		var st, en int64
+		if err := rows.Scan(&r.ID, &r.ConvID, &r.Status, &r.Steps, &r.Error, &st, &en); err != nil {
+			return nil, fmt.Errorf("list runs: %w", err)
+		}
+		r.Started = ms(st)
+		if en != 0 {
+			r.Ended = ms(en)
+		}
+		out = append(out, r)
+	}
+	if err := rowsErr(rows, "list runs"); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

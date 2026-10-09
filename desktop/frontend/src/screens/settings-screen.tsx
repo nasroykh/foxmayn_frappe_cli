@@ -12,6 +12,7 @@ import {
   IconSun,
 } from "@tabler/icons-react"
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 
 import { useApp } from "@/app/app-context"
 import { useTheme, type Theme } from "@/app/theme"
@@ -32,6 +33,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { backend } from "@/lib/backend"
 import type { UpdateInfo } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
+import { ProviderSettings } from "@/screens/assistant/provider-settings"
 import { WSLAlert } from "@/screens/wsl-alert"
 
 const REPO = "https://github.com/nasroykh/foxmayn_frappe_cli"
@@ -46,17 +48,22 @@ async function attempt(fn: () => Promise<unknown>) {
 }
 
 export function SettingsScreen() {
+  const { t } = useTranslation()
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title="Settings" description="How the app looks, where things are kept, and what it is." />
       <Tabs defaultValue="general">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="assistant">{t("settings.assistantTab")}</TabsTrigger>
           <TabsTrigger value="ffc">ffc helper</TabsTrigger>
           <TabsTrigger value="about">About</TabsTrigger>
         </TabsList>
         <TabsContent value="general" className="pt-4">
           <GeneralTab />
+        </TabsContent>
+        <TabsContent value="assistant" className="pt-4">
+          <ProviderSettings />
         </TabsContent>
         <TabsContent value="ffc" className="pt-4">
           <FFCTab />

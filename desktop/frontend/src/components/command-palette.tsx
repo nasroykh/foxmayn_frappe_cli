@@ -4,6 +4,7 @@ import {
   IconMoon,
   IconPlugConnected,
   IconPlus,
+  IconMessageChatbot,
   IconRobot,
   IconSettings,
   IconSun,
@@ -71,6 +72,10 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             <CommandItem onSelect={run(() => setScreen("sites"))}>
               <IconWorld />
               Sites
+            </CommandItem>
+            <CommandItem onSelect={run(() => setScreen("assistant"))}>
+              <IconMessageChatbot />
+              {t("nav.assistant")}
             </CommandItem>
             <CommandItem onSelect={run(() => setScreen("assistants"))}>
               <IconRobot />

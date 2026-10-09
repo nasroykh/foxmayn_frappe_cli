@@ -8,6 +8,7 @@ import { InstallFFCDialog } from "@/components/install-ffc-dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { AddSiteSheet } from "@/screens/add-site-sheet"
+import { AssistantScreen } from "@/screens/assistant/assistant-screen"
 import { AssistantsScreen } from "@/screens/assistants-screen"
 import { ConnectDialog, type ConnectTarget } from "@/screens/connect-dialog"
 import { Onboarding } from "@/screens/onboarding"
@@ -94,13 +95,20 @@ function Shell() {
       <AppSidebar />
       <SidebarInset className="min-w-0 overflow-hidden">
         <AppHeader onOpenPalette={() => setPaletteOpen(true)} />
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="mx-auto w-full max-w-5xl p-6">
-            {screen === "sites" && <SitesScreen />}
-            {screen === "assistants" && <AssistantsScreen />}
-            {screen === "settings" && <SettingsScreen />}
+        {screen === "assistant" ? (
+          // The chat scrolls its own panes and fills the window.
+          <div className="min-h-0 flex-1">
+            <AssistantScreen />
           </div>
-        </ScrollArea>
+        ) : (
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="mx-auto w-full max-w-5xl p-6">
+              {screen === "sites" && <SitesScreen />}
+              {screen === "assistants" && <AssistantsScreen />}
+              {screen === "settings" && <SettingsScreen />}
+            </div>
+          </ScrollArea>
+        )}
       </SidebarInset>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </SidebarProvider>

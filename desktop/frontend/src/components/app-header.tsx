@@ -36,7 +36,7 @@ export function useModKey() {
 export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
   const { t } = useTranslation()
   const { screen, setScreen } = useApp()
-  const titles = { sites: "Sites", assistants: t("connectApps.title"), settings: "Settings" }
+  const titles = { sites: "Sites", assistant: t("nav.assistant"), assistants: t("connectApps.title"), settings: "Settings" }
   const { theme, setTheme } = useTheme()
   const mod = useModKey()
   const ThemeIcon = theme === "light" ? IconSun : theme === "dark" ? IconMoon : IconDeviceDesktop

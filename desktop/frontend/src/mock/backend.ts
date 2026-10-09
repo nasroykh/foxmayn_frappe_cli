@@ -17,22 +17,42 @@
 //   ?fail=sites       listing sites fails
 //   ?fail=assistants  listing assistants fails
 //   ?disconnect=unavailable  Disconnect answers "not available yet"
+//   ?providers=none|nokey    no AI provider yet / one without a key
+//   ?local=ollama     DetectLocal finds Ollama
+// The assistant's scripts (what to type to get a read answer, an approval
+// card with a diff, ffc's own card, an error, a pause) are described above
+// the assistant section below.
 import type {
   AddedSite,
   ApplyResult,
   Assistant,
   AssistantList,
+  ApprovalOutcome,
   Backend,
   Cancellable,
+  ChatApproval,
+  ChatApprovalClosed,
+  ChatDelta,
+  ChatDone,
+  ChatError,
+  ChatMessage,
+  ChatTool,
+  ChatToolCall,
+  ChatUsage,
   CheckResult,
   ConfigChanged,
   ConnectRequest,
+  Conversation,
   Environment,
   FFCInfo,
+  KeyStatus,
   Preview,
+  ProviderInfo,
+  RunStatus,
   SignInProgress,
   Site,
   SiteList,
+  ToolStatus,
 } from "@/lib/backend-types"
 import type { AppError } from "@/lib/errors"
 
@@ -245,6 +265,231 @@ function cancellable<T>(run: (signal: AbortSignal) => Promise<T>): Cancellable<T
 }
 
 let signIn: AbortController | null = null
+
+// ---- The assistant ----
+// A scripted model. What the user writes picks the script (a conversation in
+// "ask" mode may change things; one in "read" mode never has the tools):
+//   anything else          reads TD-0001 with get_doc, then answers
+//   "update" / "change"    update_doc with an app card (a field diff);
+//                          "same" in the text makes the diff empty
+//   "delete"               delete_doc with ffc's own card
+//   "create" / "add"       create_doc with an app card (no diff)
+//   "error" / "fail"       streams a little, then chat:error and done(error)
+//   "many" / "pause"       ends "paused" (step limit); continueRun resumes
+// Query parameters: ?providers=none (no provider yet), ?providers=nokey (one
+// without a key), ?local=ollama (DetectLocal finds Ollama).
+const providerParam = params.get("providers")
+let providers: ProviderInfo[] =
+  providerParam === "none"
+    ? []
+    : [
+        {
+          id: "anthropic",
+          kind: "anthropic",
+          label: "Anthropic",
+          baseURL: "",
+          defaultModel: "claude-sonnet-5-5",
+          keySet: providerParam !== "nokey",
+          keyLast4: providerParam !== "nokey" ? "a1B2" : "",
+        },
+      ]
+const keys = new Map<string, string>(providerParam === "none" || providerParam === "nokey" ? [] : [["anthropic", "mock-key-a1B2"]])
+
+interface MockRun {
+  id: string
+  convID: string
+  cancelled: boolean
+  settle?: (outcome: ApprovalOutcome) => void
+}
+
+interface MockConv {
+  conv: Conversation
+  messages: ChatMessage[]
+  pausedRunID: string
+}
+
+const convs = new Map<string, MockConv>()
+const runs = new Map<string, MockRun>()
+const openCards = new Map<string, ChatApproval>() // by approvalID
+const chat = {
+  delta: new Set<(v: ChatDelta) => void>(),
+  tool: new Set<(v: ChatTool) => void>(),
+  approval: new Set<(v: ChatApproval) => void>(),
+  closed: new Set<(v: ChatApprovalClosed) => void>(),
+  usage: new Set<(v: ChatUsage) => void>(),
+  done: new Set<(v: ChatDone) => void>(),
+  error: new Set<(v: ChatError) => void>(),
+}
+
+function emit<T>(set: Set<(v: T) => void>, v: T) {
+  for (const cb of set) cb(v)
+}
+
+let idSeq = 0
+const newID = (p: string) => `${p}${(++idSeq).toString(16).padStart(4, "0")}`
+
+function findConv(id: string) {
+  const c = convs.get(id)
+  if (!c) fail("not_found", "That conversation or run no longer exists.")
+  return c
+}
+
+function activeRun(convID: string) {
+  for (const r of runs.values()) if (r.convID === convID) return r
+  return undefined
+}
+
+function findProvider(id: string) {
+  const p = providers.find((x) => x.id === id)
+  if (!p) fail("not_found", "That provider is not set up.", { field: "provider" })
+  return p
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// streamText sends text as small deltas; false when the run was stopped.
+async function streamText(run: MockRun, text: string) {
+  for (const chunk of text.match(/.{1,12}(\s|$)/g) ?? [text]) {
+    if (run.cancelled) return false
+    emit(chat.delta, { convID: run.convID, runID: run.id, text: chunk })
+    await sleep(40)
+  }
+  return !run.cancelled
+}
+
+async function toolCall(run: MockRun, tool: string, site: string, summary: string, outcome: ToolStatus = "ok") {
+  const callID = newID("call")
+  emit(chat.tool, { convID: run.convID, runID: run.id, callID, tool, site, status: "running", summary })
+  await sleep(500)
+  const status: ToolStatus = run.cancelled ? "stopped" : outcome
+  emit(chat.tool, { convID: run.convID, runID: run.id, callID, tool, site, status, summary })
+  return { callID, status }
+}
+
+// ask opens a card and waits for the answer (or the stop).
+function ask(run: MockRun, card: Omit<ChatApproval, "convID" | "runID" | "approvalID">) {
+  const full: ChatApproval = { ...card, convID: run.convID, runID: run.id, approvalID: newID("appr") }
+  openCards.set(full.approvalID, full)
+  emit(chat.approval, full)
+  return new Promise<ApprovalOutcome>((resolve) => {
+    run.settle = (outcome) => {
+      openCards.delete(full.approvalID)
+      emit(chat.closed, { convID: run.convID, runID: run.id, approvalID: full.approvalID, outcome })
+      run.settle = undefined
+      resolve(outcome)
+    }
+  })
+}
+
+function finish(run: MockRun, c: MockConv, status: RunStatus, paused = false) {
+  runs.delete(run.id)
+  c.pausedRunID = paused ? run.id : ""
+  emit(chat.usage, { convID: run.convID, runID: run.id, turn: 1, input: 1840, output: 212, cached: 1500 })
+  emit(chat.done, { convID: run.convID, runID: run.id, status })
+}
+
+async function script(run: MockRun, c: MockConv, text: string) {
+  const site = c.conv.site
+  const lower = text.toLowerCase()
+  const writes = c.conv.mode === "ask"
+  const msg: ChatMessage = { id: newID("msg"), role: "assistant", text: "", tools: [], created: new Date().toISOString() }
+  c.messages.push(msg)
+  const say = async (t: string) => {
+    msg.text += t
+    return streamText(run, t)
+  }
+  const record = (callID: string, tool: string, status: ToolStatus, approval: ChatToolCall["approval"], summary: string) => {
+    msg.tools.push({ id: callID, tool, site, status, approval, summary })
+  }
+  await sleep(300)
+
+  if (/\b(error|fail)/.test(lower)) {
+    if (!(await say("Let me check that. "))) return finish(run, c, "cancelled")
+    emit(chat.error, {
+      convID: run.convID,
+      runID: run.id,
+      error: { code: "failed", message: "The AI provider returned an error.", detail: "provider error (HTTP 529): overloaded" },
+    })
+    return finish(run, c, "error")
+  }
+
+  if (/\b(many|pause)/.test(lower)) {
+    if (!(await say("This takes many lookups. "))) return finish(run, c, "cancelled")
+    for (let i = 1; i <= 3; i++) {
+      const t = await toolCall(run, "get_doc", site, `doctype=ToDo name=TD-000${i}`)
+      record(t.callID, "get_doc", t.status, "", `doctype=ToDo name=TD-000${i}`)
+    }
+    return finish(run, c, "paused", true)
+  }
+
+  if (/\b(update|change|delete|create|add)\b/.test(lower) && !writes) {
+    await say("I can only read in this conversation. Switch it to \"Ask before changes\" and I can propose the change for your approval.")
+    return finish(run, c, "done")
+  }
+
+  const isDelete = /\bdelete\b/.test(lower)
+  const isCreate = /\b(create|add)\b/.test(lower)
+  const isUpdate = /\b(update|change)\b/.test(lower)
+  if (isDelete || isCreate || isUpdate) {
+    if (isUpdate) {
+      const t = await toolCall(run, "get_doc", site, "doctype=ToDo name=TD-0001")
+      record(t.callID, "get_doc", t.status, "", "doctype=ToDo name=TD-0001")
+    }
+    if (run.cancelled) return finish(run, c, "cancelled")
+    const tool = isDelete ? "delete_doc" : isCreate ? "create_doc" : "update_doc"
+    const same = /\bsame\b/.test(lower)
+    const args: Record<string, unknown> = isCreate
+      ? { doctype: "ToDo", data: { description: "Call the supplier", priority: "High" } }
+      : isDelete
+        ? { doctype: "ToDo", name: "TD-0001" }
+        : {
+            doctype: "ToDo",
+            name: "TD-0001",
+            data: same ? { status: "Open" } : { description: "Call the supplier back", status: "Closed" },
+            if_unmodified: "2026-10-08 09:14:03.512",
+          }
+    const callID = newID("call")
+    emit(chat.tool, { convID: run.convID, runID: run.id, callID, tool, site, status: "running", summary: "doctype=ToDo" })
+    const outcome = await ask(run, {
+      kind: isDelete ? "ffc" : "app",
+      tool,
+      site,
+      doctypes: ["ToDo"],
+      names: isCreate ? [] : ["TD-0001"],
+      args,
+      diff: isUpdate && !same
+        ? [
+            { field: "description", old: "Call the supplier", new: "Call the supplier back" },
+            { field: "status", old: "Open", new: "Closed" },
+          ]
+        : [],
+      noChanges: isUpdate && same,
+      message: isDelete ? 'Delete ToDo "TD-0001"? This cannot be undone.' : "",
+    })
+    const approved = outcome === "approved"
+    const status: ToolStatus = outcome === "cancelled" ? "stopped" : approved ? "ok" : "error"
+    const approval: ChatToolCall["approval"] = isDelete
+      ? approved
+        ? "ffc-approved"
+        : outcome === "declined"
+          ? "ffc-declined"
+          : "cancelled"
+      : outcome
+    const summary = approved ? "doctype=ToDo" : outcome === "declined" ? "The user declined this change. Nothing was changed." : "Stopped by the user before this change ran."
+    emit(chat.tool, { convID: run.convID, runID: run.id, callID, tool, site, status, summary })
+    record(callID, tool, status, approval, summary)
+    if (outcome === "cancelled") return finish(run, c, "cancelled")
+    await say(approved ? "Done. The change was saved." : "Understood, I left it as it was.")
+    return finish(run, c, run.cancelled ? "cancelled" : "done")
+  }
+
+  if (!(await say("Let me look that up. "))) return finish(run, c, "cancelled")
+  const t = await toolCall(run, "get_doc", site, "doctype=ToDo name=TD-0001")
+  record(t.callID, "get_doc", t.status, "", "doctype=ToDo name=TD-0001")
+  if (run.cancelled) return finish(run, c, "cancelled")
+  await say("TD-0001 is a ToDo, \"Call the supplier\", status Open, assigned to you and due on 2026-10-12.")
+  return finish(run, c, run.cancelled ? "cancelled" : "done")
+}
 
 export const backend: Backend = {
   async environment(): Promise<Environment> {
@@ -654,6 +899,183 @@ export const backend: Backend = {
     connections = rest
     return { changed: true, backup: "", hint: hint(c.id) }
   },
+
+  async sendMessage(convID, text) {
+    const c = findConv(convID)
+    await wait(100)
+    if (!text.trim()) fail("invalid", "Write a message first.", { field: "text" })
+    if (activeRun(convID)) fail("invalid", "The assistant is still answering in this conversation.")
+    c.pausedRunID = ""
+    const now = new Date().toISOString()
+    c.messages.push({ id: newID("msg"), role: "user", text, tools: [], created: now })
+    if (!c.conv.title) c.conv.title = text.slice(0, 60)
+    c.conv.updated = now
+    const run: MockRun = { id: newID("run"), convID, cancelled: false }
+    runs.set(run.id, run)
+    void script(run, c, text)
+    return run.id
+  },
+  async cancelRun(runID) {
+    const run = runs.get(runID)
+    if (!run) return
+    run.cancelled = true
+    run.settle?.("cancelled")
+  },
+  async answerApproval(convID, approvalID, approve) {
+    const card = openCards.get(approvalID)
+    const run = card && runs.get(card.runID)
+    if (!card || !run || run.convID !== convID) fail("not_found", "This request was already answered or has ended.")
+    run.settle?.(approve ? "approved" : "declined")
+  },
+  async continueRun(runID) {
+    const c = [...convs.values()].find((x) => x.pausedRunID === runID)
+    if (!c) fail("invalid", "This run is not paused.")
+    c.pausedRunID = ""
+    const run: MockRun = { id: runID, convID: c.conv.id, cancelled: false }
+    runs.set(run.id, run)
+    const msg: ChatMessage = { id: newID("msg"), role: "assistant", text: "", tools: [], created: new Date().toISOString() }
+    c.messages.push(msg)
+    void (async () => {
+      msg.text = "All three are open ToDos and none is overdue."
+      await streamText(run, msg.text)
+      finish(run, c, run.cancelled ? "cancelled" : "done")
+    })()
+  },
+  async pendingApprovals(convID) {
+    return [...openCards.values()].filter((card) => runs.get(card.runID)?.convID === convID)
+  },
+  async newConversation(site, mode, providerID, model) {
+    await wait(150)
+    if (mode !== "read" && mode !== "ask") fail("invalid", 'Choose "Read only" or "Ask before changes".', { field: "mode" })
+    if (!sites.some((s) => s.name === site)) fail("not_found", "That site is not in your list.", { field: "site" })
+    const p = findProvider(providerID)
+    const now = new Date().toISOString()
+    const conv: Conversation = {
+      id: newID("conv"),
+      title: "",
+      site,
+      mode,
+      providerID: p.id,
+      model: model.trim() || p.defaultModel,
+      created: now,
+      updated: now,
+    }
+    convs.set(conv.id, { conv, messages: [], pausedRunID: "" })
+    return { ...conv }
+  },
+  async listConversations() {
+    await wait(150)
+    return [...convs.values()].map((c) => ({ ...c.conv })).sort((a, b) => b.updated.localeCompare(a.updated))
+  },
+  async getConversation(id) {
+    await wait(150)
+    const c = findConv(id)
+    return {
+      conversation: { ...c.conv },
+      messages: c.messages.map((m) => ({ ...m, tools: m.tools.map((t) => ({ ...t })) })),
+      activeRunID: activeRun(id)?.id ?? "",
+      pausedRunID: c.pausedRunID,
+    }
+  },
+  async deleteConversation(id) {
+    findConv(id)
+    if (activeRun(id)) fail("invalid", "The assistant is still answering in this conversation. Stop it first.")
+    convs.delete(id)
+  },
+  async setConversationMode(id, mode) {
+    const c = findConv(id)
+    if (mode !== "read" && mode !== "ask") fail("invalid", 'Choose "Read only" or "Ask before changes".', { field: "mode" })
+    if (activeRun(id)) fail("invalid", "The assistant is still answering in this conversation. Stop it first.")
+    c.conv.mode = mode
+  },
+
+  async listProviders() {
+    await wait(200)
+    return providers.map((p) => ({ ...p }))
+  },
+  async saveProvider(p) {
+    await wait(200)
+    const kinds = ["anthropic", "openrouter", "ollama", "lmstudio", "custom"]
+    if (!kinds.includes(p.kind)) fail("invalid", "Choose a provider type.", { field: "kind" })
+    const base = p.baseURL.trim()
+    if (p.kind === "custom" && !base) fail("invalid", "Enter the server's address.", { field: "baseURL" })
+    if (base && !/^https:\/\//.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(base)) {
+      fail("invalid", "Use https, unless the server runs on this computer.", { field: "baseURL" })
+    }
+    const labels: Record<string, string> = { anthropic: "Anthropic", openrouter: "OpenRouter", ollama: "Ollama", lmstudio: "LM Studio", custom: "Custom" }
+    const bases: Record<string, string> = { openrouter: "https://openrouter.ai/api/v1", ollama: "http://localhost:11434/v1", lmstudio: "http://localhost:1234/v1" }
+    let id = p.id.trim() || p.kind
+    for (let n = 2; !p.id.trim() && p.kind === "custom" && providers.some((x) => x.id === id); n++) id = `custom-${n}`
+    const old = providers.find((x) => x.id === id)
+    if (old && old.kind !== p.kind) fail("invalid", "A provider with this name exists with another type.", { field: "kind" })
+    const saved: ProviderInfo = {
+      id,
+      kind: p.kind,
+      label: p.label.trim() || labels[p.kind],
+      baseURL: base || bases[p.kind] || "",
+      defaultModel: p.defaultModel.trim() || (p.kind === "anthropic" ? "claude-sonnet-5-5" : ""),
+      keySet: !!keys.get(id),
+      keyLast4: old?.keyLast4 ?? "",
+    }
+    // A new address does not get the old key.
+    if (old && keys.has(id) && old.baseURL !== saved.baseURL) {
+      keys.delete(id)
+      saved.keySet = false
+      saved.keyLast4 = ""
+      saved.keyCleared = true
+    }
+    providers = old ? providers.map((x) => (x.id === id ? saved : x)) : [...providers, saved]
+    return { ...saved }
+  },
+  async deleteProvider(id) {
+    findProvider(id)
+    keys.delete(id)
+    providers = providers.filter((p) => p.id !== id)
+  },
+  async setKey(providerID, key) {
+    const p = findProvider(providerID)
+    await wait(700)
+    const k = key.trim()
+    if (!k) fail("invalid", "Paste the API key.", { field: "key" })
+    // A key starting with "bad" is refused, as the provider would.
+    if (k.startsWith("bad")) fail("auth", "The provider did not accept the API key.", { field: "key" })
+    keys.set(p.id, k)
+    p.keySet = true
+    p.keyLast4 = k.length >= 12 ? k.slice(-4) : ""
+  },
+  async keyStatus(providerID) {
+    const p = findProvider(providerID)
+    return { set: p.keySet, last4: p.keyLast4 || undefined } as KeyStatus
+  },
+  async detectLocal() {
+    await wait(600)
+    if (params.get("local") !== "ollama") return []
+    return [{ id: "ollama", kind: "ollama", label: "Ollama", baseURL: "http://localhost:11434/v1", defaultModel: "", keySet: false, keyLast4: "" }]
+  },
+  async listModels(providerID) {
+    const p = findProvider(providerID)
+    await wait(500)
+    if (p.kind === "anthropic") {
+      if (!p.keySet) fail("auth", `Add the API key for ${p.label} first.`, { field: "key" })
+      return [
+        { id: "claude-opus-5-5", label: "Claude Opus 5.5", default: false },
+        { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", default: true },
+        { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", default: false },
+      ]
+    }
+    return [
+      { id: "llama3.1:8b", label: "llama3.1:8b", default: false },
+      { id: "qwen2.5:14b", label: "qwen2.5:14b", default: false },
+    ]
+  },
+
+  onChatDelta: (cb) => on(chat.delta, cb),
+  onChatTool: (cb) => on(chat.tool, cb),
+  onChatApproval: (cb) => on(chat.approval, cb),
+  onChatApprovalClosed: (cb) => on(chat.closed, cb),
+  onChatUsage: (cb) => on(chat.usage, cb),
+  onChatDone: (cb) => on(chat.done, cb),
+  onChatError: (cb) => on(chat.error, cb),
 
   onConfigChanged: (cb) => on(configListeners, cb),
   onSignInProgress: (cb) => on(signInListeners, cb),

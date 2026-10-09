@@ -3,10 +3,12 @@ import { Clipboard, Events } from "@wailsio/runtime"
 
 import {
   AppService,
+  AssistantService,
   AssistantsService,
   SitesService,
 } from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services"
-import type { Backend, Cancellable } from "@/lib/backend-types"
+import type * as wire from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services/models"
+import type { Backend, Cancellable, ChatApproval, ChatMessage, ConversationDetail } from "@/lib/backend-types"
 
 // A new promise (never p itself), so setting cancel on it leaves p untouched.
 function cancellable<T>(p: Promise<T> & { cancel(): unknown }): Cancellable<T> {
@@ -15,6 +17,40 @@ function cancellable<T>(p: Promise<T> & { cancel(): unknown }): Cancellable<T> {
     void p.cancel()
   }
   return out
+}
+
+// The generated types allow null lists (Go's nil slices) and a raw args value;
+// the UI gets plain arrays and an object.
+function approval(a: wire.ChatApproval): ChatApproval {
+  const raw = a.args as unknown
+  let args: Record<string, unknown> = {}
+  if (raw && typeof raw === "object") args = raw as Record<string, unknown>
+  else if (typeof raw === "string") {
+    try {
+      args = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      args = {}
+    }
+  }
+  return {
+    ...a,
+    kind: a.kind === "ffc" ? "ffc" : "app",
+    args,
+    doctypes: a.doctypes ?? [],
+    names: a.names ?? [],
+    diff: a.diff ?? [],
+    noChanges: a.noChanges ?? false,
+    message: a.message ?? "",
+  }
+}
+
+function detail(d: wire.ConversationDetail): ConversationDetail {
+  const messages: ChatMessage[] = (d.messages ?? []).map((m) => ({
+    ...m,
+    role: m.role === "assistant" ? "assistant" : "user",
+    tools: m.tools ?? [],
+  }))
+  return { ...d, messages }
 }
 
 export const backend: Backend = {
@@ -45,6 +81,33 @@ export const backend: Backend = {
   connect: (req) => AssistantsService.Connect(req),
   previewDisconnect: (client) => AssistantsService.PreviewDisconnect(client),
   disconnect: (client) => AssistantsService.Disconnect(client),
+
+  sendMessage: (convID, text) => AssistantService.Send(convID, text),
+  cancelRun: (runID) => AssistantService.Cancel(runID),
+  answerApproval: (convID, approvalID, approve) => AssistantService.Answer(convID, approvalID, approve),
+  continueRun: (runID) => AssistantService.Continue(runID),
+  pendingApprovals: async (convID) => ((await AssistantService.PendingApprovals(convID)) ?? []).map(approval),
+  newConversation: (site, mode, providerID, model) => AssistantService.NewConversation(site, mode, providerID, model),
+  listConversations: async () => (await AssistantService.ListConversations()) ?? [],
+  getConversation: async (id) => detail(await AssistantService.GetConversation(id)),
+  deleteConversation: (id) => AssistantService.DeleteConversation(id),
+  setConversationMode: (id, mode) => AssistantService.SetConversationMode(id, mode),
+
+  listProviders: async () => (await AssistantService.ListProviders()) ?? [],
+  saveProvider: (p) => AssistantService.SaveProvider(p),
+  deleteProvider: (id) => AssistantService.DeleteProvider(id),
+  setKey: (providerID, key) => AssistantService.SetKey(providerID, key),
+  keyStatus: (providerID) => AssistantService.KeyStatus(providerID),
+  detectLocal: async () => (await AssistantService.DetectLocal()) ?? [],
+  listModels: async (providerID) => (await AssistantService.ListModels(providerID)) ?? [],
+
+  onChatDelta: (cb) => Events.On("chat:delta", (ev) => cb(ev.data)),
+  onChatTool: (cb) => Events.On("chat:tool", (ev) => cb(ev.data)),
+  onChatApproval: (cb) => Events.On("chat:approval", (ev) => cb(approval(ev.data))),
+  onChatApprovalClosed: (cb) => Events.On("chat:approval-closed", (ev) => cb(ev.data)),
+  onChatUsage: (cb) => Events.On("chat:usage", (ev) => cb(ev.data)),
+  onChatDone: (cb) => Events.On("chat:done", (ev) => cb(ev.data)),
+  onChatError: (cb) => Events.On("chat:error", (ev) => cb(ev.data)),
 
   onConfigChanged: (cb) => Events.On("config:changed", (ev) => cb(ev.data)),
   onSignInProgress: (cb) => Events.On("signin:progress", (ev) => cb(ev.data)),
