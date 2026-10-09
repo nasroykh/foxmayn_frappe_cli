@@ -421,11 +421,19 @@ var executablePath = func() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("finding executable path: %w", err)
 	}
-	exePath, err = filepath.EvalSymlinks(exePath)
-	if err != nil {
-		return "", fmt.Errorf("resolving symlinks: %w", err)
+	return resolveExecutable(exePath), nil
+}
+
+// resolveExecutable follows symlinks in the running binary's path (Homebrew
+// links <prefix>/bin/ffc into the Cellar or Caskroom). When that fails it keeps
+// the path, which still names the running file: on Windows EvalSymlinks fails
+// below a directory junction (Go reports junctions as irregular files since
+// 1.23), and Scoop runs ffc from apps/ffc/current, a junction.
+func resolveExecutable(path string) string {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
 	}
-	return exePath, nil
+	return path
 }
 
 // managedInstall returns the package manager that installed the running

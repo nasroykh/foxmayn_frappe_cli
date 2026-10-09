@@ -136,7 +136,7 @@ internal/cmd/collab.go           → T2.5 logic shared by CLI and MCP: addCommen
                                 tagDoc/untagDoc (cleanTags), shareDoc/unshareDoc; each reads the state first
 internal/cmd/collab_cmds.go      → comment / assign / unassign / tag / untag / share (confirm or --yes) / unshare
 internal/cmd/update.go           → self-update: internal/release finds, downloads and verifies; update.go confirms and swaps the binary;
-                                a package manager's copy (`release.ManagedBy` on `executablePath`) is refused with its command,
+                                a package manager's copy (`release.ManagedBy` on `executablePath`, which keeps os.Executable's path when EvalSymlinks fails: Go fails below a Windows junction, such as Scoop's apps/ffc/current) is refused with its command,
                                 which the update notice and doctor's hint also use (`updateCommand`); `--version` (versionTag, release.Tagged,
                                 classifyPin) and `--rollback` (runRollback: prevPath ffc.prev / ffc.prev.exe plus prevSumPath `.sha256`;
                                 replaceBinary copies the running binary to a temp file (copyPrevious) and commitPrevious renames it
