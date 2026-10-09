@@ -50,6 +50,8 @@ func newProvider(t *testing.T, h http.Handler) (*Provider, *captured) {
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "env-token-must-not-be-sent")
 	t.Setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:1")
 	t.Setenv("ANTHROPIC_API_KEY", "env-key-must-not-be-sent")
+	t.Setenv("ANTHROPIC_PROFILE", "env-profile-that-does-not-exist")
+	t.Setenv("ANTHROPIC_CUSTOM_HEADERS", "X-Api-Key: env-leak\nX-Env-Leak: secret")
 	cap := &captured{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cap.set(r)
@@ -378,7 +380,9 @@ func TestEnvCustomHeadersNotSent(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	t.Setenv("ANTHROPIC_PROFILE", "")
-	t.Setenv("ANTHROPIC_CUSTOM_HEADERS", "X-Env-Leak: secret\nX-Other: 1")
+	// An X-Api-Key line once made the adapter delete its own key header.
+	t.Setenv("ANTHROPIC_CUSTOM_HEADERS", "X-Env-Leak: secret\nX-Other: 1\nX-Api-Key: env-leak")
+	t.Setenv("ANTHROPIC_CONFIG_DIR", t.TempDir())
 	p2 := New(testKey, WithBaseURL(cap.url), WithMaxRetries(0))
 	s, err := p2.Stream(context.Background(), llm.Request{Model: DefaultModel})
 	if err != nil {
@@ -837,5 +841,41 @@ func TestRequestEncodesImages(t *testing.T) {
 	}
 	if _, raw, _ := cap.get(); raw != nil {
 		t.Fatalf("request sent: %s", raw)
+	}
+}
+
+// A redirect is never followed: the key header would go to the new host.
+func TestRedirectNotFollowed(t *testing.T) {
+	var mu sync.Mutex
+	hit := false
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hit = true
+		mu.Unlock()
+	}))
+	t.Cleanup(other.Close)
+	p, cap := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	if s, err := p.Stream(context.Background(), llm.Request{Model: DefaultModel}); err == nil {
+		for {
+			if _, err = s.Next(); err != nil {
+				break
+			}
+		}
+		s.Close()
+	}
+	if _, err := p.Models(context.Background()); err == nil {
+		t.Fatal("redirected model list accepted")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hit {
+		t.Fatal("redirect followed")
+	}
+	// The env base URL (127.0.0.1:1) was not used: the request reached the
+	// test server, with the configured key.
+	if h, _, _ := cap.get(); h.Get("x-api-key") != testKey || h.Get("Authorization") != "" {
+		t.Fatalf("headers %v", h)
 	}
 }

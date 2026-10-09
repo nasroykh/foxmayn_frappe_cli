@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -58,44 +57,39 @@ func WithMaxRetries(n int) Option { return func(c *config) { c.maxRetries = n } 
 
 // Provider is the Anthropic llm.Provider.
 type Provider struct {
-	client sdk.Client
-	key    string
+	messages sdk.MessageService
+	models   sdk.ModelService
+	key      string
 }
 
 var _ llm.Provider = (*Provider)(nil)
 
 // New returns a Provider that authenticates with apiKey. The key goes only in
-// the x-api-key header; ANTHROPIC_* environment credentials, base URL and
-// custom headers are overridden or removed.
+// the x-api-key header, and redirects are not followed.
+//
+// The services are built directly, not through sdk.NewClient: NewClient
+// applies the SDK's environment defaults (ANTHROPIC_BASE_URL,
+// ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE and the profile
+// files, env federation, ANTHROPIC_WEBHOOK_SIGNING_KEY,
+// ANTHROPIC_CUSTOM_HEADERS). So no ANTHROPIC_* variable or profile file is
+// read at all.
 func New(apiKey string, opts ...Option) *Provider {
 	cfg := config{baseURL: defaultBaseURL, maxRetries: 2}
 	for _, o := range opts {
 		o(&cfg)
 	}
 	ro := []option.RequestOption{
+		option.WithHTTPClient(llm.NoRedirectClient(cfg.httpClient)),
 		option.WithBaseURL(cfg.baseURL),
 		option.WithAPIKey(apiKey),
-		option.WithHeaderDel("authorization"),
 		option.WithMaxRetries(cfg.maxRetries),
 	}
-	// The SDK reads ANTHROPIC_CUSTOM_HEADERS (name: value per line) into its
-	// defaults when no env credential is set; take those headers back off.
-	for _, line := range strings.Split(os.Getenv("ANTHROPIC_CUSTOM_HEADERS"), "\n") {
-		if i := strings.Index(line, ":"); i >= 0 {
-			if name := strings.TrimSpace(line[:i]); name != "" {
-				ro = append(ro, option.WithHeaderDel(name))
-			}
-		}
-	}
-	if cfg.httpClient != nil {
-		ro = append(ro, option.WithHTTPClient(cfg.httpClient))
-	}
-	return &Provider{client: sdk.NewClient(ro...), key: apiKey}
+	return &Provider{messages: sdk.NewMessageService(ro...), models: sdk.NewModelService(ro...), key: apiKey}
 }
 
 // Models lists the chat models the account can use (ids starting "claude-").
 func (p *Provider) Models(ctx context.Context) ([]llm.Model, error) {
-	pager := p.client.Models.ListAutoPaging(ctx, sdk.ModelListParams{})
+	pager := p.models.ListAutoPaging(ctx, sdk.ModelListParams{})
 	var out []llm.Model
 	for pager.Next() {
 		m := pager.Current()
@@ -120,7 +114,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, err
 	if err != nil {
 		return nil, err
 	}
-	s := p.client.Messages.NewStreaming(ctx, params)
+	s := p.messages.NewStreaming(ctx, params)
 	if err := s.Err(); err != nil {
 		_ = s.Close()
 		return nil, p.mapErr(ctx, err)
