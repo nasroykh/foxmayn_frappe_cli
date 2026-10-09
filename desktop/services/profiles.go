@@ -476,6 +476,10 @@ func (a *AssistantService) SetConversationProfile(convID, profileID string) (Con
 		if err := st.SetConversationProfile(convID, profileID); err != nil {
 			return wrapStoreErr(err)
 		}
+		// A profile that keeps no history makes the conversation ephemeral.
+		if err := st.SetEphemeral(convID, !prof.KeepHistory); err != nil {
+			return wrapStoreErr(err)
+		}
 		c, err := st.GetConversation(convID)
 		if err != nil {
 			return wrapStoreErr(err)

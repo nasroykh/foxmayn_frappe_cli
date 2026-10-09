@@ -100,6 +100,12 @@ type Conversation struct {
 	ProfileID  string    `json:"profileID"`
 	Created    time.Time `json:"created"`
 	Updated    time.Time `json:"updated"`
+	// Pinned and Archived are the user's marks; Ephemeral is set by a
+	// profile that keeps no history (the conversation is deleted when the
+	// app closes). Only ListConversations fills them.
+	Pinned    bool `json:"pinned,omitempty"`
+	Archived  bool `json:"archived,omitempty"`
+	Ephemeral bool `json:"ephemeral,omitempty"`
 }
 
 // ChatToolCall is a tool call of an assistant message, as the chat shows it.
@@ -167,6 +173,7 @@ type AssistantService struct {
 	run      *runner
 	startErr error
 	or       orAuth // the OpenRouter browser sign-in (openrouter_auth.go)
+	hist     historyState
 }
 
 // NewAssistantService returns the service over the ffc config file at
@@ -215,6 +222,7 @@ func (a *AssistantService) open() error {
 	a.st, a.engine, a.run = st, eng, r
 	a.ctx, a.cancel = ctx, cancel
 	a.mu.Unlock()
+	a.startHistory(ctx)
 	// A changed config (a site added, removed or re-signed-in) makes new runs
 	// build their servers again.
 	if s, ok := a.host.(interface {
@@ -236,6 +244,7 @@ func (a *AssistantService) ServiceShutdown() error {
 	if cancel != nil {
 		cancel()
 	}
+	a.hist.stop()
 	if r != nil {
 		r.shutdown()
 	}
@@ -245,6 +254,7 @@ func (a *AssistantService) ServiceShutdown() error {
 	a.life.Lock()
 	defer a.life.Unlock()
 	if st != nil {
+		endHistory(st)
 		return st.Close()
 	}
 	return nil
@@ -407,9 +417,15 @@ func (a *AssistantService) ListConversations() ([]Conversation, error) {
 	if err != nil {
 		return nil, wrapStoreErr(err)
 	}
+	states, err := st.ConvStates()
+	if err != nil {
+		return nil, wrapStoreErr(err)
+	}
 	out := make([]Conversation, len(rows))
 	for i, c := range rows {
 		out[i] = toConversation(c)
+		s := states[c.ID]
+		out[i].Pinned, out[i].Archived, out[i].Ephemeral = s.Pinned, s.Archived, s.Ephemeral
 	}
 	return out, nil
 }
