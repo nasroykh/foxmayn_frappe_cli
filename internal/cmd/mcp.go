@@ -146,35 +146,16 @@ func newMCPEnv(o mcpOptions, sites []string) (*mcpEnv, func(), error) {
 	return env, closeFn, nil
 }
 
-// cleanMCPFlags trims the policy flag values and refuses one given with no
-// value: "--allow-doctypes=" reads as "none" but would mean "no limit".
+// cleanMCPFlags validates the flags of `ffc mcp` with cleanMCPOptions, the
+// same code NewMCPServer validates its options with, and stores the cleaned
+// values back in the flag variables (daemonArgs reads them from there).
 func cleanMCPFlags(cmd *cobra.Command) error {
-	for name, list := range map[string]*[]string{
-		"allow-tools": &mcpFlags.AllowTools, "allow-doctypes": &mcpFlags.AllowDoctypes,
-		"deny-doctypes": &mcpFlags.DenyDoctypes, "allow-methods": &mcpFlags.AllowMethods,
-		"deny-methods": &mcpFlags.DenyMethods,
-	} {
-		var out []string
-		for _, v := range *list {
-			if v = strings.TrimSpace(v); v != "" {
-				out = append(out, v)
-			}
-		}
-		if cmd.Flags().Changed(name) && len(out) == 0 {
-			return usageErrorf("--%s needs at least one value", name)
-		}
-		*list = out
-	}
-	if err := cleanToolsets(cmd); err != nil {
+	o := mcpOptionsFromFlags()
+	if err := cleanMCPOptions(&o, true, func(flag string) bool { return cmd.Flags().Changed(flag) }); err != nil {
 		return err
 	}
-	switch mcpFlags.Confirm = strings.TrimSpace(mcpFlags.Confirm); mcpFlags.Confirm {
-	case "", config.ConfirmIfSupported, config.ConfirmAlways:
-	case config.ConfirmNever:
-		return usageErrorf("--confirm can only tighten the site's setting; to turn confirmation off, set sites.<site>.mcp.confirm: never in the config")
-	default:
-		return usageErrorf("--confirm must be always or if-supported, not %q", mcpFlags.Confirm)
-	}
+	mcpFlags, mcpToolsets = o.policy, o.toolsets
+	mcpFlags.ReadOnly = false // --read-only has its own variable
 	return nil
 }
 
@@ -186,13 +167,20 @@ func cleanMCPFlags(cmd *cobra.Command) error {
 // that is down must not stop the others. Their first call signs in. The
 // warnings are returned for the caller to print.
 func startMCP(ctx context.Context, o mcpOptions) (*server.MCPServer, []string, func(), error) {
+	s, _, warnings, closeEnv, err := buildMCP(ctx, o)
+	return s, warnings, closeEnv, err
+}
+
+// buildMCP is startMCP that also returns the served sites, the default one
+// first.
+func buildMCP(ctx context.Context, o mcpOptions) (*server.MCPServer, []string, []string, func(), error) {
 	sites, err := mcpSites(o)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	env, closeEnv, err := newMCPEnv(o, sites)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	var warnings []string
 	var policies []mcpPolicy
@@ -207,7 +195,7 @@ func startMCP(ctx context.Context, o mcpOptions) (*server.MCPServer, []string, f
 		switch {
 		case err != nil && i == 0:
 			closeEnv()
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		case err != nil:
 			warnings = append(warnings, fmt.Sprintf("warning: site %q: %v", name, err))
 		}
@@ -217,7 +205,7 @@ func startMCP(ctx context.Context, o mcpOptions) (*server.MCPServer, []string, f
 	if len(sites) > 1 {
 		warnings = append(warnings, fmt.Sprintf("Serving %d sites: %s. Every tool call must name its site.", len(sites), strings.Join(sites, ", ")))
 	}
-	return s, warnings, closeEnv, nil
+	return s, sites, warnings, closeEnv, nil
 }
 
 var (

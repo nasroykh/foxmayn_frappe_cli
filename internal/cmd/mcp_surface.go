@@ -15,7 +15,6 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/spf13/cobra"
 )
 
 // The MCP surface around the tools (T2.7): tool sets, titles and size hints,
@@ -24,27 +23,6 @@ import (
 
 // mcpToolsets is `ffc mcp --toolsets`; nil exposes defaultToolsets.
 var mcpToolsets []string
-
-// cleanToolsets trims --toolsets and refuses an unknown or missing name.
-func cleanToolsets(cmd *cobra.Command) error {
-	var out []string
-	for _, v := range mcpToolsets {
-		switch v = strings.TrimSpace(v); v {
-		case "":
-		case toolsetCore, toolsetLifecycle, toolsetCollab, toolsetAdmin, toolsetFiles, toolsetERP:
-			if !contains(out, v, false) {
-				out = append(out, v)
-			}
-		default:
-			return usageErrorf("--toolsets: unknown tool set %q (known: %s)", v, strings.Join(knownToolsets, ", "))
-		}
-	}
-	if cmd.Flags().Changed("toolsets") && len(out) == 0 {
-		return usageErrorf("--toolsets needs at least one value")
-	}
-	mcpToolsets = out
-	return nil
-}
 
 // inToolsets reports whether tool belongs to a tool set the server exposes
 // (defaultToolsets without --toolsets). Siteless tools (list_sites) are
