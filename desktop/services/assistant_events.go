@@ -118,6 +118,9 @@ type ChatApproval struct {
 	Args json.RawMessage `json:"args"`
 	// Diff lists the changed fields of an update_doc.
 	Diff []DiffField `json:"diff,omitempty"`
+	// NoChanges is set for an update_doc whose data matches the document
+	// already, so the UI can say "no field changes".
+	NoChanges bool `json:"noChanges,omitempty"`
 	// Message is ffc's question, for kind "ffc".
 	Message string `json:"message,omitempty"`
 }
