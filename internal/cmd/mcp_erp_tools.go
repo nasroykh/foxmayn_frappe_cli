@@ -28,7 +28,14 @@ var erpDoctypeArgs = map[string]bool{"erp_item": true, "erp_party": true}
 
 // erpScope returns the DocTypes and the documents an erp tool call reads,
 // for the DocType rules. The tool's own parse step has validated the
-// arguments; a missing or blank one adds nothing.
+// arguments; a missing or blank one adds nothing. It lists what ffc and the
+// server methods are known to read beyond the named documents: the item
+// lookup answers stock levels from Bin and prices from a Price List (the
+// default one from Selling/Buying Settings when none is given), and the
+// party lookup answers address and contact fields, all read without a
+// permission check of their own (get_item_details.py, party.py). The party of
+// a payment (Customer, Supplier) is covered through the source document: it
+// must be readable, and the draft only repeats its fields.
 func erpScope(tool string, args map[string]interface{}) (doctypes, names []string) {
 	str := func(k string) string {
 		s, _ := docName(args[k])
@@ -50,6 +57,9 @@ func erpScope(tool string, args map[string]interface{}) (doctypes, names []strin
 		add(&names, str("from_name"))
 	case "erp_payment":
 		add(&doctypes, str("against_doctype"), "Payment Entry")
+		if str("bank_account") != "" {
+			doctypes = append(doctypes, "Account")
+		}
 		add(&names, str("against_name"))
 	case "erp_item":
 		doctypes = append(doctypes, "Item")
@@ -59,12 +69,11 @@ func erpScope(tool string, args map[string]interface{}) (doctypes, names []strin
 		if str("supplier") != "" {
 			doctypes = append(doctypes, "Supplier")
 		}
-		if str("price_list") != "" {
-			doctypes = append(doctypes, "Price List")
-		}
+		doctypes = append(doctypes, "Price List") // given, or the default of the settings
 		if str("warehouse") != "" {
 			doctypes = append(doctypes, "Warehouse")
 		}
+		doctypes = append(doctypes, "Bin") // actual_qty, projected_qty
 		add(&names, str("item_code"))
 	case "erp_stock":
 		doctypes = append(doctypes, "Item", "Warehouse", "Bin")
@@ -76,6 +85,7 @@ func erpScope(tool string, args map[string]interface{}) (doctypes, names []strin
 		if str("supplier") != "" {
 			doctypes = append(doctypes, "Supplier")
 		}
+		doctypes = append(doctypes, "Address", "Contact") // address_display, contact_email/mobile/phone
 		add(&names, str("customer"), str("supplier"))
 	}
 	return doctypes, names

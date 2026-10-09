@@ -463,7 +463,8 @@ func TestMCPERPParty(t *testing.T) {
 	mcpTErr(t, erpMCP(t, erpTSite(t, "17.1.0"), nil), "erp_party", map[string]interface{}{"customer": "C"}, "call_method")
 }
 
-// No tool sends ignore_permissions, whatever it is given.
+// No tool sends ignore_permissions, whatever it is given: every request the
+// site received for each call (path, query and body) is checked.
 func TestMCPERPNeverSendsIgnorePermissions(t *testing.T) {
 	site := erpLSite(t, erpTV16, 1)
 	erpTSiteWithPayment(site)
@@ -479,11 +480,16 @@ func TestMCPERPNeverSendsIgnorePermissions(t *testing.T) {
 		for k, v := range extra {
 			args[k] = v
 		}
+		before := len(site.Requests())
 		mcpTOK(t, s, tool, args)
-	}
-	for _, r := range site.Requests() {
-		if strings.Contains(r.Path+r.Query.Encode()+r.Body, "ignore_permissions") {
-			t.Errorf("ignore_permissions sent: %s %s?%s %s", r.Method, r.Path, r.Query.Encode(), r.Body)
+		reqs := site.Requests()[before:]
+		if len(reqs) == 0 {
+			t.Errorf("%s: no request reached the site", tool)
+		}
+		for _, r := range reqs {
+			if strings.Contains(r.Path+r.Query.Encode()+r.Body, "ignore_permissions") {
+				t.Errorf("%s: ignore_permissions sent: %s %s?%s %s", tool, r.Method, r.Path, r.Query.Encode(), r.Body)
+			}
 		}
 	}
 }
@@ -506,9 +512,9 @@ var erpMCPCalls = map[string]struct {
 	"erp_map":     {map[string]interface{}{"from_doctype": "Sales Order", "from_name": "SRC-1", "to_doctype": "Sales Invoice"}, []string{"Sales Order", "Sales Invoice"}},
 	"erp_payment": {map[string]interface{}{"against_doctype": "Sales Invoice", "against_name": "SRC-1"}, []string{"Sales Invoice", "Payment Entry"}},
 	"erp_item": {map[string]interface{}{"item_code": "ITEM-1", "company": "Acme", "customer": "CUST-1", "price_list": "Standard Selling", "warehouse": "Stores - A"},
-		[]string{"Item", "Customer", "Price List", "Warehouse"}},
+		[]string{"Item", "Customer", "Price List", "Warehouse", "Bin"}},
 	"erp_stock": {map[string]interface{}{"item_code": "ITEM-1", "warehouse": "Stores - A"}, []string{"Item", "Warehouse", "Bin"}},
-	"erp_party": {map[string]interface{}{"customer": "CUST-1"}, []string{"Customer"}},
+	"erp_party": {map[string]interface{}{"customer": "CUST-1"}, []string{"Customer", "Address", "Contact"}},
 }
 
 func TestMCPERPScope(t *testing.T) {
@@ -528,15 +534,17 @@ func TestMCPERPScope(t *testing.T) {
 		args map[string]interface{}
 		want []string
 	}{
-		{"erp_item", map[string]interface{}{"item_code": "I", "company": "C"}, []string{"Item"}},
-		{"erp_item", map[string]interface{}{"item_code": "I", "company": "C", "supplier": "S", "customer": " "}, []string{"Item", "Supplier"}},
+		{"erp_item", map[string]interface{}{"item_code": "I", "company": "C"}, []string{"Item", "Price List", "Bin"}},
+		{"erp_item", map[string]interface{}{"item_code": "I", "company": "C", "supplier": "S", "customer": " "}, []string{"Item", "Supplier", "Price List", "Bin"}},
 		// The document a row is for is not read: it is not in the scope.
-		{"erp_item", map[string]interface{}{"item_code": "I", "company": "C", "doctype": "Purchase Order"}, []string{"Item"}},
-		{"erp_party", map[string]interface{}{"supplier": "S", "doctype": "Purchase Invoice"}, []string{"Supplier"}},
+		{"erp_item", map[string]interface{}{"item_code": "I", "company": "C", "doctype": "Purchase Order"}, []string{"Item", "Price List", "Bin"}},
+		{"erp_party", map[string]interface{}{"supplier": "S", "doctype": "Purchase Invoice"}, []string{"Supplier", "Address", "Contact"}},
 		{"erp_stock", map[string]interface{}{"item_code": "I"}, []string{"Item", "Warehouse", "Bin"}},
 		// A Quotation mapping looks for the lead's Customer.
 		{"erp_map", map[string]interface{}{"from_doctype": "Quotation", "from_name": "Q", "to_doctype": "Sales Order"}, []string{"Quotation", "Sales Order", "Customer"}},
 		{"erp_payment", map[string]interface{}{"against_doctype": " Purchase Order ", "against_name": "P"}, []string{"Purchase Order", "Payment Entry"}},
+		// A bank account is read to build the draft; the party is covered by the source document.
+		{"erp_payment", map[string]interface{}{"against_doctype": "Sales Invoice", "against_name": "P", "bank_account": "Bank - A"}, []string{"Sales Invoice", "Payment Entry", "Account"}},
 	} {
 		sc, err := scopeOf(mcpTRequest(tc.tool, tc.args))
 		if err != nil || !reflect.DeepEqual(sc.Doctypes, tc.want) {
@@ -602,15 +610,39 @@ func TestMCPERPPolicy(t *testing.T) {
 	s := server.NewMCPServer("test", "0")
 	registerTools(s, env, []mcpPolicy{newMCPPolicy(sc, env.flags)})
 	mcpTErr(t, s, "erp_stock", erpMCPCalls["erp_stock"].args, `DocType "Bin" is denied by --deny-doctypes`)
-	mcpTOK(t, s, "erp_item", map[string]interface{}{"item_code": "ITEM-1", "company": "Acme"})
+	mcpTErr(t, s, "erp_item", map[string]interface{}{"item_code": "ITEM-1", "company": "Acme"}, `DocType "Bin" is denied by --deny-doctypes`)
 
 	// Denying what is not in the scope changes nothing: erp_item for a
 	// Sales Invoice row reads no Sales Invoice, and without a customer no Customer.
-	s, _ = seed(t, &config.MCPPolicy{DenyDoctypes: []string{"Sales Invoice", "Customer", "Supplier", "Bin"}})
+	s, _ = seed(t, &config.MCPPolicy{DenyDoctypes: []string{"Sales Invoice", "Customer", "Supplier"}})
 	mcpTOK(t, s, "erp_item", map[string]interface{}{"item_code": "ITEM-1", "company": "Acme"})
 	mcpTOK(t, s, "erp_item", map[string]interface{}{"item_code": "ITEM-1", "company": "Acme", "doctype": "Sales Invoice"})
 	mcpTErr(t, s, "erp_item", map[string]interface{}{"item_code": "ITEM-1", "company": "Acme", "customer": "CUST-1"}, `DocType "Customer" is denied`)
 	mcpTErr(t, s, "erp_party", map[string]interface{}{"supplier": "SUP-1"}, `DocType "Supplier" is denied`)
+
+	// What the server methods read on their own is in the scope: stock levels
+	// (Bin) and the default Price List for an item, address and contact for a party,
+	// the Account of a payment.
+	for _, tc := range []struct {
+		tool, deny string
+		args       map[string]interface{}
+	}{
+		{"erp_item", "Bin", map[string]interface{}{"item_code": "ITEM-1", "company": "Acme"}},
+		{"erp_item", "Price List", map[string]interface{}{"item_code": "ITEM-1", "company": "Acme"}},
+		{"erp_party", "Address", map[string]interface{}{"customer": "CUST-1"}},
+		{"erp_party", "Contact", map[string]interface{}{"customer": "CUST-1"}},
+		{"erp_party", "Address", map[string]interface{}{"supplier": "SUP-1"}},
+		{"erp_payment", "Account", map[string]interface{}{"against_doctype": "Sales Invoice", "against_name": "SRC-1", "bank_account": "Cash - A"}},
+	} {
+		s, site := seed(t, &config.MCPPolicy{DenyDoctypes: []string{tc.deny}})
+		mcpTErr(t, s, tc.tool, tc.args, fmt.Sprintf("DocType %q is denied", tc.deny))
+		if n := len(site.Requests()); n != 0 {
+			t.Errorf("%s denied for %s: %d requests reached the site", tc.tool, tc.deny, n)
+		}
+	}
+	// Without bank_account, denying Account changes nothing for a payment.
+	s, _ = seed(t, &config.MCPPolicy{DenyDoctypes: []string{"Account"}})
+	mcpTOK(t, s, "erp_payment", map[string]interface{}{"against_doctype": "Sales Invoice", "against_name": "SRC-1"})
 
 	// read_only keeps them: they are reads.
 	s, site2 := seed(t, &config.MCPPolicy{ReadOnly: true})

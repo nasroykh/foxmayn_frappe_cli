@@ -109,10 +109,10 @@ ERPNext 15 and 16 only (any other major, or a site without ERPNext, is a tool er
 The draft is cleaned for `create_doc` (no `__islocal`-style keys, no empty `name`). Arguments are checked like the CLI's flags, with the same messages and the argument names in them; a blank optional argument counts as not given. The site's DocType rules apply to what each tool reads:
 
 - `erp_map`: the source and target DocTypes (and Customer, for a Quotation: the lead check reads it);
-- `erp_payment`: the DocType paid against and Payment Entry;
-- `erp_item`: Item, plus Customer, Supplier, Price List and Warehouse when given. `doctype` only picks the row's defaults and is not part of the scope;
+- `erp_payment`: the DocType paid against and Payment Entry, plus Account when `bank_account` is given (the party is covered through the document paid against);
+- `erp_item`: Item, Price List (given, or the default of the Selling/Buying Settings) and Bin (it answers stock levels), plus Customer, Supplier and Warehouse when given. `doctype` only picks the row's defaults and is not part of the scope;
 - `erp_stock`: Item, Warehouse and Bin;
-- `erp_party`: Customer or Supplier.
+- `erp_party`: Customer or Supplier, plus Address and Contact (it answers the address text and the contact's email, mobile and phone, which ERPNext reads without a permission check of their own).
 
 ERPNext checks the user's own permissions for everything the call touches; `ignore_permissions` is never sent. The DocTypes ERPNext reads inside a mapper (items, taxes, accounts) are not listed in the scope.
 

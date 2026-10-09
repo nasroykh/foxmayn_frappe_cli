@@ -1,6 +1,6 @@
 ---
 name: ffc-mcp
-description: Run and configure ffc's MCP server so AI clients (Claude Code, Claude Desktop, Cursor, VS Code, Codex) can use a Frappe or ERPNext site - ffc mcp install/uninstall per client, stdio, HTTP and detached modes, read-only servers, tool sets, the per-site mcp policy (allowed DocTypes and methods, sensitive DocTypes, confirmations, audit log), multi-site servers, and how to use the 42 tools well. Use it whenever the user wants an assistant or agent connected to Frappe through MCP, asks why an MCP tool call was refused with "policy:", or wants to limit what an AI may do on their site.
+description: Run and configure ffc's MCP server so AI clients (Claude Code, Claude Desktop, Cursor, VS Code, Codex) can use a Frappe or ERPNext site - ffc mcp install/uninstall per client, stdio, HTTP and detached modes, read-only servers, tool sets, the per-site mcp policy (allowed DocTypes and methods, sensitive DocTypes, confirmations, audit log), multi-site servers, and how to use the 49 tools well. Use it whenever the user wants an assistant or agent connected to Frappe through MCP, asks why an MCP tool call was refused with "policy:", or wants to limit what an AI may do on their site.
 ---
 
 # ffc MCP server
