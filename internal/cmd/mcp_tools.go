@@ -743,7 +743,7 @@ func refuseDuplicateNames(names []string) error {
 
 func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_create",
-		mcp.WithDescription(fmt.Sprintf("Create multiple Frappe documents in one call (at most %d). Each element of the data array is an object of field values for one document. Returns per-item results with created names or error messages. Items are created in input order, one at a time, unless you set concurrency (up to %d) for items that do not depend on each other (no links between them, no tree parent among them); order is then not kept. Processing continues on individual failures.", maxMCPBulkItems, maxMCPBulkWorkers)),
+		mcp.WithDescription(fmt.Sprintf("Create multiple Frappe documents in one call (at most %d). Each element of the data array is an object of field values for one document. Returns per-item results with created names or error messages. Items are created in input order, one at a time, unless you set concurrency (up to %d) for items that do not depend on each other (no links between them, no tree parent among them); order is then not kept. Processing continues on individual failures. Set atomic to true for all or none: the items go to the site in one request and one database transaction (at most %d), so if any item is invalid nothing is created and the call fails with that item's error instead of a per-item report (a hook that commits, or a schema change such as a Custom Field, ends the transaction early). atomic cannot be combined with concurrency, and every item must be of the given doctype.", maxMCPBulkItems, maxMCPBulkWorkers, atomicLimit)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithOpenWorldHintAnnotation(true),
@@ -753,6 +753,9 @@ func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 		),
 		jsonParam("data", `Array of field-value objects, e.g. [{"description":"Task 1"},{"description":"Task 2"}]`, mcp.Required()),
 		concurrencyParam(),
+		mcp.WithBoolean("atomic",
+			mcp.Description(fmt.Sprintf("Create all items in one request and one transaction: all or none, at most %d items. Not with concurrency. Default: false.", atomicLimit)),
+		),
 	)
 	s.AddTool(tool, toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		doctype, err := req.RequireString("doctype")
@@ -767,6 +770,13 @@ func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 		if err != nil {
 			return nil, fmt.Errorf("data: %w", err)
 		}
+		atomic, err := atomicArg(req)
+		if err != nil {
+			return nil, err
+		}
+		if atomic {
+			return atomicCreate(req, doctype, items)
+		}
 		workers, err := concurrencyArg(req)
 		if err != nil {
 			return nil, err
@@ -780,6 +790,55 @@ func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 			return name, nil
 		})
 	}))
+}
+
+// atomicLimit is the most items an atomic bulk_create takes: what insert_many
+// accepts, and no more than any bulk tool touches.
+var atomicLimit = min(maxMCPBulkItems, client.MaxInsertMany)
+
+// atomicArg reads the optional atomic flag of bulk_create. A value that is
+// not a boolean is an error and never read as false: the caller asked for all
+// or none, and must not get one-by-one creation instead.
+func atomicArg(req mcp.CallToolRequest) (bool, error) {
+	switch v := req.GetArguments()["atomic"].(type) {
+	case nil:
+		return false, nil
+	case bool:
+		return v, nil
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true":
+			return true, nil
+		case "false":
+			return false, nil
+		}
+	}
+	return false, usageErrorf("atomic: expected true or false")
+}
+
+// atomicCreate is bulk_create with atomic: one insert_many request. Everything
+// that can be refused is refused before it, so a bad call sends nothing. The
+// result has the shape of a per-item run; a failure is a tool error that says
+// what it means for the batch (atomicError, as for ffc bulk-create --atomic).
+// There is one request, so no progress is reported; the call's context ends it.
+func atomicCreate(req mcp.CallToolRequest, doctype string, items []map[string]interface{}) (toolCall, error) {
+	if v, ok := req.GetArguments()["concurrency"]; ok && v != nil {
+		return nil, usageErrorf("atomic sends one request, so concurrency does not apply")
+	}
+	if len(items) > atomicLimit {
+		return nil, fmt.Errorf("too many items (%d): an atomic call may create at most %d documents", len(items), atomicLimit)
+	}
+	docs, err := client.InsertManyDocs(doctype, items)
+	if err != nil {
+		return nil, usageErrorf("atomic: %w", err)
+	}
+	return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
+		names, err := c.InsertMany(ctx, doctype, docs)
+		if err != nil {
+			return nil, atomicError(err)
+		}
+		return createdReport(names).JSON(), nil
+	}, nil
 }
 
 func registerBulkUpdate(s *server.MCPServer, env *mcpEnv) {

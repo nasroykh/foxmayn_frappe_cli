@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
@@ -360,5 +361,17 @@ func TestDaemonArgsCarryThePolicy(t *testing.T) {
 	want := "mcp --port 8765 --site prod --read-only --allow-doctypes=Sales Invoice --allow-doctypes=ToDo --deny-methods=frappe.client.*"
 	if got != want {
 		t.Errorf("args = %q\nwant   %q", got, want)
+	}
+}
+
+func TestDaemonArgsCarryTheTimeout(t *testing.T) {
+	prev := client.Timeout
+	t.Cleanup(func() { client.Timeout = prev })
+	if got := strings.Join(daemonArgs(nil, 1), " "); strings.Contains(got, "--timeout") {
+		t.Errorf("default timeout forwarded: %q", got)
+	}
+	client.Timeout = 2 * time.Minute
+	if got := strings.Join(daemonArgs(nil, 1), " "); !strings.Contains(got, " --timeout=2m0s") {
+		t.Errorf("args = %q, want --timeout=2m0s", got)
 	}
 }
