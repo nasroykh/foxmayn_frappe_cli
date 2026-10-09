@@ -60,9 +60,11 @@ Examples:
 		}
 		req := mapRequest{from: source, name: name, to: strings.TrimSpace(emTo), create: emCreate || emSubmit, submit: emSubmit}
 		lines := erpLines{
-			draft:     fmt.Sprintf("Unsaved draft of %s: nothing was written (--create saves it).", req.to),
-			created:   fmt.Sprintf("Created %s %%s from %s %s", req.to, req.from, req.name),
-			submitted: fmt.Sprintf("Created and submitted %s %%s from %s %s", req.to, req.from, req.name),
+			draft:   fmt.Sprintf("Unsaved draft of %s: nothing was written (--create saves it).", req.to),
+			created: func(n string) string { return fmt.Sprintf("Created %s %s from %s %s", req.to, n, req.from, req.name) },
+			submitted: func(n string) string {
+				return fmt.Sprintf("Created and submitted %s %s from %s %s", req.to, n, req.from, req.name)
+			},
 		}
 		return runERP(cmd, fmt.Sprintf("Mapping %s %s…", source, name), emKeys, lines, func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (*erpResult, error) {
 			return runERPMap(ctx, c, cfg, req)

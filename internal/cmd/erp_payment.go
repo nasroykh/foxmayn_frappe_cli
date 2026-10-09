@@ -41,7 +41,8 @@ Invoice, Purchase Order or Dunning on ERPNext 15 and 16. Only the options you
 give are sent; ERPNext fills in the rest:
   --amount          pay this much instead of the outstanding amount
   --bank-account    pay from or into this Account (default: the Company's
-                    default bank, else cash, account)
+                    default bank, else cash, account). A Mode of Payment set
+                    on the document overrides it; a warning says so
   --reference-date  the date the payment is made for (YYYY-MM-DD, default today)
 
 A Sales Order or Purchase Order that is already fully billed is refused by
@@ -68,9 +69,11 @@ Examples:
 		}
 		req := paymentRequest{doctype: dt, name: name, opts: opts, create: epCreate || epSubmit, submit: epSubmit}
 		lines := erpLines{
-			draft:     "Unsaved draft of a Payment Entry: nothing was written (--create saves it).",
-			created:   fmt.Sprintf("Created Payment Entry %%s against %s %s", dt, name),
-			submitted: fmt.Sprintf("Created and submitted Payment Entry %%s against %s %s", dt, name),
+			draft:   "Unsaved draft of a Payment Entry: nothing was written (--create saves it).",
+			created: func(n string) string { return fmt.Sprintf("Created Payment Entry %s against %s %s", n, dt, name) },
+			submitted: func(n string) string {
+				return fmt.Sprintf("Created and submitted Payment Entry %s against %s %s", n, dt, name)
+			},
 		}
 		return runERP(cmd, fmt.Sprintf("Paying %s %s…", dt, name), epKeys, lines, func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (*erpResult, error) {
 			return runERPPayment(ctx, c, cfg, req)
@@ -86,8 +89,9 @@ type paymentRequest struct {
 	create, submit bool
 }
 
-// plainAmount is a positive decimal: no sign, exponent, separator or "Inf".
-var plainAmount = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+// plainAmount is a plain decimal: no sign, exponent, separator, "Inf" or
+// leading zeros ("05"), so what is sent reads as the number it is.
+var plainAmount = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]+)?$`)
 
 // paymentOptions reads the optional flags. A flag that was given and is
 // empty or invalid is a usage error; one that was not given is not sent.
@@ -137,13 +141,43 @@ func runERPPayment(ctx context.Context, c *client.FrappeClient, cfg *config.Site
 		return nil, err
 	}
 	gap := paymentAccountGap(draft)
+	warning := gap
+	if w := bankAccountOverride(draft, req.opts.BankAccount); w != "" {
+		if warning != "" {
+			warning += "\nwarning: "
+		}
+		warning += w
+	}
 	if !req.create {
-		return &erpResult{doc: draft, warning: gap}, nil
+		return &erpResult{doc: draft, warning: warning}, nil
 	}
 	if gap != "" {
 		return nil, &client.StateError{Message: gap}
 	}
-	return createFromDraft(ctx, c, "Payment Entry", draft, req.submit)
+	res, err := createFromDraft(ctx, c, "Payment Entry", draft, req.submit)
+	if res != nil {
+		res.warning = warning
+	}
+	return res, err
+}
+
+// bankAccountOverride says so when the draft does not use the --bank-account
+// given. get_payment_entry lets the Mode of Payment of the document override
+// the account (get_default_bank_cash_account: the account of the mode wins),
+// so a document with a mode_of_payment pays from or into that mode's account.
+func bankAccountOverride(draft map[string]interface{}, want string) string {
+	if want == "" {
+		return ""
+	}
+	field := map[string]string{"Receive": "paid_to", "Pay": "paid_from"}[fmt.Sprint(draft["payment_type"])]
+	if field == "" {
+		return ""
+	}
+	got, _ := draft[field].(string)
+	if got == want {
+		return ""
+	}
+	return fmt.Sprintf("--bank-account %q was not used: the draft has %s %q (the Mode of Payment of the document takes precedence over --bank-account)", want, field, got)
 }
 
 // paymentAccountGap says what is missing when the draft has no bank or cash
@@ -171,7 +205,7 @@ func init() {
 	f := erpPaymentCmd.Flags()
 	f.StringVar(&epAgainst, "against", "", `Document to pay as "DocType:name" (required)`)
 	f.StringVar(&epAmount, "amount", "", "Amount to pay (default: the outstanding amount)")
-	f.StringVar(&epBankAccount, "bank-account", "", "Bank or cash Account to pay from or into (default: the Company's default)")
+	f.StringVar(&epBankAccount, "bank-account", "", "Bank or cash Account to pay from or into (default: the Company's default; a Mode of Payment on the document overrides it)")
 	f.StringVar(&epReferenceDate, "reference-date", "", "Reference date, YYYY-MM-DD (default: today)")
 	f.BoolVar(&epCreate, "create", false, "Save the draft as a new Payment Entry")
 	f.BoolVar(&epSubmit, "submit", false, "Save and submit it (implies --create)")

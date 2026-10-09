@@ -90,7 +90,7 @@ func TestERPPaymentFlagsAreSent(t *testing.T) {
 		t.Fatalf("method requests = %+v", req)
 	}
 	q := req[0].Query
-	// A number goes as a number, so the server's int | float check accepts it.
+	// The amount is sent as a plain decimal string; Frappe coerces it for its int | float check.
 	if q.Get("dt") != "Purchase Invoice" || q.Get("dn") != "SRC-1" || q.Get("party_amount") != "12.50" ||
 		q.Get("bank_account") != "Bank - A" || q.Get("reference_date") != "2026-10-09" || len(q) != 5 {
 		t.Errorf("query = %v", q)
@@ -229,7 +229,7 @@ func TestERPPaymentDryRun(t *testing.T) {
 		if plan["dry_run"] != true || len(reqs) != want {
 			t.Fatalf("%s: plan = %v", flag, plan)
 		}
-		if insert := reqs[0].(map[string]interface{}); insert["method"] != "POST" || !strings.Contains(fmt.Sprint(insert["url"]), "/api/resource/Payment") {
+		if insert := reqs[0].(map[string]interface{}); insert["method"] != "POST" || !strings.HasSuffix(fmt.Sprint(insert["url"]), "/api/resource/Payment%20Entry") {
 			t.Errorf("%s: insert plan = %v", flag, insert)
 		}
 	}
@@ -246,6 +246,10 @@ func TestERPPaymentUsage(t *testing.T) {
 		{"erp", "payment", "--against", ":SINV-1"},
 		{"erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--amount", "0"},
 		{"erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--amount", "-5"},
+		{"erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--amount", "-1"},
+		{"erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--amount", "05"},
+		{"erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--amount", "00.5"},
+		{"erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--amount", ".5"},
 		{"erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--amount", "1e3"},
 		{"erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--amount", "Inf"},
 		{"erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--amount", ""},
@@ -329,12 +333,12 @@ func TestERPPaymentNoBankAccount(t *testing.T) {
 		t.Errorf("stdout = %s", r.Stdout)
 	}
 
-	for _, flag := range []string{"--create", "--submit"} {
+	for _, args := range [][]string{{"--create"}, {"--submit"}, {"--create", "--dry-run"}, {"--submit", "--dry-run"}} {
 		s := erpPSite(t, erpTV16)
 		noAccount(s)
-		lcTCode(t, cmdTRun(t, s, "erp", "payment", "--against", erpPAgainst("Sales Invoice"), flag), exitValidation, "no bank or cash account", "--bank-account")
+		lcTCode(t, cmdTRun(t, s, append([]string{"erp", "payment", "--against", erpPAgainst("Sales Invoice")}, args...)...), exitValidation, "no bank or cash account", "--bank-account")
 		if w := erpTWrites(s); len(w) != 0 {
-			t.Errorf("%s: writes: %+v", flag, w)
+			t.Errorf("%v: writes: %+v", args, w)
 		}
 	}
 }
@@ -348,5 +352,37 @@ func TestERPPaymentNeverSendsIgnorePermissions(t *testing.T) {
 		if strings.Contains(r.Path+r.Query.Encode()+r.Body, "ignore_permissions") {
 			t.Errorf("ignore_permissions sent: %s %s?%s %s", r.Method, r.Path, r.Query.Encode(), r.Body)
 		}
+	}
+}
+
+// A Mode of Payment on the document overrides --bank-account on the server:
+// when the draft pays into another account, say so.
+func TestERPPaymentBankAccountOverride(t *testing.T) {
+	s := erpPSite(t, erpTV16)
+	r := cmdTOK(t, cmdTRun(t, s, "--json", "erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--bank-account", "Bank - A"))
+	if !strings.Contains(r.Stderr, `warning: --bank-account "Bank - A" was not used: the draft has paid_to "Cash - A"`) || !strings.Contains(r.Stderr, "Mode of Payment") {
+		t.Errorf("stderr = %q", r.Stderr)
+	}
+	// The account the draft uses, or no --bank-account: no warning.
+	for _, args := range [][]string{{"--bank-account", "Cash - A"}, {}} {
+		r := cmdTOK(t, cmdTRun(t, s, append([]string{"--json", "erp", "payment", "--against", erpPAgainst("Sales Invoice")}, args...)...))
+		if strings.Contains(r.Stderr, "warning") {
+			t.Errorf("%v: stderr = %q", args, r.Stderr)
+		}
+	}
+	// A Pay entry compares paid_from.
+	s.HandleMethod(erpTPaymentMethod, func(*http.Request, map[string]interface{}) (interface{}, error) {
+		d := erpTPaymentDraft()
+		d["payment_type"], d["paid_from"] = "Pay", "Bank - A"
+		return d, nil
+	})
+	r = cmdTOK(t, cmdTRun(t, s, "--json", "erp", "payment", "--against", erpPAgainst("Purchase Invoice"), "--bank-account", "Bank - A"))
+	if strings.Contains(r.Stderr, "warning") {
+		t.Errorf("stderr = %q", r.Stderr)
+	}
+	// The warning also comes with a created entry.
+	r = cmdTOK(t, cmdTRun(t, s, "--json", "erp", "payment", "--against", erpPAgainst("Purchase Invoice"), "--bank-account", "Other - A", "--create"))
+	if !strings.Contains(r.Stderr, `paid_from "Bank - A"`) {
+		t.Errorf("stderr = %q", r.Stderr)
 	}
 }

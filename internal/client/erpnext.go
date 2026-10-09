@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -141,7 +140,7 @@ func PaymentMethod(major int) (string, bool) {
 // PaymentOptions are the optional arguments of get_payment_entry; an empty
 // one is not sent, so the server picks its own default.
 type PaymentOptions struct {
-	Amount        string // party_amount: a plain positive decimal
+	Amount        string // party_amount: a plain positive decimal, sent as text (Frappe coerces it to a number)
 	BankAccount   string // bank_account: an Account of the company
 	ReferenceDate string // reference_date: YYYY-MM-DD
 }
@@ -152,7 +151,7 @@ type PaymentOptions struct {
 func (c *FrappeClient) PaymentDraft(ctx context.Context, method, doctype, name string, o PaymentOptions) (map[string]interface{}, error) {
 	args := map[string]interface{}{"dt": doctype, "dn": name}
 	if o.Amount != "" {
-		args["party_amount"] = json.Number(o.Amount)
+		args["party_amount"] = o.Amount
 	}
 	if o.BankAccount != "" {
 		args["bank_account"] = o.BankAccount

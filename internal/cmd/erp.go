@@ -59,8 +59,12 @@ func (r *erpResult) name() string {
 }
 
 // erpLines are what an 'erp' command says about its outcome; created and
-// submitted take the document's name.
-type erpLines struct{ draft, created, submitted string }
+// submitted build their line from the document's name (a name is never part
+// of a format string).
+type erpLines struct {
+	draft              string
+	created, submitted func(name string) string
+}
 
 // printERP prints the outcome of an 'erp' command: the document as data, or
 // a line saying what happened and the document table.
@@ -73,9 +77,9 @@ func printERP(res *erpResult, keys string, lines erpLines) error {
 	}
 	switch {
 	case res.submitted:
-		output.PrintSuccess(fmt.Sprintf(lines.submitted, res.name()))
+		output.PrintSuccess(lines.submitted(res.name()))
 	case res.created:
-		output.PrintSuccess(fmt.Sprintf(lines.created, res.name()))
+		output.PrintSuccess(lines.created(res.name()))
 	default:
 		fmt.Fprintln(os.Stderr, lines.draft)
 	}

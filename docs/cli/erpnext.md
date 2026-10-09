@@ -61,7 +61,7 @@ Makes a Payment Entry against an invoice or an order, as the desk's Create > Pay
 | --- | --- |
 | `--against` | The document to pay, as `"DocType:name"` (required). |
 | `--amount` | Pay this much instead of the outstanding amount. A positive number. |
-| `--bank-account` | The bank or cash Account to pay from or into. Default: the Company's default bank account, else its default cash account. |
+| `--bank-account` | The bank or cash Account to pay from or into. Default: the Company's default bank account, else its default cash account. A Mode of Payment set on the document takes precedence (see below). |
 | `--reference-date` | The reference date of the payment, `YYYY-MM-DD`. Default: today. |
 | `--create` | Save the draft as a new Payment Entry. |
 | `--submit` | Save and submit it. Implies `--create`. |
@@ -84,6 +84,8 @@ ERPNext's refusals reach the usual [exit codes](exit-codes.md):
 | No bank or cash account for the Company (below) | 6 |
 
 **No bank or cash account.** When the Company has no default bank or cash account and its chart of accounts has not exactly one account of either type, ERPNext does not throw: it answers a draft whose `paid_from` or `paid_to` is empty. `erp payment` prints that draft with a warning on stderr; with `--create` or `--submit` it refuses (exit 6) before writing anything. Set the Company's default bank or cash account, or pass `--bank-account`.
+
+**A Mode of Payment on the document overrides `--bank-account`.** When the invoice or order has a `mode_of_payment`, ERPNext uses that mode's account for the Company and ignores `bank_account`. After the draft comes back, `erp payment` compares the account on the bank side (`paid_to` for Receive, `paid_from` for Pay) with the one you gave and prints a warning on stderr naming both when they differ; the draft is still printed and `--create` still works.
 
 **An invoice with nothing outstanding.** ERPNext checks only orders while it builds the draft, so an invoice that is already paid still comes back as a draft; whether `--create` is then refused is up to the server's own validation of the Payment Entry, whose error is reported as it comes.
 

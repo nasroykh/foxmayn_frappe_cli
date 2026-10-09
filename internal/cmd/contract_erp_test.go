@@ -320,6 +320,13 @@ func contractERPPayment(t *testing.T, c *client.FrappeClient, sc *config.SiteCon
 		if _, err := c.UpdateDoc(ctx, "Company", company, map[string]interface{}{"default_cash_account": cash}); err != nil {
 			t.Fatalf("setting default_cash_account: %v", err)
 		}
+		// The site is left as it was found. This runs after the cleanup of
+		// the Payment Entry made below, which needs the account.
+		t.Cleanup(func() {
+			if _, err := c.UpdateDoc(contractCtx(t), "Company", company, map[string]interface{}{"default_cash_account": nil}); err != nil {
+				t.Logf("restoring default_cash_account of %s: %v", company, err)
+			}
+		})
 	}
 	paymentsOf := func() int {
 		rows, err := c.GetList(contractCtx(t), "Payment Entry", client.ListOptions{Fields: []string{"name"}, Filters: fmt.Sprintf(`{"party":%q}`, customer), Limit: -1})
@@ -359,21 +366,26 @@ func contractERPPayment(t *testing.T, c *client.FrappeClient, sc *config.SiteCon
 
 	// --create --submit: saved, submitted, linked to the invoice.
 	r = runFFC(t, cfg, "", "--json", "--timeout", "2m", "erp", "payment", "--against", against, "--bank-account", cash, "--reference-date", today, "--submit", "--keys", "name,docstatus")
-	if r.Err != nil {
-		t.Fatalf("erp payment --submit: %v\n%s", r.Err, r.Stderr)
-	}
 	var made struct {
 		Name      string      `json:"name"`
 		DocStatus json.Number `json:"docstatus"`
 	}
-	if err := json.Unmarshal([]byte(r.Stdout), &made); err != nil || made.Name == "" || made.DocStatus != "1" {
-		t.Fatalf("created = %s (%v)", r.Stdout, err)
+	// A submit that fails after the insert still prints the created entry:
+	// remove it whatever happened next.
+	parseErr := json.Unmarshal([]byte(r.Stdout), &made)
+	if made.Name != "" {
+		t.Cleanup(func() {
+			ctx := contractCtx(t)
+			_, _ = c.CancelDoc(ctx, "Payment Entry", made.Name)
+			_ = c.DeleteDoc(ctx, "Payment Entry", made.Name)
+		})
 	}
-	t.Cleanup(func() {
-		ctx := contractCtx(t)
-		_, _ = c.CancelDoc(ctx, "Payment Entry", made.Name)
-		_ = c.DeleteDoc(ctx, "Payment Entry", made.Name)
-	})
+	if r.Err != nil {
+		t.Fatalf("erp payment --submit: %v\n%s\n%s", r.Err, r.Stderr, r.Stdout)
+	}
+	if parseErr != nil || made.Name == "" || made.DocStatus != "1" {
+		t.Fatalf("created = %s (%v)", r.Stdout, parseErr)
+	}
 	pe, err := c.GetDoc(ctx, "Payment Entry", made.Name)
 	if err != nil {
 		t.Fatal(err)
