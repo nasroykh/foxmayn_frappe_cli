@@ -220,7 +220,7 @@ func (a *AssistantService) signInOpenRouter(ctx context.Context, st *store.Store
 	if ctx.Err() != nil {
 		return ProviderInfo{}, cancelled()
 	}
-	ev :=OpenRouterAuth{Status: AuthBrowser, AuthURL: authURL}
+	ev := OpenRouterAuth{Status: AuthBrowser, AuthURL: authURL}
 	if err := a.host.OpenURL(authURL); err != nil {
 		ev.BrowserError = text.Sanitize(err.Error())
 	}
