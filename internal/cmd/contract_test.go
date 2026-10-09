@@ -107,6 +107,7 @@ func TestContract(t *testing.T) {
 	t.Run("export", func(t *testing.T) { contractExport(t, c, sc) })
 	t.Run("import", func(t *testing.T) { contractImport(t, c, sc) })
 	t.Run("import --server", func(t *testing.T) { contractImportServer(t, c, sc) })
+	t.Run("erp map", func(t *testing.T) { contractERPMap(t, c, sc) })
 	// Last: an active workflow changes how the DocType submits.
 	t.Run("workflow", func(t *testing.T) { contractWorkflow(t, c, sc) })
 	// After workflow, whose teardown would remove the Workflow this one makes.

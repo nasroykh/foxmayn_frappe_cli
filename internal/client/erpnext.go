@@ -1,0 +1,144 @@
+package client
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// ERPNext helpers: document mappers, called through the whitelisted methods
+// ERPNext itself offers. The desk uses the same methods ("Create > Sales
+// Invoice"), so permissions, naming and hooks stay the server's.
+
+// ERPNextApp is the name get_versions gives the ERPNext app.
+const ERPNextApp = "erpnext"
+
+// MapPair is a source and a target DocType of a mapper.
+type MapPair struct{ From, To string }
+
+func (p MapPair) String() string { return p.From + " -> " + p.To }
+
+// erpMapperMethods are the mappers (source_name, target_doc=None, ...) that
+// return one unsaved target document. They are the same on v15 and v16
+// (source of v15.121.6 and v16.37.0). Sales Order -> Purchase Order is left
+// out on purpose: it returns a list of documents, one per supplier.
+var erpMapperMethods = map[MapPair]string{
+	{"Quotation", "Sales Order"}:             "erpnext.selling.doctype.quotation.quotation.make_sales_order",
+	{"Sales Order", "Sales Invoice"}:         "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice",
+	{"Sales Order", "Delivery Note"}:         "erpnext.selling.doctype.sales_order.sales_order.make_delivery_note",
+	{"Delivery Note", "Sales Invoice"}:       "erpnext.stock.doctype.delivery_note.delivery_note.make_sales_invoice",
+	{"Purchase Order", "Purchase Receipt"}:   "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_receipt",
+	{"Purchase Order", "Purchase Invoice"}:   "erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice",
+	{"Purchase Receipt", "Purchase Invoice"}: "erpnext.stock.doctype.purchase_receipt.purchase_receipt.make_purchase_invoice",
+	{"Material Request", "Purchase Order"}:   "erpnext.stock.doctype.material_request.material_request.make_purchase_order",
+}
+
+// erpMappers is the mapper table by ERPNext major. Develop (17) moved most
+// mappers into <doctype>/mapper.py, so a newer major is refused rather than
+// guessed at; adding one is a row here.
+var erpMappers = map[int]map[MapPair]string{
+	15: erpMapperMethods,
+	16: erpMapperMethods,
+}
+
+// SupportedERPNext reports whether ffc knows the ERPNext helpers of a major.
+func SupportedERPNext(major int) bool {
+	_, ok := erpMappers[major]
+	return ok
+}
+
+// MapMethod returns the method that maps a document of from into one of to
+// on the given ERPNext major.
+func MapMethod(major int, from, to string) (string, bool) {
+	m, ok := erpMappers[major][MapPair{From: from, To: to}]
+	return m, ok
+}
+
+// MapPairs returns the pairs ffc can map on an ERPNext major, sorted.
+func MapPairs(major int) []MapPair {
+	var out []MapPair
+	for p := range erpMappers[major] {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].From != out[j].From {
+			return out[i].From < out[j].From
+		}
+		return out[i].To < out[j].To
+	})
+	return out
+}
+
+// MapPairsText lists the pairs of a major for an error message.
+func MapPairsText(major int) string {
+	pairs := MapPairs(major)
+	parts := make([]string, len(pairs))
+	for i, p := range pairs {
+		parts[i] = p.String()
+	}
+	return strings.Join(parts, "; ")
+}
+
+// Major returns the major version of an installed app (15, 16), or 0 when it
+// is not installed or the version is unknown.
+func (s *ServerInfo) Major(app string) int { return ParseMajor(s.Version(app)) }
+
+// MapDoc runs a mapper on a source document and returns the unsaved target
+// document (it carries __islocal and no real name). The call is a GET: no
+// mapper sets methods=, and a GET never commits, so nothing is kept. Only
+// source_name is sent; ignore_permissions, which some mappers take, never is.
+func (c *FrappeClient) MapDoc(ctx context.Context, method, source string) (map[string]interface{}, error) {
+	res, err := c.CallMethod(ctx, method, map[string]interface{}{"source_name": source}, true)
+	if err != nil {
+		return nil, err
+	}
+	doc, ok := res.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected response from %s: expected a document, got %T", method, res)
+	}
+	return doc, nil
+}
+
+// InsertableCopy returns a copy of a mapped document that can be inserted:
+// keys starting with "__" (__islocal, __unsaved, ...) are removed from it and
+// from its child rows, and so is a name that is empty or local ("new-...").
+func InsertableCopy(doc map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(doc))
+	for k, v := range doc {
+		switch {
+		case strings.HasPrefix(k, "__"):
+		case k == "name" && localName(v):
+		default:
+			out[k] = insertableRows(v)
+		}
+	}
+	return out
+}
+
+// localName reports whether a name is empty or the placeholder the server
+// gives an unsaved document ("new-sales-invoice-abc").
+func localName(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && (s == "" || strings.HasPrefix(s, "new-"))
+}
+
+// insertableRows applies InsertableCopy to the rows of a child table value.
+func insertableRows(v interface{}) interface{} {
+	rows, ok := v.([]interface{})
+	if !ok {
+		return v
+	}
+	out := make([]interface{}, len(rows))
+	for i, r := range rows {
+		if m, ok := r.(map[string]interface{}); ok {
+			out[i] = InsertableCopy(m)
+		} else {
+			out[i] = r
+		}
+	}
+	return out
+}

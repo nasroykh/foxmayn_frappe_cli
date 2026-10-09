@@ -2,7 +2,8 @@ name: Contract
 
 # Runs the contract tests (internal/cmd/contract_test.go, build tag
 # "contract") against real Frappe/ERPNext sites started from frappe_docker's
-# pwd.yml. Nightly, on demand, and on PRs that touch the tests or this file.
+# pwd.yml. Nightly, on demand, and on PRs that touch the tests, the ERPNext
+# helpers they pin, or this file.
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -11,6 +12,8 @@ on:
     paths:
       - internal/cmd/contract*_test.go
       - internal/frappetest/**
+      - internal/client/erpnext*.go
+      - internal/cmd/erp*.go
       - .github/workflows/contract.yml
 
 permissions:
@@ -70,7 +73,7 @@ jobs:
           FFC_CONTRACT_URL: http://localhost:8080
           FFC_CONTRACT_USER: Administrator
           FFC_CONTRACT_PASSWORD: admin
-        run: go test -tags contract -count=1 -run TestContract -v ./internal/cmd/
+        run: go test -tags contract -count=1 -timeout 25m -run TestContract -v ./internal/cmd/
 
       - name: Site logs on failure
         if: failure()
