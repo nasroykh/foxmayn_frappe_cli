@@ -789,6 +789,9 @@ type callEntry struct {
 	// which result holds, possibly with the app's own notes around it.
 	site     bool
 	siteText string
+	// siteTool names the tool that produced siteText when it is not the
+	// call's own (the get_doc read before an update_doc).
+	siteTool string
 
 	cls      cmd.ToolClass
 	approval string // guarded by activeRun.askMu
@@ -983,7 +986,11 @@ func modelResult(e *callEntry) string {
 	if !e.site {
 		return cutForModel(e.result)
 	}
-	body := wrapToolResult(e.call.Name, cutForModel(e.siteText))
+	tool := e.call.Name
+	if e.siteTool != "" {
+		tool = e.siteTool
+	}
+	body := wrapToolResult(tool, cutForModel(e.siteText))
 	if e.siteText == "" {
 		return body + e.result
 	}
