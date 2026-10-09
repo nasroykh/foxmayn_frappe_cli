@@ -582,7 +582,7 @@ function checkLocalOnly(site: string, providerID: string, model = "") {
   if (siteSettings.get(site)?.localOnly && (!isLocal(p) || isCloudModel(model || p.defaultModel))) {
     fail(
       "invalid",
-      "This site is set to use local models only. Choose a provider that runs on this computer (Ollama, LM Studio or a local server).",
+      "This site is set to use local models only. Choose a provider that runs on this computer (Ollama, LM Studio or a local server) and a model that is not an Ollama cloud model.",
       { field: "provider" },
     )
   }
