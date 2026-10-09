@@ -20,7 +20,7 @@ func (s *Site) registerInsertMany() {
 	s.methods["frappe.client.insert_many"] = s.insertMany
 }
 
-func (s *Site) insertMany(_ *http.Request, args map[string]interface{}) (interface{}, error) {
+func (s *Site) insertMany(r *http.Request, args map[string]interface{}) (interface{}, error) {
 	docs, err := insertManyDocs(args["docs"])
 	if err != nil {
 		return nil, err
@@ -29,6 +29,7 @@ func (s *Site) insertMany(_ *http.Request, args map[string]interface{}) (interfa
 		return nil, Validation("Only 200 inserts allowed in one request")
 	}
 
+	user := s.authenticate(r)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	seq, clock := s.seq, s.clock
@@ -42,7 +43,7 @@ func (s *Site) insertMany(_ *http.Request, args map[string]interface{}) (interfa
 		if _, known := s.doctypes[doctype]; !known {
 			e = &Error{http.StatusInternalServerError, "ImportError", fmt.Sprintf("Module import failed for %s", doctype)}
 		} else {
-			doc, e = s.insertLocked(doctype, d, Username)
+			doc, e = s.insertLocked(doctype, d, user)
 		}
 		if e != nil {
 			for _, m := range made {

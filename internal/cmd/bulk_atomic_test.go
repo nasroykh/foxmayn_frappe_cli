@@ -121,6 +121,35 @@ func TestCmdBulkCreateAtomicOutcomeUnknown(t *testing.T) {
 	s2 := cmdTSite(t)
 	s2.Handle("POST "+atomicPath, frappetest.ErrorHandler(&frappetest.Error{Status: http.StatusGatewayTimeout, ExcType: "Exception", Message: "gateway timeout"}))
 	lcTCode(t, cmdTRun(t, s2, "bulk-create", "-d", "ToDo", "--atomic", "--data", `[{"name":"late"}]`), exitNetwork, "may or may not have been created")
+
+	// A CDN's origin timeout (524) and a plain 500 page are not Frappe's
+	// answers; a 500 with Frappe's exc_type is.
+	for _, tc := range []struct {
+		err  *frappetest.Error
+		want string
+	}{
+		{&frappetest.Error{Status: 524, Message: "origin timeout"}, "may or may not have been created"},
+		{&frappetest.Error{Status: http.StatusRequestTimeout, Message: "request timeout"}, "may or may not have been created"},
+		{&frappetest.Error{Status: http.StatusInternalServerError, ExcType: "LinkValidationError", Message: "bad link"}, "nothing was created"},
+	} {
+		s3 := cmdTSite(t)
+		s3.Handle("POST "+atomicPath, frappetest.ErrorHandler(tc.err))
+		r := cmdTRun(t, s3, "bulk-create", "-d", "ToDo", "--atomic", "--data", `[{"name":"x"}]`)
+		if r.Err == nil || !strings.Contains(r.Err.Error(), tc.want) {
+			t.Errorf("status %d: err %v, want %q", tc.err.Status, r.Err, tc.want)
+		}
+	}
+
+	// A success answer that does not hold the names means the batch was
+	// probably created.
+	s4 := cmdTSite(t)
+	s4.HandleMethod("frappe.client.insert_many", func(*http.Request, map[string]interface{}) (interface{}, error) {
+		return []interface{}{}, nil
+	})
+	r = cmdTRun(t, s4, "bulk-create", "-d", "ToDo", "--atomic", "--data", `[{"name":"x"}]`)
+	if r.Err == nil || !strings.Contains(r.Err.Error(), "probably created") {
+		t.Errorf("unusable reply: err %v", r.Err)
+	}
 }
 
 func TestCmdBulkCreateAtomicRefusedBeforeSending(t *testing.T) {

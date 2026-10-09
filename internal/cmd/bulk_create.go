@@ -106,9 +106,9 @@ func bulkCreateAtomic(cmd *cobra.Command, items []map[string]interface{}) error 
 		}
 		return atomicError(callErr)
 	}
-	if spinErr != nil {
-		return spinErr
-	}
+	// The batch exists once the call succeeded, so it is reported even when
+	// the spinner itself failed.
+	_ = spinErr
 	rep := bulkReport{Done: "created", Total: len(names), OK: len(names), Results: make([]bulkResult, len(names))}
 	for i, n := range names {
 		rep.Results[i] = bulkResult{Index: i + 1, Name: n, Status: "created"}
@@ -116,18 +116,27 @@ func bulkCreateAtomic(cmd *cobra.Command, items []map[string]interface{}) error 
 	return printBulkReport(rep, bcDoctype)
 }
 
-// atomicError says what a failed --atomic request means for the batch. An
-// answer from Frappe means the transaction was rolled back; no answer (a
-// timeout, a dropped connection, a proxy's 502/503/504, a reply that is not
-// the expected one) leaves the outcome unknown. Both keep the error's class
-// for the exit code.
+// atomicError says what a failed --atomic request means for the batch, and
+// keeps the error's class for the exit code. A 4xx refusal, or a 500/501 with
+// Frappe's exc_type, means Frappe rolled the transaction back. A success
+// answer ffc cannot read means the batch was most likely committed. Anything
+// else leaves the outcome unknown: no answer, a dropped connection, a 408 or
+// 499, any 502 and above (proxies and CDNs: 502-504, 520-524), or a 5xx that
+// is not Frappe's.
 func atomicError(err error) error {
-	var api *client.APIError
-	if errors.As(err, &api) && api.Status != http.StatusBadGateway &&
-		api.Status != http.StatusServiceUnavailable && api.Status != http.StatusGatewayTimeout {
-		return fmt.Errorf("nothing was created: %w", err)
+	if errors.Is(err, client.ErrUnusableReply) {
+		return fmt.Errorf("the batch was probably created: check the site before re-running: %w", err)
 	}
-	return fmt.Errorf("the batch may or may not have been created (no answer arrived): check the site before re-running, and raise --timeout (now %s; 200 inserts can take longer): %w", client.Timeout, err)
+	var api *client.APIError
+	if errors.As(err, &api) {
+		st := api.Status
+		unknown := st == http.StatusRequestTimeout || st == 499 || st >= http.StatusBadGateway ||
+			(st >= http.StatusInternalServerError && api.ExcType == "")
+		if st >= 400 && !unknown {
+			return fmt.Errorf("nothing was created: %w", err)
+		}
+	}
+	return fmt.Errorf("the batch may or may not have been created: check the site before re-running, and raise --timeout (now %s; 200 inserts can take longer): %w", client.Timeout, err)
 }
 
 func init() {

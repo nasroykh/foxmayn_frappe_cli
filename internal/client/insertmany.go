@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 )
@@ -10,13 +11,18 @@ import (
 // request; it refuses more with "Only 200 inserts allowed in one request".
 const MaxInsertMany = 200
 
+// ErrUnusableReply marks a successful insert_many answer that ffc cannot
+// read: Frappe committed, so the documents most likely exist.
+var ErrUnusableReply = errors.New("insert_many answered, but the reply was unusable")
+
 // InsertManyDocs checks docs for InsertMany and returns copies to send,
 // each with "doctype" set to doctype. Nothing is rewritten silently: a
 // document naming another DocType is an error, because insert_many inserts
 // each one as its own DocType. So is a document with "parent" and
-// "parenttype": Frappe then appends it to that existing parent and saves
-// the parent, which is not a create. Callers use it to refuse bad input
-// before any request.
+// "parenttype": when the DocType is a child table, Frappe appends it to that
+// existing parent and saves the parent, which is not a create. ffc reads no
+// meta here, so it refuses the pair for any DocType. Callers use it to refuse
+// bad input before any request.
 func InsertManyDocs(doctype string, docs []map[string]interface{}) ([]map[string]interface{}, error) {
 	if len(docs) > MaxInsertMany {
 		return nil, fmt.Errorf("%d documents exceed the %d insert_many takes in one request", len(docs), MaxInsertMany)
@@ -27,7 +33,7 @@ func InsertManyDocs(doctype string, docs []map[string]interface{}) ([]map[string
 			return nil, fmt.Errorf("item %d has doctype %v, not %q: insert_many inserts each item as its own DocType", i+1, v, doctype)
 		}
 		if d["parent"] != nil && d["parenttype"] != nil {
-			return nil, fmt.Errorf("item %d has parent and parenttype: Frappe would add it to that existing parent document, not create a document", i+1)
+			return nil, fmt.Errorf("item %d has parent and parenttype: for a child table Frappe would add it to that existing parent document, not create a document", i+1)
 		}
 		cp := make(map[string]interface{}, len(d)+1)
 		for k, v := range d {
@@ -60,13 +66,13 @@ func (c *FrappeClient) InsertMany(ctx context.Context, doctype string, docs []ma
 		return nil, c.missingDocType(ctx, doctype, err)
 	}
 	if len(env.Message) != len(items) {
-		return nil, fmt.Errorf("unexpected response: insert_many returned %d names for %d documents", len(env.Message), len(items))
+		return nil, fmt.Errorf("%w: %d names for %d documents", ErrUnusableReply, len(env.Message), len(items))
 	}
 	names := make([]string, len(env.Message))
 	for i, v := range env.Message {
 		s, ok := v.(string)
 		if !ok {
-			return nil, fmt.Errorf("unexpected response: name %d is %T, not a string", i+1, v)
+			return nil, fmt.Errorf("%w: name %d is %T, not a string", ErrUnusableReply, i+1, v)
 		}
 		names[i] = s
 	}
