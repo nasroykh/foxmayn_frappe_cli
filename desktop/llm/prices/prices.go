@@ -16,12 +16,15 @@ import (
 //go:embed prices.json
 var raw []byte
 
-// Where a cost came from. SourceLocal means a model on this computer: it has
-// tokens and no cost, which is not the same as an unknown cost ("").
+// Where a cost came from, as stored in usage.cost_source. SourceLocal (a
+// model on this computer: tokens and no cost) and SourceUnknown (a price this
+// app does not have) are set by the caller, never by Cost. An empty value is
+// a row stored before 0.3.0: tokens only, neither priced nor unknown.
 const (
 	SourceProvider = "provider"
 	SourceTable    = "table"
 	SourceLocal    = "local"
+	SourceUnknown  = "unknown"
 )
 
 // Price is one set of $/Mtok prices.
@@ -103,13 +106,10 @@ type Result struct {
 	OK     bool
 }
 
-// Local reports kinds that run on this computer (a custom server is checked by
-// the caller, which knows its address).
-func Local(kind string) bool { return kind == "ollama" || kind == "lmstudio" }
-
 // Cost prices u for a model of a provider kind. A cost the provider reported
-// (OpenRouter's usage.cost) wins; then the table; else the cost is unknown. A
-// local kind has none: Source is SourceLocal and OK is false.
+// (OpenRouter's usage.cost) wins; then the table; else the cost is unknown
+// (OK false). Whether the model runs on this computer is not decided here: the
+// caller knows the provider's address.
 //
 // u.In holds the cache writes (CacheWrite is a subset): they are priced at the
 // write price, the rest of In at the input price, u.Cached at the cache-read
@@ -118,9 +118,6 @@ func Local(kind string) bool { return kind == "ollama" || kind == "lmstudio" }
 func Cost(kind, model string, u llm.Usage) Result {
 	if u.Cost != nil && *u.Cost >= 0 {
 		return Result{USD: *u.Cost, Source: SourceProvider, OK: true}
-	}
-	if Local(kind) {
-		return Result{Source: SourceLocal}
 	}
 	load()
 	if err != nil {

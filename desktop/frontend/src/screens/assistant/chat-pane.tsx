@@ -26,7 +26,7 @@ import type {
   ToolStatus,
   UsageTotals,
 } from "@/lib/backend-types"
-import { hasUsage, noUsage } from "@/lib/cost"
+import { hasUsage, mergeTotals, noUsage } from "@/lib/cost"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 import { chatReducer, initialState } from "@/screens/assistant/chat-reducer"
 import { ProfilePicker } from "@/screens/assistant/profile-picker"
@@ -54,7 +54,7 @@ export function ChatPane({
   /** The conversation list may be stale (title, order, mode): reload it. */
   onChanged: () => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const convID = conv.id
   const [state, dispatch] = React.useReducer(chatReducer, convID, initialState)
   const [messages, setMessages] = React.useState<ChatMessage[] | null>(null)
@@ -124,7 +124,8 @@ export function ChatPane({
       backend.onChatTitle((ev) => {
         if (ev.convID !== convRef.current) return
         onChangedRef.current()
-        // The title call is part of the total; a reload during a run would reset the live view.
+        // The title call is part of the total. A reload during a run would reset its live view;
+        // the reload at the run's end (chat:done) then picks the title call up.
         if (stateRef.current.phase === "idle") void load()
       }),
       backend.onChatApproval((ev) => dispatch({ type: "approval", ev })),
@@ -252,10 +253,11 @@ export function ChatPane({
 
   async function saveName() {
     const name = (renaming ?? "").trim()
-    if (!name || name === conv.title) {
+    if (!name) {
       setRenaming(null)
       return
     }
+    // Always sent, even when unchanged: confirming a title locks it as the user's own.
     try {
       await backend.renameConversation(convID, name)
       setRenaming(null)
@@ -267,6 +269,8 @@ export function ChatPane({
 
   const provider = providers.find((p) => p.id === conv.providerID)
   const usageOf = new Map(runUsage.map((u) => [u.msgID, u.usage]))
+  // The stored total plus the model turns of the run in progress (a reload resets those).
+  const shownTotal = active ? mergeTotals(total, state.usage) : total
 
   return (
     <section aria-label={conv.title || t("chat.title")} className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
@@ -326,13 +330,16 @@ export function ChatPane({
           <p className="text-muted-foreground truncate text-xs">
             {t("chat.header.site", { site: conv.site })} · {provider?.label || conv.providerID}
             {conv.model ? ` · ${conv.model}` : ""}
-            {hasUsage(total) && (
+            {hasUsage(shownTotal) && (
               <span title={t("chat.header.totalHelp")} data-testid="usage-total">
                 {" · "}
                 {t("chat.header.total", {
                   usage: [
-                    t("chat.usage.tokens", { input: total.input.toLocaleString(), output: total.output.toLocaleString() }),
-                    costText(total),
+                    t("chat.usage.tokens", {
+                      input: shownTotal.input.toLocaleString(i18n.language),
+                      output: shownTotal.output.toLocaleString(i18n.language),
+                    }),
+                    costText(shownTotal),
                   ]
                     .filter(Boolean)
                     .join(" · "),

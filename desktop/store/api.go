@@ -87,7 +87,8 @@ type Usage struct {
 	CacheWrite int
 	// CostUSD is nil when the cost is unknown (and for a local model).
 	CostUSD *float64
-	// CostSource is "provider", "table", "local" or "" (unknown).
+	// CostSource is "provider", "table", "local", "unknown", or "" for a
+	// row stored before 0.3.0 (tokens only).
 	CostSource string
 	// PriceDate is the price table's date for a "table" cost.
 	PriceDate string

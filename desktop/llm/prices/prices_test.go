@@ -138,10 +138,11 @@ func TestUnknownModelIsNotGuessed(t *testing.T) {
 	}
 }
 
-func TestLocalKindsHaveNoCost(t *testing.T) {
+// Cost is the table only: the caller decides what is local.
+func TestKindsWithoutATableEntryAreUnknown(t *testing.T) {
 	for _, kind := range []string{"ollama", "lmstudio"} {
 		r := Cost(kind, "gpt-5.4", llm.Usage{In: 100, Out: 100})
-		if r.OK || r.Source != SourceLocal {
+		if r.OK || r.Source != "" {
 			t.Errorf("%s: result = %+v", kind, r)
 		}
 	}

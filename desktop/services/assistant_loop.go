@@ -99,6 +99,8 @@ type runner struct {
 	// titles lets a finished first run name its conversation with one more
 	// model call (AssistantService.open turns it on).
 	titles bool
+	// titleCancels stops a conversation's title call (guarded by mu).
+	titleCancels map[string]context.CancelFunc
 }
 
 // activeRun is one run in flight.

@@ -186,7 +186,7 @@ describe("chat reducer", () => {
     let s = run([ev({}), ev({ turn: 2, cost: 0.02 })], started())
     expect(s.usage).toMatchObject({ input: 200, output: 20, cached: 10, hasCost: true, unknown: false })
     expect(s.usage.costUSD).toBeCloseTo(0.03)
-    s = run([ev({ turn: 3, cost: null, costSource: "" })], s)
+    s = run([ev({ turn: 3, cost: null, costSource: "unknown" })], s)
     expect(s.usage).toMatchObject({ hasCost: true, unknown: true })
     // A local model has tokens only: no cost, and nothing unknown about it.
     s = run([ev({ cost: null, costSource: "local" })], started())

@@ -17,8 +17,10 @@ type priced struct {
 // costOf prices a call of conv's provider and model. The provider's own price
 // (OpenRouter's usage.cost) wins; a model on this computer has tokens and no
 // cost; else the embedded table decides; a model it does not list has an
-// unknown cost, never a guessed one. A model that a local server passes on to
-// a hosted service (isCloudModel) is not local: its cost is unknown.
+// unknown cost, never a guessed one. "On this computer" is the provider's
+// address only (isLocalProvider), never its kind: an Ollama pointed at
+// ollama.com is a hosted service. A model that a local server passes on to a
+// hosted service (isCloudModel) is not local either.
 func costOf(st *store.Store, conv store.Conversation, model string, u llm.Usage) priced {
 	var p store.Provider
 	if rows, err := st.ListProviders(); err == nil {
@@ -28,15 +30,12 @@ func costOf(st *store.Store, conv store.Conversation, model string, u llm.Usage)
 			}
 		}
 	}
-	if u.Cost == nil && (prices.Local(p.Kind) || isLocalProvider(p)) {
-		if isCloudModel(model) {
-			return priced{}
-		}
+	if u.Cost == nil && isLocalProvider(p) && !isCloudModel(model) {
 		return priced{Source: prices.SourceLocal}
 	}
 	r := prices.Cost(p.Kind, model, u)
 	if !r.OK {
-		return priced{Source: r.Source}
+		return priced{Source: prices.SourceUnknown}
 	}
 	usd := r.USD
 	return priced{USD: &usd, Source: r.Source, Date: r.Date}
@@ -53,7 +52,8 @@ func usageRow(runID string, turn int, kind string, u llm.Usage, c priced) store.
 
 // UsageTotals adds up the token counts and costs of some calls. When Unknown
 // is set the cost of some call is not known: CostUSD is then "at least". A
-// call on a local model counts tokens only and never makes a total unknown.
+// call on a local model, and a row stored before 0.3.0 (cost_source ""), count
+// tokens only and never make a total unknown.
 type UsageTotals struct {
 	Input      int `json:"input"`
 	Output     int `json:"output"`
@@ -74,7 +74,7 @@ func (t *UsageTotals) add(u store.Usage) {
 	case u.CostUSD != nil:
 		t.CostUSD += *u.CostUSD
 		t.HasCost = true
-	case u.CostSource != prices.SourceLocal:
+	case u.CostSource == prices.SourceUnknown:
 		t.Unknown = true
 	}
 }

@@ -60,7 +60,7 @@ import type {
   ToolStatus,
   UsageTotals,
 } from "@/lib/backend-types"
-import { addEvent, noUsage } from "@/lib/cost"
+import { addEvent, mergeTotals, noUsage } from "@/lib/cost"
 import type { AppError } from "@/lib/errors"
 
 const params = new URLSearchParams(window.location.search)
@@ -405,7 +405,7 @@ function mockPrice(c: MockConv): { cost: number | null; costSource: string } {
   if (kind === "ollama" || kind === "lmstudio" || kind === "custom") return { cost: null, costSource: "local" }
   if (kind === "openrouter") return { cost: 0.0123, costSource: "provider" }
   if (/^(claude-(sonnet|opus|haiku)-5|gpt-5|gemini-)/.test(c.conv.model)) return { cost: 0.0156, costSource: "table" }
-  return { cost: null, costSource: "" }
+  return { cost: null, costSource: "unknown" }
 }
 
 function finish(run: MockRun, c: MockConv, status: RunStatus, paused = false) {
@@ -414,7 +414,7 @@ function finish(run: MockRun, c: MockConv, status: RunStatus, paused = false) {
   const ev: ChatUsage = { convID: run.convID, runID: run.id, turn: 1, input: 1840, output: 212, cached: 1500, cacheWrite: 0, ...mockPrice(c) }
   emit(chat.usage, ev)
   const used = addEvent(noUsage, ev)
-  c.total = [used].reduce((t, u) => addTotals(t, u), c.total)
+  c.total = mergeTotals(c.total, used)
   const last = [...c.messages].reverse().find((m) => m.role === "assistant")
   c.runUsage = [...c.runUsage.filter((u) => u.runID !== run.id), { runID: run.id, msgID: last?.id ?? "", usage: used }]
   emit(chat.done, { convID: run.convID, runID: run.id, status })
@@ -423,23 +423,12 @@ function finish(run: MockRun, c: MockConv, status: RunStatus, paused = false) {
     setTimeout(() => {
       if (c.named) return
       c.conv.title = "Open ToDos"
-      c.total = addTotals(c.total, addEvent(noUsage, { ...ev, input: 220, output: 6, cached: 0 }))
+      c.total = mergeTotals(c.total, addEvent(noUsage, { ...ev, input: 220, output: 6, cached: 0 }))
       emit(chat.title, { convID: run.convID, title: c.conv.title })
     }, 600)
   }
 }
 
-function addTotals(a: UsageTotals, b: UsageTotals): UsageTotals {
-  return {
-    input: a.input + b.input,
-    output: a.output + b.output,
-    cached: a.cached + b.cached,
-    cacheWrite: a.cacheWrite + b.cacheWrite,
-    costUSD: a.costUSD + b.costUSD,
-    hasCost: a.hasCost || b.hasCost,
-    unknown: a.unknown || b.unknown,
-  }
-}
 
 async function script(run: MockRun, c: MockConv, text: string) {
   const site = c.conv.site

@@ -21,13 +21,21 @@ describe("cost state", () => {
   it("counts a turn without a cost as unknown, except a local one", () => {
     const ev = { convID: "c", runID: "r", turn: 1, input: 10, output: 5, cached: 0, cacheWrite: 0 }
     expect(addEvent(noUsage, { ...ev, cost: 0.02, costSource: "table" })).toMatchObject({ hasCost: true, unknown: false, costUSD: 0.02 })
-    expect(addEvent(noUsage, { ...ev, cost: null, costSource: "" })).toMatchObject({ hasCost: false, unknown: true })
+    expect(addEvent(noUsage, { ...ev, cost: null, costSource: "unknown" })).toMatchObject({ hasCost: false, unknown: true })
+    // A row from before 0.3.0 has no source: tokens only, not unknown.
+    expect(addEvent(noUsage, { ...ev, cost: null, costSource: "" })).toMatchObject({ hasCost: false, unknown: false, input: 10 })
     expect(addEvent(noUsage, { ...ev, cost: null, costSource: "local" })).toMatchObject({ hasCost: false, unknown: false, input: 10 })
   })
 
   it("shows a small price with more decimals", () => {
     expect(formatUSD(0.0123, "en")).toBe("$0.0123")
     expect(formatUSD(1.5, "en")).toBe("$1.50")
+    // Below half of the last shown digit: "<$0.0001"; the format is picked after rounding.
+    expect(formatUSD(0.00004, "en")).toBe("<$0.0001")
+    expect(formatUSD(0.00005, "en")).toBe("$0.0001")
+    expect(formatUSD(0, "en")).toBe("$0.0000")
+    expect(formatUSD(0.99996, "en")).toBe("$1.00")
+    expect(formatUSD(0.9999, "en")).toBe("$0.9999")
     expect(hasUsage(noUsage)).toBe(false)
   })
 })

@@ -287,7 +287,8 @@ export interface ChatUsage {
 
     /**
      * Cost is the turn's price in USD; nil when it is unknown or the model
-     * is local. CostSource is "provider", "table", "local" or "" (unknown).
+     * is local. CostSource is "provider", "table", "local", "unknown", or ""
+     * (a row from before 0.3.0: tokens only).
      */
     "cost": number | null;
     "costSource": string;
@@ -885,7 +886,8 @@ export interface UpdateInfo {
 /**
  * UsageTotals adds up the token counts and costs of some calls. When Unknown
  * is set the cost of some call is not known: CostUSD is then "at least". A
- * call on a local model counts tokens only and never makes a total unknown.
+ * call on a local model, and a row stored before 0.3.0 (cost_source ""), count
+ * tokens only and never make a total unknown.
  */
 export interface UsageTotals {
     "input": number;

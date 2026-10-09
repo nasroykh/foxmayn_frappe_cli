@@ -73,7 +73,8 @@ type ChatUsage struct {
 	// CacheWrite is the part of Input written to the prompt cache.
 	CacheWrite int `json:"cacheWrite"`
 	// Cost is the turn's price in USD; nil when it is unknown or the model
-	// is local. CostSource is "provider", "table", "local" or "" (unknown).
+	// is local. CostSource is "provider", "table", "local", "unknown", or ""
+	// (a row from before 0.3.0: tokens only).
 	Cost       *float64 `json:"cost"`
 	CostSource string   `json:"costSource"`
 }

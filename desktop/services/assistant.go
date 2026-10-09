@@ -508,6 +508,8 @@ func (a *AssistantService) DeleteConversation(id string) error {
 	}
 	defer done()
 	return r.whileIdle(id, func() error {
+		// A title call still out for it ends with the conversation.
+		r.cancelTitleLocked(id)
 		if err := st.DeleteConversation(id); err != nil {
 			return wrapStoreErr(err)
 		}

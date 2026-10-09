@@ -82,6 +82,18 @@ describe("Assistant screen with the mock backend", () => {
     expect((await backend.listConversations())[0].title).toBe("My todos")
   }, 30000)
 
+  it("saves a name even when it is unchanged, so confirming it locks it", async () => {
+    await backend.newConversation("acme-prod", "read", "anthropic", "claude-sonnet-5-5")
+    const rename = vi.spyOn(backend, "renameConversation")
+    show()
+    await send("What is TD-0001?")
+    await waitFor(() => expect(chatTitle()).toBe("Open ToDos"), { timeout: 12000 })
+    fireEvent.click(screen.getByRole("button", { name: "Rename this conversation" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }))
+    await waitFor(() => expect(rename).toHaveBeenCalledWith(expect.any(String), "Open ToDos"))
+    rename.mockRestore()
+  }, 30000)
+
   it("says cost unknown for a model that is not in the price table", async () => {
     await backend.newConversation("acme-prod", "read", "anthropic", "mystery-model")
     show()

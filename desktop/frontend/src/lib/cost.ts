@@ -44,17 +44,33 @@ export function addEvent(u: UsageTotals, ev: ChatUsage): UsageTotals {
     cacheWrite: u.cacheWrite + ev.cacheWrite,
   }
   if (ev.cost != null) return { ...next, costUSD: u.costUSD + ev.cost, hasCost: true }
-  // A local model has tokens and no cost; any other call without one is unknown.
-  return ev.costSource === "local" ? next : { ...next, unknown: true }
+  // Only a call the app could not price is unknown. A local model has tokens
+  // and no cost, and a row from before 0.3.0 (costSource "") is tokens only.
+  return ev.costSource === "unknown" ? { ...next, unknown: true } : next
 }
 
-/** Dollars: two decimals from $1 up, four below it so a small price is not 0.00. */
+/** The sum of two totals. */
+export function mergeTotals(a: UsageTotals, b: UsageTotals): UsageTotals {
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cached: a.cached + b.cached,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    costUSD: a.costUSD + b.costUSD,
+    hasCost: a.hasCost || b.hasCost,
+    unknown: a.unknown || b.unknown,
+  }
+}
+
+/**
+ * Dollars: two decimals from $1 up, four below it so a small price is not
+ * $0.00, and "<$0.0001" for a price that would round to nothing. The format
+ * is chosen after rounding, so $0.99999 reads $1.00.
+ */
 export function formatUSD(usd: number, locale?: string): string {
-  const small = usd < 1
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: small ? 4 : 2,
-    maximumFractionDigits: small ? 4 : 2,
-  }).format(usd)
+  const money = (v: number, digits: number) =>
+    new Intl.NumberFormat(locale, { style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v)
+  if (usd > 0 && usd < 0.00005) return "<" + money(0.0001, 4)
+  const rounded4 = Math.round(usd * 1e4) / 1e4
+  return money(usd, rounded4 < 1 ? 4 : 2)
 }

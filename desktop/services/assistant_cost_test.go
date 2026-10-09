@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
@@ -136,7 +137,7 @@ func TestCostUnknownModelIsNullAndTotalIsAtLeast(t *testing.T) {
 	g.a.run.titles = false
 	runID := g.send(t, cid, "go", 1)
 	rows := g.usageRows(t, runID)
-	if len(rows) != 2 || rows[0].CostUSD == nil || rows[1].CostUSD != nil || rows[1].CostSource != "" || rows[1].PriceDate != "" {
+	if len(rows) != 2 || rows[0].CostUSD == nil || rows[1].CostUSD != nil || rows[1].CostSource != "unknown" || rows[1].PriceDate != "" {
 		t.Fatalf("rows = %+v", rows)
 	}
 	d, _ := g.a.GetConversation(cid)
@@ -204,11 +205,63 @@ func TestCostOllamaCloudModelIsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	runID := g.send(t, c.ID, "hi", 1)
-	if u := g.usageRows(t, runID)[0]; u.CostUSD != nil || u.CostSource != "" {
+	if u := g.usageRows(t, runID)[0]; u.CostUSD != nil || u.CostSource != "unknown" {
 		t.Fatalf("stored = %+v", u)
 	}
 	if d, _ := g.a.GetConversation(c.ID); !d.Total.Unknown {
 		t.Fatalf("total = %+v", d.Total)
+	}
+}
+
+// Locality is the provider's address, not its kind: an Ollama provider that
+// points at a hosted service has an unknown cost.
+func TestCostOllamaAtAHostedAddressIsUnknown(t *testing.T) {
+	g := newAssistantRig(t, usageTurn(llm.Usage{In: 50, Out: 9}, "ok"))
+	if _, err := g.a.SaveProvider(ProviderInfo{ID: "p1", Kind: KindOllama, BaseURL: "https://ollama.com", DefaultModel: "llama3"}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := g.a.NewConversation("prod", ModeRead, "p1", "llama3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := g.send(t, c.ID, "hi", 1)
+	if u := g.usageRows(t, runID)[0]; u.CostUSD != nil || u.CostSource != "unknown" {
+		t.Fatalf("stored = %+v", u)
+	}
+	if d, _ := g.a.GetConversation(c.ID); !d.Total.Unknown {
+		t.Fatalf("total = %+v", d.Total)
+	}
+}
+
+// A row as the 0.2.0 -> 0.3.0 migration leaves it (cost_source ” and a NULL
+// cost) is tokens only: it does not make a total "at least".
+func TestLegacyUsageRowIsNotUnknown(t *testing.T) {
+	g, cid := costRig(t, KindAnthropic, "claude-sonnet-5-5", usageTurn(llm.Usage{In: 100, Out: 10}, "ok"))
+	g.a.run.titles = false
+	run, err := g.a.st.CreateRun(cid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", g.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO usage(run_id,turn,input,output,cached) VALUES(?,?,?,?,?)`, run.ID, 1, 700, 80, 20); err != nil {
+		t.Fatal(err)
+	}
+	d, err := g.a.GetConversation(cid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Total.Unknown || d.Total.HasCost || d.Total.Input != 700 || d.Total.Output != 80 {
+		t.Fatalf("total = %+v", d.Total)
+	}
+	// With a priced turn added, the total is exact, not "at least".
+	g.send(t, cid, "hi", 1)
+	d, _ = g.a.GetConversation(cid)
+	if d.Total.Unknown || !d.Total.HasCost || d.Total.Input != 800 {
+		t.Fatalf("total after a priced turn = %+v", d.Total)
 	}
 }
 
@@ -257,7 +310,7 @@ func TestTitleAfterFirstExchange(t *testing.T) {
 		t.Fatalf("requests = %d", len(reqs))
 	}
 	tr := reqs[1]
-	if tr.Model != reqs[0].Model || len(tr.Tools) != 0 || tr.MaxTokens != 32 || len(tr.Messages) != 1 {
+	if tr.Model != reqs[0].Model || len(tr.Tools) != 0 || tr.MaxTokens != 1024 || len(tr.Messages) != 1 {
 		t.Fatalf("title request = %+v", tr)
 	}
 	body := tr.Messages[0].Parts[0].(llm.Text).Text
@@ -322,6 +375,117 @@ func TestTitleModelTextIsSanitisedOneLineAndShort(t *testing.T) {
 	g.send(t, cid, "make a report", 1)
 	if ev := waitTitle(t, g, 1); ev.Title != "Weekly report" {
 		t.Fatalf("title = %q", ev.Title)
+	}
+}
+
+func TestStripThinkAndMarkup(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{"<think>let me see\nthe user wants</think>\nOverdue invoices", "Overdue invoices"},
+		{"<THINK>x</THINK><think>y</think>Stock report", "Stock report"},
+		{"<think>I am still thinking and never finish", ""},
+		{"reasoning that started without a tag</think>Sales summary", "Sales summary"},
+		{"<b>Bold</b> title", ""},
+		{"<div>", ""},
+		{"Plain title", "Plain title"},
+	} {
+		if got := cleanModelTitle(tc.raw); got != tc.want {
+			t.Errorf("cleanModelTitle(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+	// A title the user types is not subject to the markup rule.
+	if cleanTitle("<draft> notes") != "<draft> notes" {
+		t.Error("a user title was refused")
+	}
+	g, cid := costRig(t, KindAnthropic, "claude-sonnet-5-5", textTurn("answer"),
+		usageTurn(llm.Usage{In: 1, Out: 1}, "<think>hmm</think>Weekly sales"))
+	g.send(t, cid, "sales?", 1)
+	if ev := waitTitle(t, g, 1); ev.Title != "Weekly sales" {
+		t.Fatalf("title = %q", ev.Title)
+	}
+}
+
+// A first run that was stopped or failed does not cost the conversation its
+// title: the first run that ends done names it, once.
+func TestTitleAfterAFailedFirstRun(t *testing.T) {
+	g, cid := costRig(t, KindAnthropic, "claude-sonnet-5-5",
+		llmtest.Turn{Err: &llm.APIError{Message: "overloaded", Status: 400}},
+		usageTurn(llm.Usage{In: 5, Out: 5}, "Here you go."),
+		usageTurn(llm.Usage{In: 1, Out: 1}, "Recovered chat"),
+		textTurn("third"))
+	g.send(t, cid, "first try", 1)
+	g.a.run.wg.Wait()
+	if n := len(g.h.named(EventChatTitle)); n != 0 {
+		t.Fatalf("a failed run was titled (%d events)", n)
+	}
+	g.send(t, cid, "second try", 2)
+	if ev := waitTitle(t, g, 1); ev.Title != "Recovered chat" {
+		t.Fatalf("title = %q", ev.Title)
+	}
+	g.send(t, cid, "third", 3)
+	g.a.run.wg.Wait()
+	if n := len(g.prov.Requests()); n != 4 {
+		t.Fatalf("requests = %d, want 4 (no second title call)", n)
+	}
+}
+
+// One paid attempt only: a title call that came back empty is not repeated by
+// the next run.
+func TestTitleIsTriedOnce(t *testing.T) {
+	g, cid := costRig(t, KindAnthropic, "claude-sonnet-5-5", textTurn("one"),
+		usageTurn(llm.Usage{In: 5, Out: 1024}, "<think>never ends"), textTurn("two"))
+	runID := g.send(t, cid, "first", 1)
+	waitTitleUsage(t, g, runID)
+	g.a.run.wg.Wait()
+	g.send(t, cid, "second", 2)
+	g.a.run.wg.Wait()
+	if n := len(g.prov.Requests()); n != 3 {
+		t.Fatalf("requests = %d, want 3", n)
+	}
+}
+
+// The title call reads the conversation again: a model changed since the run
+// started is the one used and priced.
+func TestTitleCallUsesTheCurrentConversation(t *testing.T) {
+	g, cid := costRig(t, KindAnthropic, "claude-sonnet-5-5", textTurn("answer"), usageTurn(llm.Usage{In: 1, Out: 1}, "Name"))
+	g.a.run.titles = false
+	runID := g.send(t, cid, "hello", 1)
+	stale, err := g.a.st.GetConversation(cid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", g.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE conversations SET model='claude-opus-5-5' WHERE id=?`, cid); err != nil {
+		t.Fatal(err)
+	}
+	g.a.run.titles = true
+	(&activeRun{r: g.a.run, runID: runID, conv: stale}).autoTitle()
+	reqs := g.prov.Requests()
+	if len(reqs) != 2 || reqs[1].Model != "claude-opus-5-5" {
+		t.Fatalf("requests = %+v", reqs)
+	}
+}
+
+// Deleting a conversation ends its title call.
+func TestDeleteConversationCancelsTheTitleCall(t *testing.T) {
+	g, cid := costRig(t, KindAnthropic, "claude-sonnet-5-5", textTurn("answer"), llmtest.Turn{Hang: true})
+	g.send(t, cid, "hello", 1)
+	waitFor(t, func() bool { return len(g.prov.Requests()) == 2 }) // the title call is out and hangs
+	if err := g.a.DeleteConversation(cid); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan struct{})
+	go func() { g.a.run.wg.Wait(); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the title call kept running after the conversation was deleted")
+	}
+	if n := len(g.h.named(EventChatTitle)); n != 0 {
+		t.Fatalf("title events = %d", n)
 	}
 }
 
@@ -434,7 +598,7 @@ func TestTitleRefusedOnLocalOnlySiteWithCloudProvider(t *testing.T) {
 		t.Fatalf("title = %q", c.Title)
 	}
 	// The refusal is the run's own error.
-	_, _, _, err = ar.titleCall(t.Context(), "u", "a")
+	_, _, _, _, err = ar.titleCall(t.Context(), "u", "a")
 	if !isLocalOnlyErr(err) {
 		t.Fatalf("titleCall = %v", err)
 	}

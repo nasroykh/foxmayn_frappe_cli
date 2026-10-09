@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	// titleMaxTokens bounds the title call's answer.
-	titleMaxTokens = 32
+	// titleMaxTokens bounds the title call's answer. Thinking and reasoning
+	// models spend tokens before the text; cleanTitle keeps the title short.
+	titleMaxTokens = 1024
 	// titleMaxChars bounds a title; a user's own is bounded the same way.
 	titleMaxChars = 80
 	// titleTimeout bounds the title call.
@@ -72,12 +73,49 @@ func cleanTitle(s string) string {
 	return ""
 }
 
-// autoTitle names the conversation after its first exchange: one extra call
-// to the conversation's own provider and model, with no tools. It does
-// nothing for an ephemeral conversation, one the user named, one already
-// titled, or any run but the first. A failure keeps the first words of the
-// first message (set when the message was sent). Errors are not reported:
-// the title is a nicety.
+// stripThink removes the reasoning some models write into their text: closed
+// <think>...</think> blocks, a lone opening <think> with everything after it
+// (the answer never came), and what precedes a lone </think> (the template
+// opened the block itself).
+func stripThink(s string) string {
+	const open, close = "<think>", "</think>"
+	for {
+		lower := strings.ToLower(s)
+		i := strings.Index(lower, open)
+		if i < 0 {
+			break
+		}
+		j := strings.Index(lower[i:], close)
+		if j < 0 {
+			s = s[:i]
+			break
+		}
+		s = s[:i] + s[i+j+len(close):]
+	}
+	if i := strings.LastIndex(strings.ToLower(s), close); i >= 0 {
+		s = s[i+len(close):]
+	}
+	return s
+}
+
+// cleanModelTitle is cleanTitle for the model's text: reasoning is dropped and
+// a title that starts with '<' (markup, a stray tag) is refused.
+func cleanModelTitle(s string) string {
+	t := cleanTitle(stripThink(s))
+	if strings.HasPrefix(t, "<") {
+		return ""
+	}
+	return t
+}
+
+// autoTitle names the conversation after an exchange: one extra call to the
+// conversation's own provider and model, with no tools. It runs after a run
+// that ended done while the title is still the first words of the first
+// message, so a first run that was stopped or failed does not cost the
+// conversation its title. It does nothing for an ephemeral conversation, one
+// the user named, or one whose title call was already paid for (one attempt
+// only). A failure keeps the first words. Errors are not reported: the title
+// is a nicety. The call is cancelled when the conversation is deleted.
 func (a *activeRun) autoTitle() {
 	if !a.r.titles {
 		return
@@ -87,25 +125,24 @@ func (a *activeRun) autoTitle() {
 	if err != nil || ts.Ephemeral || ts.Source != store.TitleFallback {
 		return
 	}
-	runs, err := st.ListRuns(a.conv.ID)
-	if err != nil || len(runs) == 0 || runs[0].ID != a.runID {
+	if rows, err := st.ListConversationUsage(a.conv.ID); err != nil || hasTitleCall(rows) {
 		return
 	}
 	userText, reply := firstExchange(st, a.conv.ID)
 	if userText == "" || reply == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(a.r.ctx, titleTimeout)
+	ctx, cancel := a.r.titleContext(a.conv.ID)
 	defer cancel()
-	raw, usage, model, err := a.titleCall(ctx, userText, reply)
+	raw, usage, model, conv, err := a.titleCall(ctx, userText, reply)
 	if usage != nil {
-		row := usageRow(a.runID, 0, store.UsageTitle, *usage, costOf(st, a.conv, model, *usage))
+		row := usageRow(a.runID, 0, store.UsageTitle, *usage, costOf(st, conv, model, *usage))
 		_ = st.AddUsage(row)
 	}
 	if err != nil {
 		return
 	}
-	title := cleanTitle(raw)
+	title := cleanModelTitle(raw)
 	if title == "" {
 		return
 	}
@@ -114,18 +151,62 @@ func (a *activeRun) autoTitle() {
 	}
 }
 
+func hasTitleCall(rows []store.Usage) bool {
+	for _, u := range rows {
+		if u.Kind == store.UsageTitle {
+			return true
+		}
+	}
+	return false
+}
+
+// titleContext returns the context of a conversation's title call: it ends at
+// titleTimeout, at shutdown, and when cancelTitle is called for the
+// conversation (it is deleted). The returned func releases it.
+func (r *runner) titleContext(convID string) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(r.ctx, titleTimeout)
+	r.mu.Lock()
+	if r.titleCancels == nil {
+		r.titleCancels = map[string]context.CancelFunc{}
+	}
+	r.titleCancels[convID] = cancel
+	r.mu.Unlock()
+	return ctx, func() {
+		cancel()
+		r.mu.Lock()
+		delete(r.titleCancels, convID)
+		r.mu.Unlock()
+	}
+}
+
+// cancelTitleLocked stops a conversation's title call. r.mu must be held
+// (DeleteConversation calls it from inside whileIdle).
+func (r *runner) cancelTitleLocked(convID string) {
+	if cancel := r.titleCancels[convID]; cancel != nil {
+		cancel()
+	}
+}
+
 // titleCall asks for the title. It goes through the same check and provider
 // path as a run, so the local-only rule and the key handling apply. The
 // usage is returned even when the call failed after the model answered.
-func (a *activeRun) titleCall(ctx context.Context, userText, reply string) (string, *llm.Usage, string, error) {
+//
+// The conversation is read again first, so a provider, model or profile
+// changed since the run started is the one checked and used; it is returned
+// for pricing.
+func (a *activeRun) titleCall(ctx context.Context, userText, reply string) (string, *llm.Usage, string, store.Conversation, error) {
+	conv, err := a.r.store.GetConversation(a.conv.ID)
+	if err != nil {
+		return "", nil, "", a.conv, err
+	}
 	if a.r.check != nil {
-		if err := a.r.check(&a.conv); err != nil {
-			return "", nil, "", err
+		if err := a.r.check(&conv); err != nil {
+			return "", nil, "", conv, err
 		}
 	}
-	prov, model, err := a.r.provider(a.conv)
+	prov, model, err := a.r.provider(conv)
 	if err != nil {
-		return "", nil, "", err
+		return "", nil, "", conv, err
 	}
 	prompt := "User:\n" + clip(userText, titleExcerpt) + "\n\nAssistant:\n" + clip(reply, titleExcerpt)
 	req := llm.Request{
@@ -136,7 +217,7 @@ func (a *activeRun) titleCall(ctx context.Context, userText, reply string) (stri
 	}
 	s, err := prov.Stream(ctx, req)
 	if err != nil {
-		return "", nil, model, err
+		return "", nil, model, conv, err
 	}
 	defer s.Close()
 	defer context.AfterFunc(ctx, func() { s.Close() })()
@@ -148,7 +229,7 @@ func (a *activeRun) titleCall(ctx context.Context, userText, reply string) (stri
 			if errors.Is(err, io.EOF) {
 				err = &llm.APIError{Message: "the stream ended before the model finished"}
 			}
-			return "", usage, model, err
+			return "", usage, model, conv, err
 		}
 		switch e := ev.(type) {
 		case llm.TextDelta:
@@ -157,7 +238,7 @@ func (a *activeRun) titleCall(ctx context.Context, userText, reply string) (stri
 			u := e
 			usage = &u
 		case llm.Stop:
-			return sb.String(), usage, model, nil
+			return sb.String(), usage, model, conv, nil
 		}
 	}
 }
