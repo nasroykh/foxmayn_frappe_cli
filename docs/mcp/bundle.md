@@ -40,6 +40,10 @@ They map to `FFC_SITE`, `FFC_CONFIG` and `--read-only`. Per-site limits and conf
 
 The bundle and the binary inside are not signed or notarized, and the bundle is not in Anthropic's extension directory. Check the download against `checksums.txt` from the same release, which is signed (see [Security](../security.md)), or verify its build attestation with `gh attestation verify`.
 
+## MCP Registry
+
+The bundle is listed in the [MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.nasroykh/ffc`, with its SHA-256, so clients that install from the registry check the download. Each release publishes its version.
+
 ## See also
 
 - [MCP server](README.md)
