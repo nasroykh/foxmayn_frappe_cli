@@ -598,6 +598,9 @@ func daemonArgs(sites []string, port int) []string {
 	if level := debugLevelName(client.Debug); level != "" {
 		args = append(args, "--debug="+level) // the trace goes to mcp.log (0600)
 	}
+	if client.Timeout != client.DefaultTimeout {
+		args = append(args, "--timeout="+client.Timeout.String())
+	}
 	return args
 }
 

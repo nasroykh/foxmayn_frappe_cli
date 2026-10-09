@@ -23,7 +23,10 @@ import (
 
 // Timeout bounds every HTTP request made to a Frappe site. It is a package
 // variable so the global --timeout flag can raise it for heavy reports.
-var Timeout = 30 * time.Second
+var Timeout = DefaultTimeout
+
+// DefaultTimeout is Timeout's value unless --timeout or FFC_TIMEOUT sets it.
+const DefaultTimeout = 30 * time.Second
 
 // MaxResponseBytes caps how much of a response body is read into memory. An
 // unlimited list of a large DocType fails with a clear error instead of
