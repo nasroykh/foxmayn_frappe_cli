@@ -321,7 +321,10 @@ func toServiceError(err error) *Error {
 		se = newError(CodeAuth, "The provider did not accept the API key.", err)
 	default:
 		var ae *llm.APIError
-		if errors.As(err, &ae) {
+		if errors.As(err, &ae) && ae.Category != "" {
+			// The model ended its turn with no usable answer; say why.
+			se = newError(CodeFailed, "The model stopped without an answer: "+ae.Message+".", err)
+		} else if errors.As(err, &ae) {
 			se = newError(CodeFailed, "The AI provider returned an error.", err)
 		} else {
 			se = newError(CodeFailed, "The assistant stopped because of an error.", err)
@@ -334,7 +337,7 @@ func toServiceError(err error) *Error {
 }
 
 // secretPattern matches what an API key or bearer token looks like.
-var secretPattern = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=\-]{8,}|\b(?:sk|pk|rk)-[A-Za-z0-9_\-]{8,}`)
+var secretPattern = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=\-]{8,}|\b(?:sk|pk|rk)-[A-Za-z0-9_\-]{8,}|\bAIza[0-9A-Za-z_\-]{30,}`)
 
 func redactSecrets(s string) string { return secretPattern.ReplaceAllString(s, "[hidden]") }
 

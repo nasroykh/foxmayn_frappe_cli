@@ -163,7 +163,8 @@ export function SaveProfile(p: $models.Profile): $CancellablePromise<$models.Pro
 /**
  * SaveProvider adds or changes a provider. An empty ID takes the kind's name
  * (a custom provider gets a numbered one). The key is set apart, with SetKey.
- * Anthropic and OpenRouter are pinned to their own hosts. When a provider's
+ * Anthropic, OpenRouter, OpenAI and Gemini are pinned to their own hosts
+ * (stored as an empty address, except OpenRouter's). When a provider's
  * address changes the stored key is deleted in the same step (KeyCleared), so
  * a key can never be sent to a host the user did not give it to.
  */

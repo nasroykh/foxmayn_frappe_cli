@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/llmtest"
 )
 
 const testKey = "sk-ant-TESTKEY-0123456789"
@@ -170,7 +172,7 @@ func TestStreamUsageWithCache(t *testing.T) {
 	got, _ := run(t, "usage_cache.sse")
 	want := []llm.Event{
 		llm.TextDelta{Text: "ok"},
-		llm.Usage{In: 312, Out: 77, Cached: 4096},
+		llm.Usage{In: 312, Out: 77, Cached: 4096, CacheWrite: 300},
 		llm.Stop{Reason: "max_tokens", Message: asst(llm.Text{Text: "ok"})},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -305,12 +307,12 @@ func TestStreamTruncatedToolArgsAfterMaxTokens(t *testing.T) {
 func TestStreamThinkingAndToolUse(t *testing.T) {
 	got, _ := run(t, "thinking_tool.sse")
 	want := []llm.Event{
-		llm.Thinking{Text: "I should read the invoice.", Signature: "EqQBCgIYAhIM1234"},
+		llm.Thinking{Provider: llm.ProviderAnthropic, Text: "I should read the invoice.", Signature: "EqQBCgIYAhIM1234"},
 		llm.TextDelta{Text: "Checking."},
 		llm.ToolCall{ID: "toolu_T", Name: "get_doc", Args: json.RawMessage(`{"doctype":"Item"}`)},
 		llm.Usage{In: 50, Out: 60},
 		llm.Stop{Reason: llm.StopToolUse, Message: asst(
-			llm.Thinking{Text: "I should read the invoice.", Signature: "EqQBCgIYAhIM1234"},
+			llm.Thinking{Provider: llm.ProviderAnthropic, Text: "I should read the invoice.", Signature: "EqQBCgIYAhIM1234"},
 			llm.Text{Text: "Checking."},
 			llm.ToolUse{ID: "toolu_T", Name: "get_doc", Args: json.RawMessage(`{"doctype":"Item"}`)},
 		)},
@@ -323,10 +325,10 @@ func TestStreamThinkingAndToolUse(t *testing.T) {
 func TestStreamRedactedThinking(t *testing.T) {
 	got, _ := run(t, "redacted.sse")
 	want := []llm.Event{
-		llm.Thinking{Redacted: true, Data: "EmwKAhgBEgy3va3pzix/LafPsn4"},
+		llm.Thinking{Provider: llm.ProviderAnthropic, Redacted: true, Data: "EmwKAhgBEgy3va3pzix/LafPsn4"},
 		llm.TextDelta{Text: "Done."},
 		llm.Usage{In: 5, Out: 9},
-		llm.Stop{Reason: llm.StopEndTurn, Message: asst(llm.Thinking{Redacted: true, Data: "EmwKAhgBEgy3va3pzix/LafPsn4"}, llm.Text{Text: "Done."})},
+		llm.Stop{Reason: llm.StopEndTurn, Message: asst(llm.Thinking{Provider: llm.ProviderAnthropic, Redacted: true, Data: "EmwKAhgBEgy3va3pzix/LafPsn4"}, llm.Text{Text: "Done."})},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("events\n got %#v\nwant %#v", got, want)
@@ -754,7 +756,7 @@ func TestStreamBlockOrderAndReplay(t *testing.T) {
 	}
 	stop := stopOf(t, got)
 	want := asst(
-		llm.Thinking{Text: "plan it", Signature: "SIGX"},
+		llm.Thinking{Provider: llm.ProviderAnthropic, Text: "plan it", Signature: "SIGX"},
 		llm.Text{Text: "Let me look."},
 		llm.ToolUse{ID: "toolu_bad", Name: "get_doc", Args: json.RawMessage(`{}`)},
 		llm.ToolUse{ID: "toolu_good", Name: "whoami", Args: json.RawMessage(`{}`)},
@@ -776,5 +778,64 @@ func TestStreamBlockOrderAndReplay(t *testing.T) {
 		c[2]["type"] != "tool_use" || c[2]["id"] != "toolu_bad" ||
 		c[3]["type"] != "tool_use" || c[3]["id"] != "toolu_good" {
 		t.Fatalf("replayed order %v", c)
+	}
+}
+
+func TestRequestSkipsForeignThinking(t *testing.T) {
+	msgs := sentMessages(t, llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleUser, Parts: []llm.Part{llm.Text{Text: "go"}}},
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			llm.Thinking{Provider: llm.ProviderOpenAI, Signature: "rs_1", Data: "gAAAA"},
+			llm.Thinking{Provider: llm.ProviderGemini, Signature: "c2ln"},
+			llm.Text{Text: "from another provider"},
+		}},
+		{Role: llm.RoleUser, Parts: []llm.Part{llm.Text{Text: "again"}}},
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			llm.Thinking{Text: "stored by 0.2.0", Signature: "OLD"},
+			llm.Thinking{Provider: llm.ProviderAnthropic, Text: "mine", Signature: "NEW"},
+			llm.Text{Text: "ok"},
+		}},
+		{Role: llm.RoleUser, Parts: []llm.Part{llm.Text{Text: "next"}}},
+	}})
+	if len(msgs) != 5 {
+		t.Fatalf("messages %+v", msgs)
+	}
+	if c := msgs[1].Content; len(c) != 1 || c[0]["type"] != "text" {
+		t.Fatalf("foreign thinking sent: %+v", c)
+	}
+	c := msgs[3].Content
+	if len(c) != 3 || c[0]["signature"] != "OLD" || c[1]["signature"] != "NEW" || c[2]["type"] != "text" {
+		t.Fatalf("own thinking not replayed: %+v", c)
+	}
+}
+
+func TestRequestEncodesImages(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\nfake")
+	msgs := sentMessages(t, llm.Request{
+		Images: llmtest.Images{"att-1": png},
+		Messages: []llm.Message{{Role: llm.RoleUser, Parts: []llm.Part{
+			llm.Text{Text: "what is this?"},
+			llm.Image{AttachmentID: "att-1", MediaType: "image/png"},
+		}}},
+	})
+	c := msgs[0].Content
+	if len(c) != 2 || c[1]["type"] != "image" {
+		t.Fatalf("content %+v", c)
+	}
+	src, _ := c[1]["source"].(map[string]any)
+	if src["type"] != "base64" || src["media_type"] != "image/png" || src["data"] != base64.StdEncoding.EncodeToString(png) {
+		t.Fatalf("image source %+v", src)
+	}
+	// No resolver, or an unknown attachment: the request is refused before
+	// anything is sent.
+	p, cap := newProvider(t, serveFile(t, "text.sse"))
+	for _, imgs := range []llm.ImageResolver{nil, llmtest.Images{}} {
+		_, err := p.Stream(context.Background(), llm.Request{Images: imgs, Messages: []llm.Message{{Role: llm.RoleUser, Parts: []llm.Part{llm.Image{AttachmentID: "att-1", MediaType: "image/png"}}}}})
+		if err == nil {
+			t.Fatalf("image without bytes accepted (%v)", imgs)
+		}
+	}
+	if _, raw, _ := cap.get(); raw != nil {
+		t.Fatalf("request sent: %s", raw)
 	}
 }

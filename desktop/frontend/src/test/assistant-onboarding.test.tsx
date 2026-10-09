@@ -64,6 +64,14 @@ describe("assistant onboarding", () => {
     expect(await screen.findByText(/No Ollama or LM Studio found/)).toBeTruthy()
   })
 
+  it("offers OpenAI and Google Gemini, and OpenAI goes to the key step", async () => {
+    show()
+    expect(screen.getByRole("button", { name: /Google Gemini/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole("button", { name: /^OpenAI/ }))
+    expect(await screen.findByLabelText(/API key/)).toBeTruthy()
+    expect(b.saveProvider).toHaveBeenCalledWith(expect.objectContaining({ kind: "openai" }))
+  })
+
   it("offers a detected local server", async () => {
     b.detectLocal.mockResolvedValue([
       { ...anthropic, id: "ollama", kind: "ollama", label: "Ollama", baseURL: "http://localhost:11434/v1" },

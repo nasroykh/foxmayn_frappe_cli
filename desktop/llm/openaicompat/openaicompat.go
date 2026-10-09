@@ -10,7 +10,8 @@
 //     ends; after finish_reason "length" a call whose arguments are not a JSON
 //     object is cut-off output and dropped.
 //   - Usage is emitted only when the server reports it. In is prompt_tokens
-//     minus the cached part, so In + Cached is the whole prompt.
+//     minus the cached part, so In + Cached is the whole prompt; CacheWrite is
+//     prompt_tokens_details.cache_write_tokens when the server sends it.
 //
 // Retries follow the Anthropic adapter: the SDK retries only until the
 // response headers arrive, errors after that are returned from Next.
@@ -18,12 +19,12 @@ package openaicompat
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -84,7 +85,8 @@ func WithMaxRetries(n int) Option { return func(c *config) { c.maxRetries = n } 
 
 // Provider is an OpenAI-compatible llm.Provider.
 type Provider struct {
-	client sdk.Client
+	models sdk.ModelService
+	chat   sdk.ChatService
 	key    string
 	preset Preset
 }
@@ -93,46 +95,34 @@ var _ llm.Provider = (*Provider)(nil)
 
 // New returns a Provider for preset. A non-empty apiKey goes only in the
 // Authorization header; with no key no credential header is sent at all.
-// OPENAI_* environment credentials, base URL, organization, project and custom
-// headers are overridden or removed.
+// Redirects are not followed.
+//
+// The services are built directly, not through sdk.NewClient, which always
+// applies the SDK's OPENAI_* environment defaults (base URL, keys,
+// organization, project, custom headers) through a switch the SDK keeps
+// internal. So no OPENAI_* variable is read at all.
 func New(preset Preset, apiKey string, opts ...Option) *Provider {
 	cfg := config{maxRetries: 2}
 	for _, o := range opts {
 		o(&cfg)
 	}
 	ro := []option.RequestOption{
+		option.WithHTTPClient(llm.NoRedirectClient(cfg.httpClient)),
 		option.WithBaseURL(preset.BaseURL),
 		option.WithAPIKey(apiKey),
-		option.WithAdminAPIKey(""),
-		option.WithOrganization(""),
-		option.WithProject(""),
-		option.WithHeaderDel("OpenAI-Organization"),
-		option.WithHeaderDel("OpenAI-Project"),
 		option.WithMaxRetries(cfg.maxRetries),
-	}
-	// The SDK reads OPENAI_CUSTOM_HEADERS (name: value per line) into its
-	// defaults; take those headers back off.
-	for _, line := range strings.Split(os.Getenv("OPENAI_CUSTOM_HEADERS"), "\n") {
-		if i := strings.Index(line, ":"); i >= 0 {
-			if name := strings.TrimSpace(line[:i]); name != "" {
-				ro = append(ro, option.WithHeaderDel(name))
-			}
-		}
 	}
 	if preset.ID == OpenRouter.ID {
 		ro = append(ro, option.WithHeader("HTTP-Referer", appURL), option.WithHeader("X-Title", appName))
 	}
-	if cfg.httpClient != nil {
-		ro = append(ro, option.WithHTTPClient(cfg.httpClient))
-	}
-	return &Provider{client: sdk.NewClient(ro...), key: apiKey, preset: preset}
+	return &Provider{models: sdk.NewModelService(ro...), chat: sdk.NewChatService(ro...), key: apiKey, preset: preset}
 }
 
 // Models lists the models the server offers. OpenRouter lists hundreds, many
 // without tool support, so there only models whose supported_parameters
 // include "tools" are kept (all of them when a model has no such field).
 func (p *Provider) Models(ctx context.Context) ([]llm.Model, error) {
-	pager := p.client.Models.ListAutoPaging(ctx)
+	pager := p.models.ListAutoPaging(ctx)
 	var out []llm.Model
 	for pager.Next() {
 		m := pager.Current()
@@ -167,11 +157,11 @@ func contains(list []string, s string) bool {
 
 // Stream starts one streaming Chat Completions request.
 func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, error) {
-	params, err := buildParams(req)
+	params, err := buildParams(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	s := p.client.Chat.Completions.NewStreaming(ctx, params)
+	s := p.chat.Completions.NewStreaming(ctx, params)
 	if err := s.Err(); err != nil {
 		_ = s.Close()
 		return nil, p.mapErr(ctx, err)
@@ -181,8 +171,9 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, err
 
 // buildParams maps a request. The model is required: unlike a hosted vendor,
 // these servers have no default to fall back on. max_tokens is sent only when
-// set (every server understands it; max_completion_tokens is newer).
-func buildParams(req llm.Request) (sdk.ChatCompletionNewParams, error) {
+// set (every server understands it; max_completion_tokens is newer). Image
+// parts are read through req.Images here.
+func buildParams(ctx context.Context, req llm.Request) (sdk.ChatCompletionNewParams, error) {
 	var params sdk.ChatCompletionNewParams
 	if req.Model == "" {
 		return params, errors.New("no model selected")
@@ -202,7 +193,11 @@ func buildParams(req llm.Request) (sdk.ChatCompletionNewParams, error) {
 		}
 		params.Tools = append(params.Tools, sdk.ChatCompletionFunctionTool(fn))
 	}
-	params.Messages = append(params.Messages, historyParams(req.Messages)...)
+	hist, err := historyParams(ctx, req.Images, req.Messages)
+	if err != nil {
+		return params, err
+	}
+	params.Messages = append(params.Messages, hist...)
 	return params, nil
 }
 
@@ -242,8 +237,11 @@ func mergeSameRole(in []llm.Message) []llm.Message {
 }
 
 // historyParams maps the history to chat messages.
-//   - Thinking parts are dropped; an assistant turn with nothing else sends
-//     nothing.
+//   - Thinking parts are dropped, whatever their Provider (these servers have
+//     no reasoning blocks to replay); an assistant turn with nothing else
+//     sends nothing.
+//   - A user message with images sends content parts (text, then each image
+//     as a data: URL), else plain text.
 //   - An assistant message gives one message with its text and tool_calls (a
 //     ToolUse without an id gets "call_<position>").
 //   - The tool messages for those calls come directly after it, one per call
@@ -254,14 +252,18 @@ func mergeSameRole(in []llm.Message) []llm.Message {
 //     a user message.
 //
 // IsError results are prefixed "Error: ", since the chat API has no flag.
-func historyParams(in []llm.Message) []sdk.ChatCompletionMessageParamUnion {
+func historyParams(ctx context.Context, images llm.ImageResolver, in []llm.Message) ([]sdk.ChatCompletionMessageParamUnion, error) {
 	msgs := mergeSameRole(in)
 	var out []sdk.ChatCompletionMessageParamUnion
 	for i := 0; i < len(msgs); i++ {
 		m := msgs[i]
 		if m.Role != llm.RoleAssistant {
-			if t := userText(m); t != "" {
-				out = append(out, sdk.UserMessage(t))
+			um, ok, err := userMessage(ctx, images, m)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				out = append(out, um)
 			}
 			continue
 		}
@@ -330,12 +332,47 @@ func historyParams(in []llm.Message) []sdk.ChatCompletionMessageParamUnion {
 			out = append(out, sdk.ToolMessage(c, id))
 		}
 		if follow != nil {
-			if t := userText(*follow); t != "" {
-				out = append(out, sdk.UserMessage(t))
+			um, ok, err := userMessage(ctx, images, *follow)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				out = append(out, um)
 			}
 		}
 	}
-	return out
+	return out, nil
+}
+
+// userMessage maps the text and images of a user message; ok is false when
+// it has neither (tool results go elsewhere).
+func userMessage(ctx context.Context, images llm.ImageResolver, m llm.Message) (sdk.ChatCompletionMessageParamUnion, bool, error) {
+	t := userText(m)
+	var imgs []sdk.ChatCompletionContentPartUnionParam
+	for _, part := range m.Parts {
+		img, ok := part.(llm.Image)
+		if !ok {
+			continue
+		}
+		b, err := llm.ImageBytes(ctx, images, img)
+		if err != nil {
+			return sdk.ChatCompletionMessageParamUnion{}, false, err
+		}
+		imgs = append(imgs, sdk.ImageContentPart(sdk.ChatCompletionContentPartImageImageURLParam{
+			URL: "data:" + img.MediaType + ";base64," + base64.StdEncoding.EncodeToString(b),
+		}))
+	}
+	if len(imgs) == 0 {
+		if t == "" {
+			return sdk.ChatCompletionMessageParamUnion{}, false, nil
+		}
+		return sdk.UserMessage(t), true, nil
+	}
+	var parts []sdk.ChatCompletionContentPartUnionParam
+	if t != "" {
+		parts = append(parts, sdk.TextContentPart(t))
+	}
+	return sdk.UserMessage(append(parts, imgs...)), true, nil
 }
 
 func resultText(r llm.ToolResult) string {
@@ -416,6 +453,10 @@ func (s *stream) handle(ch sdk.ChatCompletionChunk) {
 		s.usage.In = int(u.PromptTokens) - cached
 		s.usage.Out = int(u.CompletionTokens)
 		s.usage.Cached = cached
+		// OpenRouter reports cache writes (Anthropic and Gemini routes) as
+		// prompt_tokens_details.cache_write_tokens, a part of the uncached
+		// prompt; other servers leave it out (0).
+		s.usage.CacheWrite = int(u.PromptTokensDetails.CacheWriteTokens)
 		var extra struct {
 			Cost *float64 `json:"cost"`
 		}

@@ -1,0 +1,6 @@
+data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_doc","args":{"doctype":"Sales Invoice","name":"SINV-1"}},"thoughtSignature":"AAEC/+3t"}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":5000,"totalTokenCount":5000},"modelVersion":"gemini-test"}
+
+data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"list_docs","args":{"doctype":"Customer","limit":5}}}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":5000,"totalTokenCount":5000},"modelVersion":"gemini-test"}
+
+data: {"candidates":[{"content":{"parts":[],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":5000,"cachedContentTokenCount":4096,"candidatesTokenCount":40,"thoughtsTokenCount":256,"totalTokenCount":5296},"modelVersion":"gemini-test"}
+

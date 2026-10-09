@@ -1,0 +1,2 @@
+data: {"candidates":[{"content":{"parts":[{"text":"Partial"}],"role":"model"},"finishReason":"MAX_TOKENS","index":0}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":32,"totalTokenCount":42},"modelVersion":"gemini-test"}
+

@@ -28,12 +28,16 @@ import type { ProviderInfo, ProviderKind } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 import { blankProvider, KeyForm, ModelPicker, needsKey, SavedLine, usable } from "@/screens/assistant/provider-parts"
 
-const KINDS: ProviderKind[] = ["anthropic", "openrouter", "ollama", "lmstudio", "custom"]
+const KINDS: ProviderKind[] = ["anthropic", "openai", "gemini", "openrouter", "ollama", "lmstudio", "custom"]
 
 function kindName(kind: string): string {
   switch (kind) {
     case "anthropic":
       return "Anthropic"
+    case "openai":
+      return "OpenAI"
+    case "gemini":
+      return "Google Gemini"
     case "openrouter":
       return "OpenRouter"
     case "ollama":
@@ -314,7 +318,7 @@ function ProviderForm({
   const [model, setModel] = React.useState(provider?.defaultModel ?? "")
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<AppError | null>(null)
-  const hasBase = kind !== "anthropic"
+  const hasBase = kind !== "anthropic" && kind !== "openai" && kind !== "gemini"
   const canPickModel = editing && provider !== null && usable(provider)
 
   async function save(e: React.FormEvent) {
