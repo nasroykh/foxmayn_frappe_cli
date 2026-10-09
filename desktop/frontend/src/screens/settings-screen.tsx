@@ -33,7 +33,9 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { backend } from "@/lib/backend"
 import type { UpdateInfo } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
+import { ProfileSettings } from "@/screens/assistant/profile-settings"
 import { ProviderSettings } from "@/screens/assistant/provider-settings"
+import { SiteAssistantSettings } from "@/screens/assistant/site-settings"
 import { WSLAlert } from "@/screens/wsl-alert"
 
 const REPO = "https://github.com/nasroykh/foxmayn_frappe_cli"
@@ -62,8 +64,12 @@ export function SettingsScreen() {
         <TabsContent value="general" className="pt-4">
           <GeneralTab />
         </TabsContent>
-        <TabsContent value="assistant" className="pt-4">
+        <TabsContent value="assistant" className="flex flex-col gap-8 pt-4">
           <ProviderSettings />
+          <Separator />
+          <ProfileSettings />
+          <Separator />
+          <SiteAssistantSettings />
         </TabsContent>
         <TabsContent value="ffc" className="pt-4">
           <FFCTab />

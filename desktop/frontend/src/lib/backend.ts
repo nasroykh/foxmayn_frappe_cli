@@ -8,7 +8,16 @@ import {
   SitesService,
 } from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services"
 import type * as wire from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services/models"
-import type { Backend, Cancellable, ChatApproval, ChatMessage, ConversationDetail } from "@/lib/backend-types"
+import type {
+  Backend,
+  Cancellable,
+  ChatApproval,
+  ChatMessage,
+  ConversationDetail,
+  Profile,
+  PromptPreview,
+  Toolset,
+} from "@/lib/backend-types"
 
 // A new promise (never p itself), so setting cancel on it leaves p untouched.
 function cancellable<T>(p: Promise<T> & { cancel(): unknown }): Cancellable<T> {
@@ -51,6 +60,24 @@ function detail(d: wire.ConversationDetail): ConversationDetail {
     tools: m.tools ?? [],
   }))
   return { ...d, messages }
+}
+
+function profile(p: wire.Profile): Profile {
+  return {
+    ...p,
+    mode: p.mode === "ask" ? "ask" : "read",
+    toolsets: (p.toolsets ?? []) as Toolset[],
+    allowTools: p.allowTools ?? [],
+    allowDoctypes: p.allowDoctypes ?? [],
+    denyDoctypes: p.denyDoctypes ?? [],
+    allowMethods: p.allowMethods ?? [],
+    denyMethods: p.denyMethods ?? [],
+    denyTools: p.denyTools ?? [],
+  }
+}
+
+function preview(p: wire.PromptPreview): PromptPreview {
+  return { ...p, mode: p.mode === "ask" ? "ask" : "read", tools: p.tools ?? [] }
 }
 
 export const backend: Backend = {
@@ -100,6 +127,15 @@ export const backend: Backend = {
   keyStatus: (providerID) => AssistantService.KeyStatus(providerID),
   detectLocal: async () => (await AssistantService.DetectLocal()) ?? [],
   listModels: async (providerID) => (await AssistantService.ListModels(providerID)) ?? [],
+
+  listPresets: async () => ((await AssistantService.ListPresets()) ?? []).map(profile),
+  listProfiles: async () => ((await AssistantService.ListProfiles()) ?? []).map(profile),
+  saveProfile: async (p) => profile(await AssistantService.SaveProfile(p)),
+  deleteProfile: (id) => AssistantService.DeleteProfile(id),
+  setConversationProfile: (convID, profileID) => AssistantService.SetConversationProfile(convID, profileID),
+  getSiteSettings: (site) => AssistantService.GetSiteSettings(site),
+  saveSiteSettings: (s) => AssistantService.SaveSiteSettings(s),
+  promptPreview: async (convID) => preview(await AssistantService.PromptPreview(convID)),
 
   onChatDelta: (cb) => Events.On("chat:delta", (ev) => cb(ev.data)),
   onChatTool: (cb) => Events.On("chat:tool", (ev) => cb(ev.data)),

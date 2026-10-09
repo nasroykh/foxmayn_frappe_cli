@@ -8,7 +8,8 @@
   },
   "common": {
     "cancel": "Cancel",
-    "retry": "Try again"
+    "retry": "Try again",
+    "save": "Save"
   },
   "settings": {
     "assistantTab": "Assistant"
@@ -178,5 +179,70 @@
     "settingsLabel": "Changes to the settings file",
     "added": "Added: ",
     "removed": "Removed: "
+  },
+  "profile": {
+    "title": "Profiles",
+    "intro": "A profile sets what the assistant is for: its tools, its mode and its instructions. It can only narrow what a site allows, never widen it.",
+    "builtIn": "Built in",
+    "summary": "Tools: {{toolsets}} · up to {{steps}} steps",
+    "defaultToolsets": "default",
+    "new": "New profile",
+    "newTitle": "New profile",
+    "editTitle": "Edit profile",
+    "duplicateTitle": "Duplicate profile",
+    "editorBody": "The site's own rules still apply: anything the site does not allow stays refused.",
+    "duplicate": "Duplicate",
+    "copyName": "{{name}} (copy)",
+    "duplicateLabel": "Duplicate {{name}}",
+    "editLabel": "Edit {{name}}",
+    "deleteLabel": "Delete {{name}}",
+    "delete": "Delete profile",
+    "deleteTitle": "Delete {{name}}?",
+    "deleteBody": "Conversations that use this profile switch to Explore (read only).",
+    "modeHelp": "The stricter of this and the conversation's switch applies.",
+    "toolsetsHelp": "None checked means the default tool sets (core and lifecycle).",
+    "callMethodHelp": "Lets the assistant call server methods, only when the conversation asks before changes and the site allows it.",
+    "field": {
+      "name": "Name",
+      "toolsets": "Tool sets",
+      "denyTools": "Tools to hide",
+      "allowTools": "Only these tools",
+      "allowDoctypes": "Only these DocTypes",
+      "denyDoctypes": "DocTypes to refuse",
+      "allowMethods": "Only these methods",
+      "denyMethods": "Methods to refuse",
+      "callMethod": "Server methods",
+      "stepLimit": "Step limit (1 to 100)",
+      "instructions": "Instructions"
+    },
+    "picker": {
+      "label": "Profile",
+      "none": "No profile",
+      "presets": "Built in",
+      "own": "Your profiles",
+      "missing": "Missing profile",
+      "readOnly": "Read only by profile"
+    }
+  },
+  "prompt": {
+    "open": "Show what the model gets",
+    "title": "What the model gets",
+    "body": "The instructions and tools the next answer in this conversation starts with.",
+    "steps": "Up to {{n}} steps",
+    "contextPending": "Details about the site (user, roles, versions) are added at the first answer.",
+    "tools": "Tools ({{n}})",
+    "system": "Instructions"
+  },
+  "siteSettings": {
+    "title": "Site settings",
+    "intro": "Instructions and limits for the assistant on each site.",
+    "noSites": "Add a site first.",
+    "site": "Site",
+    "instructions": "Instructions for this site",
+    "instructionsHelp": "Sent to the model in every conversation on this site.",
+    "localOnly": "Local models only",
+    "localOnlyHelp": "Conversations on this site may use only a model server on this computer (Ollama, LM Studio or a local address).",
+    "localOnlyFrom": "Set under the site's earlier name \"{{site}}\". Turn it off here to clear it.",
+    "saved": "Site settings saved"
   }
 }

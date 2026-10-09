@@ -30,11 +30,14 @@ import type {
   Model,
   PasswordRequest,
   Preview,
+  Profile as GeneratedProfile,
+  PromptPreview as GeneratedPromptPreview,
   ProviderInfo,
   RemoveResult,
   SignInProgress,
   Site,
   SiteList,
+  SiteSettings,
   UpdateInfo,
   Validation,
   WSLInfo,
@@ -71,6 +74,7 @@ export type {
   SignInProgress,
   Site,
   SiteList,
+  SiteSettings,
   UpdateInfo,
   Validation,
   WSLInfo,
@@ -119,6 +123,34 @@ export interface ChatMessage extends Omit<GeneratedChatMessage, "role" | "tools"
 
 export interface ConversationDetail extends Omit<GeneratedConversationDetail, "messages"> {
   messages: ChatMessage[]
+}
+
+/** ffc's tool sets a profile can serve; none chosen means core and lifecycle. */
+export type Toolset = "core" | "lifecycle" | "collab" | "admin" | "files" | "erp"
+
+type ProfileLists = "toolsets" | "allowTools" | "allowDoctypes" | "denyDoctypes" | "allowMethods" | "denyMethods" | "denyTools"
+
+/**
+ * A profile: a built-in preset (preset true, never changed; duplicate it to
+ * edit) or the user's own. It only narrows the site's policy. Empty lists
+ * mean no limit of the profile's own.
+ */
+export interface Profile extends Omit<GeneratedProfile, "mode" | ProfileLists> {
+  mode: ConversationMode
+  toolsets: Toolset[]
+  allowTools: string[]
+  allowDoctypes: string[]
+  denyDoctypes: string[]
+  allowMethods: string[]
+  denyMethods: string[]
+  denyTools: string[]
+}
+
+/** What the model gets at a conversation's next run. */
+export interface PromptPreview extends Omit<GeneratedPromptPreview, "mode" | "tools"> {
+  /** The stricter of the profile's mode and the conversation's switch. */
+  mode: ConversationMode
+  tools: string[]
 }
 
 /** A promise the caller can cancel (the Go side sees its context end). */
@@ -181,6 +213,21 @@ export interface Backend {
   /** Looks for Ollama and LM Studio on this computer; saves nothing. */
   detectLocal(): Promise<ProviderInfo[]>
   listModels(providerID: string): Promise<Model[]>
+
+  /** The built-in profiles. */
+  listPresets(): Promise<Profile[]>
+  /** The user's own profiles. */
+  listProfiles(): Promise<Profile[]>
+  /** Adds (empty id) or changes a profile; a preset is refused (invalid). */
+  saveProfile(p: Profile): Promise<Profile>
+  /** Its conversations move to the Explore preset (read only). */
+  deleteProfile(id: string): Promise<void>
+  /** "" for none. Refused while a run is active, and for a cloud provider on a local-only site. */
+  setConversationProfile(convID: string, profileID: string): Promise<Conversation>
+  getSiteSettings(site: string): Promise<SiteSettings>
+  saveSiteSettings(s: SiteSettings): Promise<SiteSettings>
+  /** Opens an engine session (may sign in) but calls no tool. */
+  promptPreview(convID: string): Promise<PromptPreview>
 
   onChatDelta(cb: (ev: ChatDelta) => void): () => void
   onChatTool(cb: (ev: ChatTool) => void): () => void
