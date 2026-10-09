@@ -66,6 +66,7 @@ func toolHandler(env *mcpEnv, parse func(req mcp.CallToolRequest) (toolCall, err
 		rec := auditRecord{Time: time.Now().UTC(), Tool: req.Params.Name, Client: mcpClientName(ctx), RunID: runIDFrom(ctx), Via: viaFrom(ctx)}
 		if out := classifyFrom(ctx); out != nil {
 			// MCPServer.Classify: validate like a call, run and log nothing.
+			out.ran = true
 			out.p, out.status, out.err = env.prepare(ctx, req, parse, &rec)
 			return nil, nil
 		}

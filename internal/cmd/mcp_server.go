@@ -153,7 +153,16 @@ type ToolClass struct {
 // it covers only the rules checked before any request: checkReport,
 // checkRestore and checkCommentAuthor run later and can still refuse a call
 // it allows.
-func (s *MCPServer) Classify(tool string, args map[string]any) (ToolClass, error) {
+//
+// Classify assumes the tools are ffc's own: a tool replaced through the
+// embedded server.MCPServer is unsupported, is reported as an error, and its
+// handler may have been run.
+func (s *MCPServer) Classify(tool string, args map[string]any) (cls ToolClass, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			cls, err = ToolClass{}, fmt.Errorf("classify %s: %v", tool, r)
+		}
+	}()
 	if s == nil || s.env == nil || s.MCPServer == nil {
 		return ToolClass{}, errors.New("no MCP server")
 	}
@@ -184,11 +193,14 @@ func (s *MCPServer) Classify(tool string, args map[string]any) (ToolClass, error
 	if _, err := registered.Handler(withClassify(context.Background(), out), req); err != nil {
 		return ToolClass{}, err
 	}
+	if !out.ran {
+		return ToolClass{}, fmt.Errorf("tool %q is not served by ffc's own handler (replacing a tool on the server is unsupported); it may have run", tool)
+	}
 	if out.err != nil {
 		return ToolClass{}, out.err
 	}
 	p := out.p
-	cls := ToolClass{
+	cls = ToolClass{
 		Action:   map[toolAction]string{actRead: "read", actWrite: "write", actMethod: "method"}[action],
 		Confirm:  p.scope.Confirm,
 		Doctypes: p.scope.Doctypes, Names: p.scope.Names, Method: p.scope.Method,
@@ -208,6 +220,7 @@ type classifyCtxKey struct{}
 
 // classifyOut receives what a handler found out when it ran for Classify.
 type classifyOut struct {
+	ran    bool // toolHandler saw the marker; false means another handler ran
 	p      preparedCall
 	status string
 	err    error
