@@ -2,7 +2,7 @@ module github.com/nasroykh/foxmayn_frappe_cli/desktop
 
 go 1.26.0
 
-toolchain go1.27.1
+toolchain go1.27.2
 
 require (
 	github.com/nasroykh/foxmayn_frappe_cli v0.0.0
@@ -20,7 +20,7 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 )
 
 replace github.com/nasroykh/foxmayn_frappe_cli => ../
