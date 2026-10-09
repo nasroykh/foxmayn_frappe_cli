@@ -2,8 +2,8 @@ package services
 
 import (
 	"errors"
+	"regexp"
 	"strings"
-	"unicode"
 
 	"github.com/zalando/go-keyring"
 )
@@ -12,11 +12,17 @@ import (
 // OS keychain; the user field is the provider id.
 const keychainService = "Foxmayn Frappe Desktop"
 
-// maxKeyBytes bounds a pasted key. Real provider keys are well under 300.
-const maxKeyBytes = 4096
+// maxKeyBytes bounds a pasted key. Real provider keys are well under 300;
+// the cap stays under what Windows (2560 bytes) and macOS (a 4096 character
+// command, with the key base64-encoded) accept.
+const maxKeyBytes = 2048
 
 // minLast4Len is the shortest key whose last four characters are shown.
 const minLast4Len = 12
+
+// providerIDPattern keeps ids simple: lower case, so a case-insensitive
+// keychain cannot hold two entries for one provider, and short.
+var providerIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // keyStore is the keychain surface Keys needs; tests swap it.
 type keyStore interface {
@@ -51,13 +57,8 @@ type Keys struct {
 func NewKeys() *Keys { return &Keys{store: osKeyStore{}} }
 
 func validProviderID(id string) error {
-	if strings.TrimSpace(id) == "" {
-		return invalid("provider", "Choose a provider.")
-	}
-	for _, r := range id {
-		if unicode.IsControl(r) {
-			return invalid("provider", "The provider name has characters that are not allowed.")
-		}
+	if !providerIDPattern.MatchString(id) {
+		return invalid("provider", "The provider name is not valid.")
 	}
 	return nil
 }
@@ -75,7 +76,7 @@ func (k *Keys) Set(providerID, key string) error {
 		return invalid("key", "That key is too long.")
 	}
 	if err := k.store.Set(keychainService, providerID, key); err != nil {
-		return keychainError("Saving the key", err, key)
+		return setError(err)
 	}
 	return nil
 }
@@ -88,13 +89,14 @@ func (k *Keys) Get(providerID string) (string, error) {
 	}
 	key, err := k.store.Get(keychainService, providerID)
 	if err != nil {
-		return "", keychainError("Reading the key", err, "")
+		return "", keychainError("Reading the key", err)
 	}
 	return key, nil
 }
 
 // Status reports whether a key is set, with its last four characters when
-// it is long enough for that to be safe.
+// it is long enough for that to be safe. It reads the secret, so it can
+// block on a locked Linux Secret Service: callers run it off the UI path.
 func (k *Keys) Status(providerID string) (KeyStatus, error) {
 	key, err := k.Get(providerID)
 	if err != nil {
@@ -120,20 +122,22 @@ func (k *Keys) Delete(providerID string) error {
 	if err == nil || errors.Is(err, keyring.ErrNotFound) {
 		return nil
 	}
-	return keychainError("Removing the key", err, "")
+	return keychainError("Removing the key", err)
 }
 
-// keychainError maps a keychain failure to an *Error. secret is scrubbed
-// from the detail text in case a backend echoes it.
-func keychainError(what string, err error, secret string) error {
+// setError maps a failure of Set. The backend's text is never copied: it
+// could echo the key or a part of it.
+func setError(err error) error {
+	if errors.Is(err, keyring.ErrSetDataTooBig) {
+		return invalid("key", "That key is too long.")
+	}
+	return &Error{Code: CodeUnavailable, Message: "Saving the key failed. The system keychain is not available."}
+}
+
+// keychainError maps a failure of Get or Delete.
+func keychainError(what string, err error) error {
 	if errors.Is(err, keyring.ErrNotFound) {
 		return &Error{Code: CodeNotFound, Message: "No key is saved for this provider."}
 	}
-	e := &Error{Code: CodeUnavailable, Message: what + " failed. The system keychain is not available."}
-	detail := err.Error()
-	if secret != "" {
-		detail = strings.ReplaceAll(detail, secret, "")
-	}
-	e.Detail = detail
-	return e
+	return newError(CodeUnavailable, what+" failed. The system keychain is not available.", err)
 }
