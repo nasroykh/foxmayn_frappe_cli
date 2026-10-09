@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,7 +106,43 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, err
 	if t.StreamErr != nil {
 		return nil, t.StreamErr
 	}
+	t.Events = withStopMessage(t.Events)
 	return &stream{ctx: ctx, turn: t, done: make(chan struct{})}, nil
+}
+
+// withStopMessage fills a Stop that has no Message from the events before it,
+// the way a real provider does: consecutive TextDeltas become one Text part,
+// Thinking stays, a ToolCall becomes a ToolUse. A scripted Message is kept.
+func withStopMessage(in []llm.Event) []llm.Event {
+	out := make([]llm.Event, len(in))
+	var parts []llm.Part
+	var text strings.Builder
+	flush := func() {
+		if text.Len() > 0 {
+			parts = append(parts, llm.Text{Text: text.String()})
+			text.Reset()
+		}
+	}
+	for i, ev := range in {
+		switch e := ev.(type) {
+		case llm.TextDelta:
+			text.WriteString(e.Text)
+		case llm.Thinking:
+			flush()
+			parts = append(parts, e)
+		case llm.ToolCall:
+			flush()
+			parts = append(parts, llm.ToolUse{ID: e.ID, Name: e.Name, Args: e.Args})
+		case llm.Stop:
+			flush()
+			if len(e.Message.Parts) == 0 && len(parts) > 0 {
+				e.Message = llm.Message{Role: llm.RoleAssistant, Parts: append([]llm.Part(nil), parts...)}
+			}
+			ev = e
+		}
+		out[i] = ev
+	}
+	return out
 }
 
 type stream struct {

@@ -140,9 +140,18 @@ const (
 // Stop ends the turn. Reason is one of the Stop* constants, or the provider's
 // own value. Category names the policy area of a StopRefusal when the provider
 // gives one ("cyber", "bio", ...), else it is empty.
+//
+// Message is the authoritative history entry for the turn: the assistant
+// message with its parts in the exact order the model produced them (Thinking,
+// Text, ToolUse), built by the provider from the finished blocks. Blocks cut
+// off by max_tokens are not in it. The loop appends Message to the history
+// as-is and uses TextDelta only for display. ToolCall events arrive just before
+// Usage and Stop, in the same order as the ToolUse parts. Message has no parts
+// when the turn produced nothing.
 type Stop struct {
 	Reason   string
 	Category string
+	Message  Message
 }
 
 func (TextDelta) isEvent() {}

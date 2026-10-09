@@ -105,7 +105,7 @@ func TestStreamText(t *testing.T) {
 		llm.TextDelta{Text: "Hello"},
 		llm.TextDelta{Text: ", world"},
 		llm.Usage{In: 25, Out: 6},
-		llm.Stop{Reason: "end_turn"},
+		llm.Stop{Reason: "end_turn", Message: asst(llm.Text{Text: "Hello, world"})},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("events\n got %#v\nwant %#v", got, want)
@@ -138,7 +138,10 @@ func TestStreamToolUseSplitJSON(t *testing.T) {
 	if args["doctype"] != "Sales Invoice" || args["name"] != "SINV-0001" {
 		t.Fatalf("args %v", args)
 	}
-	if got[2] != (llm.Usage{In: 100, Out: 42}) || got[3] != (llm.Stop{Reason: "tool_use"}) {
+	if got[2] != (llm.Usage{In: 100, Out: 42}) || !reflect.DeepEqual(got[3], llm.Stop{Reason: "tool_use", Message: asst(
+		llm.Text{Text: "Looking it up."},
+		llm.ToolUse{ID: "toolu_A", Name: "get_doc", Args: tc.Args},
+	)}) {
 		t.Fatalf("tail %#v", got[2:])
 	}
 }
@@ -168,7 +171,7 @@ func TestStreamUsageWithCache(t *testing.T) {
 	want := []llm.Event{
 		llm.TextDelta{Text: "ok"},
 		llm.Usage{In: 312, Out: 77, Cached: 4096},
-		llm.Stop{Reason: "max_tokens"},
+		llm.Stop{Reason: "max_tokens", Message: asst(llm.Text{Text: "ok"})},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("events\n got %#v\nwant %#v", got, want)
@@ -282,7 +285,7 @@ func TestStreamBadToolArgs(t *testing.T) {
 			t.Fatalf("Args must always be valid JSON: %#v", c)
 		}
 	}
-	if last := got[len(got)-1]; last != (llm.Stop{Reason: llm.StopToolUse}) {
+	if last := stopOf(t, got); last.Reason != llm.StopToolUse || len(last.Message.Parts) != 4 {
 		t.Fatalf("last %#v", last)
 	}
 }
@@ -292,7 +295,7 @@ func TestStreamTruncatedToolArgsAfterMaxTokens(t *testing.T) {
 	want := []llm.Event{
 		llm.TextDelta{Text: "Creating it."},
 		llm.Usage{In: 5, Out: 100},
-		llm.Stop{Reason: llm.StopMaxTokens},
+		llm.Stop{Reason: llm.StopMaxTokens, Message: asst(llm.Text{Text: "Creating it."})},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("events\n got %#v\nwant %#v", got, want)
@@ -306,7 +309,11 @@ func TestStreamThinkingAndToolUse(t *testing.T) {
 		llm.TextDelta{Text: "Checking."},
 		llm.ToolCall{ID: "toolu_T", Name: "get_doc", Args: json.RawMessage(`{"doctype":"Item"}`)},
 		llm.Usage{In: 50, Out: 60},
-		llm.Stop{Reason: llm.StopToolUse},
+		llm.Stop{Reason: llm.StopToolUse, Message: asst(
+			llm.Thinking{Text: "I should read the invoice.", Signature: "EqQBCgIYAhIM1234"},
+			llm.Text{Text: "Checking."},
+			llm.ToolUse{ID: "toolu_T", Name: "get_doc", Args: json.RawMessage(`{"doctype":"Item"}`)},
+		)},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("events\n got %#v\nwant %#v", got, want)
@@ -319,7 +326,7 @@ func TestStreamRedactedThinking(t *testing.T) {
 		llm.Thinking{Redacted: true, Data: "EmwKAhgBEgy3va3pzix/LafPsn4"},
 		llm.TextDelta{Text: "Done."},
 		llm.Usage{In: 5, Out: 9},
-		llm.Stop{Reason: llm.StopEndTurn},
+		llm.Stop{Reason: llm.StopEndTurn, Message: asst(llm.Thinking{Redacted: true, Data: "EmwKAhgBEgy3va3pzix/LafPsn4"}, llm.Text{Text: "Done."})},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("events\n got %#v\nwant %#v", got, want)
@@ -328,7 +335,7 @@ func TestStreamRedactedThinking(t *testing.T) {
 
 func TestStreamRefusalCategory(t *testing.T) {
 	got, _ := run(t, "refusal.sse")
-	if last := got[len(got)-1]; last != (llm.Stop{Reason: llm.StopRefusal, Category: "cyber"}) {
+	if last := stopOf(t, got); last.Reason != llm.StopRefusal || last.Category != "cyber" || len(last.Message.Parts) != 0 {
 		t.Fatalf("events %#v", got)
 	}
 }
@@ -710,5 +717,64 @@ func TestModelsAuthError(t *testing.T) {
 	_, err := p.Models(context.Background())
 	if !llm.IsAuth(err) || strings.Contains(err.Error(), testKey) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func asst(parts ...llm.Part) llm.Message {
+	return llm.Message{Role: llm.RoleAssistant, Parts: parts}
+}
+
+func stopOf(t *testing.T, evs []llm.Event) llm.Stop {
+	t.Helper()
+	st, ok := evs[len(evs)-1].(llm.Stop)
+	if !ok {
+		t.Fatalf("last event is not Stop: %#v", evs[len(evs)-1])
+	}
+	return st
+}
+
+// A turn with thinking, text and two tool calls, the first with bad arguments:
+// ToolCall events and Stop.Message keep block order, and replaying
+// Stop.Message sends the blocks in that same order.
+func TestStreamBlockOrderAndReplay(t *testing.T) {
+	got, _ := run(t, "order_mixed.sse")
+	var calls []llm.ToolCall
+	for _, ev := range got {
+		if tc, ok := ev.(llm.ToolCall); ok {
+			calls = append(calls, tc)
+		}
+	}
+	if len(calls) != 2 || calls[0].ID != "toolu_bad" || calls[0].ArgsError == "" || calls[1].ID != "toolu_good" || calls[1].ArgsError != "" {
+		t.Fatalf("calls %#v", calls)
+	}
+	// ToolCalls come right before Usage and Stop.
+	n := len(got)
+	if _, ok := got[n-4].(llm.ToolCall); !ok {
+		t.Fatalf("events %#v", got)
+	}
+	stop := stopOf(t, got)
+	want := asst(
+		llm.Thinking{Text: "plan it", Signature: "SIGX"},
+		llm.Text{Text: "Let me look."},
+		llm.ToolUse{ID: "toolu_bad", Name: "get_doc", Args: json.RawMessage(`{}`)},
+		llm.ToolUse{ID: "toolu_good", Name: "whoami", Args: json.RawMessage(`{}`)},
+	)
+	if !reflect.DeepEqual(stop.Message, want) {
+		t.Fatalf("Stop.Message\n got %#v\nwant %#v", stop.Message, want)
+	}
+
+	msgs := sentMessages(t, llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleUser, Parts: []llm.Part{llm.Text{Text: "go"}}},
+		stop.Message,
+		{Role: llm.RoleUser, Parts: []llm.Part{
+			llm.ToolResult{ID: "toolu_bad", Text: "bad arguments", IsError: true},
+			llm.ToolResult{ID: "toolu_good", Text: "ok"},
+		}},
+	}})
+	c := msgs[1].Content
+	if len(c) != 4 || c[0]["type"] != "thinking" || c[1]["type"] != "text" ||
+		c[2]["type"] != "tool_use" || c[2]["id"] != "toolu_bad" ||
+		c[3]["type"] != "tool_use" || c[3]["id"] != "toolu_good" {
+		t.Fatalf("replayed order %v", c)
 	}
 }

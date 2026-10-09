@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -47,6 +48,36 @@ func TestScriptAndRecording(t *testing.T) {
 	reqs := p.Requests()
 	if len(reqs) != 3 || reqs[0].Model != "m1" || reqs[1].Model != "m2" {
 		t.Fatalf("requests: %+v", reqs)
+	}
+}
+
+func TestStopMessageBuiltFromEvents(t *testing.T) {
+	call := llm.ToolCall{ID: "t1", Name: "get_doc", Args: json.RawMessage(`{"a":1}`)}
+	scripted := llm.Message{Role: llm.RoleAssistant, Parts: []llm.Part{llm.Text{Text: "own"}}}
+	p := New(
+		Turn{Events: []llm.Event{
+			llm.Thinking{Text: "t", Signature: "s"},
+			llm.TextDelta{Text: "Hel"}, llm.TextDelta{Text: "lo"},
+			call,
+			llm.Usage{In: 1},
+			llm.Stop{Reason: llm.StopToolUse},
+		}},
+		Turn{Events: []llm.Event{llm.TextDelta{Text: "x"}, llm.Stop{Reason: llm.StopEndTurn, Message: scripted}}},
+	)
+	s, _ := p.Stream(context.Background(), llm.Request{})
+	evs, _ := drain(s)
+	want := llm.Message{Role: llm.RoleAssistant, Parts: []llm.Part{
+		llm.Thinking{Text: "t", Signature: "s"},
+		llm.Text{Text: "Hello"},
+		llm.ToolUse{ID: "t1", Name: "get_doc", Args: json.RawMessage(`{"a":1}`)},
+	}}
+	if got := evs[len(evs)-1].(llm.Stop).Message; !reflect.DeepEqual(got, want) {
+		t.Fatalf("built message %#v", got)
+	}
+	s, _ = p.Stream(context.Background(), llm.Request{})
+	evs, _ = drain(s)
+	if got := evs[len(evs)-1].(llm.Stop).Message; !reflect.DeepEqual(got, scripted) {
+		t.Fatalf("scripted message replaced: %#v", got)
 	}
 }
 

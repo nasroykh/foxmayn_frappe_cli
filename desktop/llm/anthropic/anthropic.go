@@ -256,12 +256,15 @@ func messageParam(m llm.Message) (sdk.MessageParam, bool) {
 	return sdk.NewUserMessage(blocks...), true
 }
 
-// block accumulates one streamed content block of kind tool_use or thinking.
+// block accumulates one streamed content block (text, thinking, redacted
+// thinking or tool_use), kept in stream order.
 type block struct {
-	kind     string // "tool_use", "thinking"
+	kind     string
 	id, name string
-	buf      strings.Builder // tool arguments or thinking text
+	buf      strings.Builder // text, thinking text or tool arguments
 	sig      strings.Builder
+	data     string // redacted thinking payload
+	done     bool   // content_block_stop seen
 }
 
 type stream struct {
@@ -269,8 +272,8 @@ type stream struct {
 	p      *Provider
 	s      *ssestream.Stream[sdk.MessageStreamEventUnion]
 	blocks map[int64]*block
+	order  []*block // every block, in stream (index) order
 	queue  []llm.Event
-	held   []llm.ToolCall // calls with unusable arguments, decided at message_stop
 	usage  llm.Usage
 	reason string
 	cat    string
@@ -305,6 +308,12 @@ func (s *stream) Next() (llm.Event, error) {
 	}
 }
 
+func (s *stream) open(index int64, b *block) *block {
+	s.blocks[index] = b
+	s.order = append(s.order, b)
+	return b
+}
+
 func (s *stream) handle(ev sdk.MessageStreamEventUnion) {
 	switch ev.Type {
 	case "message_start":
@@ -316,37 +325,43 @@ func (s *stream) handle(ev sdk.MessageStreamEventUnion) {
 		cb := ev.ContentBlock
 		switch cb.Type {
 		case "text":
+			b := s.open(ev.Index, &block{kind: "text"})
 			if cb.Text != "" {
+				b.buf.WriteString(cb.Text)
 				s.queue = append(s.queue, llm.TextDelta{Text: cb.Text})
 			}
 		case "tool_use":
-			s.blocks[ev.Index] = &block{kind: "tool_use", id: cb.ID, name: cb.Name}
+			s.open(ev.Index, &block{kind: "tool_use", id: cb.ID, name: cb.Name})
 		case "thinking":
-			b := &block{kind: "thinking"}
+			b := s.open(ev.Index, &block{kind: "thinking"})
 			b.buf.WriteString(cb.Thinking)
 			b.sig.WriteString(cb.Signature)
-			s.blocks[ev.Index] = b
 		case "redacted_thinking":
 			// Complete in the start event; nothing follows but the stop.
+			s.open(ev.Index, &block{kind: "redacted", data: cb.Data, done: true})
 			s.queue = append(s.queue, llm.Thinking{Redacted: true, Data: cb.Data})
 		}
 	case "content_block_delta":
 		b := s.blocks[ev.Index]
+		if b == nil {
+			return
+		}
 		switch ev.Delta.Type {
 		case "text_delta":
-			if ev.Delta.Text != "" {
+			if b.kind == "text" && ev.Delta.Text != "" {
+				b.buf.WriteString(ev.Delta.Text)
 				s.queue = append(s.queue, llm.TextDelta{Text: ev.Delta.Text})
 			}
 		case "input_json_delta":
-			if b != nil && b.kind == "tool_use" {
+			if b.kind == "tool_use" {
 				b.buf.WriteString(ev.Delta.PartialJSON)
 			}
 		case "thinking_delta":
-			if b != nil && b.kind == "thinking" {
+			if b.kind == "thinking" {
 				b.buf.WriteString(ev.Delta.Thinking)
 			}
 		case "signature_delta":
-			if b != nil && b.kind == "thinking" {
+			if b.kind == "thinking" {
 				b.sig.WriteString(ev.Delta.Signature)
 			}
 		}
@@ -356,7 +371,10 @@ func (s *stream) handle(ev sdk.MessageStreamEventUnion) {
 			return
 		}
 		delete(s.blocks, ev.Index)
-		s.finish(b)
+		b.done = true
+		if b.kind == "thinking" {
+			s.queue = append(s.queue, llm.Thinking{Text: b.buf.String(), Signature: b.sig.String()})
+		}
 	case "message_delta":
 		if r := string(ev.Delta.StopReason); r != "" {
 			s.reason = r
@@ -379,58 +397,67 @@ func (s *stream) handle(ev sdk.MessageStreamEventUnion) {
 	}
 }
 
-// finish emits a completed block: a thinking block as is, a tool call with its
-// assembled arguments. A call whose arguments are not a JSON object is held
-// until the stop reason is known.
-func (s *stream) finish(b *block) {
-	if b.kind == "thinking" {
-		s.queue = append(s.queue, llm.Thinking{Text: b.buf.String(), Signature: b.sig.String()})
-		return
+// stop ends the turn. Tool calls are emitted here, in block order, valid and
+// unusable ones alike (the stop reason is known now). The assistant message
+// goes out on the Stop event with its parts in block order. After max_tokens,
+// tool calls and thinking blocks that did not finish are cut-off output and
+// are dropped; after any other reason an unusable call reaches the loop with
+// ArgsError set, so it can answer with an error result.
+func (s *stream) stop() {
+	cut := s.reason == llm.StopMaxTokens
+	var parts []llm.Part
+	for _, b := range s.order {
+		switch b.kind {
+		case "text":
+			if t := b.buf.String(); t != "" {
+				parts = append(parts, llm.Text{Text: t})
+			}
+		case "thinking":
+			if b.done {
+				parts = append(parts, llm.Thinking{Text: b.buf.String(), Signature: b.sig.String()})
+			}
+		case "redacted":
+			parts = append(parts, llm.Thinking{Redacted: true, Data: b.data})
+		case "tool_use":
+			call, ok := toolCall(b)
+			if cut && (!ok || !b.done) {
+				continue
+			}
+			s.queue = append(s.queue, call)
+			parts = append(parts, llm.ToolUse{ID: call.ID, Name: call.Name, Args: call.Args})
+		}
 	}
+	stop := llm.Stop{Reason: s.reason, Category: s.cat}
+	if len(parts) > 0 {
+		stop.Message = llm.Message{Role: llm.RoleAssistant, Parts: parts}
+	}
+	s.queue = append(s.queue, s.usage, stop)
+	s.blocks, s.order = map[int64]*block{}, nil
+	s.done = true
+}
+
+// toolCall assembles a tool block. ok is false when its arguments are not a
+// JSON object (or the block never finished); ArgsError is then set and Args is
+// the raw text if that is valid JSON, else "{}".
+func toolCall(b *block) (call llm.ToolCall, ok bool) {
 	raw := strings.TrimSpace(b.buf.String())
 	if raw == "" {
 		raw = "{}"
 	}
-	call := llm.ToolCall{ID: b.id, Name: b.name, Args: json.RawMessage(raw)}
+	call = llm.ToolCall{ID: b.id, Name: b.name, Args: json.RawMessage(raw)}
 	var obj map[string]json.RawMessage
-	switch err := json.Unmarshal([]byte(raw), &obj); {
-	case err == nil && obj != nil:
-		s.queue = append(s.queue, call)
-	default:
-		call.ArgsError = "arguments are not a JSON object: " + clip(raw, maxRawArgsLen)
-		if !json.Valid([]byte(raw)) {
-			call.Args = json.RawMessage("{}")
+	if json.Unmarshal([]byte(raw), &obj) == nil && obj != nil {
+		if b.done {
+			return call, true
 		}
-		s.held = append(s.held, call)
+		call.ArgsError = "the arguments were cut off before they were complete"
+		return call, false
 	}
-}
-
-// stop ends the turn. After max_tokens the unusable and unfinished tool calls
-// are cut-off output and are dropped; after any other reason they reach the
-// loop with ArgsError set.
-func (s *stream) stop() {
-	if s.reason != llm.StopMaxTokens {
-		s.queue = append(s.queue, heldEvents(s.held)...)
-		for _, b := range s.blocks {
-			if b.kind == "tool_use" {
-				s.queue = append(s.queue, llm.ToolCall{
-					ID: b.id, Name: b.name, Args: json.RawMessage("{}"),
-					ArgsError: "the arguments were cut off before they were complete",
-				})
-			}
-		}
+	call.ArgsError = "arguments are not a JSON object: " + clip(raw, maxRawArgsLen)
+	if !json.Valid([]byte(raw)) {
+		call.Args = json.RawMessage("{}")
 	}
-	s.held, s.blocks = nil, map[int64]*block{}
-	s.queue = append(s.queue, s.usage, llm.Stop{Reason: s.reason, Category: s.cat})
-	s.done = true
-}
-
-func heldEvents(calls []llm.ToolCall) []llm.Event {
-	out := make([]llm.Event, len(calls))
-	for i, c := range calls {
-		out[i] = c
-	}
-	return out
+	return call, false
 }
 
 func clip(s string, n int) string {
