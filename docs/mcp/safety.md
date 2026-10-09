@@ -98,7 +98,7 @@ A "no" returns `cancelled by the user; nothing was changed`.
 
 ## Audit log
 
-Every tool call and resource read, allowed or refused, appends one JSON line to `mcp-audit.jsonl` next to the config file (`~/.config/ffc/mcp-audit.jsonl` by default, mode 0600). It records the time, site, the client's self-reported name, tool, DocTypes, document names (up to 20), status (`ok`, `error`, `denied`, `invalid`, `confirm_pending`, `declined`), the confirmation outcome, error and duration. Arguments are logged with secrets redacted, and document data and method arguments reduced to their keys and size. The file is rotated to `mcp-audit.jsonl.1` at 10 MiB.
+Every tool call and resource read, allowed or refused, appends one JSON line to `mcp-audit.jsonl` next to the config file (`~/.config/ffc/mcp-audit.jsonl` by default, mode 0600). It records the time, site, the client's self-reported name, tool, DocTypes, document names (up to 20), status (`ok`, `error`, `denied`, `invalid`, `confirm_pending`, `declined`), the confirmation outcome, error and duration. A program that embeds the server in its own process (the Foxmayn Frappe desktop app) can tag the calls of one run with a `run_id`; the stdio and HTTP servers never write the field, and an MCP client cannot set it. Arguments are logged with secrets redacted, and document data and method arguments reduced to their keys and size. The file is rotated to `mcp-audit.jsonl.1` at 10 MiB.
 
 ```bash
 tail -n 20 ~/.config/ffc/mcp-audit.jsonl | jq -c '{time, site, tool, status}'

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 )
@@ -35,6 +36,7 @@ type MCPServer struct {
 	Sites []string
 	// Warnings are the lines `ffc mcp` prints to stderr at start.
 	Warnings []string
+	env      *mcpEnv
 	close    func()
 }
 
@@ -93,11 +95,87 @@ func NewMCPServer(ctx context.Context, o MCPOptions) (*MCPServer, error) {
 	}); err != nil {
 		return nil, err
 	}
-	s, sites, warnings, closeEnv, err := buildMCP(ctx, opts)
+	s, env, sites, warnings, closeEnv, err := buildMCP(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	return &MCPServer{MCPServer: s, Sites: slices.Clone(sites), Warnings: warnings, close: sync.OnceFunc(closeEnv)}, nil
+	return &MCPServer{MCPServer: s, Sites: slices.Clone(sites), Warnings: warnings, env: env, close: sync.OnceFunc(closeEnv)}, nil
+}
+
+type runIDCtxKey struct{}
+
+// WithRunID returns a context that makes the audit lines of the tool calls
+// made with it carry id as run_id, so a program that embeds the server (the
+// desktop app) can tie the lines to a run of its own. It is a Go context
+// value, read by the server of an in-process client: an MCP client outside
+// the process cannot set it, there is no request field for it.
+func WithRunID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, runIDCtxKey{}, id)
+}
+
+// runIDFrom returns the id WithRunID stored, or "".
+func runIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(runIDCtxKey{}).(string)
+	return id
+}
+
+// ToolClass is what the server's rules say about a call before it is made.
+type ToolClass struct {
+	Action   string   `json:"action"`             // "read", "write" or "method" (call_method)
+	Confirm  bool     `json:"confirm"`            // the call destroys, cancels or merges documents, or widens access
+	Mode     string   `json:"mode"`               // the site's confirm mode: never, if-supported or always
+	WillAsk  bool     `json:"will_ask"`           // Confirm, and Mode would ask a client that can elicit
+	Site     string   `json:"site,omitempty"`     // the site the call is for
+	Doctypes []string `json:"doctypes,omitempty"` // the DocTypes the call names
+	Names    []string `json:"names,omitempty"`    // the document names the call names
+	Method   string   `json:"method,omitempty"`   // call_method: the method
+	Denied   string   `json:"denied,omitempty"`   // the policy's refusal; "" when it allows the call
+}
+
+// Classify says how the server would treat a call of tool with args, by the
+// rules a tool call applies: the policy of the site the call is for, and
+// whether the call needs the user's confirmation and in which mode. The tool
+// must be registered on this server and the arguments valid, else it is an
+// error. Classify sends no request to the site, so it covers only the rules
+// checked before any request: checkReport, checkRestore and
+// checkCommentAuthor run later and can still refuse a call it allows.
+func (s *MCPServer) Classify(tool string, args map[string]any) (ToolClass, error) {
+	action, known := toolActions[tool]
+	if !known {
+		return ToolClass{}, fmt.Errorf("unknown tool %q", tool)
+	}
+	if _, ok := s.ListTools()[tool]; !ok {
+		return ToolClass{}, fmt.Errorf("tool %q is not served by this MCP server", tool)
+	}
+	req := mcp.CallToolRequest{}
+	req.Params.Name, req.Params.Arguments = tool, args
+	scope, err := scopeOf(req)
+	if err != nil {
+		return ToolClass{}, err
+	}
+	cls := ToolClass{
+		Action:   map[toolAction]string{actRead: "read", actWrite: "write", actMethod: "method"}[action],
+		Confirm:  scope.Confirm,
+		Doctypes: scope.Doctypes, Names: scope.Names, Method: scope.Method,
+	}
+	if siteless[tool] {
+		return cls, nil
+	}
+	name, err := s.env.siteFor(req)
+	if err != nil {
+		return ToolClass{}, err
+	}
+	site, err := s.env.site(context.Background(), name)
+	if err != nil {
+		return ToolClass{}, err
+	}
+	policy := newMCPPolicy(site, s.env.flags)
+	cls.Site, cls.Mode = site.Name, policy.confirmMode()
+	cls.WillAsk = cls.Confirm && cls.Mode != config.ConfirmNever
+	if err := policy.check(tool, scope); err != nil {
+		cls.Denied = err.Error()
+	}
+	return cls, nil
 }
 
 // cleanMCPOptions validates o the way the flags of `ffc mcp` are: it trims

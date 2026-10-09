@@ -40,7 +40,8 @@ type auditRecord struct {
 	Site       string      `json:"site,omitempty"`
 	Client     string      `json:"client,omitempty"` // as the MCP client names itself
 	Tool       string      `json:"tool"`
-	Via        string      `json:"via,omitempty"` // "resource": a resources/read served by the tool
+	RunID      string      `json:"run_id,omitempty"` // an embedding program's id for the run (WithRunID)
+	Via        string      `json:"via,omitempty"`    // "resource": a resources/read served by the tool
 	Doctypes   []string    `json:"doctypes,omitempty"`
 	Names      []string    `json:"names,omitempty"`
 	NamesTotal int         `json:"names_total,omitempty"` // set when names were cut
@@ -78,6 +79,7 @@ func (l *auditLog) write(rec auditRecord, args map[string]interface{}) {
 	// read with cat without spoofed lines (bidi, C1 controls) or huge lines.
 	rec.Error = clip(hideSecretValues(rec.Error, args), auditMaxError)
 	rec.Client, rec.Method = clip(rec.Client, 100), clip(rec.Method, 200)
+	rec.RunID = clip(rec.RunID, 100)
 	if len(rec.Names) > auditMaxNames {
 		rec.NamesTotal, rec.Names = len(rec.Names), rec.Names[:auditMaxNames]
 	}

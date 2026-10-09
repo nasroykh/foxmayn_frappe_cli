@@ -63,7 +63,7 @@ type mcpEnv struct {
 // treating it as a protocol failure.
 func toolHandler(env *mcpEnv, parse func(req mcp.CallToolRequest) (toolCall, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rec := auditRecord{Time: time.Now().UTC(), Tool: req.Params.Name, Client: mcpClientName(ctx), Via: viaFrom(ctx)}
+		rec := auditRecord{Time: time.Now().UTC(), Tool: req.Params.Name, Client: mcpClientName(ctx), RunID: runIDFrom(ctx), Via: viaFrom(ctx)}
 		res := env.run(ctx, req, parse, &rec)
 		rec.DurationMS = time.Since(rec.Time).Milliseconds()
 		env.audit.write(rec, req.GetArguments())
