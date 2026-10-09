@@ -17,7 +17,7 @@ import (
 
 var erpCmd = &cobra.Command{
 	Use:   "erp",
-	Short: "ERPNext helpers: map documents, make payments",
+	Short: "ERPNext helpers: map documents, make payments, look up items, stock, parties",
 	Long: `Helpers for sites that run ERPNext. They call the whitelisted methods ERPNext
 itself uses (the desk's "Create" buttons), so its validations, permissions and
 hooks apply.
@@ -173,5 +173,8 @@ func planSubmit(ctx context.Context, c *client.FrappeClient, plan *client.DryRun
 func init() {
 	erpCmd.AddCommand(erpMapCmd)
 	erpCmd.AddCommand(erpPaymentCmd)
+	erpCmd.AddCommand(erpItemCmd)
+	erpCmd.AddCommand(erpStockCmd)
+	erpCmd.AddCommand(erpPartyCmd)
 	rootCmd.AddCommand(erpCmd)
 }

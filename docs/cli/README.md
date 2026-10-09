@@ -19,7 +19,7 @@ Run `ffc <command> --help` for the full text of any command. This reference foll
 | Export documents with their child tables, import templates | `export`, `import-template` | [Export](export.md) |
 | Create or update documents from a CSV or JSON file | `import` | [Import](import.md) |
 | Submit, cancel, amend, workflows | `submit-doc`, `cancel-doc`, `amend-doc`, `copy-doc`, `rename-doc`, `restore-doc`, `discard-doc`, `workflow` | [Lifecycle and workflow](lifecycle-and-workflow.md) |
-| ERPNext: map a Sales Order to an invoice and the like, pay an invoice | `erp map`, `erp payment` | [ERPNext helpers](erpnext.md) |
+| ERPNext: map a Sales Order to an invoice and the like, pay an invoice, look up an item's price, stock or a party's defaults | `erp map`, `erp payment`, `erp item`, `erp stock`, `erp party` | [ERPNext helpers](erpnext.md) |
 | Find documents, compute totals | `search`, `aggregate`, `count-docs --group-by` | [Search and aggregate](search-and-aggregate.md) |
 | Reports and server methods | `list-reports`, `run-report`, `call-method` | [Reports and methods](server-calls.md) |
 | Any other endpoint | `api` | [ffc api](api.md) |
