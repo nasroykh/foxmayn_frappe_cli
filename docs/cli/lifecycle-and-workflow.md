@@ -20,7 +20,7 @@ Submits a draft of a submittable DocType (docstatus 0 → 1), so ledger entries 
 | `-d, --doctype`, `-n, --name` | The document (required). |
 | `--keys` | Keys to keep in the output, e.g. `name,docstatus`. |
 
-A DocType with an active Workflow is refused: use [`ffc workflow apply`](#workflows-ffc-workflow).
+A DocType with an active Workflow is refused: use [`ffc workflow apply`](#workflows-ffc-workflow). To submit many drafts, see [`bulk-submit`](bulk.md#submit-and-cancel).
 
 ## Cancel: `cancel-doc`
 
@@ -32,7 +32,7 @@ Cancels a submitted document (docstatus 1 → 2). A cancelled document cannot be
 | `-y, --yes` | Skip the confirmation. |
 | `--keys` | Keys to keep in the output. |
 
-Linked submitted documents block the cancel with `LinkExistsError` (exit 6). A DocType with an active Workflow is refused.
+Linked submitted documents block the cancel with `LinkExistsError` (exit 6). A DocType with an active Workflow is refused. To cancel many documents, see [`bulk-cancel`](bulk.md#submit-and-cancel).
 
 ## Amend: `amend-doc`
 
@@ -82,7 +82,7 @@ ffc discard-doc -d "Sales Invoice" -n ACC-SINV-2026-00007 --yes
 
 ## Workflows: `ffc workflow`
 
-On a DocType with an active Workflow, documents change state through workflow actions (Approve, Reject, ...), not through `submit-doc` or `cancel-doc`. An action may submit or cancel the document.
+On a DocType with an active Workflow, documents change state through workflow actions (Approve, Reject, ...), not through `submit-doc`, `cancel-doc`, `bulk-submit` or `bulk-cancel`, which refuse such a DocType. An action may submit or cancel the document.
 
 ```bash
 ffc workflow transitions -d "Leave Application" -n HR-LAP-2026-00001       # actions you can apply now

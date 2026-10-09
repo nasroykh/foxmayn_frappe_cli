@@ -52,17 +52,21 @@ Examples:
 }
 
 // refuseWorkflow stops a submit or cancel of a DocType that has an active
-// Workflow: those documents move through workflow actions. When the user
-// may not read Workflows, the server's own checks decide.
+// Workflow: those documents move through workflow actions. name is empty
+// for a bulk run, which refuses the DocType before touching any document.
+// When the user may not read Workflows, the server's own checks decide.
 func refuseWorkflow(ctx context.Context, c *client.FrappeClient, doctype, name string) error {
 	wf, _, err := c.ActiveWorkflow(ctx, doctype)
 	if err != nil {
 		return err
 	}
-	if wf != "" {
-		return &client.StateError{Message: fmt.Sprintf("%s uses the workflow %q: list its actions with 'ffc workflow transitions -d %q -n %q' and apply one with 'ffc workflow apply'", doctype, wf, doctype, name)}
+	if wf == "" {
+		return nil
 	}
-	return nil
+	if name == "" {
+		return &client.StateError{Message: fmt.Sprintf("%s uses the workflow %q: move its documents with 'ffc workflow bulk-apply -d %q --action ACTION' ('ffc workflow transitions' lists a document's actions)", doctype, wf, doctype)}
+	}
+	return &client.StateError{Message: fmt.Sprintf("%s uses the workflow %q: list its actions with 'ffc workflow transitions -d %q -n %q' and apply one with 'ffc workflow apply'", doctype, wf, doctype, name)}
 }
 
 func init() {

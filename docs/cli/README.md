@@ -15,7 +15,7 @@ Run `ffc <command> --help` for the full text of any command. This reference foll
 | Set up sites and settings | `init`, `site`, `config`, `ping` | [Sites and settings](sites-and-settings.md) |
 | Read and write documents | `get-doc`, `list-docs`, `count-docs`, `create-doc`, `update-doc`, `delete-doc` | [Documents](documents.md) |
 | Edit a document in your editor | `edit-doc` | [edit-doc](edit-doc.md) |
-| Change many documents at once | `bulk-create`, `bulk-update`, `bulk-delete` | [Bulk operations](bulk.md) |
+| Change many documents at once | `bulk-create`, `bulk-update`, `bulk-delete`, `bulk-submit`, `bulk-cancel` | [Bulk operations](bulk.md) |
 | Export documents with their child tables, import templates | `export`, `import-template` | [Export](export.md) |
 | Create or update documents from a CSV or JSON file | `import` | [Import](import.md) |
 | Submit, cancel, amend, workflows | `submit-doc`, `cancel-doc`, `amend-doc`, `copy-doc`, `rename-doc`, `restore-doc`, `discard-doc`, `workflow` | [Lifecycle and workflow](lifecycle-and-workflow.md) |

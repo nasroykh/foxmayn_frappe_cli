@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -113,11 +112,7 @@ func bulkUpdateFiltered(cmd *cobra.Command) error {
 		return err
 	}
 	if len(names) == 0 {
-		fmt.Fprintf(os.Stderr, "No %s documents match the filters; nothing to update.\n", buDoctype)
-		if !machineOutput() {
-			return nil
-		}
-		return printBulkReport(bulkReport{Done: "updated", Results: []bulkResult{}}, buDoctype)
+		return noMatches(buDoctype, "update", "updated")
 	}
 	if !buYes && !dryRunOn(cmd) {
 		fields := make([]string, 0, len(patch))
