@@ -44,6 +44,11 @@ type mcpEnv struct {
 	client func(ctx context.Context, site *config.SiteConfig) (*client.FrappeClient, error)
 	flags  config.MCPPolicy
 	audit  *auditLog // nil: no audit log
+	// cfgPath is the config file the served sites live in; an OAuth refresh
+	// during a call writes the new token there.
+	cfgPath string
+	// confirm issues and checks the states of this server's confirmations.
+	confirm *confirmer
 	// toolsets are the tool sets `ffc mcp --toolsets` exposes; nil means
 	// defaultToolsets (core and lifecycle).
 	toolsets []string
@@ -112,7 +117,7 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 	if err := policy.check(req.Params.Name, scope); err != nil {
 		return fail(auditDenied, err)
 	}
-	if res := policy.confirm(ctx, req, scope, rec); res != nil {
+	if res := policy.confirm(ctx, env.confirm, req, scope, rec); res != nil {
 		return res
 	}
 	c, err := env.client(ctx, site)

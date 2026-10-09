@@ -201,12 +201,12 @@ func lastLogLines(path string, n int) string {
 }
 
 // startDetached re-execs the current binary as a background HTTP MCP server.
-func startDetached(ctx context.Context, port int) error {
+func startDetached(ctx context.Context, o mcpOptions, port int) error {
 	// Resolve the site before spawning anything: a missing config or unknown
 	// site fails here instead of after the health-check timeout, and the state
 	// file records the site actually served, not just the --site flag. The
 	// child validates the credentials.
-	sites, err := mcpSites()
+	sites, err := mcpSites(o)
 	if err != nil {
 		return err
 	}
@@ -359,12 +359,13 @@ func isLocalhostOrigin(origin string) bool {
 }
 
 // runHTTPServer starts the MCP server over HTTP on the given port.
-func runHTTPServer(ctx context.Context, port int) error {
-	s, closeEnv, err := startMCP(ctx)
+func runHTTPServer(ctx context.Context, o mcpOptions, port int) error {
+	s, warnings, closeEnv, err := startMCP(ctx, o)
 	if err != nil {
 		return err
 	}
 	defer closeEnv()
+	printMCPWarnings(warnings)
 
 	// The token/instance are supplied by the parent when detached; generate
 	// them for a foreground `ffc mcp --port N` run.

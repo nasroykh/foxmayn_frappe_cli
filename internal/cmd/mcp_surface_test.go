@@ -92,6 +92,7 @@ func mcpTToolsets(t *testing.T, sets []string) *server.MCPServer {
 	}
 	sc := &config.SiteConfig{Name: "test"}
 	env := &mcpEnv{
+		confirm:  newConfirmer(),
 		sites:    []string{"test"},
 		site:     func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
 		client:   func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
@@ -819,9 +820,10 @@ func TestMCPResourceErrors(t *testing.T) {
 	}
 	sc := &config.SiteConfig{Name: "prod", MCP: &config.MCPPolicy{DenyDoctypes: []string{"Note"}}}
 	env := &mcpEnv{
-		sites:  []string{"prod"},
-		site:   func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
-		client: func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
+		confirm: newConfirmer(),
+		sites:   []string{"prod"},
+		site:    func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
+		client:  func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
 	}
 	var (
 		mu   sync.Mutex

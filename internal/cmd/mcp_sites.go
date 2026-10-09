@@ -27,15 +27,15 @@ var siteless = map[string]bool{"list_sites": true}
 
 // mcpSites resolves the sites `ffc mcp` serves, the default one first.
 // Without --sites or --all-sites it is the selected site alone, as before.
-func mcpSites() ([]string, error) {
-	if !mcpAllSites && len(mcpSiteList) == 0 {
-		site, err := config.LoadSite(siteName, configPath)
+func mcpSites(o mcpOptions) ([]string, error) {
+	if !o.allSites && len(o.sites) == 0 {
+		site, err := config.LoadSite(o.site, o.configPath)
 		if err != nil {
 			return nil, fmt.Errorf("config: %w", err)
 		}
 		return []string{site.Name}, nil
 	}
-	if mcpAllSites && len(mcpSiteList) > 0 {
+	if o.allSites && len(o.sites) > 0 {
 		return nil, usageErrorf("use --sites or --all-sites, not both")
 	}
 	// FFC_API_KEY/FFC_API_SECRET replace the stored credentials of the site
@@ -43,7 +43,7 @@ func mcpSites() ([]string, error) {
 	if os.Getenv("FFC_API_KEY") != "" && os.Getenv("FFC_API_SECRET") != "" {
 		return nil, usageErrorf("FFC_API_KEY and FFC_API_SECRET apply to one site; unset them to serve several sites")
 	}
-	path, err := resolveCfgPath()
+	path, err := o.cfgPath()
 	if err != nil {
 		return nil, err
 	}
@@ -51,8 +51,8 @@ func mcpSites() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
-	want := mcpSiteList
-	if mcpAllSites {
+	want := o.sites
+	if o.allSites {
 		want = nil
 		for name := range cfg.Sites {
 			want = append(want, name)
@@ -76,8 +76,8 @@ func mcpSites() ([]string, error) {
 	}
 	// The default site goes first: --site, else default_site when served.
 	first := cfg.DefaultSite
-	if siteName != "" {
-		site, err := config.LoadSite(siteName, path)
+	if o.site != "" {
+		site, err := config.LoadSite(o.site, path)
 		if err != nil {
 			return nil, fmt.Errorf("config: %w", err)
 		}

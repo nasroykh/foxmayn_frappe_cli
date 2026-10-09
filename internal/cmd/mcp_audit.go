@@ -60,13 +60,10 @@ type auditLog struct {
 	mu   sync.Mutex
 }
 
-// newAuditLog returns the audit log under the config directory.
-func newAuditLog() (*auditLog, error) {
-	cfg, err := resolveCfgPath()
-	if err != nil {
-		return nil, err
-	}
-	return &auditLog{path: filepath.Join(filepath.Dir(cfg), auditFileName)}, nil
+// newAuditLog returns the audit log under the directory of the config file
+// at cfgPath.
+func newAuditLog(cfgPath string) *auditLog {
+	return &auditLog{path: filepath.Join(filepath.Dir(cfgPath), auditFileName)}
 }
 
 // write appends rec, built for a call with arguments args. A failure is

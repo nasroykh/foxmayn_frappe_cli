@@ -53,7 +53,7 @@ func mcpTAuth(t *testing.T, s *frappetest.Site, want string) {
 
 func mcpTStart(t *testing.T) *server.MCPServer {
 	t.Helper()
-	s, closeEnv, err := startMCP(context.Background())
+	s, _, closeEnv, err := startMCP(context.Background(), mcpOptionsFromFlags())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestMCPSites(t *testing.T) {
 				t.Setenv("FFC_API_KEY", "k")
 				t.Setenv("FFC_API_SECRET", "s")
 			}
-			sites, err := mcpSites()
+			sites, err := mcpSites(mcpOptionsFromFlags())
 			got := strings.Join(sites, " ")
 			if err != nil {
 				got = err.Error()

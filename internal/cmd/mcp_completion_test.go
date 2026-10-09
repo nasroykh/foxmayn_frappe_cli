@@ -109,8 +109,9 @@ func TestMCPCompletionEnvOnlySite(t *testing.T) {
 	cacheTEnv(t)
 	sc := &config.SiteConfig{URL: "http://erp.example", APIKey: "k", APISecret: "s"}
 	env := &mcpEnv{
-		sites: []string{""},
-		site:  func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
+		confirm: newConfirmer(),
+		sites:   []string{""},
+		site:    func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
 	}
 	s := server.NewMCPServer("t", "0")
 	registerTools(s, env, []mcpPolicy{newMCPPolicy(sc, config.MCPPolicy{})})
