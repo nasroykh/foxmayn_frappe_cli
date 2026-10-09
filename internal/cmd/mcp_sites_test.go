@@ -218,7 +218,11 @@ func TestMCPSites(t *testing.T) {
 				t.Setenv("FFC_API_KEY", "k")
 				t.Setenv("FFC_API_SECRET", "s")
 			}
-			sites, err := mcpSites(mcpOptionsFromFlags())
+			o := mcpOptionsFromFlags()
+			sites, err := []string(nil), cleanMCPOptions(&o, true, func(string) bool { return false })
+			if err == nil {
+				sites, err = mcpSites(o)
+			}
 			got := strings.Join(sites, " ")
 			if err != nil {
 				got = err.Error()
