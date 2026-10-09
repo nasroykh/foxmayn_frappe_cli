@@ -105,7 +105,7 @@ func scanConv(r scanner) (Conversation, error) {
 func (s *Store) GetConversation(id string) (Conversation, error) {
 	c, err := scanConv(s.db.QueryRow(`SELECT `+convCols+` FROM conversations WHERE id=?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return Conversation{}, ErrNotFound
+		return Conversation{}, fmt.Errorf("get conversation: %w", ErrNotFound)
 	}
 	if err != nil {
 		return Conversation{}, fmt.Errorf("get conversation: %w", err)
@@ -128,18 +128,21 @@ func (s *Store) ListConversations() ([]Conversation, error) {
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rowsErr(rows, "list conversations"); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // RenameConversation changes the title without touching the updated time.
 func (s *Store) RenameConversation(id, title string) error {
-	return notFound(s.db.Exec(`UPDATE conversations SET title=? WHERE id=?`, title, id))
+	return execOne("rename conversation", s.db, `UPDATE conversations SET title=? WHERE id=?`, title, id)
 }
 
 // DeleteConversation removes the conversation and, by cascade, its messages,
 // runs, tool calls, usage and search entries.
 func (s *Store) DeleteConversation(id string) error {
-	return notFound(s.db.Exec(`DELETE FROM conversations WHERE id=?`, id))
+	return execOne("delete conversation", s.db, `DELETE FROM conversations WHERE id=?`, id)
 }
 
 // AppendMessage adds a message with the next per-conversation seq (from 1) and
@@ -151,8 +154,8 @@ func (s *Store) AppendMessage(convID, role, partsJSON string) (Message, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	now := nowMS()
-	if err := notFound(tx.Exec(`UPDATE conversations SET updated=? WHERE id=?`, now, convID)); err != nil {
-		return Message{}, fmt.Errorf("append message: %w", err)
+	if err := execOne("append message", tx, `UPDATE conversations SET updated=? WHERE id=?`, now, convID); err != nil {
+		return Message{}, err
 	}
 	m := Message{ID: newID(), ConvID: convID, Role: role, PartsJSON: partsJSON, Created: ms(now)}
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(seq),0)+1 FROM messages WHERE conv_id=?`, convID).Scan(&m.Seq); err != nil {
@@ -168,14 +171,29 @@ func (s *Store) AppendMessage(convID, role, partsJSON string) (Message, error) {
 	return m, nil
 }
 
-// UpdateMessageParts replaces a message's parts (and its search entry).
+// UpdateMessageParts replaces a message's parts (and its search entry) and
+// bumps the conversation's updated time.
 func (s *Store) UpdateMessageParts(id, partsJSON string) error {
-	return notFound(s.db.Exec(`UPDATE messages SET parts_json=? WHERE id=?`, partsJSON, id))
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("update message: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := execOne("update message", tx, `UPDATE messages SET parts_json=? WHERE id=?`, partsJSON, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE conversations SET updated=? WHERE id=(SELECT conv_id FROM messages WHERE id=?)`, nowMS(), id); err != nil {
+		return fmt.Errorf("update message: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("update message: %w", err)
+	}
+	return nil
 }
 
 // DeleteMessage removes one message and its search entry.
 func (s *Store) DeleteMessage(id string) error {
-	return notFound(s.db.Exec(`DELETE FROM messages WHERE id=?`, id))
+	return execOne("delete message", s.db, `DELETE FROM messages WHERE id=?`, id)
 }
 
 func scanMessages(rows *sql.Rows, what string) ([]Message, error) {
@@ -190,7 +208,10 @@ func scanMessages(rows *sql.Rows, what string) ([]Message, error) {
 		m.Created = ms(cr)
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%s: %w", what, err)
+	}
+	return out, nil
 }
 
 // ListMessages returns a conversation's messages in seq order.
@@ -207,14 +228,14 @@ func (s *Store) CreateRun(convID string) (Run, error) {
 	now := nowMS()
 	r := Run{ID: newID(), ConvID: convID, Status: "running", Started: ms(now)}
 	if _, err := s.db.Exec(`INSERT INTO runs(id,conv_id,status,steps,error,started) VALUES(?,?,?,0,'',?)`, r.ID, convID, r.Status, now); err != nil {
-		return Run{}, fmt.Errorf("create run: %w", err)
+		return Run{}, fkNotFound("create run", err)
 	}
 	return r, nil
 }
 
 // FinishRun records the final status, error text and step count.
 func (s *Store) FinishRun(id, status, errText string, steps int) error {
-	return notFound(s.db.Exec(`UPDATE runs SET status=?,error=?,steps=?,ended=? WHERE id=?`, status, errText, steps, nowMS(), id))
+	return execOne("finish run", s.db, `UPDATE runs SET status=?,error=?,steps=?,ended=? WHERE id=?`, status, errText, steps, nowMS(), id)
 }
 
 // GetRun returns ErrNotFound when id is unknown.
@@ -224,7 +245,7 @@ func (s *Store) GetRun(id string) (Run, error) {
 	err := s.db.QueryRow(`SELECT id,conv_id,status,steps,error,started,ended FROM runs WHERE id=?`, id).
 		Scan(&r.ID, &r.ConvID, &r.Status, &r.Steps, &r.Error, &st, &en)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Run{}, ErrNotFound
+		return Run{}, fmt.Errorf("get run: %w", ErrNotFound)
 	}
 	if err != nil {
 		return Run{}, fmt.Errorf("get run: %w", err)
@@ -247,14 +268,14 @@ func (s *Store) InsertToolCall(runID, msgID, tool, site, argsJSON, status string
 	}
 	if _, err := s.db.Exec(`INSERT INTO tool_calls(id,run_id,msg_id,tool,site,args_json,status,started) VALUES(?,?,?,?,?,?,?,?)`,
 		t.ID, runID, msg, tool, site, argsJSON, status, now); err != nil {
-		return ToolCall{}, fmt.Errorf("insert tool call: %w", err)
+		return ToolCall{}, fkNotFound("insert tool call", err)
 	}
 	return t, nil
 }
 
 // FinishToolCall records the result text, final status and approval outcome.
 func (s *Store) FinishToolCall(id, resultText, status, approval string) error {
-	return notFound(s.db.Exec(`UPDATE tool_calls SET result_text=?,status=?,approval=?,ended=? WHERE id=?`, resultText, status, approval, nowMS(), id))
+	return execOne("finish tool call", s.db, `UPDATE tool_calls SET result_text=?,status=?,approval=?,ended=? WHERE id=?`, resultText, status, approval, nowMS(), id)
 }
 
 // ListToolCalls returns a run's calls in start order.
@@ -277,7 +298,10 @@ func (s *Store) ListToolCalls(runID string) ([]ToolCall, error) {
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rowsErr(rows, "list tool calls"); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // AddUsage records (or replaces) the token usage of one turn of a run.
@@ -306,7 +330,10 @@ func (s *Store) ListUsage(runID string) ([]Usage, error) {
 		}
 		out = append(out, u)
 	}
-	return out, rows.Err()
+	if err := rowsErr(rows, "list usage"); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // UpsertProvider inserts or replaces a provider by ID.
@@ -335,25 +362,53 @@ func (s *Store) ListProviders() ([]Provider, error) {
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err := rowsErr(rows, "list providers"); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // DeleteProvider removes a provider by ID.
 func (s *Store) DeleteProvider(id string) error {
-	return notFound(s.db.Exec(`DELETE FROM providers WHERE id=?`, id))
+	return execOne("delete provider", s.db, `DELETE FROM providers WHERE id=?`, id)
 }
 
-// Search returns messages whose indexed text matches an FTS5 query, in
-// conversation then seq order.
-func (s *Store) Search(query string) ([]Message, error) {
-	if strings.TrimSpace(query) == "" {
+// ErrBadQuery is returned by Search when SQLite rejects the query.
+var ErrBadQuery = errors.New("store: invalid search query")
+
+// ftsQuery turns user text into an FTS5 query: every whitespace-separated
+// token becomes a quoted string (so "SINV-0001", "a.b" or "it's" are literal
+// phrases) and all tokens must match.
+func ftsQuery(text string) string {
+	fields := strings.Fields(text)
+	for i, f := range fields {
+		fields[i] = `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
+	}
+	return strings.Join(fields, " ")
+}
+
+// Search returns messages whose indexed text contains every word of query,
+// best match first (bm25), then most recently updated conversation first.
+// limit <= 0 means 50. An empty query returns nil.
+func (s *Store) Search(query string, limit int) ([]Message, error) {
+	q := ftsQuery(query)
+	if q == "" {
 		return nil, nil
 	}
-	rows, err := s.db.Query(`SELECT m.id,m.conv_id,m.seq,m.role,m.parts_json,m.created
-		FROM messages_fts f JOIN messages m ON m.n=f.rowid
-		WHERE messages_fts MATCH ? ORDER BY m.conv_id, m.seq`, query)
-	if err != nil {
-		return nil, fmt.Errorf("search: %w", err)
+	if limit <= 0 {
+		limit = 50
 	}
-	return scanMessages(rows, "search")
+	rows, err := s.db.Query(`SELECT m.id,m.conv_id,m.seq,m.role,m.parts_json,m.created
+		FROM messages_fts JOIN messages m ON m.n=messages_fts.rowid
+		JOIN conversations c ON c.id=m.conv_id
+		WHERE messages_fts MATCH ?
+		ORDER BY bm25(messages_fts), c.updated DESC, m.conv_id, m.seq LIMIT ?`, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrBadQuery, err)
+	}
+	msgs, err := scanMessages(rows, "search")
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrBadQuery, err)
+	}
+	return msgs, nil
 }

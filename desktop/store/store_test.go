@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 func openTemp(t *testing.T) (*Store, string) {
@@ -31,6 +29,13 @@ func mustConv(t *testing.T, s *Store, title string) Conversation {
 		t.Fatal(err)
 	}
 	return c
+}
+
+func setUpdated(t *testing.T, s *Store, convID string, ms int64) {
+	t.Helper()
+	if _, err := s.db.Exec(`UPDATE conversations SET updated=? WHERE id=?`, ms, convID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestDefaultPath(t *testing.T) {
@@ -91,24 +96,101 @@ func TestNewerVersionRefused(t *testing.T) {
 	}
 }
 
+func TestConcurrentOpenFreshFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.db")
+	const n = 4
+	stores := make([]*Store, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stores[i], errs[i] = Open(path)
+		}()
+	}
+	wg.Wait()
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Fatalf("open %d: %v", i, errs[i])
+		}
+		defer stores[i].Close()
+	}
+	var v int
+	if err := stores[0].db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != len(migrations) {
+		t.Fatalf("user_version = %d, %v", v, err)
+	}
+}
+
+func TestOddPaths(t *testing.T) {
+	name := "my dir #1 100% what"
+	if runtime.GOOS != "windows" {
+		name += "?"
+	}
+	dir := filepath.Join(t.TempDir(), name)
+	path := filepath.Join(dir, "assistant file#.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	c := mustConv(t, s, "odd")
+	_ = s.Close()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("db not at the requested path: %v", err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.GetConversation(c.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFileModes(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX modes")
 	}
-	_, path := openTemp(t)
-	fi, err := os.Stat(path)
+	dir := filepath.Join(t.TempDir(), "d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "assistant.db")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fi.Mode().Perm() != 0o600 {
-		t.Fatalf("file mode %v", fi.Mode().Perm())
+	defer s.Close()
+	mustConv(t, s, "c") // makes sure -wal exists
+	// Reopen: the sidecar files exist now and must be tightened too.
+	_ = s.Close()
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	di, err := os.Stat(filepath.Dir(path))
+	defer s2.Close()
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		fi, err := os.Stat(p)
+		if err != nil {
+			if strings.HasSuffix(p, "-wal") || strings.HasSuffix(p, "-shm") {
+				continue
+			}
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode %v", filepath.Base(p), fi.Mode().Perm())
+		}
+	}
+	di, err := os.Stat(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if di.Mode().Perm() != 0o700 {
-		t.Fatalf("dir mode %v", di.Mode().Perm())
+		t.Errorf("dir mode %v", di.Mode().Perm())
 	}
 }
 
@@ -126,14 +208,29 @@ func TestConversationCRUD(t *testing.T) {
 	if got.Created.Location().String() != "UTC" {
 		t.Fatalf("not UTC: %v", got.Created.Location())
 	}
+	setUpdated(t, s, a.ID, 1000)
+	setUpdated(t, s, b.ID, 2000)
+	list, err := s.ListConversations()
+	if err != nil || len(list) != 2 || list[0].ID != b.ID {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
 	// A message bumps updated, so a moves to the front.
-	time.Sleep(5 * time.Millisecond)
 	if _, err := s.AppendMessage(a.ID, "user", `[{"text":"hi"}]`); err != nil {
 		t.Fatal(err)
 	}
-	list, err := s.ListConversations()
-	if err != nil || len(list) != 2 || list[0].ID != a.ID {
-		t.Fatalf("list = %+v, %v", list, err)
+	list, _ = s.ListConversations()
+	if list[0].ID != a.ID {
+		t.Fatalf("append did not bump updated: %+v", list)
+	}
+	// So does editing a message.
+	setUpdated(t, s, a.ID, 1000)
+	msgs, _ := s.ListMessages(a.ID)
+	if err := s.UpdateMessageParts(msgs[0].ID, `[{"text":"hello"}]`); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = s.ListConversations()
+	if list[0].ID != a.ID {
+		t.Fatalf("update did not bump updated: %+v", list)
 	}
 	if err := s.RenameConversation(b.ID, "renamed"); err != nil {
 		t.Fatal(err)
@@ -153,6 +250,25 @@ func TestConversationCRUD(t *testing.T) {
 	}
 	if err := s.RenameConversation("nope", "x"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("rename missing: %v", err)
+	}
+	if err := s.UpdateMessageParts("nope", `[]`); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("update missing: %v", err)
+	}
+	if err := s.DeleteConversation("nope"); err == nil || !strings.Contains(err.Error(), "delete conversation") {
+		t.Fatalf("no op context: %v", err)
+	}
+}
+
+func TestForeignKeyFailuresAreNotFound(t *testing.T) {
+	s, _ := openTemp(t)
+	if _, err := s.CreateRun("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	if _, err := s.InsertToolCall("missing", "", "get_doc", "acme", `{}`, "running"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InsertToolCall: %v", err)
+	}
+	if err := s.AddUsage(Usage{RunID: "missing", Turn: 1}); err == nil {
+		t.Fatal("AddUsage for a missing run should fail")
 	}
 }
 
@@ -180,27 +296,43 @@ func TestMessagesSeq(t *testing.T) {
 }
 
 func TestConcurrentAppend(t *testing.T) {
-	s, _ := openTemp(t)
-	c := mustConv(t, s, "c")
-	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if _, err := s.AppendMessage(c.ID, "user", `[{"text":"x"}]`); err != nil {
-				t.Error(err)
+	for _, tc := range []struct {
+		name   string
+		stores int
+	}{{"one store", 1}, {"two stores on one file", 2}} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "a.db")
+			var stores []*Store
+			for i := 0; i < tc.stores; i++ {
+				s, err := Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer s.Close()
+				stores = append(stores, s)
 			}
-		}()
-	}
-	wg.Wait()
-	msgs, err := s.ListMessages(c.ID)
-	if err != nil || len(msgs) != 20 {
-		t.Fatalf("got %d, %v", len(msgs), err)
-	}
-	for i, m := range msgs {
-		if m.Seq != i+1 {
-			t.Fatalf("seq gap at %d: %d", i, m.Seq)
-		}
+			c := mustConv(t, stores[0], "c")
+			var wg sync.WaitGroup
+			for i := 0; i < 20; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if _, err := stores[i%len(stores)].AppendMessage(c.ID, "user", `[{"text":"x"}]`); err != nil {
+						t.Error(err)
+					}
+				}()
+			}
+			wg.Wait()
+			msgs, err := stores[0].ListMessages(c.ID)
+			if err != nil || len(msgs) != 20 {
+				t.Fatalf("got %d, %v", len(msgs), err)
+			}
+			for i, m := range msgs {
+				if m.Seq != i+1 {
+					t.Fatalf("seq gap at %d: %d", i, m.Seq)
+				}
+			}
+		})
 	}
 }
 
@@ -294,8 +426,9 @@ func TestDeleteConversationCascades(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, _ := s.CreateRun(c.ID)
-	tc, _ := s.InsertToolCall(r.ID, "", "get_doc", "acme", `{}`, "ok")
-	_ = tc
+	if _, err := s.InsertToolCall(r.ID, "", "get_doc", "acme", `{}`, "ok"); err != nil {
+		t.Fatal(err)
+	}
 	_ = s.AddUsage(Usage{RunID: r.ID, Turn: 1, Input: 1, Output: 1})
 	if err := s.DeleteConversation(c.ID); err != nil {
 		t.Fatal(err)
@@ -305,11 +438,41 @@ func TestDeleteConversationCascades(t *testing.T) {
 			t.Errorf("%s rows = %d, want %d", table, got, want)
 		}
 	}
-	if hits, _ := s.Search("doomed"); len(hits) != 0 {
+	if hits, _ := s.Search("doomed", 0); len(hits) != 0 {
 		t.Fatalf("search still finds deleted: %+v", hits)
 	}
-	if hits, _ := s.Search("survivor"); len(hits) != 1 {
+	if hits, _ := s.Search("survivor", 0); len(hits) != 1 {
 		t.Fatalf("survivor lost: %+v", hits)
+	}
+}
+
+// Valid JSON that is not an array of objects must insert and update fine; it
+// is just not indexed.
+func TestPartsShapes(t *testing.T) {
+	s, _ := openTemp(t)
+	c := mustConv(t, s, "c")
+	for _, parts := range []string{
+		`["hello"]`, `"hi"`, `{"text":"obj"}`, `42`, `null`, `[1,{"text":"mixed"},null]`, `not json`, `[]`,
+	} {
+		m, err := s.AppendMessage(c.ID, "user", parts)
+		if err != nil {
+			t.Fatalf("append %s: %v", parts, err)
+		}
+		if err := s.UpdateMessageParts(m.ID, `{"text":"updated obj"}`); err != nil {
+			t.Fatalf("update after %s: %v", parts, err)
+		}
+		if err := s.UpdateMessageParts(m.ID, parts); err != nil {
+			t.Fatalf("update to %s: %v", parts, err)
+		}
+	}
+	for _, q := range []string{"hello", "obj", "updated"} {
+		if hits, err := s.Search(q, 0); err != nil || len(hits) != 0 {
+			t.Errorf("%q indexed: %+v %v", q, hits, err)
+		}
+	}
+	// Only the object element of a mixed array is indexed.
+	if hits, err := s.Search("mixed", 0); err != nil || len(hits) != 1 {
+		t.Errorf("mixed: %+v %v", hits, err)
 	}
 }
 
@@ -318,110 +481,156 @@ func TestSearchFollowsChanges(t *testing.T) {
 	c := mustConv(t, s, "c")
 	m1, _ := s.AppendMessage(c.ID, "user", `[{"type":"text","text":"how many invoices are overdue"}]`)
 	m2, _ := s.AppendMessage(c.ID, "assistant", `[{"text":"twelve"},{"text":"unpaid invoices"},{"tool_use":"ignored_token"}]`)
-	// A message whose parts are not valid JSON must not break the insert.
-	if _, err := s.AppendMessage(c.ID, "user", `not json`); err != nil {
-		t.Fatalf("invalid parts: %v", err)
-	}
 
-	hits, err := s.Search("invoices")
-	if err != nil || len(hits) != 2 || hits[0].ID != m1.ID || hits[1].ID != m2.ID {
+	hits, err := s.Search("invoices", 0)
+	if err != nil || len(hits) != 2 {
 		t.Fatalf("invoices: %+v %v", hits, err)
 	}
-	if hits, _ := s.Search("ignored_token"); len(hits) != 0 {
+	if hits, _ := s.Search("ignored_token", 0); len(hits) != 0 {
 		t.Fatalf("non-text part indexed: %+v", hits)
 	}
-	if hits, _ := s.Search("overdue AND invoices"); len(hits) != 1 || hits[0].ID != m1.ID {
-		t.Fatalf("AND: %+v", hits)
+	if hits, _ := s.Search("overdue invoices", 0); len(hits) != 1 || hits[0].ID != m1.ID {
+		t.Fatalf("AND of words: %+v", hits)
 	}
-
 	if err := s.UpdateMessageParts(m1.ID, `[{"text":"customers with credit notes"}]`); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := s.Search("overdue"); len(hits) != 0 {
+	if hits, _ := s.Search("overdue", 0); len(hits) != 0 {
 		t.Fatalf("old text still indexed: %+v", hits)
 	}
-	if hits, _ := s.Search("credit"); len(hits) != 1 || hits[0].ID != m1.ID {
+	if hits, _ := s.Search("credit", 0); len(hits) != 1 || hits[0].ID != m1.ID {
 		t.Fatalf("new text: %+v", hits)
 	}
-
 	if err := s.DeleteMessage(m2.ID); err != nil {
 		t.Fatal(err)
 	}
-	if hits, _ := s.Search("twelve"); len(hits) != 0 {
+	if hits, _ := s.Search("twelve", 0); len(hits) != 0 {
 		t.Fatalf("deleted message found: %+v", hits)
-	}
-	if hits, err := s.Search("   "); err != nil || hits != nil {
-		t.Fatalf("blank query: %+v %v", hits, err)
-	}
-	if _, err := s.Search(`"unterminated`); err == nil {
-		t.Fatal("malformed FTS query should error")
 	}
 }
 
-// A full recorded run. The provider key is only ever held by the keychain; the
-// store has no column for it, so the bytes of the db and its WAL must not
-// contain it even when every other provider field is saved.
-func TestNoSecretInDatabaseBytes(t *testing.T) {
-	const key = "sk-ant-test-SECRET123"
-	s, path := openTemp(t)
-	if err := s.UpsertProvider(Provider{ID: "anthropic", Kind: "anthropic", Label: "Claude", BaseURL: "https://api.anthropic.com", DefaultModel: "claude-sonnet-5-5"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.UpsertProvider(Provider{ID: "local", Kind: "ollama", Label: "Ollama", BaseURL: "http://localhost:11434/v1"}); err != nil {
-		t.Fatal(err)
-	}
-	c := mustConv(t, s, "Overdue invoices")
-	if _, err := s.AppendMessage(c.ID, "user", `[{"text":"which invoices are overdue?"}]`); err != nil {
-		t.Fatal(err)
-	}
-	r, _ := s.CreateRun(c.ID)
-	am, _ := s.AppendMessage(c.ID, "assistant", `[{"tool_use":{"id":"t1","name":"list_docs"}}]`)
-	tc, err := s.InsertToolCall(r.ID, am.ID, "list_docs", "acme", `{"doctype":"Sales Invoice"}`, "running")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = s.FinishToolCall(tc.ID, `[{"name":"SINV-0001"}]`, "ok", "none")
-	_ = s.AddUsage(Usage{RunID: r.ID, Turn: 1, Input: 900, Output: 40, Cached: 800})
-	_, _ = s.AppendMessage(c.ID, "assistant", `[{"text":"One invoice is overdue: SINV-0001."}]`)
-	_ = s.FinishRun(r.ID, "done", "", 1)
-
-	// Checkpoint so the main file is complete, but also scan the WAL while it
-	// still exists (before checkpoint) and again after.
-	scan := func(label string) {
-		for _, p := range []string{path, path + "-wal", path + "-shm"} {
-			b, err := os.ReadFile(p)
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if bytes.Contains(b, []byte(key)) || bytes.Contains(b, []byte("SECRET123")) {
-				t.Fatalf("%s: secret found in %s", label, filepath.Base(p))
-			}
+func TestSearchQueries(t *testing.T) {
+	s, _ := openTemp(t)
+	c := mustConv(t, s, "c")
+	for _, text := range []string{
+		"Invoice SINV-0001 is overdue by 12 days",
+		"customer foo:bar paid via a.b gateway",
+		"it's the customer's credit note",
+		"the tab stops at 100% and *stars* appear",
+		`he said "hello world" twice`,
+		"NEAR the warehouse WH-Main - Acme",
+	} {
+		if _, err := s.AppendMessage(c.ID, "assistant", fmt.Sprintf(`[{"text":%q}]`, text)); err != nil {
+			t.Fatal(err)
 		}
 	}
-	scan("before checkpoint")
-	if _, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		query string
+		want  int
+	}{
+		{"SINV-0001", 1},
+		{"sinv-0001", 1},
+		{"SINV", 1},
+		{"0001", 1},
+		{"foo:bar", 1},
+		{"a.b", 1},
+		{"it's", 1},
+		{"customer's", 1},
+		{"100%", 1},
+		{"*", 0},
+		{"stars", 1},
+		{`"hello world"`, 1},
+		{`hello "`, 1},
+		{"NEAR(", 1},
+		{"WH-Main", 1},
+		{"overdue 12", 1},
+		{"overdue warehouse", 0},
+		{"customer", 2},
+		{"AND", 1}, // an operator word is just a word
+		{"OR NOT", 0},
+		{"", 0},
+		{"  \t\n", 0},
+		{"nomatch", 0},
+	} {
+		hits, err := s.Search(tc.query, 0)
+		if err != nil {
+			t.Errorf("Search(%q): %v", tc.query, err)
+			continue
+		}
+		if len(hits) != tc.want {
+			t.Errorf("Search(%q) = %d hits, want %d", tc.query, len(hits), tc.want)
+		}
 	}
-	scan("after checkpoint")
+}
 
-	// And structurally: no providers column can hold a secret.
+func TestSearchRankAndLimit(t *testing.T) {
+	s, _ := openTemp(t)
+	old := mustConv(t, s, "old")
+	recent := mustConv(t, s, "recent")
+	setUpdated(t, s, old.ID, 1000)
+	setUpdated(t, s, recent.ID, 2000)
+	add := func(c Conversation, text string) Message {
+		m, err := s.AppendMessage(c.ID, "user", fmt.Sprintf(`[{"text":%q}]`, text))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	weak := add(old, "invoice mentioned once among many other unrelated words here today")
+	strong := add(old, "invoice invoice invoice")
+	tie := add(recent, "invoice invoice invoice")
+	// Keep the explicit timestamps set above (append bumps updated).
+	setUpdated(t, s, old.ID, 1000)
+	setUpdated(t, s, recent.ID, 2000)
+
+	hits, err := s.Search("invoice", 0)
+	if err != nil || len(hits) != 3 {
+		t.Fatalf("hits %+v %v", hits, err)
+	}
+	if hits[2].ID != weak.ID {
+		t.Errorf("weakest match not last: %v", []string{hits[0].ID, hits[1].ID, hits[2].ID})
+	}
+	// Equal scores: the more recently updated conversation first.
+	if hits[0].ID != tie.ID || hits[1].ID != strong.ID {
+		t.Errorf("tie order wrong: got %s %s, want %s %s", hits[0].ID, hits[1].ID, tie.ID, strong.ID)
+	}
+	if hits, _ := s.Search("invoice", 2); len(hits) != 2 {
+		t.Errorf("limit 2 gave %d", len(hits))
+	}
+	for i := 0; i < 60; i++ {
+		add(recent, "bulk entry")
+	}
+	if hits, _ := s.Search("bulk", 0); len(hits) != 50 {
+		t.Errorf("default limit gave %d", len(hits))
+	}
+}
+
+// Providers have no place for a secret: the table must stay free of any
+// key-like column, so a future change cannot quietly start storing one.
+func TestProvidersTableHasNoSecretColumn(t *testing.T) {
+	s, _ := openTemp(t)
 	rows, err := s.db.Query(`SELECT name FROM pragma_table_info('providers')`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
+	var cols []string
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			t.Fatal(err)
 		}
+		cols = append(cols, name)
 		for _, bad := range []string{"key", "secret", "token", "password"} {
 			if strings.Contains(strings.ToLower(name), bad) {
 				t.Fatalf("providers has column %q", name)
 			}
 		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(cols) != 5 {
+		t.Fatalf("providers columns = %v", cols)
 	}
 }
