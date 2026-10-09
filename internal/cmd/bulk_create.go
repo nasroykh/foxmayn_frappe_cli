@@ -109,11 +109,17 @@ func bulkCreateAtomic(cmd *cobra.Command, items []map[string]interface{}) error 
 	// The batch exists once the call succeeded, so it is reported even when
 	// the spinner itself failed.
 	_ = spinErr
+	return printBulkReport(createdReport(names), bcDoctype)
+}
+
+// createdReport is the report of a batch that insert_many created whole: one
+// "created" result per name, in order, the shape a per-item run produces.
+func createdReport(names []string) bulkReport {
 	rep := bulkReport{Done: "created", Total: len(names), OK: len(names), Results: make([]bulkResult, len(names))}
 	for i, n := range names {
 		rep.Results[i] = bulkResult{Index: i + 1, Name: n, Status: "created"}
 	}
-	return printBulkReport(rep, bcDoctype)
+	return rep
 }
 
 // atomicError says what a failed --atomic request means for the batch, and
