@@ -29,14 +29,16 @@ const (
 	erpTV16 = "16.37.0"
 )
 
-// erpTDraft is what a mapper answers: an unsaved document with a local name
-// and a child row, both carrying the __ keys the desk's form uses.
+// erpTDraft is what a mapper answers: an unsaved document with no name and
+// a child row that has none either, its parent unset but its place in the
+// table (parenttype, parentfield, idx) known, both carrying the __ keys of
+// a local document.
 func erpTDraft(doctype string) map[string]interface{} {
 	return map[string]interface{}{
-		"doctype": doctype, "name": "new-" + strings.ToLower(strings.ReplaceAll(doctype, " ", "-")) + "-abc",
-		"__islocal": 1, "__unsaved": 1, "docstatus": 0, "customer": "C1",
+		"doctype": doctype, "__islocal": 1, "__unsaved": 1, "docstatus": 0, "customer": "C1",
 		"items": []interface{}{map[string]interface{}{
-			"doctype": doctype + " Item", "name": "new-item-1", "__islocal": 1, "item_code": "I1", "qty": 2,
+			"doctype": doctype + " Item", "name": nil, "parent": nil, "parenttype": doctype, "parentfield": "items", "idx": 1,
+			"docstatus": 0, "__islocal": 1, "__temporary_name": "row1", "item_code": "I1", "qty": 2,
 		}},
 	}
 }
@@ -121,8 +123,8 @@ func TestERPMapCreate(t *testing.T) {
 	if len(posts) != 1 {
 		t.Fatalf("insert requests = %d", len(posts))
 	}
-	// Nothing the form adds travels back, and the local names stay home.
-	if strings.Contains(posts[0].Body, "__") || strings.Contains(posts[0].Body, "new-") {
+	// Nothing the form adds travels back; the row keeps its place in the table.
+	if strings.Contains(posts[0].Body, "__") {
 		t.Errorf("insert body = %s", posts[0].Body)
 	}
 	var body map[string]interface{}
@@ -130,7 +132,11 @@ func TestERPMapCreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	items, _ := body["items"].([]interface{})
-	if body["customer"] != "C1" || len(items) != 1 || items[0].(map[string]interface{})["item_code"] != "I1" {
+	var row map[string]interface{}
+	if len(items) == 1 {
+		row, _ = items[0].(map[string]interface{})
+	}
+	if body["customer"] != "C1" || row["item_code"] != "I1" || row["parentfield"] != "items" || fmt.Sprint(row["idx"]) != "1" {
 		t.Errorf("insert body = %s", posts[0].Body)
 	}
 	if n := len(s.RequestsTo(http.MethodPost, "/api/method/frappe.client.submit")); n != 0 {
@@ -225,24 +231,81 @@ func TestERPMapMissingSource(t *testing.T) {
 }
 
 func TestERPMapLeadQuotation(t *testing.T) {
-	for _, to := range []string{"Lead", "Prospect"} {
-		s := erpTSite(t, erpTV16)
-		s.Add("Quotation", map[string]interface{}{"name": "SRC-1", "quotation_to": to})
-		lcTCode(t, cmdTRun(t, s, "erp", "map", "--from", erpTFrom("Quotation"), "--to", "Sales Order", "--create"), exitValidation,
-			"convert the "+strings.ToLower(to)+" to a customer first")
-		for _, r := range s.Requests() {
-			if strings.Contains(r.Path, "make_sales_order") {
-				t.Errorf("%s: the mapper ran (it would create the Customer): %s", to, r.Path)
+	for _, tc := range []struct{ to, link string }{{"Lead", "lead_name"}, {"Prospect", "prospect_name"}} {
+		quote := func(s *frappetest.Site) {
+			s.Add("Quotation", map[string]interface{}{"name": "SRC-1", "quotation_to": tc.to, "party_name": "P-1"})
+			s.AddDocType("Customer", "lead_name", "prospect_name")
+		}
+		mapperRan := func(s *frappetest.Site) bool {
+			for _, r := range s.Requests() {
+				if strings.Contains(r.Path, "make_sales_order") {
+					return true
+				}
 			}
+			return false
+		}
+
+		// No Customer for the lead (another lead's does not count): refused,
+		// since the mapper would insert one.
+		s := erpTSite(t, erpTV16)
+		quote(s)
+		s.Add("Customer", map[string]interface{}{"name": "C-OTHER", tc.link: "P-2"})
+		lcTCode(t, cmdTRun(t, s, "erp", "map", "--from", erpTFrom("Quotation"), "--to", "Sales Order", "--create"), exitValidation,
+			"convert the "+strings.ToLower(tc.to)+" to a customer first")
+		if mapperRan(s) {
+			t.Errorf("%s: the mapper ran (it would create the Customer)", tc.to)
 		}
 		if w := erpTWrites(s); len(w) != 0 {
-			t.Errorf("%s: writes: %+v", to, w)
+			t.Errorf("%s: writes: %+v", tc.to, w)
+		}
+
+		// The Customer already made from it is reused by the mapper: maps.
+		s = erpTSite(t, erpTV16)
+		quote(s)
+		s.Add("Customer", map[string]interface{}{"name": "C-1", tc.link: "P-1"})
+		cmdTOK(t, cmdTRun(t, s, "erp", "map", "--from", erpTFrom("Quotation"), "--to", "Sales Order"))
+		if !mapperRan(s) {
+			t.Errorf("%s: the mapper did not run", tc.to)
 		}
 	}
 	// A Customer quotation maps; one that does not exist is not found.
 	s := erpTSite(t, erpTV16)
 	cmdTOK(t, cmdTRun(t, s, "erp", "map", "--from", erpTFrom("Quotation"), "--to", "Sales Order"))
 	lcTCode(t, cmdTRun(t, s, "erp", "map", "--from", "Quotation:NOPE", "--to", "Sales Order"), exitNotFound)
+}
+
+// A submit that fails after the insert leaves a draft behind: its name is
+// printed like a created document's, the error keeps its exit class, and
+// nothing is inserted twice.
+func TestERPMapSubmitFailsAfterInsert(t *testing.T) {
+	s := erpTSite(t, erpTV16)
+	s.HandleMethod("frappe.client.submit", func(*http.Request, map[string]interface{}) (interface{}, error) {
+		return nil, frappetest.Validation("Debit To is required")
+	})
+	r := cmdTRun(t, s, "--json", "erp", "map", "--from", erpTFrom("Sales Order"), "--to", "Sales Invoice", "--submit", "--keys", "name,docstatus")
+	lcTCode(t, r, exitValidation, "created Sales Invoice Sales-Invoice-0001, but the submit failed", "Debit To is required")
+	if got := cmdTObj(t, r); got["name"] != "Sales-Invoice-0001" || fmt.Sprint(got["docstatus"]) != "0" {
+		t.Errorf("stdout = %s", r.Stdout)
+	}
+	if n := len(s.RequestsTo(http.MethodPost, "/api/resource/Sales Invoice")); n != 1 {
+		t.Errorf("%d inserts, want 1", n)
+	}
+	if ds := lcTDocstatus(t, s, "Sales Invoice", "Sales-Invoice-0001"); ds != "0" {
+		t.Errorf("docstatus = %s", ds)
+	}
+}
+
+// An insert answered without a name cannot be submitted: no submit is sent.
+func TestERPMapInsertWithoutName(t *testing.T) {
+	s := erpTSite(t, erpTV16)
+	s.Handle("POST /api/resource/Sales Invoice", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"doctype":"Sales Invoice"}}`))
+	}))
+	lcTCode(t, cmdTRun(t, s, "erp", "map", "--from", erpTFrom("Sales Order"), "--to", "Sales Invoice", "--submit"), exitGeneric, "no name")
+	if n := len(s.RequestsTo(http.MethodPost, "/api/method/frappe.client.submit")); n != 0 {
+		t.Errorf("%d submits", n)
+	}
 }
 
 func TestERPMapDryRun(t *testing.T) {

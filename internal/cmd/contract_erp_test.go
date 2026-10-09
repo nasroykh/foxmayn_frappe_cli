@@ -5,7 +5,12 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +49,12 @@ func contractERPSetup(t *testing.T, c *client.FrappeClient, sc *config.SiteConfi
 		return name
 	}
 
+	// The wizard rewrites System Settings and creates a Company, so it runs
+	// only on a site that is plainly a throwaway one.
+	if u, err := url.Parse(sc.URL); os.Getenv("FFC_CONTRACT_ERP_SETUP") != "1" && (err != nil || !loopbackHost(u.Hostname())) {
+		t.Skipf("%s has no Company and is not a local site: the ERPNext setup wizard would change it. Set FFC_CONTRACT_ERP_SETUP=1 to run it anyway", sc.URL)
+	}
+
 	// The wizard installs fixtures and the chart of accounts in one request,
 	// which outlasts the usual 30 s timeout.
 	old := client.Timeout
@@ -62,19 +73,41 @@ func contractERPSetup(t *testing.T, c *client.FrappeClient, sc *config.SiteConfi
 		"full_name": "FFC Contract", "company_name": "FFC Contract Co", "company_abbr": "FCC",
 		"chart_of_accounts": "Standard", "fy_start_date": fmt.Sprintf("%d-01-01", year), "fy_end_date": fmt.Sprintf("%d-12-31", year),
 	}}, false)
-	if err != nil {
+	var api *client.APIError
+	var tr *client.TransportError
+	switch {
+	case errors.As(err, &tr) || errors.As(err, &api) && api.Status >= 500:
+		// A proxy in front of the site (pwd.yml: 120 s) can give up on the
+		// request while the wizard goes on: wait for its last step instead.
+		t.Logf("%s: %v; waiting for the setup to finish", setupCompleteMethod, err)
+	case err != nil:
 		t.Fatalf("%s: %v", setupCompleteMethod, err)
+	default:
+		// process_setup_stages swallows an exception into a None reply.
+		if reply, _ := res.(map[string]interface{}); reply["status"] != "ok" {
+			t.Fatalf("%s answered %v, want {\"status\": \"ok\"}", setupCompleteMethod, res)
+		}
 	}
-	t.Logf("setup_complete answered %v", res)
-	// "registered" means a site configured to run the wizard in a worker.
-	for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(3 * time.Second) {
-		if name := company(); name != "" {
-			return name
+	// The last step of the wizard sets the default Company (Global Defaults).
+	for deadline := time.Now().Add(6 * time.Minute); ; time.Sleep(5 * time.Second) {
+		if gd, err := c.GetDoc(contractCtx(t), "Global Defaults", "Global Defaults"); err == nil {
+			if name, ok := docName(gd["default_company"]); ok {
+				return name
+			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("no Company after setup_complete (%v)", res)
+			t.Fatalf("no default Company after %s (answered %v, error %v)", setupCompleteMethod, res, err)
 		}
 	}
+}
+
+// loopbackHost reports whether a host name is this machine.
+func loopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // contractERPFirst returns the name of one document of a DocType that is not a
@@ -92,8 +125,7 @@ func contractERPFirst(t *testing.T, c *client.FrappeClient, doctype string) stri
 // over GET, the draft inserts once cleaned, and a Sales Invoice made from a
 // Sales Order submits and links back to it.
 func contractERPMap(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
-	ctx := contractCtx(t)
-	info, err := c.ServerVersions(ctx)
+	info, err := c.ServerVersions(contractCtx(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +133,8 @@ func contractERPMap(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig)
 		t.Skipf("ERPNext %q is not installed or not supported", info.Version(client.ERPNextApp))
 	}
 	company := contractERPSetup(t, c, sc)
+	// After the setup, which can take minutes.
+	ctx := contractCtx(t)
 
 	// Unique names, so a run never meets the data of an interrupted one.
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -188,7 +222,9 @@ func contractERPMap(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig)
 	}
 	items, _ := inv["items"].([]interface{})
 	row, _ := items[0].(map[string]interface{})
-	if fmt.Sprint(inv["docstatus"]) != "1" || inv["customer"] != customer || len(items) != 1 || row["sales_order"] != order || fmt.Sprint(row["qty"]) != "2" {
+	// Frappe sends a Float as 2.0, and ffc keeps the literal: compare the value.
+	qty, _ := strconv.ParseFloat(fmt.Sprint(row["qty"]), 64)
+	if fmt.Sprint(inv["docstatus"]) != "1" || inv["customer"] != customer || len(items) != 1 || row["sales_order"] != order || qty != 2 {
 		t.Errorf("invoice = docstatus %v customer %v items %v", inv["docstatus"], inv["customer"], items)
 	}
 	if n := invoicesOf(); n != 1 {

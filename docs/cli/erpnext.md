@@ -38,14 +38,14 @@ Any other pair is a usage error (exit 2) that lists these. Sales Order to Purcha
 
 ### What it does
 
-- **Default: print the draft, write nothing.** The mapping is a GET. The result is the unsaved document as ERPNext builds it (it has `__islocal` and a placeholder name); use `--json` to pipe it.
-- **`--create`** removes the keys the form adds (`__islocal`, `__unsaved`, ... on the document and on its child rows) and a name that is empty or local, then inserts it as a draft. The output is the saved document, and the table view names it.
-- **`--submit`** does the same, then submits the new document like [`submit-doc`](lifecycle-and-workflow.md#submit-submit-doc). A DocType with an active Workflow is refused (exit 6) before anything is written; use `--create`, then [`ffc workflow apply`](lifecycle-and-workflow.md#workflows-ffc-workflow). If the insert worked but the submit failed, the error names the document that was created.
+- **Default: print the draft, write nothing.** The mapping is a GET. The result is the unsaved document as ERPNext builds it: it has no name yet and carries `__islocal`; use `--json` to pipe it.
+- **`--create`** removes the keys the form adds (`__islocal`, `__temporary_name`, ... on the document and on its child rows), then inserts it as a draft; the site names it. The output is the saved document, and the table view names it.
+- **`--submit`** does the same, then submits the new document like [`submit-doc`](lifecycle-and-workflow.md#submit-submit-doc). A DocType with an active Workflow is refused (exit 6) before anything is written; use `--create`, then [`ffc workflow apply`](lifecycle-and-workflow.md#workflows-ffc-workflow). If the insert worked but the submit failed, the created document is printed as with `--create` (so a script can pick up its name), and the error, which names it too, sets the exit code.
 - **`--dry-run`** still runs the mapping (it is a read) and shows the insert, and with `--submit` the submit, as plans. Nothing is sent.
 
 ### Quotations for a Lead
 
-ERPNext creates the Customer while it maps a Quotation made out to a Lead or Prospect. Over a read that would be undone, and a Sales Order needs a real Customer, so `erp map` refuses such a Quotation (exit 6): convert the lead to a customer first, then map.
+For a Quotation made out to a Lead or Prospect, ERPNext reuses the Customer that points back at it (`lead_name`, `prospect_name`) and otherwise creates one while it maps. Over a read that creation would be undone, and a Sales Order needs a real Customer, so `erp map` refuses a Quotation whose lead or prospect has no Customer yet (exit 6): convert the lead to a customer first, then map. When your user may not read Customers, it refuses too.
 
 ### Permissions
 

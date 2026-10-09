@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -59,26 +61,43 @@ Examples:
 			return usageErrorf("--to: provide the DocType to map into")
 		}
 		req := mapRequest{from: source, name: name, to: strings.TrimSpace(emTo), create: emCreate || emSubmit, submit: emSubmit}
+		// A submit that fails after the insert leaves a document behind: it is
+		// printed as a created one, so a script can pick up its name, and the
+		// error still ends the command.
+		var partial *mapResult
 		res, err := callSiteCfg(cmd, fmt.Sprintf("Mapping %s %s…", source, name), func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (*mapResult, error) {
-			return runERPMap(ctx, c, cfg, req)
+			r, err := runERPMap(ctx, c, cfg, req)
+			if err != nil {
+				partial = r
+			}
+			return r, err
 		})
 		if err != nil {
+			if partial != nil {
+				_ = printMapped(partial, req)
+			}
 			return err
 		}
-		if machineOutput() {
-			return printResult(selectKeys(res.doc, emKeys))
-		}
-		switch {
-		case res.submitted:
-			output.PrintSuccess(fmt.Sprintf("Created and submitted %s %s from %s %s", req.to, res.name(), req.from, req.name))
-		case res.created:
-			output.PrintSuccess(fmt.Sprintf("Created %s %s from %s %s", req.to, res.name(), req.from, req.name))
-		default:
-			fmt.Fprintf(os.Stderr, "Unsaved draft of %s: nothing was written (--create saves it).\n", req.to)
-		}
-		output.PrintDocTable(res.doc, nil)
-		return nil
+		return printMapped(res, req)
 	},
+}
+
+// printMapped prints the outcome of an 'erp map': the document as data, or
+// a line saying what happened and the document table.
+func printMapped(res *mapResult, req mapRequest) error {
+	if machineOutput() {
+		return printResult(selectKeys(res.doc, emKeys))
+	}
+	switch {
+	case res.submitted:
+		output.PrintSuccess(fmt.Sprintf("Created and submitted %s %s from %s %s", req.to, res.name(), req.from, req.name))
+	case res.created:
+		output.PrintSuccess(fmt.Sprintf("Created %s %s from %s %s", req.to, res.name(), req.from, req.name))
+	default:
+		fmt.Fprintf(os.Stderr, "Unsaved draft of %s: nothing was written (--create saves it).\n", req.to)
+	}
+	output.PrintDocTable(res.doc, nil)
+	return nil
 }
 
 // mapRequest is one 'erp map' run: the source document, the target DocType
@@ -155,26 +174,49 @@ func runERPMap(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConf
 	if !req.submit {
 		return res, nil
 	}
-	name, _ := docName(doc["name"])
-	if res.doc, err = c.SubmitDoc(ctx, req.to, name); err != nil {
-		return nil, fmt.Errorf("created %s %s, but the submit failed: %w", req.to, name, err)
+	name, ok := docName(doc["name"])
+	if !ok {
+		return res, fmt.Errorf("created %s, but the site returned no name for it: not submitted", req.to)
 	}
+	submitted, err := c.SubmitDoc(ctx, req.to, name)
+	if err != nil {
+		return res, fmt.Errorf("created %s %s, but the submit failed: %w", req.to, name, err)
+	}
+	res.doc = submitted
 	res.submitted = true
 	return res, nil
 }
 
 // refuseLeadQuotation stops the mapping of a Quotation made out to a Lead or
-// Prospect: ERPNext inserts the Customer inside that call, which a GET
-// rolls back, and a Sales Order needs a real one.
+// Prospect that has no Customer yet: ERPNext then inserts the Customer
+// inside the mapper call (quotation.py _make_customer), which a GET rolls
+// back, and a Sales Order needs a real one. A Customer that points back at
+// the lead or prospect (lead_name, prospect_name) is reused by the mapper,
+// so that case maps. When the Customers cannot be read, the answer is "no".
 func refuseLeadQuotation(ctx context.Context, c *client.FrappeClient, name string) error {
 	q, err := c.GetDoc(ctx, "Quotation", name)
 	if err != nil {
 		return err
 	}
-	if to, _ := q["quotation_to"].(string); to == "Lead" || to == "Prospect" {
-		return &client.StateError{Message: fmt.Sprintf("Quotation %s is made out to a %s: convert the %s to a customer first", name, to, strings.ToLower(to))}
+	to, _ := q["quotation_to"].(string)
+	link := map[string]string{"Lead": "lead_name", "Prospect": "prospect_name"}[to]
+	if link == "" {
+		return nil
 	}
-	return nil
+	filters, err := json.Marshal(map[string]interface{}{link: q["party_name"]})
+	if err != nil {
+		return err
+	}
+	rows, err := c.GetList(ctx, "Customer", client.ListOptions{Fields: []string{"name"}, Filters: string(filters), Limit: 1})
+	var api *client.APIError
+	switch {
+	case errors.As(err, &api) && api.Status == http.StatusForbidden:
+	case err != nil:
+		return err
+	case len(rows) > 0:
+		return nil
+	}
+	return &client.StateError{Message: fmt.Sprintf("Quotation %s is made out to a %s with no customer: convert the %s to a customer first", name, to, strings.ToLower(to))}
 }
 
 // planSubmit completes the plan of a dry-run insert with the submit that

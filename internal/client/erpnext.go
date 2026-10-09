@@ -101,14 +101,17 @@ func (c *FrappeClient) MapDoc(ctx context.Context, method, source string) (map[s
 }
 
 // InsertableCopy returns a copy of a mapped document that can be inserted:
-// keys starting with "__" (__islocal, __unsaved, ...) are removed from it and
-// from its child rows, and so is a name that is empty or local ("new-...").
+// keys starting with "__" (__islocal, __temporary_name, ...) are removed from
+// it and from its child rows, and so is a null or empty name (the server
+// names the document). Child rows keep parent, parenttype, parentfield and
+// idx. Only lists of documents (items with a "doctype") are walked, so a
+// JSON field is left as it is.
 func InsertableCopy(doc map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(doc))
 	for k, v := range doc {
 		switch {
 		case strings.HasPrefix(k, "__"):
-		case k == "name" && localName(v):
+		case k == "name" && (v == nil || v == ""):
 		default:
 			out[k] = insertableRows(v)
 		}
@@ -116,29 +119,20 @@ func InsertableCopy(doc map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-// localName reports whether a name is empty or the placeholder the server
-// gives an unsaved document ("new-sales-invoice-abc").
-func localName(v interface{}) bool {
-	if v == nil {
-		return true
-	}
-	s, ok := v.(string)
-	return ok && (s == "" || strings.HasPrefix(s, "new-"))
-}
-
-// insertableRows applies InsertableCopy to the rows of a child table value.
+// insertableRows applies InsertableCopy to a child table value: a list whose
+// items are all documents. Anything else is returned as it is.
 func insertableRows(v interface{}) interface{} {
 	rows, ok := v.([]interface{})
-	if !ok {
+	if !ok || len(rows) == 0 {
 		return v
 	}
 	out := make([]interface{}, len(rows))
 	for i, r := range rows {
-		if m, ok := r.(map[string]interface{}); ok {
-			out[i] = InsertableCopy(m)
-		} else {
-			out[i] = r
+		m, ok := r.(map[string]interface{})
+		if _, hasType := m["doctype"]; !ok || !hasType {
+			return v
 		}
+		out[i] = InsertableCopy(m)
 	}
 	return out
 }
