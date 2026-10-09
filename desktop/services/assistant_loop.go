@@ -96,6 +96,9 @@ type runner struct {
 	// model turns (AssistantService.checkRun: the site's address and the
 	// local-only rule). It may fill in conv.
 	check func(conv *store.Conversation) error
+	// titles lets a finished first run name its conversation with one more
+	// model call (AssistantService.open turns it on).
+	titles bool
 }
 
 // activeRun is one run in flight.
@@ -303,6 +306,10 @@ func (a *activeRun) run(ctx context.Context) {
 		a.r.emit(EventChatError, ChatError{ConvID: a.conv.ID, RunID: a.runID, Error: pub})
 	}
 	a.r.emit(EventChatDone, ChatDone{ConvID: a.conv.ID, RunID: a.runID, Status: out.status, StopReason: out.stop, Category: out.cat})
+	// The answer is shown; the title may take a moment more.
+	if out.status == RunDone {
+		a.autoTitle()
+	}
 }
 
 // isCancel reports whether err is the cancellation of a run.
@@ -380,7 +387,9 @@ func (a *activeRun) loop(ctx context.Context) outcome {
 		return outcome{status: RunError, err: wrapStoreErr(err)}
 	}
 	for _, u := range usage {
-		a.turns = max(a.turns, u.Turn)
+		if u.Kind == store.UsageTurn {
+			a.turns = max(a.turns, u.Turn)
+		}
 	}
 	budget := prof.StepLimit
 	segTurns := 0
@@ -423,11 +432,12 @@ func (a *activeRun) loop(ctx context.Context) outcome {
 		stop := *t.stop
 		a.turns++
 		if t.usage != nil {
-			u := store.Usage{RunID: a.runID, Turn: a.turns, Input: t.usage.In, Output: t.usage.Out, Cached: t.usage.Cached}
+			u := usageRow(a.runID, a.turns, store.UsageTurn, *t.usage, costOf(a.r.store, a.conv, model, *t.usage))
 			if err := a.r.store.AddUsage(u); err != nil {
 				return outcome{status: RunError, err: wrapStoreErr(err)}
 			}
-			a.r.emit(EventChatUsage, ChatUsage{ConvID: a.conv.ID, RunID: a.runID, Turn: u.Turn, Input: u.Input, Output: u.Output, Cached: u.Cached})
+			a.r.emit(EventChatUsage, ChatUsage{ConvID: a.conv.ID, RunID: a.runID, Turn: u.Turn, Input: u.Input, Output: u.Output, Cached: u.Cached,
+				CacheWrite: u.CacheWrite, Cost: u.CostUSD, CostSource: u.CostSource})
 		}
 		var msgID string
 		if len(stop.Message.Parts) > 0 {

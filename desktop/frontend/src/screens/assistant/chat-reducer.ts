@@ -1,7 +1,8 @@
 // The state of one open conversation's live run. Pure: the screen feeds it the
 // chat:* events and the stored conversation (the store is the truth; events
 // only paint the run in progress).
-import type { ChatApproval, ChatDone, ChatError, ChatTool, ConversationDetail, ToolStatus } from "@/lib/backend-types"
+import type { ChatApproval, ChatDone, ChatError, ChatTool, ChatUsage, ConversationDetail, ToolStatus, UsageTotals } from "@/lib/backend-types"
+import { addEvent, noUsage } from "@/lib/cost"
 
 /** What the alert shows: chat:error's error, or a failed send. */
 export interface ChatFailure {
@@ -31,6 +32,8 @@ export interface ChatState {
   /** The assistant text streamed so far in this run. */
   text: string
   tools: LiveTool[]
+  /** What the model turns of this run used so far (chat:usage). */
+  usage: UsageTotals
   approvals: ChatApproval[]
   error: ChatFailure | null
   /** This conversation's events that came before sendMessage answered with the run id. */
@@ -41,6 +44,7 @@ export interface ChatState {
 export type LiveAction =
   | { type: "delta"; convID: string; runID: string; text: string }
   | { type: "tool"; ev: ChatTool }
+  | { type: "usage"; ev: ChatUsage }
   | { type: "approval"; ev: ChatApproval }
   | { type: "approvalClosed"; convID: string; runID: string; approvalID: string }
   | { type: "done"; ev: ChatDone }
@@ -57,7 +61,7 @@ export type ChatAction =
   | LiveAction
 
 export function initialState(convID = ""): ChatState {
-  return { convID, phase: "idle", runID: "", pending: "", text: "", tools: [], approvals: [], error: null, buffer: [] }
+  return { convID, phase: "idle", runID: "", pending: "", text: "", tools: [], usage: noUsage, approvals: [], error: null, buffer: [] }
 }
 
 function idsOf(a: LiveAction): { convID: string; runID: string } {
@@ -99,6 +103,8 @@ function live(s: ChatState, a: LiveAction): ChatState {
       const tools = i < 0 ? [...s.tools, row] : s.tools.map((t, j) => (j === i ? row : t))
       return { ...s, tools }
     }
+    case "usage":
+      return running ? { ...s, usage: addEvent(s.usage, a.ev) } : s
     case "approval":
       if (!running || s.approvals.some((c) => c.approvalID === a.ev.approvalID)) return s
       return { ...s, approvals: [...s.approvals, a.ev] }
@@ -120,13 +126,13 @@ export function chatReducer(s: ChatState, a: ChatAction): ChatState {
       if (a.detail.conversation.id !== s.convID) return s
       // A send in flight is not overwritten by a late load.
       if (s.phase === "starting") return s
-      const base = { ...s, pending: "", text: "", tools: [], approvals: [], buffer: [] }
+      const base = { ...s, pending: "", text: "", tools: [], usage: noUsage, approvals: [], buffer: [] }
       if (a.detail.activeRunID) return { ...base, phase: "running", runID: a.detail.activeRunID }
       if (a.detail.pausedRunID) return { ...base, phase: "paused", runID: a.detail.pausedRunID }
       return { ...base, phase: "idle", runID: "" }
     }
     case "sending":
-      return { ...s, phase: "starting", runID: "", pending: a.text, text: "", tools: [], approvals: [], error: null, buffer: [] }
+      return { ...s, phase: "starting", runID: "", pending: a.text, text: "", tools: [], usage: noUsage, approvals: [], error: null, buffer: [] }
     case "started": {
       if (s.phase !== "starting" || s.runID !== "") return s
       // Bound by sendMessage's answer; replay what this conversation's run said meanwhile.

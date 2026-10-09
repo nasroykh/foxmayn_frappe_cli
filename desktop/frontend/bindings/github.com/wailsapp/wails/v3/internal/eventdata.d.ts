@@ -18,6 +18,7 @@ declare module "@wailsio/runtime" {
             "chat:delta": services$0.ChatDelta;
             "chat:done": services$0.ChatDone;
             "chat:error": services$0.ChatError;
+            "chat:title": services$0.ChatTitle;
             "chat:tool": services$0.ChatTool;
             "chat:usage": services$0.ChatUsage;
             "config:changed": services$0.ConfigChanged;

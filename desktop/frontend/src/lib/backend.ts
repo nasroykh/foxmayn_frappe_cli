@@ -60,7 +60,7 @@ function detail(d: wire.ConversationDetail): ConversationDetail {
     role: m.role === "assistant" ? "assistant" : "user",
     tools: m.tools ?? [],
   }))
-  return { ...d, messages }
+  return { ...d, messages, runUsage: d.runUsage ?? [] }
 }
 
 function profile(p: wire.Profile): Profile {
@@ -120,6 +120,7 @@ export const backend: Backend = {
   getConversation: async (id) => detail(await AssistantService.GetConversation(id)),
   deleteConversation: (id) => AssistantService.DeleteConversation(id),
   setConversationMode: (id, mode) => AssistantService.SetConversationMode(id, mode),
+  renameConversation: (id, title) => AssistantService.Rename(id, title),
 
   listProviders: async () => (await AssistantService.ListProviders()) ?? [],
   saveProvider: (p) => AssistantService.SaveProvider(p),
@@ -145,6 +146,7 @@ export const backend: Backend = {
   onChatApproval: (cb) => Events.On("chat:approval", (ev) => cb(approval(ev.data))),
   onChatApprovalClosed: (cb) => Events.On("chat:approval-closed", (ev) => cb(ev.data)),
   onChatUsage: (cb) => Events.On("chat:usage", (ev) => cb(ev.data)),
+  onChatTitle: (cb) => Events.On("chat:title", (ev) => cb(ev.data)),
   onChatDone: (cb) => Events.On("chat:done", (ev) => cb(ev.data)),
   onChatError: (cb) => Events.On("chat:error", (ev) => cb(ev.data)),
   onOpenRouterAuth: (cb) => Events.On("auth:openrouter", (ev) => cb(ev.data as OpenRouterAuth)),

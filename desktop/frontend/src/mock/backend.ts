@@ -36,6 +36,7 @@ import type {
   ChatDone,
   ChatError,
   ChatMessage,
+  ChatTitle,
   ChatTool,
   ChatToolCall,
   ChatUsage,
@@ -51,12 +52,15 @@ import type {
   Profile,
   ProviderInfo,
   RunStatus,
+  RunUsage,
   SignInProgress,
   Site,
   SiteList,
   SiteSettings,
   ToolStatus,
+  UsageTotals,
 } from "@/lib/backend-types"
+import { addEvent, noUsage } from "@/lib/cost"
 import type { AppError } from "@/lib/errors"
 
 const params = new URLSearchParams(window.location.search)
@@ -311,6 +315,12 @@ interface MockConv {
   conv: Conversation
   messages: ChatMessage[]
   pausedRunID: string
+  runUsage: RunUsage[]
+  /** Every call of the conversation, the title call included. */
+  total: UsageTotals
+  /** The user named it: no automatic title. */
+  named: boolean
+  titled: boolean
 }
 
 const convs = new Map<string, MockConv>()
@@ -322,6 +332,7 @@ const chat = {
   approval: new Set<(v: ChatApproval) => void>(),
   closed: new Set<(v: ChatApprovalClosed) => void>(),
   usage: new Set<(v: ChatUsage) => void>(),
+  title: new Set<(v: ChatTitle) => void>(),
   done: new Set<(v: ChatDone) => void>(),
   error: new Set<(v: ChatError) => void>(),
 }
@@ -386,11 +397,48 @@ function ask(run: MockRun, card: Omit<ChatApproval, "convID" | "runID" | "approv
   })
 }
 
+// mockPrice stands in for the Go price rules: a local model has tokens only,
+// OpenRouter reports its own price, a known hosted model is in the table, and
+// any other model has an unknown cost.
+function mockPrice(c: MockConv): { cost: number | null; costSource: string } {
+  const kind = providers.find((p) => p.id === c.conv.providerID)?.kind ?? ""
+  if (kind === "ollama" || kind === "lmstudio" || kind === "custom") return { cost: null, costSource: "local" }
+  if (kind === "openrouter") return { cost: 0.0123, costSource: "provider" }
+  if (/^(claude-(sonnet|opus|haiku)-5|gpt-5|gemini-)/.test(c.conv.model)) return { cost: 0.0156, costSource: "table" }
+  return { cost: null, costSource: "" }
+}
+
 function finish(run: MockRun, c: MockConv, status: RunStatus, paused = false) {
   runs.delete(run.id)
   c.pausedRunID = paused ? run.id : ""
-  emit(chat.usage, { convID: run.convID, runID: run.id, turn: 1, input: 1840, output: 212, cached: 1500 })
+  const ev: ChatUsage = { convID: run.convID, runID: run.id, turn: 1, input: 1840, output: 212, cached: 1500, cacheWrite: 0, ...mockPrice(c) }
+  emit(chat.usage, ev)
+  const used = addEvent(noUsage, ev)
+  c.total = [used].reduce((t, u) => addTotals(t, u), c.total)
+  const last = [...c.messages].reverse().find((m) => m.role === "assistant")
+  c.runUsage = [...c.runUsage.filter((u) => u.runID !== run.id), { runID: run.id, msgID: last?.id ?? "", usage: used }]
   emit(chat.done, { convID: run.convID, runID: run.id, status })
+  if (status === "done" && !c.named && !c.titled) {
+    c.titled = true
+    setTimeout(() => {
+      if (c.named) return
+      c.conv.title = "Open ToDos"
+      c.total = addTotals(c.total, addEvent(noUsage, { ...ev, input: 220, output: 6, cached: 0 }))
+      emit(chat.title, { convID: run.convID, title: c.conv.title })
+    }, 600)
+  }
+}
+
+function addTotals(a: UsageTotals, b: UsageTotals): UsageTotals {
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cached: a.cached + b.cached,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    costUSD: a.costUSD + b.costUSD,
+    hasCost: a.hasCost || b.hasCost,
+    unknown: a.unknown || b.unknown,
+  }
 }
 
 async function script(run: MockRun, c: MockConv, text: string) {
@@ -1062,7 +1110,7 @@ export const backend: Backend = {
       created: now,
       updated: now,
     }
-    convs.set(conv.id, { conv, messages: [], pausedRunID: "" })
+    convs.set(conv.id, { conv, messages: [], pausedRunID: "", runUsage: [], total: noUsage, named: false, titled: false })
     return { ...conv }
   },
   async listConversations() {
@@ -1077,7 +1125,16 @@ export const backend: Backend = {
       messages: c.messages.map((m) => ({ ...m, tools: m.tools.map((t) => ({ ...t })) })),
       activeRunID: activeRun(id)?.id ?? "",
       pausedRunID: c.pausedRunID,
+      runUsage: c.runUsage.map((u) => ({ ...u, usage: { ...u.usage } })),
+      total: { ...c.total },
     }
+  },
+  async renameConversation(id, title) {
+    const c = findConv(id)
+    const name = title.replace(/\s+/g, " ").trim().slice(0, 80)
+    if (!name) fail("invalid", "Write a title.", { field: "title" })
+    c.conv.title = name
+    c.named = true
   },
   async deleteConversation(id) {
     findConv(id)
@@ -1322,6 +1379,7 @@ export const backend: Backend = {
   onChatApproval: (cb) => on(chat.approval, cb),
   onChatApprovalClosed: (cb) => on(chat.closed, cb),
   onChatUsage: (cb) => on(chat.usage, cb),
+  onChatTitle: (cb) => on(chat.title, cb),
   onChatDone: (cb) => on(chat.done, cb),
   onChatError: (cb) => on(chat.error, cb),
   onOpenRouterAuth: (cb) => on(openRouterListeners, cb),

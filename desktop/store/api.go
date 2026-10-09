@@ -68,13 +68,29 @@ type ToolCall struct {
 	Ended      time.Time // zero while running
 }
 
-// Usage is the token count of one model turn.
+// Usage kinds: a model turn of a run, or the call that titles the conversation.
+const (
+	UsageTurn  = "turn"
+	UsageTitle = "title"
+)
+
+// Usage is the token count and cost of one model call. A turn is numbered
+// from 1 in its run; a title call is turn 0 of kind UsageTitle, so the two
+// never share a primary key (run_id, turn, kind).
 type Usage struct {
-	RunID  string
-	Turn   int
-	Input  int
-	Output int
-	Cached int
+	RunID      string
+	Turn       int
+	Kind       string // UsageTurn when empty
+	Input      int
+	Output     int
+	Cached     int
+	CacheWrite int
+	// CostUSD is nil when the cost is unknown (and for a local model).
+	CostUSD *float64
+	// CostSource is "provider", "table", "local" or "" (unknown).
+	CostSource string
+	// PriceDate is the price table's date for a "table" cost.
+	PriceDate string
 }
 
 // Provider holds non-secret provider settings. Keys live in the keychain.
@@ -151,9 +167,57 @@ func (s *Store) ListConversations() ([]Conversation, error) {
 	return out, nil
 }
 
-// RenameConversation changes the title without touching the updated time.
+// Title sources (conversations.title_source): "" is the first words of the
+// first message, "auto" a title the model wrote, "user" one the user chose.
+const (
+	TitleFallback = ""
+	TitleAuto     = "auto"
+	TitleUser     = "user"
+)
+
+// RenameConversation sets a title the user chose: it is never replaced by an
+// automatic one. The updated time does not change.
 func (s *Store) RenameConversation(id, title string) error {
-	return execOne("rename conversation", s.db, `UPDATE conversations SET title=? WHERE id=?`, title, id)
+	return execOne("rename conversation", s.db, `UPDATE conversations SET title=?, title_source=? WHERE id=?`, title, TitleUser, id)
+}
+
+// SetFallbackTitle sets the first words of the first message as the title. It
+// leaves a title the model or the user already set (a fast first run can
+// finish before Send gets here).
+func (s *Store) SetFallbackTitle(id, title string) error {
+	return execOne("set title", s.db, `UPDATE conversations SET title=? WHERE id=? AND title_source=?`, title, id, TitleFallback)
+}
+
+// SetAutoTitle sets a title the model wrote, unless the user renamed the
+// conversation meanwhile. It reports whether the title was set.
+func (s *Store) SetAutoTitle(id, title string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE conversations SET title=?, title_source=? WHERE id=? AND title_source<>?`, title, TitleAuto, id, TitleUser)
+	if err != nil {
+		return false, fmt.Errorf("set title: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// TitleState is what decides whether a conversation gets an automatic title.
+type TitleState struct {
+	Source    string
+	Ephemeral bool
+}
+
+// GetTitleState returns ErrNotFound when id is unknown.
+func (s *Store) GetTitleState(id string) (TitleState, error) {
+	var ts TitleState
+	var eph int
+	err := s.db.QueryRow(`SELECT title_source, ephemeral FROM conversations WHERE id=?`, id).Scan(&ts.Source, &eph)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TitleState{}, fmt.Errorf("get title state: %w", ErrNotFound)
+	}
+	if err != nil {
+		return TitleState{}, fmt.Errorf("get title state: %w", err)
+	}
+	ts.Ephemeral = eph != 0
+	return ts, nil
 }
 
 // DeleteConversation removes the conversation and, by cascade, its messages,
@@ -321,36 +385,66 @@ func (s *Store) ListToolCalls(runID string) ([]ToolCall, error) {
 	return out, nil
 }
 
-// AddUsage records (or replaces) the token usage of one turn of a run.
+// AddUsage records (or replaces) the usage of one call of a run.
 func (s *Store) AddUsage(u Usage) error {
-	_, err := s.db.Exec(`INSERT INTO usage(run_id,turn,input,output,cached) VALUES(?,?,?,?,?)
-		ON CONFLICT(run_id,turn,kind) DO UPDATE SET input=excluded.input,output=excluded.output,cached=excluded.cached`,
-		u.RunID, u.Turn, u.Input, u.Output, u.Cached)
+	if u.Kind == "" {
+		u.Kind = UsageTurn
+	}
+	_, err := s.db.Exec(`INSERT INTO usage(run_id,turn,kind,input,output,cached,cache_write,cost_usd,cost_source,price_date) VALUES(?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(run_id,turn,kind) DO UPDATE SET input=excluded.input,output=excluded.output,cached=excluded.cached,
+		cache_write=excluded.cache_write,cost_usd=excluded.cost_usd,cost_source=excluded.cost_source,price_date=excluded.price_date`,
+		u.RunID, u.Turn, u.Kind, u.Input, u.Output, u.Cached, u.CacheWrite, u.CostUSD, u.CostSource, u.PriceDate)
 	if err != nil {
 		return fmt.Errorf("add usage: %w", err)
 	}
 	return nil
 }
 
-// ListUsage returns a run's usage rows by turn.
-func (s *Store) ListUsage(runID string) ([]Usage, error) {
-	rows, err := s.db.Query(`SELECT run_id,turn,input,output,cached FROM usage WHERE run_id=? ORDER BY turn`, runID)
+const usageCols = `u.run_id,u.turn,u.kind,u.input,u.output,u.cached,u.cache_write,u.cost_usd,u.cost_source,u.price_date`
+
+func scanUsage(rows *sql.Rows) (Usage, error) {
+	var u Usage
+	var cost sql.NullFloat64
+	if err := rows.Scan(&u.RunID, &u.Turn, &u.Kind, &u.Input, &u.Output, &u.Cached, &u.CacheWrite, &cost, &u.CostSource, &u.PriceDate); err != nil {
+		return Usage{}, err
+	}
+	if cost.Valid {
+		c := cost.Float64
+		u.CostUSD = &c
+	}
+	return u, nil
+}
+
+func (s *Store) queryUsage(op, query string, args ...any) ([]Usage, error) {
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list usage: %w", err)
+		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 	defer rows.Close()
 	var out []Usage
 	for rows.Next() {
-		var u Usage
-		if err := rows.Scan(&u.RunID, &u.Turn, &u.Input, &u.Output, &u.Cached); err != nil {
-			return nil, fmt.Errorf("list usage: %w", err)
+		u, err := scanUsage(rows)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", op, err)
 		}
 		out = append(out, u)
 	}
-	if err := rowsErr(rows, "list usage"); err != nil {
+	if err := rowsErr(rows, op); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// ListUsage returns a run's usage rows, by turn then kind.
+func (s *Store) ListUsage(runID string) ([]Usage, error) {
+	return s.queryUsage("list usage", `SELECT `+usageCols+` FROM usage u WHERE u.run_id=? ORDER BY u.turn, u.kind`, runID)
+}
+
+// ListConversationUsage returns the usage rows of all runs of a conversation,
+// oldest run first.
+func (s *Store) ListConversationUsage(convID string) ([]Usage, error) {
+	return s.queryUsage("list conversation usage", `SELECT `+usageCols+` FROM usage u JOIN runs r ON r.id=u.run_id
+		WHERE r.conv_id=? ORDER BY r.started, r.id, u.turn, u.kind`, convID)
 }
 
 // UpsertProvider inserts or replaces a provider by ID.

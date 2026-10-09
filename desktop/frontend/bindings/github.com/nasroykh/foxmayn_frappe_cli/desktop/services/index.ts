@@ -25,6 +25,7 @@ export type {
     ChatDone,
     ChatError,
     ChatMessage,
+    ChatTitle,
     ChatTool,
     ChatToolCall,
     ChatUsage,
@@ -48,11 +49,13 @@ export type {
     PromptPreview,
     ProviderInfo,
     RemoveResult,
+    RunUsage,
     SignInProgress,
     Site,
     SiteList,
     SiteSettings,
     UpdateInfo,
+    UsageTotals,
     Validation,
     WSLInfo
 } from "./models.js";

@@ -30,6 +30,7 @@ func init() {
 	application.RegisterEvent[ChatUsage](EventChatUsage)
 	application.RegisterEvent[ChatDone](EventChatDone)
 	application.RegisterEvent[ChatError](EventChatError)
+	application.RegisterEvent[ChatTitle](EventChatTitle)
 }
 
 // Conversation modes: what the assistant may do to the site.
@@ -134,6 +135,10 @@ type ConversationDetail struct {
 	ActiveRunID string `json:"activeRunID"`
 	// PausedRunID is the run waiting for Continue, if any.
 	PausedRunID string `json:"pausedRunID"`
+	// RunUsage is the tokens and cost of each run, shown under the run's
+	// last message. Total adds up every call of the conversation.
+	RunUsage []RunUsage  `json:"runUsage"`
+	Total    UsageTotals `json:"total"`
 }
 
 // providerMaker builds the client of a provider row. A seam for tests.
@@ -149,6 +154,8 @@ type AssistantService struct {
 	keys       *Keys
 	mk         providerMaker
 	detect     func(context.Context) []openaicompat.Preset
+	// noTitles turns off the automatic titles (tests that count requests).
+	noTitles bool
 
 	life     sync.RWMutex // held for reading by every call from the web view
 	plocks   sync.Map     // provider id -> *sync.Mutex
@@ -202,6 +209,7 @@ func (a *AssistantService) open() error {
 	eng := NewEngine(a.configPath)
 	r := newRunner(st, eng, a.providerFor, a.host.Emit)
 	r.check = a.checkRun
+	r.titles = !a.noTitles
 	ctx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
 	a.st, a.engine, a.run = st, eng, r
@@ -289,7 +297,7 @@ func (a *AssistantService) Send(convID, text string) (string, error) {
 		return "", err
 	}
 	if conv.Title == "" {
-		_ = st.RenameConversation(convID, clip(firstLine(text), titleChars))
+		_ = st.SetFallbackTitle(convID, clip(firstLine(text), titleChars))
 	}
 	return runID, nil
 }
@@ -470,6 +478,9 @@ func (a *AssistantService) GetConversation(id string) (ConversationDetail, error
 			continue // tool results and thinking only
 		}
 		d.Messages = append(d.Messages, cm)
+	}
+	if d.RunUsage, d.Total, err = conversationUsage(st, runs, d.Messages, id); err != nil {
+		return ConversationDetail{}, wrapStoreErr(err)
 	}
 	return d, nil
 }

@@ -14,6 +14,7 @@ import type {
   ChatDone,
   ChatError,
   ChatMessage as GeneratedChatMessage,
+  ChatTitle,
   ChatTool,
   ChatToolCall,
   ChatUsage,
@@ -35,11 +36,13 @@ import type {
   PromptPreview as GeneratedPromptPreview,
   ProviderInfo,
   RemoveResult,
+  RunUsage,
   SignInProgress,
   Site,
   SiteList,
   SiteSettings,
   UpdateInfo,
+  UsageTotals,
   Validation,
   WSLInfo,
 } from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services/models"
@@ -55,6 +58,7 @@ export type {
   ChatDelta,
   ChatDone,
   ChatError,
+  ChatTitle,
   ChatTool,
   ChatToolCall,
   ChatUsage,
@@ -72,11 +76,13 @@ export type {
   Preview,
   ProviderInfo,
   RemoveResult,
+  RunUsage,
   SignInProgress,
   Site,
   SiteList,
   SiteSettings,
   UpdateInfo,
+  UsageTotals,
   Validation,
   WSLInfo,
 }
@@ -122,8 +128,10 @@ export interface ChatMessage extends Omit<GeneratedChatMessage, "role" | "tools"
   tools: ChatToolCall[]
 }
 
-export interface ConversationDetail extends Omit<GeneratedConversationDetail, "messages"> {
+export interface ConversationDetail extends Omit<GeneratedConversationDetail, "messages" | "runUsage"> {
   messages: ChatMessage[]
+  /** Tokens and cost of each run, shown under the run's last message (msgID). */
+  runUsage: RunUsage[]
 }
 
 /** ffc's tool sets a profile can serve; none chosen means core and lifecycle. */
@@ -212,6 +220,8 @@ export interface Backend {
   deleteConversation(id: string): Promise<void>
   /** Refused (invalid) while a run is active in the conversation. */
   setConversationMode(id: string, mode: ConversationMode): Promise<void>
+  /** A title the user chose; no automatic title replaces it. Empty is refused (invalid). */
+  renameConversation(id: string, title: string): Promise<void>
 
   listProviders(): Promise<ProviderInfo[]>
   saveProvider(p: ProviderInfo): Promise<ProviderInfo>
@@ -251,6 +261,8 @@ export interface Backend {
   onChatApproval(cb: (ev: ChatApproval) => void): () => void
   onChatApprovalClosed(cb: (ev: ChatApprovalClosed) => void): () => void
   onChatUsage(cb: (ev: ChatUsage) => void): () => void
+  /** The model named the conversation (after its first answer). */
+  onChatTitle(cb: (ev: ChatTitle) => void): () => void
   onChatDone(cb: (ev: ChatDone) => void): () => void
   onChatError(cb: (ev: ChatError) => void): () => void
   onOpenRouterAuth(cb: (ev: OpenRouterAuth) => void): () => void

@@ -53,6 +53,7 @@ func newAssistantRig(t *testing.T, turns ...llmtest.Turn) *assistantRig {
 	a := NewAssistantService(h, path)
 	a.keys = newMemKeys()
 	a.storePath = filepath.Join(t.TempDir(), "assistant.db")
+	a.noTitles = true
 	a.mk = func(_ store.Provider, key string) (llm.Provider, error) {
 		return keyedProvider{prov, key, goodKey}, nil
 	}

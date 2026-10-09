@@ -225,6 +225,14 @@ export interface ChatMessage {
 }
 
 /**
+ * ChatTitle is the payload of EventChatTitle.
+ */
+export interface ChatTitle {
+    "convID": string;
+    "title": string;
+}
+
+/**
  * ChatTool is the payload of EventChatTool.
  */
 export interface ChatTool {
@@ -271,6 +279,18 @@ export interface ChatUsage {
     "input": number;
     "output": number;
     "cached": number;
+
+    /**
+     * CacheWrite is the part of Input written to the prompt cache.
+     */
+    "cacheWrite": number;
+
+    /**
+     * Cost is the turn's price in USD; nil when it is unknown or the model
+     * is local. CostSource is "provider", "table", "local" or "" (unknown).
+     */
+    "cost": number | null;
+    "costSource": string;
 }
 
 /**
@@ -343,6 +363,13 @@ export interface ConversationDetail {
      * PausedRunID is the run waiting for Continue, if any.
      */
     "pausedRunID": string;
+
+    /**
+     * RunUsage is the tokens and cost of each run, shown under the run's
+     * last message. Total adds up every call of the conversation.
+     */
+    "runUsage": RunUsage[] | null;
+    "total": UsageTotals;
 }
 
 /**
@@ -705,6 +732,17 @@ export interface RemoveResult {
 }
 
 /**
+ * RunUsage is what one run (a question and its answer) used. MsgID is the
+ * last assistant message of the run, where the chat shows the line; "" when
+ * the run left none.
+ */
+export interface RunUsage {
+    "runID": string;
+    "msgID": string;
+    "usage": UsageTotals;
+}
+
+/**
  * SignInProgress is the payload of EventSignInProgress.
  */
 export interface SignInProgress {
@@ -842,6 +880,25 @@ export interface UpdateInfo {
      * FFC compares the installed ffc with the newest ffc release.
      */
     "ffc": FFCUpdate;
+}
+
+/**
+ * UsageTotals adds up the token counts and costs of some calls. When Unknown
+ * is set the cost of some call is not known: CostUSD is then "at least". A
+ * call on a local model counts tokens only and never makes a total unknown.
+ */
+export interface UsageTotals {
+    "input": number;
+    "output": number;
+    "cached": number;
+    "cacheWrite": number;
+
+    /**
+     * CostUSD sums the calls that have a cost; HasCost says any has.
+     */
+    "costUSD": number;
+    "hasCost": boolean;
+    "unknown": boolean;
 }
 
 /**

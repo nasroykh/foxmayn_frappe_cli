@@ -160,6 +160,14 @@ export function PromptPreview(convID: string): $CancellablePromise<$models.Promp
 }
 
 /**
+ * Rename sets the title of a conversation. A title the user chose is kept: no
+ * automatic title replaces it.
+ */
+export function Rename(id: string, title: string): $CancellablePromise<void> {
+    return $Call.ByID(2992165439, id, title);
+}
+
+/**
  * SaveProfile adds (empty ID) or changes one of the user's profiles. Presets
  * cannot be changed: save a copy with BasedOn set to the preset.
  */
