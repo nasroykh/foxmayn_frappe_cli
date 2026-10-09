@@ -71,18 +71,52 @@ The Assistant screen is a chat inside the app. You ask a question about one of y
 
 The first time, the Assistant screen asks you to pick one. Options:
 
-- **Anthropic**: paste an API key.
-- **OpenRouter**: paste an API key.
+- **Anthropic**, **OpenAI** (GPT models) or **Google Gemini** (a Google AI Studio key): paste an API key.
+- **OpenRouter**: **Sign in with OpenRouter** (below), or paste an API key.
 - **Ollama** or **LM Studio**: models that run on this computer. The app looks for them at `http://localhost:11434/v1` and `http://localhost:1234/v1`. No key is needed.
 - **Another server**: any server that speaks the OpenAI API, at an address you give. Use https, unless the server runs on this computer.
 
-A pasted key is checked against the provider before it is saved. You can change providers, keys and the default model in Settings. Anthropic and OpenRouter always talk to their own hosts; changing the address of one of them removes its saved key.
+A pasted key is checked against the provider before it is saved. You can change providers, keys and the default model in Settings > Assistant. Anthropic, OpenAI, Gemini and OpenRouter always talk to their own hosts (the Gemini API, not Vertex AI), and the app never follows a redirect to another host. Changing the address of one of them removes its saved key, so a key is never sent to a host you did not give it to. The app does not read provider keys from environment variables such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
+
+**Sign in with OpenRouter.** Opens OpenRouter in your browser, where you allow a key for this app (labelled "Foxmayn Frappe Desktop"). The app receives it on a short-lived local address (`127.0.0.1`), checks it and saves it in the keychain; you never copy a key. It waits up to 5 minutes, and **Cancel sign-in** stops it. If the browser does not open, the page address is shown to open yourself. Pasting a key still works.
 
 **Where keys live.** In the operating system's keychain (Windows Credential Manager, macOS Keychain), under "Foxmayn Frappe Desktop". The app window never gets a key back: it only shows the last four characters. Keys are not in the chat history or in any file the app writes.
 
 ### Ask a question
 
 Click **New conversation** and pick the site, the provider and the model. Enter sends your message, Shift+Enter adds a line. Answers stream in, and each tool the assistant uses shows as a row (what it looked at, and whether it worked). The model sees your messages and the data its tools return, and that data goes to the provider you chose. With a local model it stays on this computer.
+
+### Profiles
+
+A profile sets what the assistant is for in a conversation: which tools it gets, its mode, a step limit and its instructions. Pick one in the profile picker when you start a conversation; a conversation can change it later. A profile can only narrow what the site's [policy](../mcp/safety.md#per-site-policy) allows, never widen it: anything the site refuses stays refused.
+
+Five built-in presets:
+
+| Preset | For |
+| --- | --- |
+| **Explore** | Looking things up. Read only. Where conversations go when their profile is deleted. |
+| **Accounts helper** | Invoices, payments, journal entries. Asks before changes; adds the ERPNext tool set. |
+| **Site admin** | Background jobs, the error log, the scheduler. Read only; adds the admin tool set. |
+| **Data entry** | Creating and updating documents. Asks before changes; `delete_doc` and `bulk_delete` are hidden. |
+| **Local model** | Small models on this computer. Read only, core tools, 15 steps per run. |
+
+Presets cannot be changed. **Duplicate** one in Settings > Assistant > Profiles to edit the copy, or make a **New profile**. A profile has: mode, tool sets (none checked means core and lifecycle), tools to hide or the only tools allowed, DocTypes and methods to allow or refuse, whether server methods may be called, a step limit (1 to 100) and instructions. Deleting a profile moves its conversations to Explore.
+
+- **Mode.** The stricter of the profile's mode and the conversation's switch applies. A profile set to read only shows a **Read only by profile** badge, and the switch cannot lift it.
+- **Server methods** (`call_method`) are offered only when the profile allows them, the conversation asks before changes and the site's policy serves them.
+- **Step limit.** After that many tool calls in one run the assistant pauses until you press **Continue** (25 without a profile).
+- **What the model gets.** **Show what the model gets** lists the instructions and the tools the next answer starts with, and the step limit. The site's details (user, roles, versions) are added at the first answer.
+
+### Site settings
+
+Settings > Assistant > Site settings holds two things per site:
+
+- **Instructions for this site.** Sent to the model in every conversation on the site, with the profile's own instructions.
+- **Local models only.** Conversations on the site may use only a model server on this computer: Ollama, LM Studio or a custom server whose address is `localhost` or a loopback address. Hosted providers are refused. So are Ollama cloud models (names ending in `cloud`, such as `gpt-oss:120b-cloud`): the local Ollama passes them on to ollama.com. The rule is checked when you create a conversation, when you change its profile, before every run and before each model turn.
+
+The settings follow a site that was renamed with `ffc` (same address, new name), as long as the old name is no longer in the ffc config; a rename never turns local only off. A conversation remembers the address its site had: if the site now points elsewhere, the run is refused and you start a new conversation.
+
+Text that comes from the site (tool results, the site details added at the first answer) reaches the model inside blocks marked untrusted, with every `<` escaped, and the model is told to treat it as data. The stored history keeps the original text.
 
 ### Read only, or ask before changes
 
@@ -116,6 +150,20 @@ The assistant goes through the same checks as any connected app, from the site's
 
 Every tool call is written to ffc's [audit log](../mcp/safety.md#audit-log) (`mcp-audit.jsonl` next to the config file) with the client name `foxmayn-desktop` and a `run_id`, which is the same for all the calls of one question. A change you approved through ffc's own confirmation shows `confirm_pending` followed by the result. A change you decline on an app card never reaches ffc, so it has no line.
 
+### Cost
+
+Each run shows its tokens (in, out, cached) and a cost, and the conversation shows a total. A cost comes from, in this order:
+
+1. the cost the provider reports (OpenRouter);
+2. the app's built-in price table for Anthropic, OpenAI and Gemini models, read from the providers' official pricing pages on 2026-10-09 (long-context prices and introductory prices with an end date are included). Prices change: the figure is an estimate as of that date;
+3. otherwise **cost unknown**: the model is not in the table, and the app never guesses.
+
+When any call of a conversation is unknown, its total reads **at least** the sum of the known ones. A model on this computer shows tokens only, with no cost. Conversations from 0.2.0 count as tokens only.
+
+### Titles and renaming
+
+After the first completed run, the app asks the conversation's own model for a one-line title (one extra call, no tools, through the same provider and the same local-only rule). If that fails, the first words of your message stay as the title. Rename a conversation with **Rename** in its header: a name you give is never replaced by an automatic title.
+
 ### Chat history
 
 Conversations are stored on this computer only, in `assistant.db` (a SQLite file, readable only by you) in the app's data folder:
@@ -127,9 +175,28 @@ Conversations are stored on this computer only, in `assistant.db` (a SQLite file
 
 Delete a conversation from the list to remove it. Provider names and addresses are stored there too, never keys.
 
-### Not in 0.2.0
+- **Search.** The box above the list (Ctrl+Shift+F, Cmd+Shift+F on macOS) searches the messages, with highlighted snippets and filters for site, profile and date. It can search the archive instead of the other conversations.
+- **Pin and archive.** **Pin to the top** keeps a conversation first in the list. **Archive** moves it out of the list without deleting it; **Move out of the archive** brings it back.
+- **Retention.** Settings > Assistant > History: keep conversations **Forever** (the default), or delete those with no message for **90** or **30 days**. The sweep runs when the app starts and once a day, archived conversations included, and asks you to confirm the change first. Pinned conversations and ones being answered are always kept.
+- **Not kept.** A conversation from a profile that keeps no history is marked "not kept" and removed the next time the app starts. The profile editor has no switch for this.
 
-Profiles and presets, searching the history, cost figures, attachments and signing in to OpenRouter in the browser (paste a key for now) are planned for later.
+### Export and import
+
+Open a conversation's menu and choose **Export as JSON** (everything, to import again) or **Export as Markdown** (to read). Secrets are redacted, passwords in addresses are removed, and no provider key is in the file; the export is refused if the keys cannot be scrubbed. The file is written in one step, so a failure leaves no half file.
+
+**Import a conversation** (button above the list) reads a JSON export of up to 50 MB and adds it as a new conversation with new ids. A file is not trusted, even one you exported yourself:
+
+- the conversation starts **read only**; choose a model before you continue it;
+- its messages are never replayed to the model as turns of its own: they reach it as one block marked untrusted (`<imported_history untrusted="true">`, every `<` escaped), so instructions inside cannot pass as yours or the model's;
+- the site details in the file are discarded and fetched fresh from the site;
+- images are not in the file and become notes;
+- its title is kept.
+
+A file of another format or version, or one that does not hold together, is refused.
+
+### Attachments
+
+TODO(batch C)
 
 ## The ffc helper
 
