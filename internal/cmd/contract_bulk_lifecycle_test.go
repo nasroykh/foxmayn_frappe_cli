@@ -16,7 +16,7 @@ import (
 // DocType: a list is submitted and cancelled one document at a time, a
 // document already in the target state is a failed item with ffc's own
 // message (exit 8) and the others still go through, and --filters selects
-// by docstatus. Teardown cancels and deletes whatever is left.
+// by docstatus. teardownContract removes the fixture documents afterwards.
 func contractBulkLifecycle(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
 	cfg := contractConfig(t, sc)
 	bulk := func(wantCode int, args ...string) blcReport {

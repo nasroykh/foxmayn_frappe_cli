@@ -321,3 +321,20 @@ func TestBulkSubmitOrder(t *testing.T) {
 		t.Errorf("submit order = %v", order)
 	}
 }
+
+func TestWithDocstatus(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`{"customer":"C1"}`, `{"customer":"C1","docstatus":1}`},
+		{`[["customer","=","C1"]]`, `[["customer","=","C1"],["docstatus","=",1]]`},
+		// A single bare condition is wrapped, not extended.
+		{`["customer","=","C1"]`, `[["customer","=","C1"],["docstatus","=",1]]`},
+	} {
+		got, err := withDocstatus(tc.in, 1)
+		if err != nil || got != tc.want {
+			t.Errorf("withDocstatus(%s) = %s, %v; want %s", tc.in, got, err, tc.want)
+		}
+	}
+	if _, err := withDocstatus(`{"docstatus":0}`, 1); err == nil {
+		t.Error("a filter object naming docstatus was accepted")
+	}
+}

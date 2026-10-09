@@ -177,8 +177,8 @@ func (l *lifecycleBulk) confirm(cmd *cobra.Command, names []string) error {
 
 // op acts on names[i]. The document is read first, so one that is not in the
 // state the command needs gets a clear result instead of the server's
-// DocstatusTransitionError, and a dry run plans only the documents it would
-// change.
+// DocstatusTransitionError. A dry run stops at the first such document
+// (planAll), as docs/cli/bulk.md says.
 func (l *lifecycleBulk) op(names []string) func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
 	return func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
 		name := names[i]

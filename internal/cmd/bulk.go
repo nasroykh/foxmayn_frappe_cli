@@ -372,7 +372,9 @@ func bulkNames(csv, file string) ([]string, error) {
 // withDocstatus adds docstatus = ds to filters that bulkFilters accepted, for
 // commands that only act on documents in one state. A filter object that
 // already names docstatus is refused rather than overridden; a filter list
-// simply gains the condition, and a contradicting one matches nothing.
+// simply gains the condition (a single bare condition such as
+// ["status","=","Open"], which Frappe also accepts, is wrapped first), and
+// a contradicting one matches nothing.
 func withDocstatus(filters string, ds int) (string, error) {
 	var v interface{}
 	if err := json.Unmarshal([]byte(filters), &v); err != nil {
@@ -385,6 +387,11 @@ func withDocstatus(filters string, ds int) (string, error) {
 		}
 		f["docstatus"] = ds
 	case []interface{}:
+		if len(f) > 0 {
+			if _, nested := f[0].([]interface{}); !nested {
+				f = []interface{}{f}
+			}
+		}
 		v = append(f, []interface{}{"docstatus", "=", ds})
 	}
 	out, err := json.Marshal(v)

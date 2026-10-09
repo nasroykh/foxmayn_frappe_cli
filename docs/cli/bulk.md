@@ -39,7 +39,7 @@ ffc bulk-update -d ToDo --filters '{"status":"Open","owner":"a@example.com"}' --
 
 ## Submit and cancel
 
-`bulk-submit` and `bulk-cancel` do for many documents what [`submit-doc` and `cancel-doc`](lifecycle-and-workflow.md) do for one: each document is read and then submitted (`frappe.client.submit`) or cancelled (`frappe.client.cancel`), so its validations and hooks run.
+`bulk-submit` and `bulk-cancel` do for many documents what [`submit-doc` and `cancel-doc`](lifecycle-and-workflow.md) do for one: each document is read and then submitted (`frappe.client.submit`) or cancelled (`frappe.client.cancel`), so its validations and hooks run. A submit reads the document twice (the state check, then the read it sends back), so it costs three requests per document.
 
 ```bash
 ffc bulk-submit -d "Journal Entry" --file names.json --yes --json
