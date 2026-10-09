@@ -123,7 +123,12 @@ type ToolCall struct {
 
 // Usage reports token counts for the turn. In counts input tokens read fresh
 // (cache writes included); Cached counts those served from the prompt cache.
-type Usage struct{ In, Out, Cached int }
+// Cost is the price the provider reports for the turn in USD (OpenRouter's
+// usage.cost), nil when the provider does not say; Anthropic leaves it nil.
+type Usage struct {
+	In, Out, Cached int
+	Cost            *float64
+}
 
 // Stop reasons. Other providers map their own to these where they can.
 const (
