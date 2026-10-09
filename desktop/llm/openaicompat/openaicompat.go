@@ -24,7 +24,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,8 +40,10 @@ import (
 const (
 	maxMessageLen = 300
 	maxRawArgsLen = 200
-	// appName is the attribution OpenRouter shows for the app.
+	// appName and appURL are the attribution OpenRouter shows for the app
+	// (X-Title and HTTP-Referer).
 	appName = "Foxmayn Frappe Desktop"
+	appURL  = "https://github.com/nasroykh/foxmayn_frappe_cli"
 	// probeTimeout bounds each local-server probe in DetectLocal.
 	probeTimeout = 1500 * time.Millisecond
 )
@@ -119,7 +120,7 @@ func New(preset Preset, apiKey string, opts ...Option) *Provider {
 		}
 	}
 	if preset.ID == OpenRouter.ID {
-		ro = append(ro, option.WithHeader("HTTP-Referer", appName), option.WithHeader("X-Title", appName))
+		ro = append(ro, option.WithHeader("HTTP-Referer", appURL), option.WithHeader("X-Title", appName))
 	}
 	if cfg.httpClient != nil {
 		ro = append(ro, option.WithHTTPClient(cfg.httpClient))
@@ -175,7 +176,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, err
 		_ = s.Close()
 		return nil, p.mapErr(ctx, err)
 	}
-	return &stream{ctx: ctx, p: p, s: s, calls: map[int64]*call{}}, nil
+	return &stream{ctx: ctx, p: p, s: s, byIndex: map[int64]*call{}}, nil
 }
 
 // buildParams maps a request. The model is required: unlike a hosted vendor,
@@ -201,9 +202,7 @@ func buildParams(req llm.Request) (sdk.ChatCompletionNewParams, error) {
 		}
 		params.Tools = append(params.Tools, sdk.ChatCompletionFunctionTool(fn))
 	}
-	for _, m := range req.Messages {
-		params.Messages = append(params.Messages, messageParams(m)...)
-	}
+	params.Messages = append(params.Messages, historyParams(req.Messages)...)
 	return params, nil
 }
 
@@ -228,48 +227,132 @@ func toolDef(t llm.Tool) (shared.FunctionDefinitionParam, error) {
 	return fn, nil
 }
 
-// messageParams maps a history message to chat messages. A user message gives
-// one role "tool" message per ToolResult, in order and first (a tool message
-// must directly follow the assistant message that made the calls), then the
-// remaining text as a user message. An assistant message gives one message
-// with its text and tool_calls. Thinking parts are dropped.
-func messageParams(m llm.Message) []sdk.ChatCompletionMessageParamUnion {
-	var out []sdk.ChatCompletionMessageParamUnion
-	var text strings.Builder
-	var calls []sdk.ChatCompletionMessageToolCallUnionParam
-	for _, part := range m.Parts {
-		switch p := part.(type) {
-		case llm.Text:
-			text.WriteString(p.Text)
-		case llm.ToolUse:
-			args := string(p.Args)
-			if len(p.Args) == 0 || !json.Valid(p.Args) {
-				args = "{}"
-			}
-			calls = append(calls, sdk.ChatCompletionMessageToolCallUnionParam{
-				OfFunction: &sdk.ChatCompletionMessageFunctionToolCallParam{
-					ID:       p.ID,
-					Function: sdk.ChatCompletionMessageFunctionToolCallFunctionParam{Name: p.Name, Arguments: args},
-				},
-			})
-		case llm.ToolResult:
-			out = append(out, sdk.ToolMessage(p.Text, p.ID))
+// mergeSameRole joins consecutive messages of one role. It copies; the
+// caller's messages are not touched.
+func mergeSameRole(in []llm.Message) []llm.Message {
+	var out []llm.Message
+	for _, m := range in {
+		if n := len(out); n > 0 && out[n-1].Role == m.Role {
+			out[n-1].Parts = append(out[n-1].Parts[:len(out[n-1].Parts):len(out[n-1].Parts)], m.Parts...)
+			continue
 		}
-	}
-	if m.Role == llm.RoleAssistant {
-		if text.Len() == 0 && len(calls) == 0 {
-			return out
-		}
-		a := sdk.ChatCompletionAssistantMessageParam{ToolCalls: calls}
-		if text.Len() > 0 {
-			a.Content.OfString = sdk.String(text.String())
-		}
-		return append(out, sdk.ChatCompletionMessageParamUnion{OfAssistant: &a})
-	}
-	if text.Len() > 0 {
-		out = append(out, sdk.UserMessage(text.String()))
+		out = append(out, m)
 	}
 	return out
+}
+
+// historyParams maps the history to chat messages.
+//   - Thinking parts are dropped; an assistant turn with nothing else sends
+//     nothing.
+//   - An assistant message gives one message with its text and tool_calls (a
+//     ToolUse without an id gets "call_<position>").
+//   - The tool messages for those calls come directly after it, one per call
+//     in the call order, as the API requires. A call with no result gets
+//     "Error: no result"; a result that matches no call is dropped. A result
+//     with an empty id answers the next call that had none.
+//   - The remaining text of the user message that held the results follows as
+//     a user message.
+//
+// IsError results are prefixed "Error: ", since the chat API has no flag.
+func historyParams(in []llm.Message) []sdk.ChatCompletionMessageParamUnion {
+	msgs := mergeSameRole(in)
+	var out []sdk.ChatCompletionMessageParamUnion
+	for i := 0; i < len(msgs); i++ {
+		m := msgs[i]
+		if m.Role != llm.RoleAssistant {
+			if t := userText(m); t != "" {
+				out = append(out, sdk.UserMessage(t))
+			}
+			continue
+		}
+		var text strings.Builder
+		var calls []sdk.ChatCompletionMessageToolCallUnionParam
+		var ids, origIDs []string
+		for n, part := range m.Parts {
+			switch p := part.(type) {
+			case llm.Text:
+				text.WriteString(p.Text)
+			case llm.ToolUse:
+				id := p.ID
+				if id == "" {
+					id = "call_" + strconv.Itoa(n)
+				}
+				args := string(p.Args)
+				if len(p.Args) == 0 || !json.Valid(p.Args) {
+					args = "{}"
+				}
+				ids, origIDs = append(ids, id), append(origIDs, p.ID)
+				calls = append(calls, sdk.ChatCompletionMessageToolCallUnionParam{
+					OfFunction: &sdk.ChatCompletionMessageFunctionToolCallParam{
+						ID:       id,
+						Function: sdk.ChatCompletionMessageFunctionToolCallFunctionParam{Name: p.Name, Arguments: args},
+					},
+				})
+			}
+		}
+		if text.Len() > 0 || len(calls) > 0 {
+			a := sdk.ChatCompletionAssistantMessageParam{ToolCalls: calls}
+			if text.Len() > 0 {
+				a.Content.OfString = sdk.String(text.String())
+			}
+			out = append(out, sdk.ChatCompletionMessageParamUnion{OfAssistant: &a})
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		var follow *llm.Message
+		if i+1 < len(msgs) && msgs[i+1].Role == llm.RoleUser {
+			follow = &msgs[i+1]
+			i++
+		}
+		results := map[string]string{}
+		var anon []string // results with an empty id, in order
+		if follow != nil {
+			for _, part := range follow.Parts {
+				if r, ok := part.(llm.ToolResult); ok {
+					c := resultText(r)
+					if r.ID == "" {
+						anon = append(anon, c)
+					} else if _, dup := results[r.ID]; !dup {
+						results[r.ID] = c
+					}
+				}
+			}
+		}
+		for n, id := range ids {
+			c, ok := results[id]
+			if !ok && origIDs[n] == "" && len(anon) > 0 {
+				c, ok, anon = anon[0], true, anon[1:]
+			}
+			if !ok {
+				c = "Error: no result"
+			}
+			out = append(out, sdk.ToolMessage(c, id))
+		}
+		if follow != nil {
+			if t := userText(*follow); t != "" {
+				out = append(out, sdk.UserMessage(t))
+			}
+		}
+	}
+	return out
+}
+
+func resultText(r llm.ToolResult) string {
+	if r.IsError {
+		return "Error: " + r.Text
+	}
+	return r.Text
+}
+
+func userText(m llm.Message) string {
+	var b strings.Builder
+	for _, part := range m.Parts {
+		if t, ok := part.(llm.Text); ok {
+			b.WriteString(t.Text)
+		}
+	}
+	return b.String()
 }
 
 // call accumulates one streamed tool call.
@@ -283,7 +366,8 @@ type stream struct {
 	p         *Provider
 	s         *ssestream.Stream[sdk.ChatCompletionChunk]
 	text      strings.Builder
-	calls     map[int64]*call
+	calls     []*call         // tool calls in the order they started
+	byIndex   map[int64]*call // the wire index's current call
 	queue     []llm.Event
 	usage     llm.Usage
 	haveUsage bool
@@ -316,7 +400,8 @@ func (s *stream) Next() (llm.Event, error) {
 			// The stream ended cleanly: usage, when sent, came after the
 			// finish_reason chunk, so the turn is complete only now.
 			if s.reason == "" {
-				return nil, &llm.APIError{Message: "stream ended before finish_reason"}
+				// A cut connection looks like a bad gateway: worth a retry.
+				return nil, &llm.APIError{Status: 502, Message: "stream ended before finish_reason"}
 			}
 			s.stop()
 			continue
@@ -342,16 +427,27 @@ func (s *stream) handle(ch sdk.ChatCompletionChunk) {
 	if len(ch.Choices) == 0 {
 		return
 	}
+	// Only the first choice is used (n is never set); skip any other.
 	c := ch.Choices[0]
+	if c.Index != 0 {
+		return
+	}
+	// Reasoning text (delta.reasoning, delta.reasoning_content) is dropped on
+	// purpose: it is neither shown nor replayed, so no field of the delta
+	// other than content and tool_calls is read.
 	if t := c.Delta.Content; t != "" {
 		s.text.WriteString(t)
 		s.queue = append(s.queue, llm.TextDelta{Text: t})
 	}
 	for _, d := range c.Delta.ToolCalls {
-		cl := s.calls[d.Index]
-		if cl == nil {
+		// A call is keyed by its wire index, but some servers (Gemini, some
+		// Ollama routes) send index 0 for every call: a new non-empty id on
+		// a slot that already has another id starts a new call.
+		cl := s.byIndex[d.Index]
+		if cl == nil || (d.ID != "" && cl.id != "" && d.ID != cl.id) {
 			cl = &call{}
-			s.calls[d.Index] = cl
+			s.byIndex[d.Index] = cl
+			s.calls = append(s.calls, cl)
 		}
 		if cl.id == "" {
 			cl.id = d.ID
@@ -381,13 +477,8 @@ func (s *stream) stop() {
 	if t := s.text.String(); t != "" {
 		parts = append(parts, llm.Text{Text: t})
 	}
-	idx := make([]int64, 0, len(s.calls))
-	for i := range s.calls {
-		idx = append(idx, i)
-	}
-	sort.Slice(idx, func(a, b int) bool { return idx[a] < idx[b] })
-	for _, i := range idx {
-		tc, ok := toolCall(i, s.calls[i])
+	for i, c := range s.calls {
+		tc, ok := toolCall(int64(i), c)
 		if cut && !ok {
 			continue
 		}
@@ -402,7 +493,7 @@ func (s *stream) stop() {
 		s.queue = append(s.queue, s.usage)
 	}
 	s.queue = append(s.queue, stop)
-	s.calls = map[int64]*call{}
+	s.calls, s.byIndex = nil, map[int64]*call{}
 	s.done = true
 }
 
@@ -476,17 +567,18 @@ func (p *Provider) mapErr(ctx context.Context, err error) error {
 	}
 	var se *ssestream.StreamError
 	if errors.As(err, &se) {
-		msg, code, typ := errorFields(gjsonError(se.Event.Data))
+		msg, code, kind := errorFields(gjsonError(se.Event.Data))
 		status := code
 		if status < 400 {
-			status = statusFromType(typ)
+			status = statusFromType(kind)
 		}
 		if msg == "" {
 			msg = "the stream reported an error"
 		}
 		return &llm.APIError{Status: status, Message: p.scrub(msg)}
 	}
-	return &llm.APIError{Message: p.scrub(err.Error())}
+	// Transport failure (connection reset, DNS, decode): retryable.
+	return &llm.APIError{Status: 502, Message: p.scrub(err.Error())}
 }
 
 // gjsonError returns the "error" member of an SSE error event, or the event
@@ -501,8 +593,8 @@ func gjsonError(data []byte) string {
 	return string(data)
 }
 
-// errorFields reads message, a numeric code (OpenRouter style) and type from an
-// error object. A string error body is its own message.
+// errorFields reads message, a numeric code (OpenRouter style) and the type from
+// an error object; a string code is appended to the type. A string error body is its own message.
 func errorFields(raw string) (msg string, code int, typ string) {
 	var body struct {
 		Message string          `json:"message"`
@@ -516,8 +608,14 @@ func errorFields(raw string) (msg string, code int, typ string) {
 		}
 		return "", 0, ""
 	}
-	code, _ = strconv.Atoi(strings.Trim(string(body.Code), `"`))
-	return body.Message, code, body.Type
+	typ = body.Type
+	c := strings.Trim(string(body.Code), `"`)
+	if n, err := strconv.Atoi(c); err == nil {
+		code = n
+	} else if c != "null" && c != "" {
+		typ += " " + c // a string code such as "rate_limit_exceeded"
+	}
+	return body.Message, code, typ
 }
 
 // statusFromType maps the error type of a mid-stream error event to the HTTP
@@ -528,7 +626,7 @@ func statusFromType(t string) int {
 		return 429
 	case strings.Contains(t, "overloaded"):
 		return 529
-	case strings.Contains(t, "server_error"), t == "api_error":
+	case strings.Contains(t, "server_error"), strings.Contains(t, "api_error"):
 		return 500
 	}
 	return 0
@@ -576,7 +674,10 @@ func probe(ctx context.Context, pr Preset, timeout time.Duration) bool {
 	}
 	// A client of its own: the default one honours proxy variables, which would
 	// send a localhost probe through a proxy.
-	client := &http.Client{Transport: &http.Transport{Proxy: nil}}
+	client := &http.Client{
+		Transport:     &http.Transport{Proxy: nil},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	defer client.CloseIdleConnections()
 	res, err := client.Do(req)
 	if err != nil {

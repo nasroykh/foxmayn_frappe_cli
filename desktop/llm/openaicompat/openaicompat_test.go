@@ -154,7 +154,7 @@ func TestOpenRouterText(t *testing.T) {
 	if h.Get("Authorization") != "Bearer "+testKey {
 		t.Fatalf("Authorization %q", h.Get("Authorization"))
 	}
-	if h.Get("HTTP-Referer") != "Foxmayn Frappe Desktop" || h.Get("X-Title") != "Foxmayn Frappe Desktop" {
+	if h.Get("HTTP-Referer") != "https://github.com/nasroykh/foxmayn_frappe_cli" || h.Get("X-Title") != "Foxmayn Frappe Desktop" {
 		t.Fatalf("attribution headers %v", h)
 	}
 }
@@ -559,7 +559,7 @@ func TestRequestBody(t *testing.T) {
 	}
 	t1, t2 := at(3), at(4)
 	if t1["role"] != "tool" || t1["tool_call_id"] != "call_1" || t1["content"] != "the doc" ||
-		t2["role"] != "tool" || t2["tool_call_id"] != "call_2" || t2["content"] != "boom" {
+		t2["role"] != "tool" || t2["tool_call_id"] != "call_2" || t2["content"] != "Error: boom" {
 		t.Fatalf("tool messages %v %v", t1, t2)
 	}
 	if at(5)["role"] != "user" || at(5)["content"] != "and continue" {
