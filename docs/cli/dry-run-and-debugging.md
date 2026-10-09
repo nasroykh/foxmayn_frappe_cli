@@ -9,7 +9,7 @@ ffc update-doc -d ToDo -n TD-0001 --data '{"status":"Closed"}' --dry-run
 ffc bulk-delete -d Note --file names.json --dry-run --json
 ```
 
-Every command that writes takes `--dry-run`: `create-doc`, `update-doc`, `edit-doc`, `delete-doc`, the bulk commands, `import`, the lifecycle commands, `erp map` (with `--create` or `--submit`), `workflow apply` and `bulk-apply`, the collaboration commands, `upload`, `call-method` and `api`.
+Every command that writes takes `--dry-run`: `create-doc`, `update-doc`, `edit-doc`, `delete-doc`, the bulk commands, `import`, the lifecycle commands, `erp map` and `erp payment` (with `--create` or `--submit`), `workflow apply` and `bulk-apply`, the collaboration commands, `upload`, `call-method` and `api`.
 
 - It prints the request it would send, with secrets redacted, sends nothing that writes, and exits 0. No confirmation is asked.
 - Reads still run, so a dry run fails where the real run would (a missing document, a draft that cannot be amended).

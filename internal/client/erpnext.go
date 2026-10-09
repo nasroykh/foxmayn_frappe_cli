@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -89,7 +90,12 @@ func (s *ServerInfo) Major(app string) int { return ParseMajor(s.Version(app)) }
 // mapper sets methods=, and a GET never commits, so nothing is kept. Only
 // source_name is sent; ignore_permissions, which some mappers take, never is.
 func (c *FrappeClient) MapDoc(ctx context.Context, method, source string) (map[string]interface{}, error) {
-	res, err := c.CallMethod(ctx, method, map[string]interface{}{"source_name": source}, true)
+	return c.draftDoc(ctx, method, map[string]interface{}{"source_name": source})
+}
+
+// draftDoc calls a GET-safe ERPNext method that answers one unsaved document.
+func (c *FrappeClient) draftDoc(ctx context.Context, method string, args map[string]interface{}) (map[string]interface{}, error) {
+	res, err := c.CallMethod(ctx, method, args, true)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +104,63 @@ func (c *FrappeClient) MapDoc(ctx context.Context, method, source string) (map[s
 		return nil, fmt.Errorf("unexpected response from %s: expected a document, got %T", method, res)
 	}
 	return doc, nil
+}
+
+// paymentEntryMethod builds a Payment Entry from an invoice or an order. It
+// is the same on v15 and v16 (get_payment_entry at v15.121.6:2901 and
+// v16.37.0:2898); it never inserts, and has no methods=, so a GET is allowed.
+const paymentEntryMethod = "erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry"
+
+// erpPaymentMethods is the Payment Entry method by ERPNext major.
+var erpPaymentMethods = map[int]string{
+	15: paymentEntryMethod,
+	16: paymentEntryMethod,
+}
+
+// PaymentDocTypes are the DocTypes get_payment_entry handles as dt
+// (set_party_type fails with a server error for any other).
+var PaymentDocTypes = []string{"Sales Invoice", "Sales Order", "Purchase Invoice", "Purchase Order", "Dunning"}
+
+// CanPayAgainst reports whether a Payment Entry can be made against a DocType.
+func CanPayAgainst(doctype string) bool {
+	for _, d := range PaymentDocTypes {
+		if d == doctype {
+			return true
+		}
+	}
+	return false
+}
+
+// PaymentMethod returns the method that builds a Payment Entry on an
+// ERPNext major.
+func PaymentMethod(major int) (string, bool) {
+	m, ok := erpPaymentMethods[major]
+	return m, ok
+}
+
+// PaymentOptions are the optional arguments of get_payment_entry; an empty
+// one is not sent, so the server picks its own default.
+type PaymentOptions struct {
+	Amount        string // party_amount: a plain positive decimal
+	BankAccount   string // bank_account: an Account of the company
+	ReferenceDate string // reference_date: YYYY-MM-DD
+}
+
+// PaymentDraft builds an unsaved Payment Entry against a document (dt, dn).
+// The call is a GET and inserts nothing. Only the arguments given are sent;
+// ignore_permissions is not a parameter of the method and never is sent.
+func (c *FrappeClient) PaymentDraft(ctx context.Context, method, doctype, name string, o PaymentOptions) (map[string]interface{}, error) {
+	args := map[string]interface{}{"dt": doctype, "dn": name}
+	if o.Amount != "" {
+		args["party_amount"] = json.Number(o.Amount)
+	}
+	if o.BankAccount != "" {
+		args["bank_account"] = o.BankAccount
+	}
+	if o.ReferenceDate != "" {
+		args["reference_date"] = o.ReferenceDate
+	}
+	return c.draftDoc(ctx, method, args)
 }
 
 // InsertableCopy returns a copy of a mapped document that can be inserted:

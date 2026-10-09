@@ -89,3 +89,26 @@ func TestInsertableCopy(t *testing.T) {
 		t.Errorf("empty name kept: %v", got)
 	}
 }
+
+func TestPaymentTable(t *testing.T) {
+	for _, major := range []int{15, 16} {
+		if m, ok := PaymentMethod(major); !ok || m != "erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry" {
+			t.Errorf("major %d: payment method = %q, %v", major, m, ok)
+		}
+	}
+	for _, major := range []int{0, 14, 17} {
+		if _, ok := PaymentMethod(major); ok {
+			t.Errorf("major %d has a payment method", major)
+		}
+	}
+	for _, dt := range []string{"Sales Invoice", "Sales Order", "Purchase Invoice", "Purchase Order", "Dunning"} {
+		if !CanPayAgainst(dt) {
+			t.Errorf("cannot pay against %s", dt)
+		}
+	}
+	for _, dt := range []string{"Quotation", "Journal Entry", "Payment Entry", ""} {
+		if CanPayAgainst(dt) {
+			t.Errorf("can pay against %q", dt)
+		}
+	}
+}

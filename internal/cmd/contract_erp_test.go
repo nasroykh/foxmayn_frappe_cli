@@ -121,10 +121,19 @@ func contractERPFirst(t *testing.T, c *client.FrappeClient, doctype string) stri
 	return fmt.Sprint(rows[0]["name"])
 }
 
-// contractERPMap pins T3.4's map: the mapper methods answer an unsaved draft
-// over GET, the draft inserts once cleaned, and a Sales Invoice made from a
-// Sales Order submits and links back to it.
-func contractERPMap(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
+// contractERPDocs are the documents the ERP subtests start from.
+type contractERPDocs struct {
+	company, customer, item, order string
+	// create makes a document and removes it again when the test ends
+	// (cancelled first when it was submitted).
+	create func(dt string, data map[string]interface{}) string
+}
+
+// contractERPOrder skips unless ERPNext 15 or 16 is installed, makes sure the
+// site has a Company, then creates a Customer, a non-stock Item and a
+// submitted Sales Order, all with unique names.
+func contractERPOrder(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) contractERPDocs {
+	t.Helper()
 	info, err := c.ServerVersions(contractCtx(t))
 	if err != nil {
 		t.Fatal(err)
@@ -172,6 +181,16 @@ func contractERPMap(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig)
 	if _, err := c.SubmitDoc(ctx, "Sales Order", order); err != nil {
 		t.Fatalf("submit %s: %v", order, err)
 	}
+	return contractERPDocs{company: company, customer: customer, item: item, order: order, create: create}
+}
+
+// contractERPMap pins T3.4's map: the mapper methods answer an unsaved draft
+// over GET, the draft inserts once cleaned, and a Sales Invoice made from a
+// Sales Order submits and links back to it.
+func contractERPMap(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
+	docs := contractERPOrder(t, c, sc)
+	customer, order := docs.customer, docs.order
+	ctx := contractCtx(t)
 	invoicesOf := func() int {
 		rows, err := c.GetList(contractCtx(t), "Sales Invoice", client.ListOptions{Fields: []string{"name"}, Filters: fmt.Sprintf(`{"customer":%q}`, customer), Limit: -1})
 		if err != nil {
@@ -235,5 +254,149 @@ func contractERPMap(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig)
 	r = runFFC(t, cfg, "", "erp", "map", "--from", from, "--to", "Purchase Order")
 	if r.Err == nil || r.Code != exitUsage || !strings.Contains(r.Err.Error(), "supported:") {
 		t.Errorf("unsupported pair: exit %d, %v", r.Code, r.Err)
+	}
+}
+
+// contractERPPayment pins T3.4's payment: get_payment_entry answers an
+// unsaved Payment Entry over GET, and --create --submit saves one that is
+// submitted, references the invoice and brings its outstanding amount to 0.
+func contractERPPayment(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
+	docs := contractERPOrder(t, c, sc)
+	customer, company := docs.customer, docs.company
+	ctx := contractCtx(t)
+	cfg := contractConfig(t, sc)
+
+	// A submitted Sales Invoice, made the way a user would: from the order.
+	r := runFFC(t, cfg, "", "--json", "--timeout", "2m", "erp", "map", "--from", "Sales Order:"+docs.order, "--to", "Sales Invoice", "--submit", "--keys", "name,docstatus")
+	if r.Err != nil {
+		t.Fatalf("erp map --submit: %v\n%s", r.Err, r.Stderr)
+	}
+	var raw struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(r.Stdout), &raw); err != nil || raw.Name == "" {
+		t.Fatalf("invoice = %s (%v)", r.Stdout, err)
+	}
+	invoice := raw.Name
+	t.Cleanup(func() {
+		ctx := contractCtx(t)
+		_, _ = c.CancelDoc(ctx, "Sales Invoice", invoice)
+		_ = c.DeleteDoc(ctx, "Sales Invoice", invoice)
+	})
+	number := func(v interface{}) float64 {
+		// Frappe sends a Float as 2.0, and ffc keeps the literal: compare the value.
+		f, _ := strconv.ParseFloat(fmt.Sprint(v), 64)
+		return f
+	}
+	outstanding := func() float64 {
+		d, err := c.GetDoc(contractCtx(t), "Sales Invoice", invoice)
+		if err != nil {
+			t.Fatalf("get %s: %v", invoice, err)
+		}
+		return number(d["outstanding_amount"])
+	}
+	before := outstanding()
+	if before <= 0 {
+		t.Fatalf("outstanding_amount of %s = %v, want more than 0", invoice, before)
+	}
+
+	// get_payment_entry needs an account to pay into. The setup wizard sets
+	// the Company's default cash account from the chart's "Cash" account; if
+	// it did not, use the one cash account the chart has. It is also passed
+	// as --bank-account below, so a default bank account (which would ask for
+	// a reference number) never gets in the way.
+	co, err := c.GetDoc(ctx, "Company", company)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cash, _ := docName(co["default_cash_account"])
+	if cash == "" {
+		rows, err := c.GetList(ctx, "Account", client.ListOptions{Fields: []string{"name"}, Filters: fmt.Sprintf(`{"company":%q,"account_type":"Cash","is_group":0}`, company), Limit: 1})
+		if err != nil || len(rows) == 0 {
+			t.Fatalf("no cash account in %s: %v", company, err)
+		}
+		cash = fmt.Sprint(rows[0]["name"])
+		t.Logf("Company %s has no default cash account: using %s", company, cash)
+		if _, err := c.UpdateDoc(ctx, "Company", company, map[string]interface{}{"default_cash_account": cash}); err != nil {
+			t.Fatalf("setting default_cash_account: %v", err)
+		}
+	}
+	paymentsOf := func() int {
+		rows, err := c.GetList(contractCtx(t), "Payment Entry", client.ListOptions{Fields: []string{"name"}, Filters: fmt.Sprintf(`{"party":%q}`, customer), Limit: -1})
+		if err != nil {
+			t.Fatalf("listing Payment Entry: %v", err)
+		}
+		return len(rows)
+	}
+	against := "Sales Invoice:" + invoice
+	today := time.Now().Format("2006-01-02")
+
+	// The draft is an unsaved Payment Entry for the whole outstanding amount,
+	// and a GET writes nothing.
+	r = runFFC(t, cfg, "", "--json", "--timeout", "2m", "erp", "payment", "--against", against, "--bank-account", cash, "--reference-date", today)
+	if r.Err != nil {
+		t.Fatalf("erp payment: %v\n%s", r.Err, r.Stderr)
+	}
+	var draft struct {
+		DocType     string                   `json:"doctype"`
+		PaymentType string                   `json:"payment_type"`
+		Party       string                   `json:"party"`
+		PaidTo      string                   `json:"paid_to"`
+		PaidAmount  json.Number              `json:"paid_amount"`
+		References  []map[string]interface{} `json:"references"`
+	}
+	if err := json.Unmarshal([]byte(r.Stdout), &draft); err != nil || draft.DocType != "Payment Entry" || draft.PaymentType != "Receive" ||
+		draft.Party != customer || draft.PaidTo != cash || number(draft.PaidAmount) != before ||
+		len(draft.References) != 1 || draft.References[0]["reference_name"] != invoice || draft.References[0]["reference_doctype"] != "Sales Invoice" {
+		t.Fatalf("draft = %s (%v), want a Receive of %v into %s for %s", r.Stdout, err, before, cash, invoice)
+	}
+	if n := paymentsOf(); n != 0 {
+		t.Fatalf("%d Payment Entry after a plain payment", n)
+	}
+	if got := outstanding(); got != before {
+		t.Fatalf("outstanding_amount = %v after a plain payment, want %v", got, before)
+	}
+
+	// --create --submit: saved, submitted, linked to the invoice.
+	r = runFFC(t, cfg, "", "--json", "--timeout", "2m", "erp", "payment", "--against", against, "--bank-account", cash, "--reference-date", today, "--submit", "--keys", "name,docstatus")
+	if r.Err != nil {
+		t.Fatalf("erp payment --submit: %v\n%s", r.Err, r.Stderr)
+	}
+	var made struct {
+		Name      string      `json:"name"`
+		DocStatus json.Number `json:"docstatus"`
+	}
+	if err := json.Unmarshal([]byte(r.Stdout), &made); err != nil || made.Name == "" || made.DocStatus != "1" {
+		t.Fatalf("created = %s (%v)", r.Stdout, err)
+	}
+	t.Cleanup(func() {
+		ctx := contractCtx(t)
+		_, _ = c.CancelDoc(ctx, "Payment Entry", made.Name)
+		_ = c.DeleteDoc(ctx, "Payment Entry", made.Name)
+	})
+	pe, err := c.GetDoc(ctx, "Payment Entry", made.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs, _ := pe["references"].([]interface{})
+	var ref map[string]interface{}
+	if len(refs) == 1 {
+		ref, _ = refs[0].(map[string]interface{})
+	}
+	if fmt.Sprint(pe["docstatus"]) != "1" || pe["party"] != customer || pe["paid_to"] != cash || number(pe["paid_amount"]) != before ||
+		ref["reference_doctype"] != "Sales Invoice" || ref["reference_name"] != invoice || number(ref["allocated_amount"]) != before {
+		t.Errorf("payment entry = docstatus %v party %v paid_to %v paid_amount %v references %v", pe["docstatus"], pe["party"], pe["paid_to"], pe["paid_amount"], refs)
+	}
+	if n := paymentsOf(); n != 1 {
+		t.Errorf("%d Payment Entry, want 1", n)
+	}
+	if got := outstanding(); got != 0 {
+		t.Errorf("outstanding_amount of %s = %v after the payment, want 0", invoice, got)
+	}
+
+	// A DocType ffc does not pay is refused before any request.
+	r = runFFC(t, cfg, "", "erp", "payment", "--against", "Quotation:X")
+	if r.Err == nil || r.Code != exitUsage || !strings.Contains(r.Err.Error(), "supported:") {
+		t.Errorf("unsupported DocType: exit %d, %v", r.Code, r.Err)
 	}
 }
