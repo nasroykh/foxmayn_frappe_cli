@@ -10,6 +10,7 @@ import (
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/store"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 )
 
 // A profile only narrows: its lists go to ffc as the options layer
@@ -283,7 +284,7 @@ func checkProfile(p Profile) (Profile, error) {
 			return Profile{}, invalid(field, "That list is too long.")
 		}
 		for _, v := range l {
-			if utf8.RuneCountInString(v) > maxEntryChars || hasControl(v) {
+			if utf8.RuneCountInString(v) > maxEntryChars || hasControl(v) || text.Sanitize(v) != v {
 				return Profile{}, invalid(field, "An entry of that list is not valid.")
 			}
 		}
@@ -464,7 +465,7 @@ func (a *AssistantService) SetConversationProfile(convID, profileID string) (Con
 				model = defaultModelOf(p)
 			}
 		}
-		if err := a.checkConversationProvider(st, conv.Site, conv.SiteURL, providerID); err != nil {
+		if err := a.checkConversationProvider(st, conv.Site, conv.SiteURL, providerID, model); err != nil {
 			return err
 		}
 		if providerID != conv.ProviderID || model != conv.Model {

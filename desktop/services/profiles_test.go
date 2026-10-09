@@ -706,7 +706,7 @@ func TestEngineTwoProfilesTwoServers(t *testing.T) {
 
 func TestEngineIdleServersClose(t *testing.T) {
 	e, _, _ := engineSite(t)
-	e.idleAfter = 30 * time.Millisecond
+	setIdleAfter(e, 30*time.Millisecond)
 	var closed atomic.Int32
 	e.closeSrv = func(s *cmd.MCPServer) { closed.Add(1); s.Close() }
 	s, err := e.Open(t.Context(), "prod", EngineRead, nil)
@@ -729,13 +729,13 @@ func TestEngineIdleServersClose(t *testing.T) {
 		t.Errorf("%d servers cached after idle close", n)
 	}
 	// Used again before the timer fires: kept.
-	e.idleAfter = time.Hour
+	setIdleAfter(e, time.Hour)
 	s2, err := e.Open(t.Context(), "prod", EngineRead, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s2.Close()
-	e.idleAfter = 30 * time.Millisecond
+	setIdleAfter(e, 30*time.Millisecond)
 	s3, err := e.Open(t.Context(), "prod", EngineRead, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -755,19 +755,27 @@ func TestSiteSettingsForRename(t *testing.T) {
 	defer st.Close()
 	_ = st.SaveSiteSettings(store.SiteSettings{Site: "old", URL: "https://Acme.test/", Instructions: "old text", LocalOnly: true})
 	_ = st.SaveSiteSettings(store.SiteSettings{Site: "other", URL: "https://other.test", Instructions: "other"})
-	ss, err := siteSettingsFor(st, "new", "", "https://acme.test")
+	ss, err := siteSettingsFor(st, "new", nil, "", "https://acme.test")
 	if err != nil || !ss.LocalOnly || ss.LocalOnlyFrom != "old" || ss.Instructions != "old text" {
 		t.Errorf("by url = %+v, %v", ss, err)
 	}
 	// A new site that took the old name is local only too (fail closed).
-	if ss, _ := siteSettingsFor(st, "old", "https://elsewhere.test"); !ss.LocalOnly {
+	if ss, _ := siteSettingsFor(st, "old", nil, "https://elsewhere.test"); !ss.LocalOnly {
 		t.Errorf("by name = %+v", ss)
 	}
-	if ss, _ := siteSettingsFor(st, "fresh", "https://fresh.test"); ss.LocalOnly || ss.Instructions != "" {
+	if ss, _ := siteSettingsFor(st, "fresh", nil, "https://fresh.test"); ss.LocalOnly || ss.Instructions != "" {
 		t.Errorf("unrelated = %+v", ss)
 	}
 	_ = st.SaveSiteSettings(store.SiteSettings{Site: "new", URL: "https://acme.test", Instructions: "new text"})
-	if ss, _ := siteSettingsFor(st, "new", "https://acme.test"); !ss.LocalOnly || ss.Instructions != "new text" {
+	if ss, _ := siteSettingsFor(st, "new", nil, "https://acme.test"); !ss.LocalOnly || ss.Instructions != "new text" {
 		t.Errorf("own row = %+v", ss)
 	}
+}
+
+// setIdleAfter sets the engine's idle time under its lock (release reads it
+// there).
+func setIdleAfter(e *Engine, d time.Duration) {
+	e.mu.Lock()
+	e.idleAfter = d
+	e.mu.Unlock()
 }

@@ -282,13 +282,14 @@ func (a *activeRun) prepareUpdate(ctx context.Context, e *callEntry) ([]DiffFiel
 			read[k] = v
 		}
 	}
+	// The failure text can come from the site, so it is wrapped as data.
 	res, err := a.session.Call(ctx, a.runID, "get_doc", read)
 	if err != nil {
-		return nil, "Could not read the document before the change: " + toServiceError(err).Error()
+		return nil, "Could not read the document before the change:\n" + wrapToolResult("get_doc", cutForModel(toServiceError(err).Error()))
 	}
 	text := callResultText(res)
 	if res.IsError {
-		return nil, "Could not read the document before the change: " + text
+		return nil, "Could not read the document before the change:\n" + wrapToolResult("get_doc", cutForModel(text))
 	}
 	var doc map[string]any
 	if err := json.Unmarshal([]byte(text), &doc); err != nil || doc == nil {

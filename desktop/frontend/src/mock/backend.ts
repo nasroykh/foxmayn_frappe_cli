@@ -570,8 +570,16 @@ function isLocal(p: ProviderInfo) {
   }
 }
 
-function checkLocalOnly(site: string, providerID: string) {
-  if (siteSettings.get(site)?.localOnly && !isLocal(findProvider(providerID))) {
+// Ollama's cloud models ("gpt-oss:120b-cloud") run on ollama.com.
+function isCloudModel(model: string) {
+  const m = model.trim().toLowerCase()
+  const i = Math.max(m.lastIndexOf(":"), m.lastIndexOf("-"))
+  return i >= 0 && m.slice(i + 1) === "cloud"
+}
+
+function checkLocalOnly(site: string, providerID: string, model = "") {
+  const p = findProvider(providerID)
+  if (siteSettings.get(site)?.localOnly && (!isLocal(p) || isCloudModel(model || p.defaultModel))) {
     fail(
       "invalid",
       "This site is set to use local models only. Choose a provider that runs on this computer (Ollama, LM Studio or a local server).",
@@ -1038,7 +1046,7 @@ export const backend: Backend = {
     if (mode !== "read" && mode !== "ask") fail("invalid", 'Choose "Read only" or "Ask before changes".', { field: "mode" })
     if (!sites.some((s) => s.name === site)) fail("not_found", "That site is not in your list.", { field: "site" })
     const p = findProvider(providerID)
-    checkLocalOnly(site, p.id)
+    checkLocalOnly(site, p.id, model)
     const now = new Date().toISOString()
     const conv: Conversation = {
       id: newID("conv"),
@@ -1206,7 +1214,7 @@ export const backend: Backend = {
     const c = findConv(convID)
     if (activeRun(convID)) fail("invalid", "The assistant is still answering in this conversation. Stop it first.")
     const p = findProfile(profileID)
-    checkLocalOnly(c.conv.site, p?.providerID || c.conv.providerID)
+    checkLocalOnly(c.conv.site, p?.providerID || c.conv.providerID, p?.providerID ? p.model : c.conv.model)
     if (p?.providerID) {
       c.conv.providerID = p.providerID
       c.conv.model = p.model || findProvider(p.providerID).defaultModel

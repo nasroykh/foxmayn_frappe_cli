@@ -241,7 +241,7 @@
     "instructions": "Instructions for this site",
     "instructionsHelp": "Sent to the model in every conversation on this site.",
     "localOnly": "Local models only",
-    "localOnlyHelp": "Conversations on this site may use only a model server on this computer (Ollama, LM Studio or a local address).",
+    "localOnlyHelp": "Conversations on this site may use only a model server on this computer (Ollama, LM Studio or a local address). Ollama cloud models (names ending in cloud) are refused: they run on ollama.com.",
     "localOnlyFrom": "Set under the site's earlier name \"{{site}}\". Turn it off here to clear it.",
     "saved": "Site settings saved"
   }

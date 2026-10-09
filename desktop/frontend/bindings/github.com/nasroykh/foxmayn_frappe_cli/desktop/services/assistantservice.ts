@@ -174,9 +174,10 @@ export function SaveProvider(p: $models.ProviderInfo): $CancellablePromise<$mode
 /**
  * SaveSiteSettings saves a site's instructions and its local-only switch. The
  * address is taken from the ffc config, never from the caller. Turning
- * local-only off also turns it off in settings saved under another name for
- * the same address (the site's name before a rename), which would otherwise
- * keep it on.
+ * local-only off also turns it off in settings saved under an earlier name
+ * of the site (same address, no longer in the ffc config), which would
+ * otherwise keep it on. Another configured site with the same address keeps
+ * its own setting.
  */
 export function SaveSiteSettings(s: $models.SiteSettings): $CancellablePromise<$models.SiteSettings> {
     return $Call.ByID(1529594082, s);

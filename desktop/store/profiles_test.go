@@ -69,6 +69,23 @@ func TestMigrateV1ToV2KeepsRows(t *testing.T) {
 	if p, _ := s.ListProviders(); len(p) != 1 {
 		t.Errorf("providers = %+v", p)
 	}
+	// usage is keyed by (run, turn, kind) now: another kind of row for the
+	// same turn does not replace the turn's row, and AddUsage still upserts.
+	if _, err := s.db.Exec(`INSERT INTO usage(run_id,turn,kind,input,output) VALUES('r1',1,'title',1,1)`); err != nil {
+		t.Fatalf("second kind for one turn: %v", err)
+	}
+	if err := s.AddUsage(Usage{RunID: "r1", Turn: 1, Input: 11, Output: 6, Cached: 3}); err != nil {
+		t.Fatal(err)
+	}
+	var turnIn, rowsN int
+	_ = s.db.QueryRow(`SELECT input FROM usage WHERE run_id='r1' AND turn=1 AND kind='turn'`).Scan(&turnIn)
+	_ = s.db.QueryRow(`SELECT count(*) FROM usage WHERE run_id='r1'`).Scan(&rowsN)
+	if turnIn != 11 || rowsN != 2 {
+		t.Errorf("usage after upsert: input %d, %d rows", turnIn, rowsN)
+	}
+	if _, err := s.db.Exec(`DELETE FROM usage WHERE kind='title'`); err != nil {
+		t.Fatal(err)
+	}
 	// The new columns have their defaults on the old rows.
 	var pinned, archived, ephemeral, cacheWrite int
 	var titleSource, costSource, priceDate, kind string
@@ -108,6 +125,68 @@ func TestMigrateV1ToV2KeepsRows(t *testing.T) {
 	if _, err := s.GetConversation("c1"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestMigrateFailureRollsBack makes the last statement of migration 2 fail:
+// nothing of it stays, the file is still at version 1 with its rows, and a
+// later Open with the real migration succeeds.
+func TestMigrateFailureRollsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.db")
+	db := openV1(t, path)
+	for _, q := range []string{
+		`INSERT INTO conversations(id,title,site,mode,provider_id,model,created,updated) VALUES('c1','old','acme','ask','p1','m',1,2)`,
+		`INSERT INTO runs(id,conv_id,status,started) VALUES('r1','c1','done',1)`,
+		`INSERT INTO usage(run_id,turn,input,output,cached) VALUES('r1',1,10,5,3)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = db.Close()
+
+	real := migrations[1]
+	migrations[1] = real + "\nCREATE TABLE settings (key TEXT);" // already exists
+	_, err := Open(path)
+	migrations[1] = real
+	if err == nil || !strings.Contains(err.Error(), "migrate store to v2") {
+		t.Fatalf("Open with a failing migration = %v", err)
+	}
+
+	db = openRaw(t, path)
+	var v, convs, usage, tables int
+	_ = db.QueryRow(`PRAGMA user_version`).Scan(&v)
+	_ = db.QueryRow(`SELECT count(*) FROM conversations WHERE id='c1' AND title='old'`).Scan(&convs)
+	_ = db.QueryRow(`SELECT count(*) FROM usage WHERE run_id='r1' AND input=10`).Scan(&usage)
+	_ = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name IN ('profiles','site_settings','usage_v2','attachments')`).Scan(&tables)
+	var cols int
+	_ = db.QueryRow(`SELECT count(*) FROM pragma_table_info('conversations') WHERE name='profile_id'`).Scan(&cols)
+	_ = db.Close()
+	if v != 1 || convs != 1 || usage != 1 || tables != 0 || cols != 0 {
+		t.Fatalf("after a failed migration: version %d, conversation %d, usage %d, new tables %d, new columns %d", v, convs, usage, tables, cols)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open after the failure: %v", err)
+	}
+	defer s.Close()
+	if u, _ := s.ListUsage("r1"); len(u) != 1 || u[0].Input != 10 {
+		t.Errorf("usage = %+v", u)
+	}
+}
+
+// openRaw opens a store file without migrating it.
+func openRaw(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	uri, err := dsn(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
 }
 
 func TestMigrateRefusesV3(t *testing.T) {
@@ -176,7 +255,7 @@ func TestProfilesCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetConversationSiteContext(c.ID, "ctx"); err != nil {
+	if err := s.SetConversationSiteContext(c.ID, "ctx", "k1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteProfile(p.ID, "explore"); err != nil {

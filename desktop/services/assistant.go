@@ -196,6 +196,7 @@ func (a *AssistantService) open() error {
 	}
 	eng := NewEngine(a.configPath)
 	r := newRunner(st, eng, a.providerFor, a.host.Emit)
+	r.check = a.checkRun
 	ctx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
 	a.st, a.engine, a.run = st, eng, r
@@ -365,15 +366,15 @@ func (a *AssistantService) NewConversation(site, mode, providerID, model string)
 	if err != nil {
 		return Conversation{}, err
 	}
-	if err := a.checkLocalOnly(st, site, sc.URL, p); err != nil {
-		return Conversation{}, err
-	}
 	model, err = checkModel("model", model)
 	if err != nil {
 		return Conversation{}, err
 	}
 	if model == "" {
 		model = defaultModelOf(p)
+	}
+	if err := a.checkLocalOnly(st, site, sc.URL, p, model); err != nil {
+		return Conversation{}, err
 	}
 	c, err := st.InsertConversation(store.Conversation{Site: site, Mode: mode, ProviderID: p.ID, Model: model, SiteURL: sc.URL})
 	if err != nil {
@@ -931,9 +932,9 @@ func (a *AssistantService) providerFor(conv store.Conversation) (llm.Provider, s
 	if err != nil {
 		return nil, "", &Error{Code: CodeNotFound, Message: "The provider of this conversation was removed. Set it up again or start a new conversation.", Field: "provider"}
 	}
-	// Checked on every run: the site may have been set to local models only
-	// (or renamed onto settings that are) since the conversation began.
-	if err := a.checkLocalOnly(st, conv.Site, conv.SiteURL, p); err != nil {
+	// The run checked the site and the local-only rule (checkRun) just
+	// before; checked here too, so no caller gets a client that skips it.
+	if err := a.checkLocalOnly(st, conv.Site, conv.SiteURL, p, conv.Model); err != nil {
 		return nil, "", err
 	}
 	key, err := a.keyFor(p)

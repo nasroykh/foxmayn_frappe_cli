@@ -139,8 +139,14 @@ func (s *Store) SetConversationProvider(id, providerID, model string) error {
 
 // SetConversationSiteContext stores the site context collected for a
 // conversation.
-func (s *Store) SetConversationSiteContext(id, text string) error {
-	return execOne("set site context", s.db, `UPDATE conversations SET site_context=? WHERE id=?`, text, id)
+func (s *Store) SetConversationSiteContext(id, text, key string) error {
+	return execOne("set site context", s.db, `UPDATE conversations SET site_context=?,site_context_key=? WHERE id=?`, text, key, id)
+}
+
+// SetConversationSiteURL stores the site address of a conversation that has
+// none (one created before the address was kept).
+func (s *Store) SetConversationSiteURL(id, url string) error {
+	return execOne("set site url", s.db, `UPDATE conversations SET site_url=? WHERE id=?`, url, id)
 }
 
 // SaveSiteSettings inserts or replaces the settings of a site.

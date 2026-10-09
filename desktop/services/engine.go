@@ -68,25 +68,45 @@ func (sp EngineSpec) canonical() EngineSpec {
 		slices.Sort(out)
 		return out
 	}
-	return EngineSpec{
-		Mode: sp.Mode,
-		Policy: config.MCPPolicy{
-			Confirm:       config.ConfirmAlways,
-			ReadOnly:      sp.Mode != EngineAsk,
-			AllowTools:    clean(sp.Policy.AllowTools),
-			AllowDoctypes: clean(sp.Policy.AllowDoctypes),
-			DenyDoctypes:  clean(sp.Policy.DenyDoctypes),
-			AllowMethods:  clean(sp.Policy.AllowMethods),
-			DenyMethods:   clean(sp.Policy.DenyMethods),
-		},
-		Toolsets: clean(sp.Toolsets),
-	}
+	// The whole policy is copied, so a field ffc adds later is carried, not
+	// dropped (TestEngineSpecCanonicalCarriesEveryField).
+	p := sp.Policy
+	p.Confirm = config.ConfirmAlways
+	p.ReadOnly = sp.Mode != EngineAsk
+	p.AllowTools = clean(p.AllowTools)
+	p.AllowDoctypes = clean(p.AllowDoctypes)
+	p.DenyDoctypes = clean(p.DenyDoctypes)
+	p.AllowMethods = clean(p.AllowMethods)
+	p.DenyMethods = clean(p.DenyMethods)
+	return EngineSpec{Mode: sp.Mode, Policy: p, Toolsets: clean(sp.Toolsets)}
 }
 
+// engineDefaultToolsets are the tool sets ffc serves for nil Toolsets
+// (defaultToolsets in internal/cmd/mcp_policy.go).
+var engineDefaultToolsets = []string{"core", "lifecycle"}
+
 // hash is the sha256 of the canonical policy and tool sets: two specs that
-// serve the same share a server.
+// serve the same share a server. For the hash only, nil tool sets count as
+// the defaults and DocType names as lower case (ffc compares them without
+// case), so equal specs written differently share a server.
 func (sp EngineSpec) hash() string {
 	c := sp.canonical()
+	if c.Toolsets == nil {
+		c.Toolsets = engineDefaultToolsets
+	}
+	lower := func(in []string) []string {
+		if in == nil {
+			return nil
+		}
+		out := make([]string, len(in))
+		for i, v := range in {
+			out[i] = strings.ToLower(v)
+		}
+		slices.Sort(out)
+		return slices.Compact(out)
+	}
+	c.Policy.AllowDoctypes = lower(c.Policy.AllowDoctypes)
+	c.Policy.DenyDoctypes = lower(c.Policy.DenyDoctypes)
 	b, _ := json.Marshal(struct {
 		Policy   config.MCPPolicy `json:"policy"`
 		Toolsets []string         `json:"toolsets"`
