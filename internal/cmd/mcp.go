@@ -79,7 +79,7 @@ func newMCPEnv(sites []string) (*mcpEnv, func(), error) {
 	env := &mcpEnv{
 		sites: sites,
 		site: func(_ context.Context, name string) (*config.SiteConfig, error) {
-			site, err := config.Load(name, configPath)
+			site, err := config.LoadSite(name, configPath)
 			if err != nil {
 				return nil, fmt.Errorf("config: %w", err)
 			}

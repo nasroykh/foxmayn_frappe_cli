@@ -205,6 +205,18 @@ func Read(path string) (*Config, error) {
 // siteFlag selects the site; if empty, DefaultSite is used.
 // configPath overrides the default config file location.
 func Load(siteFlag, configPath string) (*SiteConfig, error) {
+	return load(siteFlag, configPath, true)
+}
+
+// LoadSite is Load without setting the package-level display formats
+// (ActiveFormat, ActiveDateFormat) or warning about them. Callers that never
+// render tables, such as the MCP server, use it so that concurrent loads do not
+// race on those globals.
+func LoadSite(siteFlag, configPath string) (*SiteConfig, error) {
+	return load(siteFlag, configPath, false)
+}
+
+func load(siteFlag, configPath string, formats bool) (*SiteConfig, error) {
 	path := configPath
 	if path == "" {
 		p, err := DefaultConfigPath()
@@ -227,7 +239,9 @@ func Load(siteFlag, configPath string) (*SiteConfig, error) {
 		return nil, err
 	}
 
-	applyFormats(cfg)
+	if formats {
+		applyFormats(cfg)
+	}
 
 	siteName := siteFlag
 	if siteName == "" {
