@@ -36,6 +36,38 @@ type Request struct {
 	Messages  []Message
 	Tools     []Tool
 	MaxTokens int
+	// Images reads the bytes of the Image parts in Messages. It may be nil
+	// when the history has none; an adapter refuses a request with an Image
+	// part and no resolver.
+	Images ImageResolver
+}
+
+// ImageResolver returns the bytes of an attachment named by an Image part.
+// The loop provides it; the store keeps the bytes, the history only the id.
+type ImageResolver interface {
+	ImageData(ctx context.Context, attachmentID string) ([]byte, error)
+}
+
+// ImageBytes reads the bytes of img through r, for an adapter building a
+// request. It fails when r is nil, the media type is not one the providers
+// take, or the attachment is empty or cannot be read.
+func ImageBytes(ctx context.Context, r ImageResolver, img Image) ([]byte, error) {
+	switch img.MediaType {
+	case "image/png", "image/jpeg", "image/webp", "image/gif":
+	default:
+		return nil, fmt.Errorf("image %s: unsupported type %q", img.AttachmentID, img.MediaType)
+	}
+	if r == nil {
+		return nil, fmt.Errorf("image %s: no attachment store for this request", img.AttachmentID)
+	}
+	b, err := r.ImageData(ctx, img.AttachmentID)
+	if err != nil {
+		return nil, fmt.Errorf("image %s: %w", img.AttachmentID, err)
+	}
+	if len(b) == 0 {
+		return nil, fmt.Errorf("image %s: empty attachment", img.AttachmentID)
+	}
+	return b, nil
 }
 
 // Tool describes one callable tool; InputSchema is a JSON Schema object.
@@ -66,8 +98,16 @@ type Message struct {
 	Parts []Part
 }
 
-// Part is one of Text, ToolUse, ToolResult or Thinking.
+// Part is one of Text, ToolUse, ToolResult, Thinking or Image.
 type Part interface{ isPart() }
+
+// Image is a picture the user attached (user role). The bytes stay in the
+// store; Request.Images resolves AttachmentID when the request is built.
+// MediaType is image/png, image/jpeg, image/webp or image/gif.
+type Image struct {
+	AttachmentID string
+	MediaType    string
+}
 
 // Text is plain text.
 type Text struct{ Text string }
@@ -92,17 +132,38 @@ type ToolResult struct {
 // It is both a Part and an Event: the stream emits it when the block ends and
 // the loop stores it in the assistant message at that position. It is never
 // shown as assistant text.
+//
+// Provider names the adapter that produced the block (ProviderAnthropic,
+// ProviderOpenAI, ProviderGemini). The payload means something only to that
+// provider, so every adapter skips the Thinking of another one when it
+// replays the history; a conversation can then switch providers between
+// runs. An empty Provider is a block stored by 0.2.0, where only Anthropic
+// produced Thinking: the Anthropic adapter replays it, the others skip it.
+// What the fields hold per provider:
+//   - Anthropic: Text and Signature, or Redacted with Data.
+//   - OpenAI: Signature is the reasoning item id, Data its encrypted_content.
+//   - Gemini: Signature is a thought signature (standard base64 of the bytes)
+//     that belongs to the part right after it.
 type Thinking struct {
+	Provider  string
 	Text      string
 	Signature string
 	Redacted  bool
 	Data      string
 }
 
+// Thinking.Provider values.
+const (
+	ProviderAnthropic = "anthropic"
+	ProviderOpenAI    = "openai"
+	ProviderGemini    = "gemini"
+)
+
 func (Text) isPart()       {}
 func (ToolUse) isPart()    {}
 func (ToolResult) isPart() {}
 func (Thinking) isPart()   {}
+func (Image) isPart()      {}
 
 // Event is one of TextDelta, Thinking, ToolCall, Usage or Stop.
 type Event interface{ isEvent() }
@@ -122,12 +183,27 @@ type ToolCall struct {
 }
 
 // Usage reports token counts for the turn. In counts input tokens read fresh
-// (cache writes included); Cached counts those served from the prompt cache.
-// Cost is the price the provider reports for the turn in USD (OpenRouter's
-// usage.cost), nil when the provider does not say; Anthropic leaves it nil.
+// (cache writes included); Cached counts those served from the prompt cache,
+// so In + Cached is the whole prompt. CacheWrite is the part of In written to
+// the cache (priced apart by some providers), 0 when the provider does not
+// say. Out includes reasoning tokens. Cost is the price the provider reports
+// for the turn in USD (OpenRouter's usage.cost), nil when the provider does
+// not say; Anthropic leaves it nil.
 type Usage struct {
 	In, Out, Cached int
+	CacheWrite      int
 	Cost            *float64
+}
+
+// ForeignThinking reports whether an adapter for provider must skip t on
+// replay: t was produced by another provider. An empty t.Provider counts as
+// Anthropic (see Thinking).
+func ForeignThinking(t Thinking, provider string) bool {
+	p := t.Provider
+	if p == "" {
+		p = ProviderAnthropic
+	}
+	return p != provider
 }
 
 // Stop reasons. Other providers map their own to these where they can.

@@ -1,0 +1,8 @@
+data: {"id":"gen-2","object":"chat.completion.chunk","created":1,"model":"anthropic/claude-x","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}
+
+data: {"id":"gen-2","object":"chat.completion.chunk","created":1,"model":"anthropic/claude-x","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}]}
+
+data: {"id":"gen-2","object":"chat.completion.chunk","created":1,"model":"anthropic/claude-x","choices":[],"usage":{"prompt_tokens":5000,"completion_tokens":4,"total_tokens":5004,"cost":0.02,"prompt_tokens_details":{"cached_tokens":1000,"cache_write_tokens":3000}}}
+
+data: [DONE]
+
