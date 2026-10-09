@@ -98,4 +98,4 @@ Use the absolute path of ffc (`command -v ffc`, or `where ffc` on Windows).
 
 - [Running the server](running.md)
 - [Safety](safety.md)
-- [Desktop app: assistants](../desktop/using.md#assistants)
+- [Desktop app: assistants](../desktop/using.md#connect-apps)

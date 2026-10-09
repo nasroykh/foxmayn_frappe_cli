@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next"
 import { IconAlertTriangle, IconArrowUpCircle, IconCircleCheck, IconPlus, IconRobot, IconSettings, IconWorld } from "@tabler/icons-react"
 
 import { useApp, type Screen } from "@/app/app-context"
@@ -17,13 +18,15 @@ import {
   SidebarMenuSkeleton,
 } from "@/components/ui/sidebar"
 
-const nav: { id: Screen; label: string; icon: typeof IconWorld }[] = [
+const nav: { id: Screen; label?: string; labelKey?: string; icon: typeof IconWorld }[] = [
   { id: "sites", label: "Sites", icon: IconWorld },
-  { id: "assistants", label: "Assistants", icon: IconRobot },
+  // The screen id stays "assistants"; the label is "Connect apps" (a chat "Assistant" entry comes later).
+  { id: "assistants", labelKey: "nav.connectApps", icon: IconRobot },
   { id: "settings", label: "Settings", icon: IconSettings },
 ]
 
 export function AppSidebar() {
+  const { t } = useTranslation()
   const { screen, setScreen, sites, assistants, env, update, addSite, installFFC, ffcUpdate } = useApp()
   const siteCount = sites.data?.sites?.length ?? 0
   const connected = assistants.data?.assistants?.filter((a) => a.status === "connected").length ?? 0
@@ -62,7 +65,7 @@ export function AppSidebar() {
                     aria-current={screen === item.id ? "page" : undefined}
                   >
                     <item.icon />
-                    <span>{item.label}</span>
+                    <span>{item.labelKey ? t(item.labelKey) : item.label}</span>
                   </SidebarMenuButton>
                   {item.id === "sites" && siteCount > 0 && <SidebarMenuBadge>{siteCount}</SidebarMenuBadge>}
                   {item.id === "assistants" && connected > 0 && <SidebarMenuBadge>{connected}</SidebarMenuBadge>}

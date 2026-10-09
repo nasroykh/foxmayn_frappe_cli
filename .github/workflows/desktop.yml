@@ -59,6 +59,10 @@ jobs:
         working-directory: desktop/frontend
         run: npm run build
 
+      - name: Test frontend
+        working-directory: desktop/frontend
+        run: npm test
+
       # macOS only: the Windows checkout has CRLF go.sum (autocrlf), which
       # tidy -diff reports as a change on every line.
       - name: go.mod is tidy
