@@ -1,0 +1,4 @@
+data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"Partial"},"finish_reason":null}]}
+
+data: {"error":{"message":"upstream failed for sk-or-TESTKEY-0123456789","code":529,"type":"overloaded"}}
+

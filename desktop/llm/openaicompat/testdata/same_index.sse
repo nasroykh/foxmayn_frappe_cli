@@ -1,0 +1,12 @@
+data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"gemini","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_one","type":"function","function":{"name":"get_doc","arguments":"{\"doctype\":"}}]},"finish_reason":null}]}
+
+data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"gemini","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"ToDo\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"gemini","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_two","type":"function","function":{"name":"count_docs","arguments":"{\"doctype\":\"User\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"gemini","choices":[{"index":1,"delta":{"content":"second choice ignored"},"finish_reason":"stop"}]}
+
+data: {"id":"c","object":"chat.completion.chunk","created":1,"model":"gemini","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+

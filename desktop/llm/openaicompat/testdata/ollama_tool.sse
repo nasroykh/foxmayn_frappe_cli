@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"llama3.2","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"id":"call_zx1","index":0,"type":"function","function":{"name":"get_doc","arguments":"{\"doctype\":\"Sales Invoice\",\"name\":\"SINV-0001\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"llama3.2","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop"}]}
+
+data: [DONE]
+

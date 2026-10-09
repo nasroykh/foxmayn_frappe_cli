@@ -1,0 +1,18 @@
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"openai/gpt-x","provider":"Acme","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"openai/gpt-x","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":"thinking about it"},"finish_reason":null}]}
+
+data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"openai/gpt-x","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+
+data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"openai/gpt-x","choices":[{"index":0,"delta":{"content":", world"},"finish_reason":null}]}
+
+data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"openai/gpt-x","choices":[{"index":0,"delta":{"content":""},"finish_reason":"stop"}]}
+
+data: {"id":"gen-1","object":"chat.completion.chunk","created":1,"model":"openai/gpt-x","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":7,"total_tokens":107,"cost":0.00123,"prompt_tokens_details":{"cached_tokens":60},"completion_tokens_details":{"reasoning_tokens":3}}}
+
+data: [DONE]
+
