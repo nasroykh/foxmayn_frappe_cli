@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
 	"strconv"
@@ -204,13 +206,16 @@ Without --warehouse: one row per warehouse that holds any quantity or has
 any reservation, order or plan for the item (the stock dashboard's
 item_dashboard.get_data), ordered by warehouse: actual, reserved, projected
 quantity, valuation rate. ffc reads its pages of 21 rows for you, up to 504
-rows (a warning says when it stopped). --date and --valuation need
+rows (a warning says when it stopped with more to read). --date and --valuation need
 --warehouse; the rows show the current state and carry the valuation rate.
 On ERPNext 15 this call does not check Bin read permission (it lists with
 get_all, limited only by Warehouse user permissions); ERPNext 16 returns
 nothing without it. Names in the rows are shown as they are, not as HTML.
 
-Quantities keep the number Frappe sends (2.0 stays 2.0).
+Quantities keep the number Frappe sends (2.0 stays 2.0). ERPNext answers 0
+(or no rows) for an item or warehouse that does not exist, so ffc reads the
+Item, and the Warehouse when given, first: a typo is a not-found error (exit
+4), not a zero.
 
 Examples:
   ffc erp stock ITEM-001
@@ -240,6 +245,9 @@ Examples:
 				if err != nil {
 					return nil, err
 				}
+				if err := stockTargetsExist(ctx, c, item, warehouse); err != nil {
+					return nil, err
+				}
 				return c.StockBalance(ctx, m, item, warehouse, date, esValuation)
 			})
 			if err != nil {
@@ -256,6 +264,9 @@ Examples:
 			if err != nil {
 				return result{}, err
 			}
+			if err := stockTargetsExist(ctx, c, item, ""); err != nil {
+				return result{}, err
+			}
 			rows, truncated, err := c.StockByWarehouse(ctx, m, item)
 			return result{rows, truncated}, err
 		})
@@ -267,6 +278,26 @@ Examples:
 		}
 		return printStockRows(res.rows, esKeys)
 	},
+}
+
+// stockTargetsExist reads the Item, and the Warehouse when one is given, so a
+// typo is a 404 (exit 4): get_stock_balance answers 0 and the item dashboard
+// an empty list for a name that does not exist (utils.py:98-143). A user who
+// may not read Warehouses (403) is not blocked: the balance call does not
+// need that right, so the warehouse is left unchecked.
+func stockTargetsExist(ctx context.Context, c *client.FrappeClient, item, warehouse string) error {
+	if _, err := c.GetDoc(ctx, "Item", item); err != nil {
+		return err
+	}
+	if warehouse == "" {
+		return nil
+	}
+	_, err := c.GetDoc(ctx, "Warehouse", warehouse)
+	var api *client.APIError
+	if errors.As(err, &api) && api.Status == http.StatusForbidden {
+		return nil
+	}
+	return err
 }
 
 // stockColumns are the table columns of the per-warehouse view.

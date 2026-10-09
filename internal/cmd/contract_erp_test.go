@@ -418,8 +418,11 @@ func contractERPPayment(t *testing.T, c *client.FrappeClient, sc *config.SiteCon
 // without a warehouse (get_stock_balance, the item dashboard) and party
 // (get_party_details). It makes a stock Item with a price on the Standard
 // Selling list and receives 5 of it into the Company's Stores warehouse with
-// a Material Receipt, then removes what it made (LIFO: the receipt is
-// cancelled and deleted before the Item).
+// a Material Receipt. Cleanup is best effort: the receipt is cancelled and
+// deleted, then the Item price and the Item. A cancelled receipt leaves Stock
+// Ledger Entries (is_cancelled) that still link the Item, so deleting the
+// Item can fail; the Item is then disabled and the leftover logged. Every
+// name is unique, so a leftover never meets a later run.
 func contractERPLookups(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
 	docs := contractERPOrder(t, c, sc)
 	company, customer := docs.company, docs.customer
@@ -440,9 +443,24 @@ func contractERPLookups(t *testing.T, c *client.FrappeClient, sc *config.SiteCon
 	}
 
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
-	stock := docs.create("Item", map[string]interface{}{
+	// Registered first, so it runs last (LIFO): after the Item Price and the receipt.
+	stockDoc, err := c.CreateDoc(contractCtx(t), "Item", map[string]interface{}{
 		"item_code": "FFC-ERP-STK-" + id, "item_name": "FFC ERP stock " + id, "item_group": contractERPFirst(t, c, "Item Group"),
 		"stock_uom": "Nos", "is_stock_item": 1,
+	})
+	if err != nil {
+		t.Fatalf("create Item: %v", err)
+	}
+	stock := fmt.Sprint(stockDoc["name"])
+	t.Cleanup(func() {
+		ctx := contractCtx(t)
+		if err := c.DeleteDoc(ctx, "Item", stock); err != nil {
+			if _, derr := c.UpdateDoc(ctx, "Item", stock, map[string]interface{}{"disabled": 1}); derr != nil {
+				t.Logf("Item %s left behind: delete: %v; disable: %v", stock, err, derr)
+				return
+			}
+			t.Logf("Item %s disabled, not deleted: %v", stock, err)
+		}
 	})
 	docs.create("Item Price", map[string]interface{}{"item_code": stock, "price_list": "Standard Selling", "price_list_rate": 100, "selling": 1})
 
@@ -494,9 +512,20 @@ func contractERPLookups(t *testing.T, c *client.FrappeClient, sc *config.SiteCon
 		if cc, _ := docName(co["cost_center"]); cc != "" {
 			item["cost_center"] = cc
 		}
-		entry := docs.create("Stock Entry", map[string]interface{}{
+		entryDoc, err := c.CreateDoc(contractCtx(t), "Stock Entry", map[string]interface{}{
 			"stock_entry_type": "Material Receipt", "purpose": "Material Receipt", "company": company,
 			"posting_date": today, "to_warehouse": warehouse, "items": []interface{}{item},
+		})
+		if err != nil {
+			t.Fatalf("create Stock Entry: %v", err)
+		}
+		entry := fmt.Sprint(entryDoc["name"])
+		t.Cleanup(func() {
+			ctx := contractCtx(t)
+			_, _ = c.CancelDoc(ctx, "Stock Entry", entry)
+			if err := c.DeleteDoc(ctx, "Stock Entry", entry); err != nil {
+				t.Logf("Stock Entry %s left behind (cancelled if the cancel worked): %v", entry, err)
+			}
 		})
 		if _, err := c.SubmitDoc(contractCtx(t), "Stock Entry", entry); err != nil {
 			t.Fatalf("submit %s: %v", entry, err)

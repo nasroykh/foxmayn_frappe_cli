@@ -26,6 +26,8 @@ const (
 func erpLSite(t *testing.T, erpnext string, warehouses int) *frappetest.Site {
 	t.Helper()
 	s := erpTSite(t, erpnext)
+	s.Add("Item", map[string]interface{}{"name": "ITEM-1"})
+	s.Add("Warehouse", map[string]interface{}{"name": "Stores - A"}, map[string]interface{}{"name": "W"})
 	s.HandleMethod(erpTItemMethod, func(_ *http.Request, args map[string]interface{}) (interface{}, error) {
 		d := erpLDict(args)
 		if d["item_code"] != "ITEM-1" {
@@ -37,17 +39,26 @@ func erpLSite(t *testing.T, erpnext string, warehouses int) *frappetest.Site {
 		}, nil
 	})
 	s.HandleMethod(erpTStockMethod, func(_ *http.Request, args map[string]interface{}) (interface{}, error) {
-		if args["item_code"] != "ITEM-1" {
-			return nil, frappetest.NotFound(fmt.Sprintf("Item %v not found", args["item_code"]))
-		}
-		if v, _ := args["with_valuation_rate"].(string); v == "true" {
+		// Like ERPNext: an item or warehouse that does not exist is a balance of 0,
+		// not an error (utils.py:98-143).
+		known := args["item_code"] == "ITEM-1" && (args["warehouse"] == "Stores - A" || args["warehouse"] == "W")
+		valuation, _ := args["with_valuation_rate"].(string)
+		switch {
+		case valuation == "true" && !known:
+			return []interface{}{json.Number("0.0"), json.Number("0.0")}, nil
+		case valuation == "true":
 			return []interface{}{json.Number("5.0"), json.Number("12.5")}, nil
+		case !known:
+			return json.Number("0.0"), nil
 		}
 		return json.Number("5.0"), nil
 	})
 	s.HandleMethod(erpTDashboardMethod, func(_ *http.Request, args map[string]interface{}) (interface{}, error) {
 		start, _ := strconv.Atoi(fmt.Sprint(args["start"]))
 		rows := []interface{}{}
+		if args["item_code"] != "ITEM-1" { // an unknown item has no Bins: [], not an error
+			return rows, nil
+		}
 		for i := start; i < warehouses && len(rows) < 21; i++ {
 			name := fmt.Sprintf("Wh %03d", i+1)
 			if i == 0 {
@@ -277,16 +288,62 @@ func TestERPStockByWarehouseEdges(t *testing.T) {
 	if n := len(erpLRequests(s, erpTDashboardMethod)); n != 2 {
 		t.Errorf("%d dashboard requests, want 2", n)
 	}
-	// The cap: 24 pages, then a warning.
+	// Exactly the cap: a 25th (empty) page shows nothing more, so no warning.
+	s = erpLSite(t, erpTV16, 504)
+	r = cmdTOK(t, cmdTRun(t, s, "--json", "erp", "stock", "ITEM-1"))
+	if rows := cmdTRows(t, r); len(rows) != 504 || strings.Contains(r.Stderr, "warning") {
+		t.Errorf("%d rows, stderr = %q", len(rows), r.Stderr)
+	}
+	if n := len(erpLRequests(s, erpTDashboardMethod)); n != 25 {
+		t.Errorf("%d dashboard requests, want 25", n)
+	}
+	// Past the cap: 504 rows, then a warning.
 	s = erpLSite(t, erpTV16, 600)
 	r = cmdTOK(t, cmdTRun(t, s, "--json", "erp", "stock", "ITEM-1"))
 	if rows := cmdTRows(t, r); len(rows) != 504 {
 		t.Errorf("%d rows, want 504", len(rows))
 	}
-	if n := len(erpLRequests(s, erpTDashboardMethod)); n != 24 {
-		t.Errorf("%d dashboard requests, want 24", n)
+	if n := len(erpLRequests(s, erpTDashboardMethod)); n != 25 {
+		t.Errorf("%d dashboard requests, want 25", n)
 	}
 	cmdTHas(t, r.Stderr, "warning: stopped after 504 warehouses", "--warehouse")
+}
+
+// ERPNext answers 0 and [] for names that do not exist: ffc reads the Item
+// (and the Warehouse) first, so a typo is not-found (exit 4) and no balance
+// is asked for.
+func TestERPStockUnknownItemOrWarehouse(t *testing.T) {
+	for _, version := range []string{erpTV15, erpTV16} {
+		for _, args := range [][]string{
+			{"erp", "stock", "NOPE", "--warehouse", "Stores - A"},
+			{"erp", "stock", "ITEM-1", "--warehouse", "NOPE"},
+			{"erp", "stock", "NOPE"},
+		} {
+			s := erpLSite(t, version, 3)
+			lcTCode(t, cmdTRun(t, s, args...), exitNotFound)
+			if n := len(erpLRequests(s, erpTStockMethod)) + len(erpLRequests(s, erpTDashboardMethod)); n != 0 {
+				t.Errorf("%s %v: %d stock requests", version, args, n)
+			}
+		}
+	}
+}
+
+// A user who may not read Warehouses is not blocked: the balance call does
+// not need that right.
+func TestERPStockWarehouseForbidden(t *testing.T) {
+	s := erpLSite(t, erpTV16, 0)
+	denied := 0
+	s.Handle("GET /api/resource/Warehouse/Stores - A", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		denied++
+		http.Error(w, `{"exc_type":"PermissionError"}`, http.StatusForbidden)
+	}))
+	r := cmdTOK(t, cmdTRun(t, s, "--json", "erp", "stock", "ITEM-1", "--warehouse", "Stores - A"))
+	if denied == 0 {
+		t.Error("the Warehouse read was not refused")
+	}
+	if !strings.Contains(r.Stdout, `"actual_qty": 5.0`) {
+		t.Errorf("output = %s", r.Stdout)
+	}
 }
 
 func TestERPStockByWarehouseKeysAndTable(t *testing.T) {

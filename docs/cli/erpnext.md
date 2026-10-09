@@ -119,7 +119,7 @@ What ERPNext fills into a document row when an item is picked: the rate (`price_
 
 The method is `erpnext.stock.get_item_details.get_item_details` on both majors, but its first parameter has a different name: `args` on ERPNext 15, `ctx` on 16 (there is no alias). ffc sends the dict under the right one. A plain call sends `company`, `doctype`, `item_code`, `qty` and both conversion rates as 1; everything else only when you give it.
 
-**Currency.** The conversion rates are sent as 1, because for any other rate ERPNext would look the exchange rate up through its exchange rate service (an outbound request) or refuse the call. A price list in another currency than the Company's is therefore not converted. For that, call the method yourself with [`ffc call-method`](server-calls.md).
+**Currency.** ffc sends no currency and both conversion rates as 1 (ERPNext refuses a missing conversion rate with "Exchange Rate is mandatory"; with a rate of 1 and no currency it keeps 1 and makes no exchange-rate lookup). A price from a price list in another currency than the Company's is therefore not converted. For that, call the method yourself with [`ffc call-method`](server-calls.md).
 
 ### Stock: `erp stock ITEM`
 
@@ -134,9 +134,9 @@ One command, two ERPNext methods.
 
 **With `--warehouse`** it calls `erpnext.stock.utils.get_stock_balance` and prints one object: `item_code`, `warehouse`, `actual_qty`, plus `valuation_rate` with `--valuation` and `posting_date` with `--date`. A date means the end of that day (ffc sends the time 23:59:59), so everything posted on it counts. ERPNext checks only read access on Item for this call, not on the warehouse.
 
-**Without `--warehouse`** it lists the item's stock per warehouse with `erpnext.stock.dashboard.item_dashboard.get_data`, the method behind the stock dashboard: one row per Bin that has any quantity or any reservation, order or plan for the item, ordered by warehouse, with `warehouse`, `actual_qty`, `reserved_qty`, `reserved_stock`, `projected_qty`, `valuation_rate` and `stock_uom`. The method answers 21 rows per call; ffc reads the pages for you, up to 24 pages (504 warehouses), and warns on stderr when it stopped there, in which case ask for the warehouse you want with `--warehouse`. The rows show the current state, so `--date` and `--valuation` need `--warehouse` (the rows carry `valuation_rate` anyway). ERPNext escapes the names in these rows as HTML (`R&D` arrives as `R&amp;D`); ffc undoes that, so a name can be passed back to `--warehouse`.
+**Without `--warehouse`** it lists the item's stock per warehouse with `erpnext.stock.dashboard.item_dashboard.get_data`, the method behind the stock dashboard: one row per Bin that has any quantity or any reservation, order or plan for the item, ordered by warehouse, with `warehouse`, `actual_qty`, `reserved_qty`, `reserved_stock`, `projected_qty`, `valuation_rate` and `stock_uom`. The method answers 21 rows per call; ffc reads the pages for you, up to 24 pages (504 warehouses), and warns on stderr when it stopped with more rows left (no warning when there are exactly 504), in which case ask for the warehouse you want with `--warehouse`. The rows show the current state, so `--date` and `--valuation` need `--warehouse` (the rows carry `valuation_rate` anyway). ERPNext escapes the names in these rows as HTML (`R&D` arrives as `R&amp;D`); ffc undoes that, so a name can be passed back to `--warehouse`.
 
-**Permissions differ by version.** ERPNext 16's dashboard answers an empty list unless you may read Bin. ERPNext 15's does not check Bin read permission at all: it lists with `get_all`, limited only by Warehouse user permissions. So on 15 a user who cannot open Bin in the desk can still see these quantities, and the result is not proof that they could.
+**Permissions differ by version.** ERPNext 16's dashboard answers an empty list unless you may read Bin. ERPNext 15's does not check Bin read permission at all: it lists with `get_all`, limited only by Warehouse user permissions. So on 15 a user who cannot open Bin in the desk can still see these quantities, and the result is not proof that they could. When the user has Warehouse user permissions, both versions restrict the rows to `frappe.get_list("Warehouse")`, which returns at most 20 warehouses (its default page length, upstream behaviour): on such a user the list can miss warehouses even though they are allowed.
 
 ### Party: `erp party`
 
@@ -155,7 +155,7 @@ The parameters are the same on ERPNext 15 and 16. Version 16 also accepts an `ig
 
 ### Errors
 
-An unknown item or party is a 404 (exit 4). Missing `--company` for `erp item`, `--customer` together with `--supplier`, a `--doctype` that does not fit, a bad `--date` or `--qty`, and `--date` or `--valuation` without `--warehouse` are usage errors (exit 2) answered before any request.
+An unknown party, and an unknown item for `erp item`, are a 404 from ERPNext (exit 4). `get_stock_balance` and the stock dashboard do not fail for a name that does not exist: they answer 0 and an empty list. So `erp stock` first reads the Item, and the Warehouse when `--warehouse` is given, and a typo is a 404 (exit 4) instead of a quiet zero; a user who may not read Warehouses (403) skips that second check. Missing `--company` for `erp item`, `--customer` together with `--supplier`, a `--doctype` that does not fit, a bad `--date` or `--qty`, and `--date` or `--valuation` without `--warehouse` are usage errors (exit 2) answered before any request.
 
 ## See also
 

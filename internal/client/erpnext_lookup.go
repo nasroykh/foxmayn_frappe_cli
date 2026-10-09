@@ -66,10 +66,12 @@ type ItemOptions struct {
 }
 
 // dict builds the dict get_item_details takes as its first parameter. Both
-// conversion rates are 1: with a currency missing, ERPNext asks the exchange
-// rate service (an outbound request) for any other rate, and throws
-// "Exchange Rate is mandatory" for none. Prices in another currency than the
-// company's are therefore not converted. `rate` is never sent: with a price
+// conversion rates are 1: ffc sends no currency, and ERPNext throws
+// "Exchange Rate is mandatory" for a missing conversion_rate. With a rate of 1
+// and no currency, get_exchange_rate(None, ...) returns None at once and the
+// code keeps 1 (get_item_details.py:1340-1343 on v15), so no exchange-rate
+// lookup happens. A price from a price list in another currency than the
+// company's is therefore not converted. `rate` is never sent: with a price
 // list and a rate, ERPNext may insert an Item Price.
 func (o ItemOptions) dict() map[string]interface{} {
 	qty := json.Number("1")
@@ -103,7 +105,9 @@ func (c *FrappeClient) ItemDetails(ctx context.Context, m LookupMethods, o ItemO
 // YYYY-MM-DD ("" = now); a date means the end of that day, so the balance
 // includes every entry posted on it. It answers actual_qty and, with
 // valuation, valuation_rate; both keep the literal Frappe sent (0.0). Only
-// Item read permission is checked by ERPNext, not the warehouse.
+// Item read permission is checked by ERPNext, not the warehouse, and an
+// unknown item or warehouse answers 0.0 (utils.py:98-143): the caller checks
+// both exist first.
 func (c *FrappeClient) StockBalance(ctx context.Context, m LookupMethods, item, warehouse, date string, valuation bool) (map[string]interface{}, error) {
 	args := map[string]interface{}{"item_code": item, "warehouse": warehouse}
 	if date != "" {
@@ -158,13 +162,14 @@ var stockTextFields = []string{"item_code", "item_name", "stock_uom", "warehouse
 // StockByWarehouse lists an item's stock per warehouse with the item
 // dashboard's get_data: one row per Bin that has any quantity, read in
 // pages of StockPageSize (start) and ordered by warehouse so the pages do
-// not overlap. truncated is true when it stopped at StockMaxPages with a
-// full last page. v15 does not check Bin read permission (it lists with
-// get_all, bounded only by Warehouse user permissions); v16 answers an
-// empty list without it.
+// not overlap. It reads at most StockMaxPages pages; truncated is true only
+// when one more page shows that further rows exist. v15 does not check Bin
+// read permission (it lists with get_all, bounded only by Warehouse user
+// permissions); v16 answers an empty list without it. The method answers an
+// empty list for an unknown item, so the caller checks the Item first.
 func (c *FrappeClient) StockByWarehouse(ctx context.Context, m LookupMethods, item string) (rows []map[string]interface{}, truncated bool, err error) {
 	rows = []map[string]interface{}{} // an empty answer is [], not null
-	for page := 0; page < StockMaxPages; page++ {
+	for page := 0; page <= StockMaxPages; page++ {
 		res, err := c.CallMethod(ctx, m.Dashboard, map[string]interface{}{
 			"item_code": item, "start": page * StockPageSize, "sort_by": "warehouse", "sort_order": "asc",
 		}, true)
@@ -174,6 +179,10 @@ func (c *FrappeClient) StockByWarehouse(ctx context.Context, m LookupMethods, it
 		list, ok := res.([]interface{})
 		if !ok {
 			return nil, false, fmt.Errorf("unexpected response from %s: expected a list, got %T", m.Dashboard, res)
+		}
+		if page == StockMaxPages {
+			// The probe page past the cap: a row on it means there are more.
+			return rows, len(list) > 0, nil
 		}
 		for _, r := range list {
 			row, ok := r.(map[string]interface{})
@@ -191,7 +200,7 @@ func (c *FrappeClient) StockByWarehouse(ctx context.Context, m LookupMethods, it
 			return rows, false, nil
 		}
 	}
-	return rows, true, nil
+	return rows, false, nil
 }
 
 // PartyOptions are the arguments of a party lookup; empty fields are not
