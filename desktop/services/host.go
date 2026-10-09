@@ -8,6 +8,8 @@
 package services
 
 import (
+	"sync"
+
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -80,13 +82,33 @@ func WindowBackground(dark bool) application.RGBA {
 // application.New, before the app runs.
 type WailsHost struct {
 	App *application.App
+
+	mu   sync.Mutex
+	subs map[string][]func(any)
 }
 
-// Emit sends an event to the frontend.
+// Emit sends an event to the frontend, then tells the Go subscribers.
 func (h *WailsHost) Emit(name string, data any) {
 	if h.App != nil {
 		h.App.Event.Emit(name, data)
 	}
+	h.mu.Lock()
+	subs := append([]func(any){}, h.subs[name]...)
+	h.mu.Unlock()
+	for _, fn := range subs {
+		fn(data)
+	}
+}
+
+// Subscribe runs fn for every later Emit of the named event, so a service can
+// react to another's events (the assistant to config:changed).
+func (h *WailsHost) Subscribe(name string, fn func(any)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.subs == nil {
+		h.subs = map[string][]func(any){}
+	}
+	h.subs[name] = append(h.subs[name], fn)
 }
 
 // OpenURL opens url in the default browser.

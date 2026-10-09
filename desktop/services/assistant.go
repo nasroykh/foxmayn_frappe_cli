@@ -1,0 +1,831 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/anthropic"
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/openaicompat"
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/store"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/wailsapp/wails/v3/pkg/application"
+)
+
+func init() {
+	application.RegisterEvent[ChatDelta](EventChatDelta)
+	application.RegisterEvent[ChatTool](EventChatTool)
+	application.RegisterEvent[ChatApproval](EventChatApproval)
+	application.RegisterEvent[ChatApprovalClosed](EventChatApprovalClosed)
+	application.RegisterEvent[ChatUsage](EventChatUsage)
+	application.RegisterEvent[ChatDone](EventChatDone)
+	application.RegisterEvent[ChatError](EventChatError)
+}
+
+// Conversation modes: what the assistant may do to the site.
+const (
+	ModeRead = "read" // read tools only (the default)
+	ModeAsk  = "ask"  // writes too, each after the user's approval
+)
+
+// Provider kinds.
+const (
+	KindAnthropic  = "anthropic"
+	KindOpenRouter = "openrouter"
+	KindOllama     = "ollama"
+	KindLMStudio   = "lmstudio"
+	KindCustom     = "custom"
+)
+
+const (
+	// maxSendChars bounds one message.
+	maxSendChars = 20000
+	// titleChars is how much of the first message names a conversation.
+	titleChars = 60
+	// providerCallTimeout bounds listing models and checking a key.
+	providerCallTimeout = 20 * time.Second
+	// maxLabelChars bounds a provider's label.
+	maxLabelChars = 80
+)
+
+// ProviderInfo is a provider as the UI sees it. It never carries the key.
+type ProviderInfo struct {
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
+	// BaseURL is empty for Anthropic's own API.
+	BaseURL      string `json:"baseURL"`
+	DefaultModel string `json:"defaultModel"`
+	KeySet       bool   `json:"keySet"`
+	// KeyLast4 is the last four characters of a long enough key.
+	KeyLast4 string `json:"keyLast4,omitempty"`
+}
+
+// Model is one model a provider offers.
+type Model struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	// Default marks the model the app picks first.
+	Default bool `json:"default"`
+}
+
+// Conversation is a chat thread bound to a site, a write mode, a provider and
+// a model.
+type Conversation struct {
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	Site       string    `json:"site"`
+	Mode       string    `json:"mode"`
+	ProviderID string    `json:"providerID"`
+	Model      string    `json:"model"`
+	Created    time.Time `json:"created"`
+	Updated    time.Time `json:"updated"`
+}
+
+// ChatToolCall is a tool call of an assistant message, as the chat shows it.
+type ChatToolCall struct {
+	// ID is the callID of chat:tool events.
+	ID   string `json:"id"`
+	Tool string `json:"tool"`
+	Site string `json:"site"`
+	// Status is "running", "ok", "error" or "stopped".
+	Status string `json:"status"`
+	// Approval is "", "approved", "declined", "cancelled", "ffc-approved" or
+	// "ffc-declined".
+	Approval string `json:"approval"`
+	Summary  string `json:"summary"`
+}
+
+// ChatMessage is one visible message. Tool results and the model's thinking
+// are not shown.
+type ChatMessage struct {
+	ID string `json:"id"`
+	// Role is "user" or "assistant".
+	Role    string         `json:"role"`
+	Text    string         `json:"text"`
+	Tools   []ChatToolCall `json:"tools"`
+	Created time.Time      `json:"created"`
+}
+
+// ConversationDetail is a conversation with its messages.
+type ConversationDetail struct {
+	Conversation Conversation  `json:"conversation"`
+	Messages     []ChatMessage `json:"messages"`
+	// ActiveRunID is the run answering now, if any.
+	ActiveRunID string `json:"activeRunID"`
+	// PausedRunID is the run waiting for Continue, if any.
+	PausedRunID string `json:"pausedRunID"`
+}
+
+// providerMaker builds the client of a provider row. A seam for tests.
+type providerMaker func(p store.Provider, key string) (llm.Provider, error)
+
+// AssistantService is the chat assistant: conversations, runs, approvals and
+// providers. Provider keys stay in Go: they go to the OS keychain and to the
+// provider's API, never to the web view, events, the store or error text.
+type AssistantService struct {
+	host       Host
+	configPath string
+	storePath  string // "" means store.DefaultPath
+	keys       *Keys
+	mk         providerMaker
+	detect     func(context.Context) []openaicompat.Preset
+
+	mu       sync.Mutex
+	st       *store.Store
+	engine   *Engine
+	run      *runner
+	startErr error
+}
+
+// NewAssistantService returns the service over the ffc config file at
+// configPath.
+func NewAssistantService(host Host, configPath string) *AssistantService {
+	return &AssistantService{
+		host:       host,
+		configPath: configPath,
+		keys:       NewKeys(),
+		mk:         makeProvider,
+		detect:     openaicompat.DetectLocal,
+	}
+}
+
+// ServiceStartup opens the store and starts the engine and the runner. A
+// failure does not stop the app: the assistant's methods report it.
+func (a *AssistantService) ServiceStartup(_ context.Context, _ application.ServiceOptions) error {
+	if err := a.open(); err != nil {
+		log.Printf("assistant: %v", err)
+		a.mu.Lock()
+		a.startErr = err
+		a.mu.Unlock()
+	}
+	return nil
+}
+
+func (a *AssistantService) open() error {
+	path := a.storePath
+	if path == "" {
+		p, err := store.DefaultPath()
+		if err != nil {
+			return fmt.Errorf("finding the assistant data folder: %w", err)
+		}
+		path = p
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		return fmt.Errorf("opening the assistant store: %w", err)
+	}
+	eng := NewEngine(a.configPath)
+	r := newRunner(st, eng, a.providerFor, a.host.Emit)
+	a.mu.Lock()
+	a.st, a.engine, a.run = st, eng, r
+	a.mu.Unlock()
+	// A changed config (a site added, removed or re-signed-in) makes new runs
+	// build their servers again.
+	if s, ok := a.host.(interface {
+		Subscribe(string, func(any))
+	}); ok {
+		s.Subscribe(EventConfigChanged, func(any) { eng.Invalidate() })
+	}
+	return nil
+}
+
+// ServiceShutdown stops the runs, the engine and the store.
+func (a *AssistantService) ServiceShutdown() error {
+	a.mu.Lock()
+	r, eng, st := a.run, a.engine, a.st
+	a.run, a.engine, a.st = nil, nil, nil
+	a.mu.Unlock()
+	if r != nil {
+		r.shutdown()
+	}
+	if eng != nil {
+		eng.Close()
+	}
+	if st != nil {
+		return st.Close()
+	}
+	return nil
+}
+
+// ready returns the runner and the store, or why the assistant is not there.
+func (a *AssistantService) ready() (*runner, *store.Store, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.run == nil || a.st == nil {
+		e := &Error{Code: CodeUnavailable, Message: "The assistant is not available."}
+		if a.startErr != nil {
+			e.Detail = a.startErr.Error()
+		}
+		return nil, nil, e
+	}
+	return a.run, a.st, nil
+}
+
+// Send adds the user's message to a conversation and starts a run. It returns
+// the run's id at once; the answer arrives as chat:* events.
+func (a *AssistantService) Send(convID, text string) (string, error) {
+	r, st, err := a.ready()
+	if err != nil {
+		return "", err
+	}
+	if len([]rune(text)) > maxSendChars {
+		return "", invalid("text", "That message is too long.")
+	}
+	conv, err := st.GetConversation(convID)
+	if err != nil {
+		return "", wrapStoreErr(err)
+	}
+	runID, err := r.start(convID, text)
+	if err != nil {
+		return "", err
+	}
+	if conv.Title == "" {
+		_ = st.RenameConversation(convID, clip(firstLine(text), titleChars))
+	}
+	return runID, nil
+}
+
+// Cancel stops a run. A card that is open counts as declined.
+func (a *AssistantService) Cancel(runID string) {
+	if r, _, err := a.ready(); err == nil {
+		r.cancelRun(runID)
+	}
+}
+
+// Answer settles an approval card of a conversation.
+func (a *AssistantService) Answer(convID, approvalID string, approve bool) error {
+	r, _, err := a.ready()
+	if err != nil {
+		return err
+	}
+	return r.answer(convID, approvalID, approve)
+}
+
+// Continue resumes a paused run with a fresh step budget.
+func (a *AssistantService) Continue(runID string) error {
+	r, _, err := a.ready()
+	if err != nil {
+		return err
+	}
+	return r.continueRun(runID)
+}
+
+// PendingApprovals lists the open cards of a conversation, so the UI can show
+// them again after a reload.
+func (a *AssistantService) PendingApprovals(convID string) []ChatApproval {
+	r, _, err := a.ready()
+	if err != nil {
+		return []ChatApproval{}
+	}
+	out := r.pendingApprovals(convID)
+	if out == nil {
+		out = []ChatApproval{}
+	}
+	return out
+}
+
+func toConversation(c store.Conversation) Conversation {
+	return Conversation{ID: c.ID, Title: c.Title, Site: c.Site, Mode: c.Mode, ProviderID: c.ProviderID, Model: c.Model, Created: c.Created, Updated: c.Updated}
+}
+
+// NewConversation starts a conversation on a site. mode is "read" (the
+// default) or "ask"; an empty model means the provider's default.
+func (a *AssistantService) NewConversation(site, mode, providerID, model string) (Conversation, error) {
+	_, st, err := a.ready()
+	if err != nil {
+		return Conversation{}, err
+	}
+	switch mode {
+	case "":
+		mode = ModeRead
+	case ModeRead, ModeAsk:
+	default:
+		return Conversation{}, invalid("mode", "Choose \"Read only\" or \"Ask before changes\".")
+	}
+	if site == "" {
+		return Conversation{}, invalid("site", "Choose a site.")
+	}
+	cfg, err := config.Read(a.configPath)
+	if err != nil {
+		return Conversation{}, &Error{Code: CodeNotFound, Message: "That site is not in your list.", Field: "site"}
+	}
+	if _, ok := cfg.Sites[site]; !ok {
+		return Conversation{}, &Error{Code: CodeNotFound, Message: "That site is not in your list.", Field: "site"}
+	}
+	p, err := a.provider(st, providerID)
+	if err != nil {
+		return Conversation{}, err
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		model = defaultModelOf(p)
+	}
+	c, err := st.CreateConversation("", site, mode, p.ID, model)
+	if err != nil {
+		return Conversation{}, wrapStoreErr(err)
+	}
+	return toConversation(c), nil
+}
+
+// ListConversations returns every conversation, most recent first.
+func (a *AssistantService) ListConversations() ([]Conversation, error) {
+	_, st, err := a.ready()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := st.ListConversations()
+	if err != nil {
+		return nil, wrapStoreErr(err)
+	}
+	out := make([]Conversation, len(rows))
+	for i, c := range rows {
+		out[i] = toConversation(c)
+	}
+	return out, nil
+}
+
+// GetConversation returns a conversation with its messages in the shape the
+// chat shows. The model's thinking and its signatures never leave Go.
+func (a *AssistantService) GetConversation(id string) (ConversationDetail, error) {
+	r, st, err := a.ready()
+	if err != nil {
+		return ConversationDetail{}, err
+	}
+	c, err := st.GetConversation(id)
+	if err != nil {
+		return ConversationDetail{}, wrapStoreErr(err)
+	}
+	msgs, err := st.ListMessages(id)
+	if err != nil {
+		return ConversationDetail{}, wrapStoreErr(err)
+	}
+	runs, err := st.ListRuns(id)
+	if err != nil {
+		return ConversationDetail{}, wrapStoreErr(err)
+	}
+	active := r.activeRunOf(id)
+	// The tool calls of each assistant message, in the order the model made
+	// them.
+	byMsg := map[string][]store.ToolCall{}
+	for _, run := range runs {
+		calls, err := st.ListToolCalls(run.ID)
+		if err != nil {
+			return ConversationDetail{}, wrapStoreErr(err)
+		}
+		for _, tc := range calls {
+			byMsg[tc.MsgID] = append(byMsg[tc.MsgID], tc)
+		}
+	}
+	d := ConversationDetail{Conversation: toConversation(c), Messages: []ChatMessage{}, ActiveRunID: active}
+	if n := len(runs); n > 0 && runs[n-1].Status == RunPaused && active == "" {
+		d.PausedRunID = runs[n-1].ID
+	}
+	for _, m := range msgs {
+		parts, err := llm.UnmarshalParts(m.PartsJSON)
+		if err != nil {
+			return ConversationDetail{}, newError(CodeFailed, "A saved message could not be read.", err)
+		}
+		cm := ChatMessage{ID: m.ID, Role: m.Role, Tools: []ChatToolCall{}, Created: m.Created}
+		var text []string
+		next := 0
+		for _, p := range parts {
+			switch v := p.(type) {
+			case llm.Text:
+				text = append(text, v.Text)
+			case llm.ToolUse:
+				rows := byMsg[m.ID]
+				tc := ChatToolCall{Tool: v.Name, Site: c.Site, Status: ToolStopped}
+				if next < len(rows) {
+					tc = chatToolCall(rows[next], active)
+				}
+				next++
+				cm.Tools = append(cm.Tools, tc)
+			}
+		}
+		cm.Text = strings.Join(text, "")
+		if cm.Text == "" && len(cm.Tools) == 0 {
+			continue // tool results and thinking only
+		}
+		d.Messages = append(d.Messages, cm)
+	}
+	return d, nil
+}
+
+func chatToolCall(tc store.ToolCall, activeRun string) ChatToolCall {
+	status := tc.Status
+	if status == ToolRunning && tc.RunID != activeRun {
+		status = ToolStopped // its run ended without recording an outcome
+	}
+	summary := ""
+	if status == ToolOK || status == ToolRunning {
+		summary = summarizeArgs([]byte(tc.ArgsJSON))
+	} else {
+		summary = clip(firstLine(tc.ResultText), loopSummaryLimit)
+	}
+	return ChatToolCall{ID: tc.ID, Tool: tc.Tool, Site: tc.Site, Status: status, Approval: tc.Approval, Summary: redactSecrets(summary)}
+}
+
+// DeleteConversation removes a conversation and everything in it. A
+// conversation with a run in progress cannot be deleted.
+func (a *AssistantService) DeleteConversation(id string) error {
+	r, st, err := a.ready()
+	if err != nil {
+		return err
+	}
+	return r.whileIdle(id, func() error {
+		if err := st.DeleteConversation(id); err != nil {
+			return wrapStoreErr(err)
+		}
+		return nil
+	})
+}
+
+// SetConversationMode switches a conversation between "read" (read only) and
+// "ask" (ask before changes). It is refused while a run is active.
+func (a *AssistantService) SetConversationMode(id, mode string) error {
+	r, st, err := a.ready()
+	if err != nil {
+		return err
+	}
+	if mode != ModeRead && mode != ModeAsk {
+		return invalid("mode", "Choose \"Read only\" or \"Ask before changes\".")
+	}
+	return r.whileIdle(id, func() error {
+		if err := st.SetConversationMode(id, mode); err != nil {
+			return wrapStoreErr(err)
+		}
+		return nil
+	})
+}
+
+// ---- providers ----
+
+func kindLabel(kind string) string {
+	switch kind {
+	case KindAnthropic:
+		return "Anthropic"
+	case KindOpenRouter:
+		return openaicompat.OpenRouter.Label
+	case KindOllama:
+		return openaicompat.Ollama.Label
+	case KindLMStudio:
+		return openaicompat.LMStudio.Label
+	}
+	return "Custom"
+}
+
+func kindBaseURL(kind string) string {
+	switch kind {
+	case KindOpenRouter:
+		return openaicompat.OpenRouter.BaseURL
+	case KindOllama:
+		return openaicompat.Ollama.BaseURL
+	case KindLMStudio:
+		return openaicompat.LMStudio.BaseURL
+	}
+	return ""
+}
+
+func validKind(kind string) bool {
+	switch kind {
+	case KindAnthropic, KindOpenRouter, KindOllama, KindLMStudio, KindCustom:
+		return true
+	}
+	return false
+}
+
+// keyRequired reports whether a provider of this kind cannot work without a
+// key.
+func keyRequired(kind string) bool { return kind == KindAnthropic || kind == KindOpenRouter }
+
+func defaultModelOf(p store.Provider) string {
+	if p.DefaultModel != "" {
+		return p.DefaultModel
+	}
+	if p.Kind == KindAnthropic {
+		return anthropic.DefaultModel
+	}
+	return ""
+}
+
+// checkBaseURL accepts https URLs, and http only for this machine.
+func checkBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.Hostname() == "" {
+		return invalid("baseURL", "Enter a full address, such as https://api.example.com/v1.")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		switch strings.ToLower(u.Hostname()) {
+		case "localhost", "127.0.0.1", "::1":
+			return nil
+		}
+		return invalid("baseURL", "Use https, unless the server runs on this computer.")
+	}
+	return invalid("baseURL", "Enter a full address, such as https://api.example.com/v1.")
+}
+
+func (a *AssistantService) info(p store.Provider) ProviderInfo {
+	pi := ProviderInfo{ID: p.ID, Kind: p.Kind, Label: p.Label, BaseURL: p.BaseURL, DefaultModel: p.DefaultModel}
+	// A keychain that cannot be read shows as "no key" here; using the
+	// provider reports the real problem.
+	if st, err := a.keys.Status(p.ID); err == nil {
+		pi.KeySet, pi.KeyLast4 = st.Set, st.Last4
+	}
+	return pi
+}
+
+// provider returns the stored provider id.
+func (a *AssistantService) provider(st *store.Store, id string) (store.Provider, error) {
+	if err := validProviderID(id); err != nil {
+		return store.Provider{}, err
+	}
+	list, err := st.ListProviders()
+	if err != nil {
+		return store.Provider{}, wrapStoreErr(err)
+	}
+	for _, p := range list {
+		if p.ID == id {
+			return p, nil
+		}
+	}
+	return store.Provider{}, &Error{Code: CodeNotFound, Message: "That provider is not set up.", Field: "provider"}
+}
+
+// ListProviders returns the saved providers, with whether each has a key.
+func (a *AssistantService) ListProviders() ([]ProviderInfo, error) {
+	_, st, err := a.ready()
+	if err != nil {
+		return nil, err
+	}
+	list, err := st.ListProviders()
+	if err != nil {
+		return nil, wrapStoreErr(err)
+	}
+	out := make([]ProviderInfo, len(list))
+	for i, p := range list {
+		out[i] = a.info(p)
+	}
+	return out, nil
+}
+
+// SaveProvider adds or changes a provider. An empty ID takes the kind's name
+// (a custom provider gets a numbered one). The key is set apart, with SetKey.
+func (a *AssistantService) SaveProvider(p ProviderInfo) (ProviderInfo, error) {
+	_, st, err := a.ready()
+	if err != nil {
+		return ProviderInfo{}, err
+	}
+	if !validKind(p.Kind) {
+		return ProviderInfo{}, invalid("kind", "Choose a provider type.")
+	}
+	existing, err := st.ListProviders()
+	if err != nil {
+		return ProviderInfo{}, wrapStoreErr(err)
+	}
+	byID := map[string]store.Provider{}
+	for _, e := range existing {
+		byID[e.ID] = e
+	}
+	id := strings.TrimSpace(p.ID)
+	if id == "" {
+		id = p.Kind
+		for n := 2; p.Kind == KindCustom; n++ {
+			if _, taken := byID[id]; !taken {
+				break
+			}
+			id = fmt.Sprintf("%s-%d", p.Kind, n)
+		}
+	}
+	if err := validProviderID(id); err != nil {
+		return ProviderInfo{}, err
+	}
+	if old, ok := byID[id]; ok && old.Kind != p.Kind {
+		return ProviderInfo{}, invalid("kind", "A provider with this name exists with another type.")
+	}
+	label := clip(strings.TrimSpace(p.Label), maxLabelChars)
+	if label == "" {
+		label = kindLabel(p.Kind)
+	}
+	base := strings.TrimSpace(p.BaseURL)
+	if base == "" {
+		base = kindBaseURL(p.Kind)
+	}
+	if base == "" && p.Kind == KindCustom {
+		return ProviderInfo{}, invalid("baseURL", "Enter the server's address.")
+	}
+	if base != "" {
+		if err := checkBaseURL(base); err != nil {
+			return ProviderInfo{}, err
+		}
+	}
+	row := store.Provider{ID: id, Kind: p.Kind, Label: label, BaseURL: base, DefaultModel: strings.TrimSpace(p.DefaultModel)}
+	if row.DefaultModel == "" && row.Kind == KindAnthropic {
+		row.DefaultModel = anthropic.DefaultModel
+	}
+	if err := st.UpsertProvider(row); err != nil {
+		return ProviderInfo{}, wrapStoreErr(err)
+	}
+	return a.info(row), nil
+}
+
+// DeleteProvider removes a provider and its key.
+func (a *AssistantService) DeleteProvider(id string) error {
+	_, st, err := a.ready()
+	if err != nil {
+		return err
+	}
+	if _, err := a.provider(st, id); err != nil {
+		return err
+	}
+	if err := a.keys.Delete(id); err != nil {
+		return err
+	}
+	if err := st.DeleteProvider(id); err != nil {
+		return wrapStoreErr(err)
+	}
+	return nil
+}
+
+// SetKey saves a provider's key in the OS keychain and checks it by listing
+// the provider's models. A key the provider does not accept is not kept: the
+// earlier key, if any, stays.
+func (a *AssistantService) SetKey(providerID, key string) error {
+	_, st, err := a.ready()
+	if err != nil {
+		return err
+	}
+	p, err := a.provider(st, providerID)
+	if err != nil {
+		return err
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return invalid("key", "Paste the API key.")
+	}
+	prov, err := a.mk(p, key)
+	if err != nil {
+		return scrubKey(toServiceError(err), key)
+	}
+	prev, prevErr := a.keys.Get(providerID)
+	if err := a.keys.Set(providerID, key); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), providerCallTimeout)
+	defer cancel()
+	if _, err := prov.Models(ctx); err != nil {
+		if prevErr == nil {
+			_ = a.keys.Set(providerID, prev)
+		} else {
+			_ = a.keys.Delete(providerID)
+		}
+		se := toServiceError(err)
+		if ctx.Err() != nil && !llm.IsAuth(err) {
+			se = newError(CodeNetwork, "The provider did not answer in time.", nil)
+		}
+		return scrubKey(se, key)
+	}
+	return nil
+}
+
+// scrubKey removes the key from an error's text, whatever it holds.
+func scrubKey(e *Error, key string) *Error {
+	c := *e
+	c.Message = strings.ReplaceAll(c.Message, key, "[hidden]")
+	c.Detail = strings.ReplaceAll(c.Detail, key, "[hidden]")
+	return &c
+}
+
+// KeyStatus says whether a provider has a key, and its last four characters.
+func (a *AssistantService) KeyStatus(providerID string) (KeyStatus, error) {
+	if _, _, err := a.ready(); err != nil {
+		return KeyStatus{}, err
+	}
+	return a.keys.Status(providerID)
+}
+
+// DetectLocal looks for Ollama and LM Studio on this computer. It saves
+// nothing: SaveProvider adds one.
+func (a *AssistantService) DetectLocal() []ProviderInfo {
+	ctx, cancel := context.WithTimeout(context.Background(), providerCallTimeout)
+	defer cancel()
+	out := []ProviderInfo{}
+	for _, p := range a.detect(ctx) {
+		out = append(out, ProviderInfo{ID: p.ID, Kind: p.ID, Label: p.Label, BaseURL: p.BaseURL})
+	}
+	return out
+}
+
+// ListModels lists the models a provider offers.
+func (a *AssistantService) ListModels(providerID string) ([]Model, error) {
+	_, st, err := a.ready()
+	if err != nil {
+		return nil, err
+	}
+	p, err := a.provider(st, providerID)
+	if err != nil {
+		return nil, err
+	}
+	key, err := a.keyFor(p)
+	if err != nil {
+		return nil, err
+	}
+	prov, err := a.mk(p, key)
+	if err != nil {
+		return nil, scrubKey(toServiceError(err), key)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), providerCallTimeout)
+	defer cancel()
+	list, err := prov.Models(ctx)
+	if err != nil {
+		return nil, scrubKey(toServiceError(err), key)
+	}
+	def := defaultModelOf(p)
+	out := make([]Model, len(list))
+	for i, m := range list {
+		out[i] = Model{ID: m.ID, Label: m.Label, Default: def != "" && m.ID == def}
+	}
+	return out, nil
+}
+
+// keyFor reads a provider's key. A kind that works without one gets "".
+func (a *AssistantService) keyFor(p store.Provider) (string, error) {
+	key, err := a.keys.Get(p.ID)
+	if err == nil {
+		return key, nil
+	}
+	var se *Error
+	if errors.As(err, &se) && se.Code == CodeNotFound {
+		if keyRequired(p.Kind) {
+			return "", &Error{Code: CodeAuth, Message: "Add the API key for " + p.Label + " first.", Field: "key"}
+		}
+		return "", nil
+	}
+	return "", err
+}
+
+// providerFor is the runner's providerFunc: the client and model of a
+// conversation. Local servers get the whole tool list like the others; a
+// small model may call tools poorly, which the chat shows as it happens.
+func (a *AssistantService) providerFor(conv store.Conversation) (llm.Provider, string, error) {
+	_, st, err := a.ready()
+	if err != nil {
+		return nil, "", err
+	}
+	p, err := a.provider(st, conv.ProviderID)
+	if err != nil {
+		return nil, "", &Error{Code: CodeNotFound, Message: "The provider of this conversation was removed. Set it up again or start a new conversation.", Field: "provider"}
+	}
+	key, err := a.keyFor(p)
+	if err != nil {
+		return nil, "", err
+	}
+	prov, err := a.mk(p, key)
+	if err != nil {
+		return nil, "", scrubKey(toServiceError(err), key)
+	}
+	model := conv.Model
+	if model == "" {
+		model = defaultModelOf(p)
+	}
+	if model == "" {
+		return nil, "", invalid("model", "Choose a model for this conversation.")
+	}
+	return prov, model, nil
+}
+
+// makeProvider builds the client of a provider row.
+func makeProvider(p store.Provider, key string) (llm.Provider, error) {
+	switch p.Kind {
+	case KindAnthropic:
+		var opts []anthropic.Option
+		if p.BaseURL != "" {
+			opts = append(opts, anthropic.WithBaseURL(p.BaseURL))
+		}
+		return anthropic.New(key, opts...), nil
+	case KindOpenRouter, KindOllama, KindLMStudio, KindCustom:
+		preset := openaicompat.Custom(p.BaseURL)
+		switch p.Kind {
+		case KindOpenRouter:
+			preset = openaicompat.OpenRouter
+		case KindOllama:
+			preset = openaicompat.Ollama
+		case KindLMStudio:
+			preset = openaicompat.LMStudio
+		}
+		if p.BaseURL != "" {
+			preset.BaseURL = p.BaseURL
+		}
+		return openaicompat.New(preset, key), nil
+	}
+	return nil, invalid("kind", "Unknown provider type.")
+}

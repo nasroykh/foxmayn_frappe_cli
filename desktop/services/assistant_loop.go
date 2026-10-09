@@ -96,10 +96,6 @@ func newRunner(s *store.Store, e *Engine, p providerFunc, emit func(string, any)
 // start appends the user's message to the conversation, creates a run and
 // starts it. At most one run is active per conversation.
 func (r *runner) start(convID, userText string) (string, error) {
-	conv, err := r.store.GetConversation(convID)
-	if err != nil {
-		return "", wrapStoreErr(err)
-	}
 	if strings.TrimSpace(userText) == "" {
 		return "", invalid("text", "Write a message first.")
 	}
@@ -109,6 +105,11 @@ func (r *runner) start(convID, userText string) (string, error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Read under the lock, so a mode change made just before is seen.
+	conv, err := r.store.GetConversation(convID)
+	if err != nil {
+		return "", wrapStoreErr(err)
+	}
 	if err := r.admit(convID); err != nil {
 		return "", err
 	}
@@ -125,6 +126,31 @@ func (r *runner) start(convID, userText string) (string, error) {
 	}
 	r.launch(run.ID, conv, 0)
 	return run.ID, nil
+}
+
+// whileIdle runs fn when no run is active on convID, and keeps new runs from
+// starting until fn returns.
+func (r *runner) whileIdle(convID string, fn func() error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, a := range r.active {
+		if a.conv.ID == convID {
+			return &Error{Code: CodeInvalid, Message: "The assistant is still answering in this conversation. Stop it first."}
+		}
+	}
+	return fn()
+}
+
+// activeRunOf returns the id of the run active on convID, or "".
+func (r *runner) activeRunOf(convID string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, a := range r.active {
+		if a.conv.ID == convID {
+			return id
+		}
+	}
+	return ""
 }
 
 // continueRun resumes a paused run with a fresh step and turn budget. Of two
