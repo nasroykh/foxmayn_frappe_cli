@@ -163,7 +163,7 @@ func TestMCPPolicyRules(t *testing.T) {
 		// Second review: Frappe cuts a method at "/" and runs undotted names
 		// as Server Script APIs first.
 		{"a method cut at a slash", nil, config.MCPPolicy{}, "call_method",
-			method("frappe.desk.doctype.system_console.system_console.execute_code/x", nil), "may only contain"},
+			method("frappe.desk.doctype.system_console.system_console.execute_code/x", nil), "may not be empty or contain slashes"},
 		{"an undotted name on a deny list", &config.MCPPolicy{DenyMethods: []string{"wipe_all"}}, config.MCPPolicy{}, "call_method",
 			method("wipe_all", nil), "denied by sites.prod.mcp.deny_methods"},
 		{"an undotted name on an allow list", &config.MCPPolicy{AllowMethods: []string{"my_api"}}, config.MCPPolicy{}, "call_method",
@@ -195,8 +195,20 @@ func TestMCPPolicyRules(t *testing.T) {
 			method(mkSI, map[string]interface{}{"source_name": "SO-1"}), ""},
 		// Only top-level keys are method parameters; Frappe drops a "flags"
 		// key from document data.
-		{"a nested key is not a method argument", nil, config.MCPPolicy{}, "call_method",
+		{"a nested key of an ordinary method is data", nil, config.MCPPolicy{}, "call_method",
 			method("frappe.client.get_count", map[string]interface{}{"doctype": "ToDo", "filters": map[string]interface{}{"ignore_permissions": 1}}), ""},
+		// run_doc_method forwards its nested args to the document method
+		// without Frappe's get_newargs filter.
+		{"run_doc_method nested ignore_permissions", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.handler.run_doc_method", map[string]interface{}{"dt": "ToDo", "dn": "TD-1", "method": "x", "args": map[string]interface{}{"ignore_permissions": 1}}), "may not pass args.ignore_permissions"},
+		{"run_doc_method nested ignore_user_permissions", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.handler.run_doc_method", map[string]interface{}{"dt": "ToDo", "dn": "TD-1", "method": "x", "args": map[string]interface{}{"ignore_user_permissions": true}}), "may not pass args.ignore_user_permissions"},
+		{"run_doc_method undotted, nested args as a JSON string", nil, config.MCPPolicy{}, "call_method",
+			method("run_doc_method", map[string]interface{}{"dt": "ToDo", "dn": "TD-1", "method": "x", "args": `{"ignore_permissions":0}`}), "may not pass args.ignore_permissions"},
+		{"run_doc_method nested in arg", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.handler.run_doc_method", map[string]interface{}{"dt": "ToDo", "dn": "TD-1", "method": "x", "arg": `{"ignore_permissions":1}`}), "may not pass arg.ignore_permissions"},
+		{"run_doc_method with ordinary args", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.handler.run_doc_method", map[string]interface{}{"dt": "ToDo", "dn": "TD-1", "method": "x", "args": map[string]interface{}{"status": "Open"}}), ""},
 		{"flags in a document", nil, config.MCPPolicy{}, "create_doc",
 			map[string]interface{}{"doctype": "ToDo", "data": map[string]interface{}{"description": "x", "flags": map[string]interface{}{"ignore_permissions": true}}}, ""},
 	}
