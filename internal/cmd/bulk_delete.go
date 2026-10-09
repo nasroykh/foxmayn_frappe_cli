@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
@@ -47,18 +46,9 @@ Examples:
 		if bdFilters != "" {
 			return bulkDeleteFiltered(cmd)
 		}
-		var names []string
-		switch {
-		case bdFile != "":
-			raw, err := readInput("", bdFile)
-			if err != nil {
-				return err
-			}
-			if names, err = parseNames(raw); err != nil {
-				return err
-			}
-		case bdNames != "":
-			names = splitCSV(bdNames)
+		names, err := bulkNames(bdNames, bdFile)
+		if err != nil {
+			return err
 		}
 		if len(names) == 0 {
 			return usageErrorf("provide --names, --file or --filters")
@@ -94,11 +84,7 @@ func bulkDeleteFiltered(cmd *cobra.Command) error {
 		return err
 	}
 	if len(names) == 0 {
-		fmt.Fprintf(os.Stderr, "No %s documents match the filters; nothing to delete.\n", bdDoctype)
-		if !machineOutput() {
-			return nil
-		}
-		return printBulkReport(bulkReport{Done: "deleted", Results: []bulkResult{}}, bdDoctype)
+		return noMatches(bdDoctype, "delete", "deleted")
 	}
 	if err := confirmDelete(cmd, names); err != nil {
 		return err

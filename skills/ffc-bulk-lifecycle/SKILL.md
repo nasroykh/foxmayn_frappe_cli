@@ -1,6 +1,6 @@
 ---
 name: ffc-bulk-lifecycle
-description: Change many Frappe/ERPNext documents at once or move documents through their lifecycle with ffc - bulk-create, bulk-update, bulk-delete (by list or by filters), submit, cancel, amend, copy, rename or merge, restore deleted, discard drafts, and Workflow actions (transitions, apply, bulk-apply, pending). Use it whenever the user wants to import or fix records in bulk, submit or cancel invoices and orders, approve or reject through a workflow, or undo a delete, even if they only say "approve these" or "cancel that invoice". Read ffc-core first for flags and safety rules.
+description: Change many Frappe/ERPNext documents at once or move documents through their lifecycle with ffc - bulk-create, bulk-update, bulk-delete, bulk-submit, bulk-cancel (by list or by filters), submit, cancel, amend, copy, rename or merge, restore deleted, discard drafts, and Workflow actions (transitions, apply, bulk-apply, pending). Use it whenever the user wants to import or fix records in bulk, submit or cancel invoices and orders, approve or reject through a workflow, or undo a delete, even if they only say "approve these" or "cancel that invoice". Read ffc-core first for flags and safety rules.
 ---
 
 # Bulk changes and document lifecycle
@@ -17,6 +17,8 @@ ffc bulk-update -d ToDo --filters '{"status":"Open"}' --set '{"status":"Closed"}
 ffc bulk-delete -d ToDo --names "TD-0001,TD-0002" --dry-run --json
 ffc bulk-delete -d Note --file names.json --yes --json                     # names with commas: use --file
 ffc bulk-delete -d ToDo --filters '[["modified","<","2025-01-01"]]' --dry-run --json
+ffc bulk-submit -d "Sales Invoice" --names "ACC-SINV-2026-00001,ACC-SINV-2026-00002" --dry-run --json
+ffc bulk-cancel -d "Sales Invoice" --filters '{"customer":"CUST-001"}' --dry-run --json
 ```
 
 | Flag | Applies to | Notes |
@@ -24,17 +26,18 @@ ffc bulk-delete -d ToDo --filters '[["modified","<","2025-01-01"]]' --dry-run --
 | `-d, --doctype` | all | required |
 | `--data` | create, update | JSON array (also `@FILE`) |
 | `--file` | all | JSON file; `-` = stdin; delete takes an array of names |
-| `--names` | delete | comma-separated |
-| `--filters` | update (with `--set`), delete | names are listed first (one request), up to 10 shown, then confirmed |
+| `--names` | delete, submit, cancel | comma-separated |
+| `--filters` | update (with `--set`), delete, submit, cancel | names are listed first (one request), up to 10 shown, then confirmed; submit adds `docstatus` 0, cancel 1 |
 | `--set` | update | JSON object applied to every matching document |
 | `--concurrency` | all | 1-10, default 1 |
 | `--fail-fast` | all | stop starting items after the first failure |
-| `-y, --yes` | update `--filters`, delete | skip the confirmation |
+| `-y, --yes` | update `--filters`, delete, submit, cancel | skip the confirmation |
 | `--dry-run` | all | show every request; nothing written |
 
 - The whole input is validated before anything is sent.
 - Empty filters (`{}`, `[]`) are refused because they match every document. To act on all of them, say so: `'[["name","is","set"]]'`.
-- JSON result: `{"created"|"updated"|"deleted": N, "failed": N, "skipped": N, "results": [{"index","name","status","error"}]}`. Status is the verb, `error`, `interrupted` or `skipped`.
+- JSON result: `{"created"|"updated"|"deleted"|"submitted"|"cancelled": N, "failed": N, "skipped": N, "results": [{"index","name","status","error"}]}`. Status is the verb, `error`, `interrupted` or `skipped`.
+- `bulk-submit` / `bulk-cancel`: one document at a time in the order given (keep `--concurrency 1`; cancel linking documents first, see `cancel-doc --check`); a DocType with an active Workflow is refused once (exit 6, use `workflow bulk-apply`); a document already submitted/cancelled (or a draft, for cancel) is an `error` item, not a skip. Status is `submitted` / `cancelled`.
 - Exit 8 unless every item succeeded. An `interrupted` item (Ctrl+C) may or may not have been applied: check it before re-running.
 - Each item is a separate request with Frappe's validations, so one bad row does not stop the others unless `--fail-fast`.
 

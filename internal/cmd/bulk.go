@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -349,6 +350,55 @@ func filterNames(cmd *cobra.Command, c *client.FrappeClient, doctype, filters st
 		names = append(names, n)
 	}
 	return names, nil
+}
+
+// bulkNames reads the names given with --names (comma-separated) or --file
+// (a JSON array, - for stdin). It returns nil when neither is given, so the
+// caller can fall back to --filters.
+func bulkNames(csv, file string) ([]string, error) {
+	switch {
+	case file != "":
+		raw, err := readInput("", file)
+		if err != nil {
+			return nil, err
+		}
+		return parseNames(raw)
+	case csv != "":
+		return splitCSV(csv), nil
+	}
+	return nil, nil
+}
+
+// withDocstatus adds docstatus = ds to filters that bulkFilters accepted, for
+// commands that only act on documents in one state. A filter object that
+// already names docstatus is refused rather than overridden; a filter list
+// simply gains the condition, and a contradicting one matches nothing.
+func withDocstatus(filters string, ds int) (string, error) {
+	var v interface{}
+	if err := json.Unmarshal([]byte(filters), &v); err != nil {
+		return "", err
+	}
+	switch f := v.(type) {
+	case map[string]interface{}:
+		if _, ok := f["docstatus"]; ok {
+			return "", usageErrorf("--filters: the command selects docstatus %d itself; remove docstatus from the filters", ds)
+		}
+		f["docstatus"] = ds
+	case []interface{}:
+		v = append(f, []interface{}{"docstatus", "=", ds})
+	}
+	out, err := json.Marshal(v)
+	return string(out), err
+}
+
+// noMatches reports that --filters selected nothing: a note on stderr and,
+// for machine output, the empty report so scripts still get their JSON.
+func noMatches(doctype, verb, done string) error {
+	fmt.Fprintf(os.Stderr, "No %s documents match the filters; nothing to %s.\n", doctype, verb)
+	if !machineOutput() {
+		return nil
+	}
+	return printBulkReport(bulkReport{Done: done, Results: []bulkResult{}}, doctype)
 }
 
 // namePreview lists up to 10 names, then how many more there are.

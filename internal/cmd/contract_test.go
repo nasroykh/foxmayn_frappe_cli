@@ -88,6 +88,7 @@ func TestContract(t *testing.T) {
 	t.Run("child table PUT replaces rows", func(t *testing.T) { contractChildPut(t, c) })
 	t.Run("lifecycle submit cancel amend", func(t *testing.T) { contractLifecycle(t, c) })
 	t.Run("lifecycle commands", func(t *testing.T) { contractLifecycleCLI(t, c, sc) })
+	t.Run("bulk submit and cancel", func(t *testing.T) { contractBulkLifecycle(t, c, sc) })
 	t.Run("schema merges custom field and property setter", func(t *testing.T) { contractSchema(t, c) })
 	t.Run("cache and completion", func(t *testing.T) { contractCache(t, sc) })
 	t.Run("api passthrough", func(t *testing.T) { contractAPI(t, c, sc) })
@@ -779,8 +780,8 @@ func contractLifecycleCLI(t *testing.T, c *client.FrappeClient, sc *config.SiteC
 }
 
 // contractWorkflow pins the workflow methods' arguments (a doc with only
-// doctype and name) on a two-state workflow, and that submit-doc refuses a
-// DocType with an active workflow.
+// doctype and name) on a two-state workflow, and that submit-doc and
+// bulk-submit refuse a DocType with an active workflow.
 func contractWorkflow(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
 	ctx := contractCtx(t)
 	draft, done, action := contractWF+" Draft", contractWF+" Done", contractWF+" Finish"
@@ -816,6 +817,10 @@ func contractWorkflow(t *testing.T, c *client.FrappeClient, sc *config.SiteConfi
 	r := runFFC(t, cfg, "", "submit-doc", "-d", contractDT, "-n", name)
 	if r.Code != exitValidation || r.Err == nil || !strings.Contains(r.Err.Error(), contractWF) {
 		t.Errorf("submit-doc with a workflow: exit %d, %v", r.Code, r.Err)
+	}
+	r = runFFC(t, cfg, "", "bulk-submit", "-d", contractDT, "--names", name, "--yes")
+	if r.Code != exitValidation || r.Err == nil || !strings.Contains(r.Err.Error(), contractWF) {
+		t.Errorf("bulk-submit with a workflow: exit %d, %v", r.Code, r.Err)
 	}
 
 	r = runFFC(t, cfg, "", "workflow", "transitions", "-d", contractDT, "-n", name, "--jq", ".[].action")

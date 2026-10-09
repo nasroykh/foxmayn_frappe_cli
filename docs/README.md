@@ -27,7 +27,7 @@ New here? Start with [Installation](getting-started/installation.md), then the [
 | [Sites and settings](cli/sites-and-settings.md) | `init`, `site`, `config`, `ping` |
 | [Documents](cli/documents.md) | `get-doc`, `list-docs`, `count-docs`, `create-doc`, `update-doc`, `delete-doc` |
 | [edit-doc](cli/edit-doc.md) | `edit-doc` |
-| [Bulk operations](cli/bulk.md) | `bulk-create`, `bulk-update`, `bulk-delete` |
+| [Bulk operations](cli/bulk.md) | `bulk-create`, `bulk-update`, `bulk-delete`, `bulk-submit`, `bulk-cancel` |
 | [Lifecycle and workflow](cli/lifecycle-and-workflow.md) | `submit-doc`, `cancel-doc`, `amend-doc`, `copy-doc`, `rename-doc`, `restore-doc`, `discard-doc`, `workflow` |
 | [Search and aggregate](cli/search-and-aggregate.md) | `search`, `aggregate`, `count-docs --group-by` |
 | [Reports and methods](cli/server-calls.md) | `list-reports`, `run-report`, `call-method` |
