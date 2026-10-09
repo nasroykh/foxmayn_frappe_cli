@@ -54,12 +54,19 @@ const (
 )
 
 // Message is one history entry made of ordered parts.
+//
+// History must be replayed byte-identical and append-only: the loop stores the
+// parts of every assistant turn exactly as the stream produced them (Thinking
+// parts included, in their original order) and never edits, reorders or drops
+// one. With thinking on, the Anthropic API answers 400 when an earlier
+// assistant turn's thinking blocks are changed or missing (the blocks are
+// signed and bound to the conversation that produced them).
 type Message struct {
 	Role  Role
 	Parts []Part
 }
 
-// Part is one of Text, ToolUse or ToolResult.
+// Part is one of Text, ToolUse, ToolResult or Thinking.
 type Part interface{ isPart() }
 
 // Text is plain text.
@@ -79,32 +86,67 @@ type ToolResult struct {
 	IsError bool
 }
 
+// Thinking is one model reasoning block, kept opaque so it can be replayed
+// unchanged. Text and Signature are a normal block (Text is empty when the
+// provider omits it); Redacted marks a redacted block whose payload is Data.
+// It is both a Part and an Event: the stream emits it when the block ends and
+// the loop stores it in the assistant message at that position. It is never
+// shown as assistant text.
+type Thinking struct {
+	Text      string
+	Signature string
+	Redacted  bool
+	Data      string
+}
+
 func (Text) isPart()       {}
 func (ToolUse) isPart()    {}
 func (ToolResult) isPart() {}
+func (Thinking) isPart()   {}
 
-// Event is one of TextDelta, ToolCall, Usage or Stop.
+// Event is one of TextDelta, Thinking, ToolCall, Usage or Stop.
 type Event interface{ isEvent() }
 
 // TextDelta is a chunk of assistant text.
 type TextDelta struct{ Text string }
 
-// ToolCall is a complete tool call: Args is a valid JSON object, "{}" when empty.
+// ToolCall is a complete tool call. Args is a valid JSON object, "{}" when
+// empty. When the model's arguments did not parse as an object, ArgsError says
+// why and Args holds the raw text if it is valid JSON, else "{}"; the loop must
+// answer such a call with an error tool result and not run the tool.
 type ToolCall struct {
-	ID   string
-	Name string
-	Args json.RawMessage
+	ID        string
+	Name      string
+	Args      json.RawMessage
+	ArgsError string
 }
 
 // Usage reports token counts for the turn. In counts input tokens read fresh
 // (cache writes included); Cached counts those served from the prompt cache.
 type Usage struct{ In, Out, Cached int }
 
-// Stop ends the turn; Reason is the provider's stop reason (for example
-// "end_turn", "tool_use" or "max_tokens").
-type Stop struct{ Reason string }
+// Stop reasons. Other providers map their own to these where they can.
+const (
+	StopEndTurn   = "end_turn"
+	StopToolUse   = "tool_use"
+	StopMaxTokens = "max_tokens"
+	// StopPauseTurn means the provider paused a long turn: the loop continues
+	// it by sending the history, with this turn's assistant message appended
+	// unchanged, again.
+	StopPauseTurn = "pause_turn"
+	StopRefusal   = "refusal"
+)
+
+// Stop ends the turn. Reason is one of the Stop* constants, or the provider's
+// own value. Category names the policy area of a StopRefusal when the provider
+// gives one ("cyber", "bio", ...), else it is empty.
+type Stop struct {
+	Reason   string
+	Category string
+}
 
 func (TextDelta) isEvent() {}
+func (Thinking) isEvent()  {}
 func (ToolCall) isEvent()  {}
 func (Usage) isEvent()     {}
 func (Stop) isEvent()      {}
@@ -127,6 +169,13 @@ func (e *APIError) Error() string {
 func IsAuth(err error) bool {
 	var e *APIError
 	return errors.As(err, &e) && (e.Status == 401 || e.Status == 403)
+}
+
+// IsRetryable reports whether err is worth retrying later: 429, any 5xx
+// (529 overloaded included).
+func IsRetryable(err error) bool {
+	var e *APIError
+	return errors.As(err, &e) && (e.Status == 429 || e.Status >= 500)
 }
 
 // IsRateLimit reports whether err is a 429 from the provider.

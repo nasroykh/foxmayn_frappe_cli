@@ -26,6 +26,7 @@ type captured struct {
 	header http.Header
 	body   []byte
 	path   string
+	url    string
 }
 
 func (c *captured) set(r *http.Request) {
@@ -53,6 +54,7 @@ func newProvider(t *testing.T, h http.Handler) (*Provider, *captured) {
 		h.ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)
+	cap.url = srv.URL
 	return New(testKey, WithBaseURL(srv.URL), WithMaxRetries(0)), cap
 }
 
@@ -250,27 +252,136 @@ func TestStreamCancelMidStream(t *testing.T) {
 	}
 }
 
-func TestStreamMalformedToolArgs(t *testing.T) {
-	p, _ := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, `event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t","name":"x","input":{}}}
+func TestStreamBadToolArgs(t *testing.T) {
+	got, _ := run(t, "args_bad.sse")
+	var calls []llm.ToolCall
+	for _, ev := range got {
+		if tc, ok := ev.(llm.ToolCall); ok {
+			calls = append(calls, tc)
+		}
+	}
+	if len(calls) != 4 {
+		t.Fatalf("events %#v", got)
+	}
+	// The good call first, then the held ones in stream order, then the open block.
+	if calls[0].ID != "toolu_ok" || calls[0].ArgsError != "" || string(calls[0].Args) != "{}" {
+		t.Fatalf("good call %#v", calls[0])
+	}
+	bad, arr, open := calls[1], calls[2], calls[3]
+	if bad.ID != "toolu_bad" || bad.ArgsError == "" || string(bad.Args) != "{}" || !strings.Contains(bad.ArgsError, `"doctype": "Item"`) {
+		t.Fatalf("bad call %#v", bad)
+	}
+	if arr.ID != "toolu_arr" || arr.ArgsError == "" || string(arr.Args) != "[1, 2]" {
+		t.Fatalf("array call %#v", arr)
+	}
+	if open.ID != "toolu_open" || open.ArgsError == "" || string(open.Args) != "{}" {
+		t.Fatalf("open call %#v", open)
+	}
+	for _, c := range calls {
+		if !json.Valid(c.Args) {
+			t.Fatalf("Args must always be valid JSON: %#v", c)
+		}
+	}
+	if last := got[len(got)-1]; last != (llm.Stop{Reason: llm.StopToolUse}) {
+		t.Fatalf("last %#v", last)
+	}
+}
 
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"[1,2"}}
+func TestStreamTruncatedToolArgsAfterMaxTokens(t *testing.T) {
+	got, _ := run(t, "args_truncated.sse")
+	want := []llm.Event{
+		llm.TextDelta{Text: "Creating it."},
+		llm.Usage{In: 5, Out: 100},
+		llm.Stop{Reason: llm.StopMaxTokens},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("events\n got %#v\nwant %#v", got, want)
+	}
+}
 
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
+func TestStreamThinkingAndToolUse(t *testing.T) {
+	got, _ := run(t, "thinking_tool.sse")
+	want := []llm.Event{
+		llm.Thinking{Text: "I should read the invoice.", Signature: "EqQBCgIYAhIM1234"},
+		llm.TextDelta{Text: "Checking."},
+		llm.ToolCall{ID: "toolu_T", Name: "get_doc", Args: json.RawMessage(`{"doctype":"Item"}`)},
+		llm.Usage{In: 50, Out: 60},
+		llm.Stop{Reason: llm.StopToolUse},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("events\n got %#v\nwant %#v", got, want)
+	}
+}
 
-`)
-	}))
+func TestStreamRedactedThinking(t *testing.T) {
+	got, _ := run(t, "redacted.sse")
+	want := []llm.Event{
+		llm.Thinking{Redacted: true, Data: "EmwKAhgBEgy3va3pzix/LafPsn4"},
+		llm.TextDelta{Text: "Done."},
+		llm.Usage{In: 5, Out: 9},
+		llm.Stop{Reason: llm.StopEndTurn},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("events\n got %#v\nwant %#v", got, want)
+	}
+}
+
+func TestStreamRefusalCategory(t *testing.T) {
+	got, _ := run(t, "refusal.sse")
+	if last := got[len(got)-1]; last != (llm.Stop{Reason: llm.StopRefusal, Category: "cyber"}) {
+		t.Fatalf("events %#v", got)
+	}
+}
+
+func TestStreamMidStreamErrorEvent(t *testing.T) {
+	p, _ := newProvider(t, serveFile(t, "error_overloaded.sse"))
 	s, err := p.Stream(context.Background(), llm.Request{Model: DefaultModel})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if _, err := s.Next(); err == nil || !strings.Contains(err.Error(), "not a JSON object") {
+	if ev, err := s.Next(); err != nil || ev != (llm.TextDelta{Text: "partial"}) {
+		t.Fatalf("first: %#v %v", ev, err)
+	}
+	_, err = s.Next()
+	var ae *llm.APIError
+	if !errors.As(err, &ae) || ae.Status != 529 || ae.Message != "Overloaded" {
 		t.Fatalf("err = %v", err)
+	}
+	if !llm.IsRetryable(err) || llm.IsRateLimit(err) || llm.IsAuth(err) {
+		t.Fatalf("classification of %v", err)
+	}
+}
+
+func TestStatusFromType(t *testing.T) {
+	for typ, want := range map[string]int{
+		"overloaded_error": 529, "rate_limit_error": 429, "api_error": 500, "invalid_request_error": 0, "": 0,
+	} {
+		if got := statusFromType(typ); got != want {
+			t.Errorf("%q: %d, want %d", typ, got, want)
+		}
+	}
+}
+
+func TestEnvCustomHeadersNotSent(t *testing.T) {
+	_, cap := newProvider(t, serveFile(t, "text.sse"))
+	// The SDK reads these only when no env credential is set.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_PROFILE", "")
+	t.Setenv("ANTHROPIC_CUSTOM_HEADERS", "X-Env-Leak: secret\nX-Other: 1")
+	p2 := New(testKey, WithBaseURL(cap.url), WithMaxRetries(0))
+	s, err := p2.Stream(context.Background(), llm.Request{Model: DefaultModel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collect(t, s)
+	h, _, _ := cap.get()
+	if h.Get("X-Env-Leak") != "" || h.Get("X-Other") != "" {
+		t.Fatalf("env headers sent: %v", h)
+	}
+	if h.Get("x-api-key") != testKey {
+		t.Fatalf("x-api-key %q", h.Get("x-api-key"))
 	}
 }
 
@@ -342,7 +453,9 @@ func TestRequestBody(t *testing.T) {
 		Model     string `json:"model"`
 		MaxTokens int    `json:"max_tokens"`
 		Stream    bool   `json:"stream"`
-		System    []struct {
+		// Automatic caching of the conversation tail.
+		CacheControl map[string]any `json:"cache_control"`
+		System       []struct {
 			Type         string         `json:"type"`
 			Text         string         `json:"text"`
 			CacheControl map[string]any `json:"cache_control"`
@@ -375,6 +488,13 @@ func TestRequestBody(t *testing.T) {
 	}
 	if body.Model != "claude-opus-5-5" || body.MaxTokens != 1234 || !body.Stream {
 		t.Fatalf("top level %+v", body)
+	}
+	if body.CacheControl["type"] != "ephemeral" {
+		t.Fatalf("top-level cache_control %v", body.CacheControl)
+	}
+	// system + last tool + tail = 3 of the 4 breakpoints the API allows.
+	if n := strings.Count(string(raw), `"cache_control"`); n != 3 {
+		t.Fatalf("%d cache_control breakpoints in %s", n, raw)
 	}
 	if len(body.System) != 1 || body.System[0].Text != "You are helpful." || body.System[0].CacheControl["type"] != "ephemeral" {
 		t.Fatalf("system %+v", body.System)
@@ -432,6 +552,96 @@ func TestRequestBody(t *testing.T) {
 	}
 }
 
+// sentBlocks sends req and returns the sent messages as role plus raw blocks.
+func sentMessages(t *testing.T, req llm.Request) []struct {
+	Role    string
+	Content []map[string]any
+} {
+	t.Helper()
+	p, cap := newProvider(t, serveFile(t, "text.sse"))
+	s, err := p.Stream(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collect(t, s)
+	_, raw, _ := cap.get()
+	var body struct {
+		Messages []struct {
+			Role    string           `json:"role"`
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	out := make([]struct {
+		Role    string
+		Content []map[string]any
+	}, len(body.Messages))
+	for i, m := range body.Messages {
+		out[i].Role, out[i].Content = m.Role, m.Content
+	}
+	return out
+}
+
+func TestRequestReplaysThinkingVerbatim(t *testing.T) {
+	msgs := sentMessages(t, llm.Request{Messages: []llm.Message{
+		{Role: llm.RoleUser, Parts: []llm.Part{llm.Text{Text: "go"}}},
+		{Role: llm.RoleAssistant, Parts: []llm.Part{
+			llm.Thinking{Text: "think one", Signature: "SIG1"},
+			llm.Text{Text: "reading"},
+			llm.Thinking{Redacted: true, Data: "REDACTED2"},
+			llm.ToolUse{ID: "toolu_x", Name: "get_doc", Args: json.RawMessage(`{"a":1}`)},
+		}},
+		{Role: llm.RoleUser, Parts: []llm.Part{llm.ToolResult{ID: "toolu_x", Text: "ok"}}},
+	}})
+	if len(msgs) != 3 {
+		t.Fatalf("messages %+v", msgs)
+	}
+	c := msgs[1].Content
+	if len(c) != 4 {
+		t.Fatalf("assistant content %+v", c)
+	}
+	if c[0]["type"] != "thinking" || c[0]["thinking"] != "think one" || c[0]["signature"] != "SIG1" {
+		t.Fatalf("thinking block %v", c[0])
+	}
+	if c[1]["type"] != "text" || c[1]["text"] != "reading" {
+		t.Fatalf("text block %v", c[1])
+	}
+	if c[2]["type"] != "redacted_thinking" || c[2]["data"] != "REDACTED2" {
+		t.Fatalf("redacted block %v", c[2])
+	}
+	if c[3]["type"] != "tool_use" || c[3]["id"] != "toolu_x" {
+		t.Fatalf("tool_use block %v", c[3])
+	}
+}
+
+func TestRequestMergesSameRoleMessages(t *testing.T) {
+	in := []llm.Message{
+		{Role: llm.RoleUser, Parts: []llm.Part{llm.Text{Text: "go"}}},
+		{Role: llm.RoleAssistant, Parts: []llm.Part{llm.ToolUse{ID: "toolu_1", Name: "a"}, llm.ToolUse{ID: "toolu_2", Name: "b"}}},
+		{Role: llm.RoleUser, Parts: []llm.Part{llm.ToolResult{ID: "toolu_1", Text: "r1"}}},
+		{Role: llm.RoleUser, Parts: []llm.Part{llm.Text{Text: "and also this"}}},
+		{Role: llm.RoleUser, Parts: []llm.Part{llm.ToolResult{ID: "toolu_2", Text: "r2"}}},
+	}
+	msgs := sentMessages(t, llm.Request{Messages: in})
+	if len(msgs) != 3 {
+		t.Fatalf("want 3 alternating messages, got %+v", msgs)
+	}
+	c := msgs[2].Content
+	if msgs[2].Role != "user" || len(c) != 3 {
+		t.Fatalf("merged user message %+v", msgs[2])
+	}
+	if c[0]["type"] != "tool_result" || c[0]["tool_use_id"] != "toolu_1" ||
+		c[1]["type"] != "tool_result" || c[1]["tool_use_id"] != "toolu_2" ||
+		c[2]["type"] != "text" || c[2]["text"] != "and also this" {
+		t.Fatalf("order %v", c)
+	}
+	if len(in) != 5 || len(in[2].Parts) != 1 {
+		t.Fatal("input messages were modified")
+	}
+}
+
 func TestRequestDefaults(t *testing.T) {
 	p, cap := newProvider(t, serveFile(t, "text.sse"))
 	s, err := p.Stream(context.Background(), llm.Request{
@@ -444,7 +654,10 @@ func TestRequestDefaults(t *testing.T) {
 	_, raw, _ := cap.get()
 	var body map[string]any
 	_ = json.Unmarshal(raw, &body)
-	if body["model"] != DefaultModel || body["max_tokens"] != float64(defaultMaxTokens) {
+	if defaultMaxTokens != 32000 {
+		t.Fatalf("defaultMaxTokens = %d", defaultMaxTokens)
+	}
+	if body["model"] != DefaultModel || body["max_tokens"] != float64(32000) {
 		t.Fatalf("defaults %v", body)
 	}
 	if _, ok := body["system"]; ok {
@@ -468,6 +681,7 @@ func TestModels(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"data":[
 {"id":"claude-sonnet-5-5","display_name":"Claude Sonnet 5.5","created_at":"2026-09-01T00:00:00Z","type":"model"},
+{"id":"embed-1","display_name":"Not a chat model","created_at":"2026-09-02T00:00:00Z","type":"model"},
 {"id":"claude-haiku-5-5","display_name":"","created_at":"2026-09-02T00:00:00Z","type":"model"}],
 "has_more":false,"first_id":"claude-sonnet-5-5","last_id":"claude-haiku-5-5"}`)
 	}))
