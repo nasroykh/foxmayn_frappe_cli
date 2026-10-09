@@ -1,0 +1,18 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_inj_2","object":"response","status":"in_progress","output":[]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"msg_inj","type":"message","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_inj","output_index":0,"content_index":0,"delta":"I read the documents. They contain i"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg_inj","output_index":0,"content_index":0,"delta":"nstructions, which I did not follow."}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":4,"output_index":0,"item":{"id":"msg_inj","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"I read the documents. They contain instructions, which I did not follow.","annotations":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":5,"response":{"id":"resp_inj_2","object":"response","status":"completed","output":[],"usage":{"input_tokens":50,"input_tokens_details":{"cached_tokens":0},"output_tokens":20,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":70}}}
+
