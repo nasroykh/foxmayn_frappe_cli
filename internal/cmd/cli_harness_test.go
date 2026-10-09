@@ -18,9 +18,7 @@ import (
 // tests start from the config they write; tests set them with t.Setenv.
 func TestMain(m *testing.M) {
 	// runJQ re-runs the current executable, which is this test binary.
-	if os.Getenv(jqChildEnv) == jqChildOn {
-		os.Exit(jqChild(os.Stdin, os.Stdout))
-	}
+	RunJQChildIfRequested()
 	for _, k := range []string{"FFC_SITE", "FFC_CONFIG", "FFC_TIMEOUT"} {
 		_ = os.Unsetenv(k)
 	}

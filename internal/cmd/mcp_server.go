@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -38,7 +39,11 @@ type MCPServer struct {
 }
 
 // Close releases the server's clients. It is safe to call more than once.
-func (s *MCPServer) Close() { s.close() }
+func (s *MCPServer) Close() {
+	if s != nil && s.close != nil {
+		s.close()
+	}
+}
 
 // NewMCPServer builds the MCP server `ffc mcp` serves, for a program that
 // runs it in its own process (the desktop app): the options are validated as
@@ -49,8 +54,10 @@ func (s *MCPServer) Close() { s.close() }
 // Servers built from different options in one process are independent, with
 // these process-wide exceptions: client.Timeout and client.Debug, the
 // plain-HTTP warning (printed once per URL), and FFC_API_KEY, FFC_API_SECRET
-// and FFC_URL from the environment. Warnings of an OAuth refresh and of the
-// audit writer still go to stderr. The audit log is always mcp-audit.jsonl
+// and FFC_URL from the environment. Other diagnostics still go to stderr:
+// warnings of an OAuth refresh, of the config and of the client (the
+// FFC_API_KEY half-pair warning, the plain-HTTP warning), the --debug trace
+// and the audit writer's. The audit log is always mcp-audit.jsonl
 // next to the config.
 //
 // A tool that runs jq re-executes os.Executable(); the main of a program that
@@ -63,6 +70,7 @@ func NewMCPServer(ctx context.Context, o MCPOptions) (*MCPServer, error) {
 		allSites:   o.AllSites,
 		policy:     o.Policy,
 		toolsets:   o.Toolsets,
+		api:        true,
 	}
 	// A nil list is unset; an empty or all-blank one is refused, as
 	// "--allow-doctypes=" is.
@@ -89,7 +97,7 @@ func NewMCPServer(ctx context.Context, o MCPOptions) (*MCPServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &MCPServer{MCPServer: s, Sites: sites, Warnings: warnings, close: sync.OnceFunc(closeEnv)}, nil
+	return &MCPServer{MCPServer: s, Sites: slices.Clone(sites), Warnings: warnings, close: sync.OnceFunc(closeEnv)}, nil
 }
 
 // cleanMCPOptions validates o the way the flags of `ffc mcp` are: it trims

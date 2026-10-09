@@ -35,13 +35,10 @@ func mcpSites(o mcpOptions) ([]string, error) {
 		}
 		return []string{site.Name}, nil
 	}
-	if o.allSites && len(o.sites) > 0 {
-		return nil, usageErrorf("use --sites or --all-sites, not both")
-	}
 	// FFC_API_KEY/FFC_API_SECRET replace the stored credentials of the site
 	// they are loaded for; with several sites they would be sent to all.
 	if os.Getenv("FFC_API_KEY") != "" && os.Getenv("FFC_API_SECRET") != "" {
-		return nil, usageErrorf("FFC_API_KEY and FFC_API_SECRET apply to one site; unset them to serve several sites")
+		return nil, o.fail("FFC_API_KEY and FFC_API_SECRET apply to one site; unset them to serve several sites")
 	}
 	path, err := o.cfgPath()
 	if err != nil {
@@ -64,7 +61,7 @@ func mcpSites(o mcpOptions) ([]string, error) {
 	for _, w := range want {
 		site, err := config.LoadSite(w, path) // exact, then a unique case-insensitive match
 		if err != nil {
-			return nil, fmt.Errorf("--sites: %w", err)
+			return nil, fmt.Errorf("%s: %w", o.optName("--sites", "Sites"), err)
 		}
 		if !seen[site.Name] {
 			seen[site.Name] = true
@@ -82,7 +79,7 @@ func mcpSites(o mcpOptions) ([]string, error) {
 			return nil, fmt.Errorf("config: %w", err)
 		}
 		if !seen[site.Name] {
-			return nil, usageErrorf("--site %s is not one of the served sites (%s)", site.Name, strings.Join(sites, ", "))
+			return nil, o.fail("%s %s is not one of the served sites (%s)", o.optName("--site", "Site"), site.Name, strings.Join(sites, ", "))
 		}
 		first = site.Name
 	}

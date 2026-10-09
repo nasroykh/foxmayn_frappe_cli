@@ -27,6 +27,26 @@ type mcpOptions struct {
 	// --read-only.
 	policy   config.MCPPolicy
 	toolsets []string // nil: defaultToolsets
+	// api is set by NewMCPServer: errors name option fields, not flags, and
+	// are not usage errors.
+	api bool
+}
+
+// fail returns a usage error for the command line, a plain error for
+// NewMCPServer.
+func (o mcpOptions) fail(format string, a ...interface{}) error {
+	if o.api {
+		return fmt.Errorf(format, a...)
+	}
+	return usageErrorf(format, a...)
+}
+
+// optName is the flag or, for NewMCPServer, the option field.
+func (o mcpOptions) optName(flag, field string) string {
+	if o.api {
+		return field
+	}
+	return flag
 }
 
 // mcpOptionsFromFlags reads the global flag variables of `ffc mcp`.
@@ -82,10 +102,15 @@ func newMCPEnv(o mcpOptions, sites []string) (*mcpEnv, func(), error) {
 	}
 	var (
 		mu      sync.Mutex
+		closed  bool
 		clients = map[string]*siteClient{}
 	)
 	get := func(ctx context.Context, site *config.SiteConfig) (*client.FrappeClient, error) {
 		mu.Lock()
+		if closed {
+			mu.Unlock()
+			return nil, errors.New("MCP server closed")
+		}
 		sc := clients[site.Name]
 		if sc == nil {
 			sc = &siteClient{}
@@ -115,6 +140,7 @@ func newMCPEnv(o mcpOptions, sites []string) (*mcpEnv, func(), error) {
 	closeFn := func() {
 		mu.Lock()
 		defer mu.Unlock()
+		closed = true
 		for _, sc := range clients {
 			sc.mu.Lock()
 			if sc.fc != nil {
