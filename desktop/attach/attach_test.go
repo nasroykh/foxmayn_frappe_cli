@@ -12,6 +12,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -93,7 +94,7 @@ func TestParseLimits(t *testing.T) {
 	_, err = ReadFile(p)
 	refusal(t, err, "larger than 10 MB")
 	_, err = ReadFile(dir)
-	refusal(t, err, "not a file")
+	refusal(t, err, "not a regular file")
 }
 
 func TestParseSniffMismatch(t *testing.T) {
@@ -291,10 +292,40 @@ func TestCleanName(t *testing.T) {
 		`C:\Users\me\report.csv`: "report.csv",
 		"../../etc/passwd.txt":   "passwd.txt",
 		"a\x00b\x1b.txt":         "ab.txt",
+		"a\nb\rc\td.txt":         "a b c d.txt",
 		"":                       "attachment",
 	} {
 		if got := cleanName(in); got != want {
 			t.Errorf("cleanName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestReadFileRefusals(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "a.txt")
+	if err := os.WriteFile(good, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := ReadFile(good); err != nil || f.Text != "hello" {
+		t.Fatalf("regular file = %+v, %v", f, err)
+	}
+	refusal(t, readErr(dir), "is not a regular file")
+	refusal(t, readErr(filepath.Join(dir, "missing.txt")), "missing.txt could not be read.")
+}
+
+func readErr(path string) error {
+	_, err := ReadFile(path)
+	return err
+}
+
+// A UNC path is refused before it is opened (Windows only: elsewhere a
+// leading double slash is an ordinary path).
+func TestReadFileRefusesUNC(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("UNC volume names exist on Windows only")
+	}
+	for _, p := range []string{`\\host\share\a.txt`, `\\.\C:\a.txt`, `\\?\C:\a.txt`, `//host/share/a.txt`} {
+		refusal(t, readErr(p), "network or device path")
 	}
 }

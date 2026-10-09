@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"path/filepath"
 	"strings"
+	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/attach"
@@ -15,9 +18,11 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// EventChatAttachments reports files dropped on a conversation's composer:
-// Go reads the dropped paths itself (WindowFilesDropped), so the web view
-// never hands a path to a binding.
+// EventChatAttachments reports files dropped on a conversation's composer.
+// In Wails v3 beta.28 a native drop goes Go -> JS -> the Go runtime method
+// WindowFilesDropped, so the paths and the target conversation come from the
+// web view and any script in it could forge them. They are trusted only after
+// the person confirms them in a native dialog (ConfirmDroppedFiles).
 const EventChatAttachments = "chat:attachments"
 
 func init() {
@@ -60,7 +65,62 @@ type AttachDialogs interface {
 	OpenFilesDialog(title, filterName, pattern string) ([]string, error)
 }
 
-var _ AttachDialogs = (*WailsHost)(nil)
+// DropConfirmer asks the person, in a native dialog the web view cannot
+// click, whether dropped files may be attached. A host without it cannot
+// accept drops.
+type DropConfirmer interface {
+	ConfirmDroppedFiles(paths []string) (bool, error)
+}
+
+var (
+	_ AttachDialogs = (*WailsHost)(nil)
+	_ DropConfirmer = (*WailsHost)(nil)
+)
+
+// ConfirmDroppedFiles asks "Attach dropped files?" with each file's name and
+// folder. false means the person cancelled or closed the dialog.
+func (h *WailsHost) ConfirmDroppedFiles(paths []string) (bool, error) {
+	if h.App == nil {
+		return false, errors.New("the app is not running")
+	}
+	var b strings.Builder
+	b.WriteString("These files were dropped on the chat. Attach them?\n")
+	for _, p := range paths {
+		fmt.Fprintf(&b, "\n%s\n    in %s", dialogText(filepath.Base(p)), dialogText(filepath.Dir(p)))
+	}
+	d := h.App.Dialog.Question().SetTitle("Attach dropped files?").SetMessage(b.String())
+	if w := h.App.Window.Current(); w != nil {
+		d.AttachToWindow(w)
+	}
+	// Show does not wait for the answer on every OS (macOS shows the alert
+	// asynchronously, Linux runs the button callbacks in goroutines), so the
+	// answer comes through a channel. A dialog closed without a button, or
+	// left open past dropConfirmWait, counts as Cancel.
+	answer := make(chan bool, 2)
+	d.AddButton("Attach").SetAsDefault().OnClick(func() { answer <- true })
+	d.AddButton("Cancel").SetAsCancel().OnClick(func() { answer <- false })
+	d.Show()
+	select {
+	case ok := <-answer:
+		return ok, nil
+	case <-time.After(dropConfirmWait):
+		return false, nil
+	}
+}
+
+// dropConfirmWait bounds the wait for an answer to the drop dialog.
+const dropConfirmWait = 10 * time.Minute
+
+// dialogText makes a file name safe to show in a dialog: control characters
+// become spaces.
+func dialogText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+}
 
 // OpenFilesDialog asks for files to open.
 func (h *WailsHost) OpenFilesDialog(title, filterName, pattern string) ([]string, error) {
@@ -121,13 +181,51 @@ func (a *AssistantService) AddAttachment(convID string) (AttachResult, error) {
 
 // HandleDroppedFiles attaches files dropped on the composer of convID (the
 // drop target's data-conv-id) and reports the outcome as
-// EventChatAttachments. A function, not a method, so Wails does not bind it:
-// paths come from the window's drop event only.
+// EventChatAttachments. A function, not a method, so Wails does not bind it.
+// The paths and convID come from JS through the Wails runtime, so a script in
+// the web view can forge them: nothing is read until the person confirms the
+// files in a native dialog. More than MaxPerMessage files are refused before
+// the dialog.
 func HandleDroppedFiles(a *AssistantService, convID string, paths []string) {
 	if a == nil || convID == "" || len(paths) == 0 {
 		return
 	}
+	refused := func(msg string) (AttachResult, error) {
+		res := AttachResult{Attachments: []StagedAttachment{}, Errors: []string{}}
+		if msg != "" {
+			res.Errors = append(res.Errors, msg)
+		}
+		return res, nil
+	}
 	res, err := func() (AttachResult, error) {
+		if len(paths) > attach.MaxPerMessage {
+			return refused(fmt.Sprintf("A message can carry at most %d attachments.", attach.MaxPerMessage))
+		}
+		if err := func() error {
+			_, st, done, err := a.enter()
+			if err != nil {
+				return err
+			}
+			defer done()
+			if _, err := st.GetConversation(convID); err != nil {
+				return wrapStoreErr(err)
+			}
+			return nil
+		}(); err != nil {
+			return AttachResult{}, err
+		}
+		dlg, ok := a.host.(DropConfirmer)
+		if !ok {
+			return refused("Dropping files needs a native dialog, which this app cannot show.")
+		}
+		// The dialog is modal: the service is not held while it is open.
+		yes, err := dlg.ConfirmDroppedFiles(paths)
+		if err != nil {
+			return refused("The confirmation dialog failed.")
+		}
+		if !yes {
+			return refused("")
+		}
 		_, st, done, err := a.enter()
 		if err != nil {
 			return AttachResult{}, err
@@ -146,12 +244,23 @@ func HandleDroppedFiles(a *AssistantService, convID string, paths []string) {
 
 func (a *AssistantService) attachPaths(st *store.Store, convID string, paths []string) (AttachResult, error) {
 	res := AttachResult{Attachments: []StagedAttachment{}, Errors: []string{}}
+	staged, err := st.StagedAttachments(convID)
+	if err != nil {
+		return res, wrapStoreErr(err)
+	}
+	room := attach.MaxPerMessage - len(staged)
 	for _, p := range paths {
+		if room <= 0 {
+			// Nothing more is read once the message is full.
+			res.Errors = append(res.Errors, fmt.Sprintf("A message can carry at most %d attachments.", attach.MaxPerMessage))
+			break
+		}
 		f, err := attach.ReadFile(p)
 		if err == nil {
 			var s StagedAttachment
 			if s, err = a.stage(st, convID, f); err == nil {
 				res.Attachments = append(res.Attachments, s)
+				room--
 				continue
 			}
 		}

@@ -22,6 +22,14 @@ type attachHost struct {
 	*fakeHost
 	paths []string
 	asked int
+
+	confirm   bool       // the answer to ConfirmDroppedFiles
+	confirmed [][]string // what it was asked, per call
+}
+
+func (h *attachHost) ConfirmDroppedFiles(paths []string) (bool, error) {
+	h.confirmed = append(h.confirmed, paths)
+	return h.confirm, nil
 }
 
 func (h *attachHost) OpenFilesDialog(title, filterName, pattern string) ([]string, error) {
@@ -300,9 +308,10 @@ func TestAttachmentMessageLimits(t *testing.T) {
 	}
 }
 
-// Dropped files are read in Go and reported as an event.
+// Dropped files are confirmed natively, read in Go and reported as an event.
 func TestDroppedFilesReported(t *testing.T) {
-	g, _ := attachRig(t)
+	g, ah := attachRig(t)
+	ah.confirm = true
 	c := g.conv(t, ModeRead)
 	HandleDroppedFiles(g.a, c.ID, []string{writeFile(t, "d.json", []byte(`{"a":1}`)), writeFile(t, "d.exe", []byte{0x4d, 0x5a, 0})})
 	ev := g.h.named(EventChatAttachments)
@@ -313,9 +322,100 @@ func TestDroppedFilesReported(t *testing.T) {
 	if p.ConvID != c.ID || len(p.Attachments) != 1 || p.Attachments[0].Mime != "application/json" || len(p.Errors) != 1 {
 		t.Fatalf("payload = %+v", p)
 	}
+	if len(ah.confirmed) != 1 || len(ah.confirmed[0]) != 2 {
+		t.Fatalf("confirmations = %v", ah.confirmed)
+	}
 	HandleDroppedFiles(g.a, "nope", []string{writeFile(t, "d.txt", []byte("x"))})
 	if ev := g.h.named(EventChatAttachments); len(ev) != 2 || len(ev[1].(ChatAttachments).Errors) != 1 {
 		t.Fatalf("unknown conversation = %+v", ev)
+	}
+}
+
+// droppedPayload returns the one chat:attachments event a drop emitted.
+func droppedPayload(t *testing.T, g *assistantRig) ChatAttachments {
+	t.Helper()
+	ev := g.h.named(EventChatAttachments)
+	if len(ev) != 1 {
+		t.Fatalf("events = %d, want 1", len(ev))
+	}
+	return ev[0].(ChatAttachments)
+}
+
+// A declined drop reads nothing: the path is a directory that ReadFile would
+// refuse with an error, so an empty, error-free event proves it was not read.
+func TestDroppedFilesDeclined(t *testing.T) {
+	g, ah := attachRig(t)
+	c := g.conv(t, ModeRead)
+	ah.confirm = false
+	HandleDroppedFiles(g.a, c.ID, []string{writeFile(t, "d.txt", []byte("x")), t.TempDir()})
+	p := droppedPayload(t, g)
+	if p.ConvID != c.ID || len(p.Attachments) != 0 || len(p.Errors) != 0 {
+		t.Fatalf("declined payload = %+v", p)
+	}
+	if len(ah.confirmed) != 1 {
+		t.Fatalf("confirmations = %d", len(ah.confirmed))
+	}
+	if staged, _ := g.a.ListAttachments(c.ID); len(staged) != 0 {
+		t.Fatalf("staged = %d", len(staged))
+	}
+}
+
+// A host without a confirmation dialog cannot accept a drop.
+func TestDroppedFilesNoDialog(t *testing.T) {
+	g := newAssistantRig(t)
+	c := g.conv(t, ModeRead)
+	HandleDroppedFiles(g.a, c.ID, []string{writeFile(t, "d.txt", []byte("x"))})
+	p := droppedPayload(t, g)
+	if len(p.Attachments) != 0 || len(p.Errors) != 1 {
+		t.Fatalf("payload = %+v", p)
+	}
+	if staged, _ := g.a.ListAttachments(c.ID); len(staged) != 0 {
+		t.Fatalf("staged = %d", len(staged))
+	}
+}
+
+// More than five files are refused whole, before the dialog and any read.
+func TestDroppedFilesTooMany(t *testing.T) {
+	g, ah := attachRig(t)
+	ah.confirm = true
+	c := g.conv(t, ModeRead)
+	var paths []string
+	for i := 0; i < attach.MaxPerMessage+1; i++ {
+		paths = append(paths, writeFile(t, "f.txt", []byte("x")))
+	}
+	HandleDroppedFiles(g.a, c.ID, paths)
+	p := droppedPayload(t, g)
+	if len(p.Attachments) != 0 || len(p.Errors) != 1 || !strings.Contains(p.Errors[0], "at most 5") {
+		t.Fatalf("payload = %+v", p)
+	}
+	if len(ah.confirmed) != 0 {
+		t.Fatalf("confirmed %d times, want 0", len(ah.confirmed))
+	}
+	if staged, _ := g.a.ListAttachments(c.ID); len(staged) != 0 {
+		t.Fatalf("staged = %d", len(staged))
+	}
+}
+
+// Once the conversation holds five staged files, a drop reads no more.
+func TestDroppedFilesStagedCap(t *testing.T) {
+	g, ah := attachRig(t)
+	ah.confirm = true
+	c := g.conv(t, ModeRead)
+	for i := 0; i < attach.MaxPerMessage-1; i++ {
+		ah.paths = []string{writeFile(t, "s.txt", []byte{byte('a' + i)})}
+		if _, err := g.a.AddAttachment(c.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Room for one: the second path is a directory that would be refused with
+	// its own error if it were read; the cap error must come instead.
+	HandleDroppedFiles(g.a, c.ID, []string{writeFile(t, "one.txt", []byte("1")), t.TempDir(), writeFile(t, "two.txt", []byte("2"))})
+	p := droppedPayload(t, g)
+	if len(p.Attachments) != 1 || len(p.Errors) != 1 || !strings.Contains(p.Errors[0], "A message can carry at most 5 attachments.") {
+		t.Fatalf("payload = %+v", p)
+	}
+	if staged, _ := g.a.ListAttachments(c.ID); len(staged) != attach.MaxPerMessage {
+		t.Fatalf("staged = %d", len(staged))
 	}
 }
 

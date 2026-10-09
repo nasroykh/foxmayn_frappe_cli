@@ -116,3 +116,42 @@ func TestAttachmentTextNotIndexed(t *testing.T) {
 		t.Fatalf("user text not indexed: %+v %v", hits, err)
 	}
 }
+
+// Deleting a message deletes the attachments it carried: with ON DELETE SET
+// NULL they would otherwise turn back into staged ones.
+func TestDeleteMessageRemovesAttachments(t *testing.T) {
+	s, _ := openTemp(t)
+	c := mustConv(t, s, "c")
+	a, err := s.AddAttachment(Attachment{ConvID: c.ID, Name: "a.txt", Mime: "text/plain", Size: 3, SHA256: "h1", Text: "abc"}, nil, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.AppendUserMessage(c.ID, "user", `[]`, []string{a.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteMessage(m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if staged, err := s.StagedAttachments(c.ID); err != nil || len(staged) != 0 {
+		t.Fatalf("staged after delete = %v, %v", staged, err)
+	}
+	if sent, err := s.MessageAttachments(c.ID); err != nil || len(sent) != 0 {
+		t.Fatalf("sent after delete = %v, %v", sent, err)
+	}
+	if _, err := s.AttachmentData(c.ID, a.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("attachment data = %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteMessage(m.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete = %v, want ErrNotFound", err)
+	}
+}
+
+// Deleted text and blobs are overwritten in the file.
+func TestSecureDelete(t *testing.T) {
+	s, _ := openTemp(t)
+	var v int
+	if err := s.db.QueryRow(`PRAGMA secure_delete`).Scan(&v); err != nil || v != 1 {
+		t.Fatalf("secure_delete = %d, %v", v, err)
+	}
+}

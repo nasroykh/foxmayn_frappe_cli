@@ -120,15 +120,34 @@ func IsImageMime(mime string) bool {
 // ReadFile reads the file at path and checks it (see Parse). Only a regular
 // file of at most MaxFileBytes is read.
 func ReadFile(path string) (File, error) {
-	name := filepath.Base(path)
+	name := cleanName(path)
+	// A UNC share or a \\.\ or \\?\ device path can reach a network host
+	// or a device: refused before anything touches it.
+	if vol := filepath.VolumeName(path); strings.HasPrefix(vol, `\\`) || strings.HasPrefix(vol, "//") {
+		return File{}, refuse("%s is on a network or device path and cannot be attached.", name)
+	}
+	// Anything that is not a regular file (directory, FIFO, device) is refused
+	// before Open, so a FIFO cannot block it. Failures share one message, so
+	// the refusals do not tell whether a path exists.
+	pre, err := os.Stat(path)
+	if err != nil {
+		return File{}, refuse("%s could not be read.", name)
+	}
+	if !pre.Mode().IsRegular() {
+		return File{}, refuse("%s is not a regular file.", name)
+	}
 	f, err := os.Open(path)
 	if err != nil {
-		return File{}, refuse("%s could not be opened.", name)
+		return File{}, refuse("%s could not be read.", name)
 	}
 	defer f.Close()
 	st, err := f.Stat()
-	if err != nil || !st.Mode().IsRegular() {
-		return File{}, refuse("%s is not a file that can be attached.", name)
+	if err != nil {
+		return File{}, refuse("%s could not be read.", name)
+	}
+	// The path may have been swapped between Stat and Open.
+	if !st.Mode().IsRegular() || !os.SameFile(pre, st) {
+		return File{}, refuse("%s is not a regular file.", name)
 	}
 	if st.Size() > MaxFileBytes {
 		return File{}, refuse("%s is larger than 10 MB.", name)
@@ -353,6 +372,12 @@ func hasAnyImageExt(ext string) bool {
 // characters.
 func cleanName(name string) string {
 	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	name = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		return r
+	}, name)
 	name = strings.TrimSpace(stripControls(name))
 	if r := []rune(name); len(r) > 200 {
 		name = string(r[:200])

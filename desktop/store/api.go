@@ -282,9 +282,26 @@ func (s *Store) UpdateMessageParts(id, partsJSON string) error {
 	return nil
 }
 
-// DeleteMessage removes one message and its search entry.
+// DeleteMessage removes one message, its search entry and its attachments.
+// The attachments go first, in the same transaction: their msg_id is ON DELETE
+// SET NULL, and a NULL msg_id means staged, so a sent attachment would come
+// back as one staged for the next message.
 func (s *Store) DeleteMessage(id string) error {
-	return execOne("delete message", s.db, `DELETE FROM messages WHERE id=?`, id)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("delete message: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM attachments WHERE msg_id=?`, id); err != nil {
+		return fmt.Errorf("delete message: %w", err)
+	}
+	if err := execOne("delete message", tx, `DELETE FROM messages WHERE id=?`, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete message: %w", err)
+	}
+	return nil
 }
 
 func scanMessages(rows *sql.Rows, what string) ([]Message, error) {

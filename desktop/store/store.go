@@ -52,7 +52,7 @@ func dsn(path string) (string, error) {
 	}
 	q := url.Values{}
 	q.Add("_txlock", "immediate")
-	for _, pr := range []string{"busy_timeout(5000)", "foreign_keys(1)", "journal_mode(WAL)", "synchronous(NORMAL)"} {
+	for _, pr := range []string{"busy_timeout(5000)", "foreign_keys(1)", "journal_mode(WAL)", "synchronous(NORMAL)", "secure_delete(1)"} {
 		q.Add("_pragma", pr)
 	}
 	u := url.URL{Scheme: "file", Path: p, RawQuery: q.Encode()}
