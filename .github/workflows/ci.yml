@@ -35,8 +35,12 @@ jobs:
         run: go test -race ./...
 
       # Pinned tool versions: bump deliberately, like the actions above.
+      # staticcheck comes from tools/lint/go.mod: v0.8.1 needs a newer
+      # golang.org/x/tools to read go1.27.2's export data.
       - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+        run: |
+          go build -C tools/lint -o "$RUNNER_TEMP/staticcheck" honnef.co/go/tools/cmd/staticcheck
+          "$RUNNER_TEMP/staticcheck" ./...
 
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

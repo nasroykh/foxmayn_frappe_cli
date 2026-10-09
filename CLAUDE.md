@@ -25,7 +25,7 @@ make tidy           # go mod tidy
 make vet            # go vet ./...
 make fmt            # gofmt -w .
 make test           # go test -race ./...
-make lint           # gofmt check, go vet, staticcheck (pinned, via go run)
+make lint           # gofmt check, go vet, staticcheck (pinned in tools/lint/go.mod, its own module)
 make vuln           # govulncheck (pinned, via go run)
 make clean          # Remove binary
 ```
