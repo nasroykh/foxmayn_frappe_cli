@@ -13,8 +13,10 @@ LDFLAGS := -s -w \
 	-X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Commit=$(COMMIT) \
 	-X github.com/nasroykh/foxmayn_frappe_cli/internal/version.Date=$(DATE)
 
-# Analysis tools, run with go run at pinned versions (same as CI).
-STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
+# Analysis tools at pinned versions (same as CI). staticcheck is built from
+# tools/lint, whose go.mod pins it with a golang.org/x/tools that reads the
+# toolchain's export data.
+GOEXE := $(shell go env GOEXE)
 GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
 
 .PHONY: build install clean tidy vet fmt test lint vuln contract help skills-init skills-init-claude skills-init-cursor skills-init-agent
@@ -54,7 +56,8 @@ test:
 lint:
 	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 	go vet ./...
-	go run $(STATICCHECK) ./...
+	go build -C tools/lint -o $(CURDIR)/bin/staticcheck$(GOEXE) honnef.co/go/tools/cmd/staticcheck
+	./bin/staticcheck$(GOEXE) ./...
 
 ## contract: run the contract tests against a real site (SITE=<ffc config site>; it writes test data)
 contract:
