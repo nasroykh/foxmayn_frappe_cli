@@ -141,6 +141,17 @@ export const backend: Backend = {
   saveSiteSettings: (s) => AssistantService.SaveSiteSettings(s),
   promptPreview: async (convID) => preview(await AssistantService.PromptPreview(convID)),
 
+  search: async (query, filter, limit) => (await AssistantService.Search(query, filter, limit)) ?? [],
+  pinConversation: (convID, pinned) => AssistantService.Pin(convID, pinned),
+  archiveConversation: (convID, archived) => AssistantService.Archive(convID, archived),
+  getRetention: async () => {
+    const days = await AssistantService.GetRetention()
+    return days === 30 || days === 90 ? days : 0
+  },
+  setRetention: (days) => AssistantService.SetRetention(days),
+  exportConversation: (convID, format) => AssistantService.ExportConversation(convID, format),
+  importConversation: () => AssistantService.ImportConversation(),
+
   onChatDelta: (cb) => Events.On("chat:delta", (ev) => cb(ev.data)),
   onChatTool: (cb) => Events.On("chat:tool", (ev) => cb(ev.data)),
   onChatApproval: (cb) => Events.On("chat:approval", (ev) => cb(approval(ev.data))),

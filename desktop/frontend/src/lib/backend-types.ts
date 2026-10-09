@@ -27,6 +27,7 @@ import type {
   Environment,
   FFCInfo,
   FFCUpdate,
+  ImportResult,
   KeyStatus,
   Model,
   OpenRouterAuth as GeneratedOpenRouterAuth,
@@ -37,6 +38,8 @@ import type {
   ProviderInfo,
   RemoveResult,
   RunUsage,
+  SearchFilter,
+  SearchHit,
   SignInProgress,
   Site,
   SiteList,
@@ -70,6 +73,7 @@ export type {
   Environment,
   FFCInfo,
   FFCUpdate,
+  ImportResult,
   KeyStatus,
   Model,
   PasswordRequest,
@@ -77,6 +81,8 @@ export type {
   ProviderInfo,
   RemoveResult,
   RunUsage,
+  SearchFilter,
+  SearchHit,
   SignInProgress,
   Site,
   SiteList,
@@ -92,6 +98,10 @@ export type {
 // lists; these narrow them. backend.ts fills in the empty lists, so the UI
 // never meets null.
 
+/** How long a conversation is kept after its last message; 0 is forever. */
+export type RetentionDays = 0 | 30 | 90
+/** The formats ExportConversation writes. */
+export type ExportFormat = "json" | "md"
 /** What a conversation may do to its site. */
 export type ConversationMode = "read" | "ask"
 /** The kinds of provider SaveProvider accepts. */
@@ -255,6 +265,19 @@ export interface Backend {
   saveSiteSettings(s: SiteSettings): Promise<SiteSettings>
   /** Opens an engine session (may sign in) but calls no tool. */
   promptPreview(convID: string): Promise<PromptPreview>
+
+  /** Finds messages by their words; a date filter is "YYYY-MM-DD". Archived conversations only with filter.archived. */
+  search(query: string, filter: SearchFilter, limit: number): Promise<SearchHit[]>
+  /** Does not change the conversation's updated time. */
+  pinConversation(convID: string, pinned: boolean): Promise<void>
+  archiveConversation(convID: string, archived: boolean): Promise<void>
+  getRetention(): Promise<RetentionDays>
+  /** Older conversations go at the next start and then daily, not at once. */
+  setRetention(days: RetentionDays): Promise<void>
+  /** Asks where to save; answers the path, or "" when the person cancelled. */
+  exportConversation(convID: string, format: ExportFormat): Promise<string>
+  /** Asks for a file; adds a new conversation (read only). */
+  importConversation(): Promise<ImportResult>
 
   onChatDelta(cb: (ev: ChatDelta) => void): () => void
   onChatTool(cb: (ev: ChatTool) => void): () => void

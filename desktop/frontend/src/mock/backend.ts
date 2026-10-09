@@ -51,8 +51,10 @@ import type {
   Preview,
   Profile,
   ProviderInfo,
+  RetentionDays,
   RunStatus,
   RunUsage,
+  SearchHit,
   SignInProgress,
   Site,
   SiteList,
@@ -324,6 +326,7 @@ interface MockConv {
 }
 
 const convs = new Map<string, MockConv>()
+let retention: RetentionDays = 0
 const runs = new Map<string, MockRun>()
 const openCards = new Map<string, ChatApproval>() // by approvalID
 const chat = {
@@ -1361,6 +1364,66 @@ export const backend: Backend = {
       localOnly: ss?.localOnly ?? false,
       siteContextPending: true,
     }
+  },
+
+  async search(query, filter, limit) {
+    await wait(120)
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+    if (words.length === 0) return []
+    const from = filter.from ? new Date(`${filter.from}T00:00:00`).getTime() : -Infinity
+    const to = filter.to ? new Date(`${filter.to}T23:59:59.999`).getTime() : Infinity
+    const hits: SearchHit[] = []
+    for (const c of convs.values()) {
+      const cv = c.conv
+      if (!!cv.archived !== filter.archived || cv.ephemeral) continue
+      if ((filter.site && cv.site !== filter.site) || (filter.profileID && cv.profileID !== filter.profileID)) continue
+      const upd = new Date(cv.updated).getTime()
+      if (upd < from || upd > to) continue
+      for (const m of c.messages) {
+        const text = m.text.toLowerCase()
+        if (!words.every((w) => text.includes(w))) continue
+        const start = Math.max(0, text.indexOf(words[0]) - 40)
+        const snippet = (start > 0 ? "…" : "") + m.text.slice(start, start + 120).replace(/\s+/g, " ")
+        hits.push({ convID: cv.id, title: cv.title, site: cv.site, msgID: m.id, snippet, updated: cv.updated, pinned: !!cv.pinned })
+      }
+    }
+    return hits.slice(0, limit > 0 ? Math.min(limit, 200) : 50)
+  },
+  async pinConversation(convID, pinned) {
+    findConv(convID).conv.pinned = pinned
+  },
+  async archiveConversation(convID, archived) {
+    findConv(convID).conv.archived = archived
+  },
+  async getRetention() {
+    return retention
+  },
+  async setRetention(days) {
+    if (days !== 0 && days !== 30 && days !== 90) fail("invalid", "Choose forever, 90 days or 30 days.", { field: "days" })
+    retention = days
+  },
+  async exportConversation(convID, format) {
+    await wait(150)
+    const c = findConv(convID)
+    const slug = c.conv.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "conversation"
+    return [home, "Documents", `${slug}.${format}`].join(sep)
+  },
+  async importConversation() {
+    await wait(200)
+    const now = new Date().toISOString()
+    const conv: Conversation = {
+      id: newID("conv"),
+      title: "Imported conversation",
+      site: sites[0]?.name ?? "acme-prod",
+      mode: "read",
+      providerID: "",
+      model: "",
+      profileID: "",
+      created: now,
+      updated: now,
+    }
+    convs.set(conv.id, { conv, messages: [], pausedRunID: "" })
+    return { cancelled: false, conversation: { ...conv } }
   },
 
   onChatDelta: (cb) => on(chat.delta, cb),
