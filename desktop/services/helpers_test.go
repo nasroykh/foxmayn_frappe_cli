@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/cmd"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/sitecache"
 )
@@ -15,6 +16,8 @@ import (
 // TestMain keeps the tests out of the developer's ffc cache: removing or
 // renaming a site drops its cache directory.
 func TestMain(m *testing.M) {
+	// An MCP tool's jq filter re-runs this binary as a child.
+	cmd.RunJQChildIfRequested()
 	cache, err := os.MkdirTemp("", "ffc-desktop-test-cache")
 	if err != nil {
 		panic(err)
