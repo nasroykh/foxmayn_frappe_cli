@@ -193,7 +193,7 @@ func TestEngineElicitorFailuresDecline(t *testing.T) {
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			e, fake, _ := engineSite(t)
+			e, fake, path := engineSite(t)
 			asked := make(chan struct{}, 1)
 			el := tc.elicit
 			s, err := e.Open(t.Context(), "prod", EngineAsk, func(ctx context.Context, r mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
@@ -209,9 +209,23 @@ func TestEngineElicitorFailuresDecline(t *testing.T) {
 			if tc.cancel {
 				go func() { <-asked; cancel() }()
 			}
-			s.Call(ctx, "r1", "delete_doc", map[string]any{"doctype": "ToDo", "name": "TD-1"})
+			res, err := s.Call(ctx, "r1", "delete_doc", map[string]any{"doctype": "ToDo", "name": "TD-1"})
 			if _, ok := fake.Doc("ToDo", "TD-1"); !ok {
 				t.Error("TD-1 was deleted")
+			}
+			if tc.cancel {
+				return
+			}
+			select {
+			case <-asked:
+			default:
+				t.Error("the Elicitor was not asked")
+			}
+			if err != nil || !strings.Contains(resultText(res), "nothing was changed") {
+				t.Errorf("result = %v, %v", res, err)
+			}
+			if got := auditStatuses(t, path); got != "confirm_pending,declined" {
+				t.Errorf("audit statuses = %s", got)
 			}
 		})
 	}
@@ -297,8 +311,8 @@ func TestEngineCloseDuringElicitation(t *testing.T) {
 			}
 			select {
 			case <-callDone:
-			default:
-				t.Error("Close returned before the call ended")
+			case <-time.After(10 * time.Second):
+				t.Error("the call did not end")
 			}
 			close(release)
 			time.Sleep(50 * time.Millisecond)
@@ -531,5 +545,113 @@ func TestEngineRetiredServerClosedOnce(t *testing.T) {
 	e.Close()
 	if n.Load() != 1 {
 		t.Errorf("closed %d times", n.Load())
+	}
+}
+
+// Engine.Close with two questions open: both sessions are shut at once (a
+// new call is refused, a yes given late deletes nothing) and Close returns
+// only after both calls ended.
+func TestEngineCloseTwoSessions(t *testing.T) {
+	e, fake, _ := engineSite(t)
+	release := make(chan struct{})
+	asked := make(chan struct{}, 2)
+	elicit := func(context.Context, mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+		asked <- struct{}{}
+		<-release
+		return &mcp.ElicitationResult{ElicitationResponse: mcp.ElicitationResponse{
+			Action: mcp.ElicitationResponseActionAccept, Content: map[string]any{"confirm": true},
+		}}, nil
+	}
+	var sess [2]*EngineSession
+	var callDone [2]chan struct{}
+	for i := range sess {
+		s, err := e.Open(t.Context(), "prod", EngineAsk, elicit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sess[i], callDone[i] = s, make(chan struct{})
+		name := []string{"TD-1", "TD-2"}[i]
+		go func() {
+			defer close(callDone[i])
+			s.Call(t.Context(), "r", "delete_doc", map[string]any{"doctype": "ToDo", "name": name})
+		}()
+	}
+	<-asked
+	<-asked
+	closeDone := make(chan struct{})
+	go func() { defer close(closeDone); e.Close() }()
+	// Once the sessions are shut a new call is refused.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		_, err := sess[1].Call(t.Context(), "r2", "get_doc", map[string]any{"doctype": "ToDo", "name": "TD-3"})
+		if code(err) == CodeUnavailable {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a new call was accepted during Close: %v", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(release) // late yes on both
+	select {
+	case <-closeDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Engine.Close did not return")
+	}
+	for i := range callDone {
+		select {
+		case <-callDone[i]:
+		case <-time.After(10 * time.Second):
+			t.Errorf("call %d did not end", i)
+		}
+	}
+	for _, n := range []string{"TD-1", "TD-2"} {
+		if _, ok := fake.Doc("ToDo", n); !ok {
+			t.Errorf("%s was deleted", n)
+		}
+	}
+}
+
+// Engine.Close waits for a session.Close that is already running, and a
+// second Close of either waits for the first.
+func TestEngineCloseWaitsForSessionClose(t *testing.T) {
+	e, _, _ := engineSite(t)
+	s, err := e.Open(t.Context(), "prod", EngineAsk, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Hold the session's close open: a call that ignores cancellation is
+	// simulated by registering one directly.
+	_, done, err := s.enter(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionClosed, engineClosed := make(chan struct{}), make(chan struct{})
+	go func() { defer close(sessionClosed); s.Close() }()
+	for s.live() == nil { // Close has begun
+		time.Sleep(time.Millisecond)
+	}
+	go func() { defer close(engineClosed); e.Close() }()
+	select {
+	case <-engineClosed:
+		t.Fatal("Engine.Close returned while a session close was still waiting")
+	case <-sessionClosed:
+		t.Fatal("session Close returned with a call in flight")
+	case <-time.After(200 * time.Millisecond):
+	}
+	second := make(chan struct{})
+	go func() { defer close(second); e.Close() }()
+	select {
+	case <-second:
+		t.Fatal("a second Engine.Close returned early")
+	case <-time.After(100 * time.Millisecond):
+	}
+	done()
+	for _, c := range []chan struct{}{sessionClosed, engineClosed, second} {
+		select {
+		case <-c:
+		case <-time.After(10 * time.Second):
+			t.Fatal("a Close did not return after the call ended")
+		}
 	}
 }

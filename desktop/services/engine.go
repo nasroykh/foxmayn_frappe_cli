@@ -38,7 +38,8 @@ const engineBuildTimeout = 60 * time.Second
 // Elicitor answers an ffc confirmation question. A nil Elicitor declines
 // every question. So does an error, a nil result, and a session that is
 // closed or cancelled before the Elicitor answers: it is run on its own
-// goroutine and its late answer is dropped.
+// goroutine and its late answer is dropped. The Elicitor must return when
+// its ctx ends, or its goroutine lingers.
 type Elicitor func(ctx context.Context, req mcp.ElicitationRequest) (*mcp.ElicitationResult, error)
 
 // Engine hosts the ffc MCP server in this process: one server per (site,
@@ -53,6 +54,7 @@ type Engine struct {
 	startMu  sync.Mutex // see startClient
 	mu       sync.Mutex
 	closed   bool
+	done     chan struct{} // closed when Close has finished
 	servers  map[engineKey]*engineServer
 	sessions map[*EngineSession]struct{}
 }
@@ -82,6 +84,7 @@ func NewEngine(configPath string) *Engine {
 		ctx:        ctx,
 		cancel:     cancel,
 		closeSrv:   (*cmd.MCPServer).Close,
+		done:       make(chan struct{}),
 		servers:    map[engineKey]*engineServer{},
 		sessions:   map[*EngineSession]struct{}{},
 	}
@@ -129,34 +132,14 @@ func (e *Engine) acquire(ctx context.Context, key engineKey) (*engineServer, err
 	e.mu.Unlock()
 
 	if build {
-		// The build may log in to the site, so it runs outside the lock. It
-		// follows the engine, not this caller: others wait for the same build.
-		bctx, cancel := context.WithTimeout(e.ctx, engineBuildTimeout)
-		srv, err := cmd.NewMCPServer(bctx, cmd.MCPOptions{
-			ConfigPath: e.configPath,
-			Site:       key.site,
-			Sites:      []string{key.site},
-			Policy:     config.MCPPolicy{Confirm: "always", ReadOnly: key.mode != EngineAsk},
-		})
-		cancel()
+		// The build may log in to the site, so it runs on its own goroutine
+		// (this caller stops waiting when its ctx ends, like the others) and
+		// follows the engine, not this caller. It holds a reference of its
+		// own, so a server finished after every waiter left is still closed.
 		e.mu.Lock()
-		switch {
-		case e.closed:
-			es.err = errEngineClosed()
-			if err == nil {
-				es.srv, es.srvClosed = srv, true
-				defer e.closeSrv(srv)
-			}
-		case err != nil:
-			es.err = siteError("Starting the assistant engine", err)
-		default:
-			es.srv = srv
-		}
-		if es.err != nil && e.servers[key] == es {
-			delete(e.servers, key)
-		}
-		close(es.ready)
+		es.refs++
 		e.mu.Unlock()
+		go e.build(key, es)
 	}
 
 	select {
@@ -170,6 +153,40 @@ func (e *Engine) acquire(ctx context.Context, key engineKey) (*engineServer, err
 		return nil, es.err
 	}
 	return es, nil
+}
+
+// build builds es's server and publishes the result to its waiters.
+func (e *Engine) build(key engineKey, es *engineServer) {
+	defer e.release(es)
+	bctx, cancel := context.WithTimeout(e.ctx, engineBuildTimeout)
+	defer cancel()
+	srv, err := cmd.NewMCPServer(bctx, cmd.MCPOptions{
+		ConfigPath: e.configPath,
+		Site:       key.site,
+		Sites:      []string{key.site},
+		Policy:     config.MCPPolicy{Confirm: "always", ReadOnly: key.mode != EngineAsk},
+	})
+	e.mu.Lock()
+	var late *cmd.MCPServer
+	switch {
+	case e.closed:
+		es.err = errEngineClosed()
+		if err == nil {
+			es.srvClosed, late = true, srv
+		}
+	case err != nil:
+		es.err = siteError("Starting the assistant engine", err)
+	default:
+		es.srv = srv
+	}
+	if es.err != nil && e.servers[key] == es {
+		delete(e.servers, key)
+	}
+	close(es.ready)
+	e.mu.Unlock()
+	if late != nil {
+		e.closeSrv(late)
+	}
 }
 
 // takeClose returns es's server if it must be closed now, once. e.mu is held.
@@ -216,22 +233,33 @@ func (e *Engine) Invalidate() {
 }
 
 // Close ends every session (cancelling and waiting for its calls), closes
-// every server and refuses later Opens.
+// every server and refuses later Opens. A second Close waits for the first.
 func (e *Engine) Close() {
 	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		<-e.done
+		return
+	}
 	e.closed = true
 	sessions := make([]*EngineSession, 0, len(e.sessions))
 	for s := range e.sessions {
 		sessions = append(sessions, s)
 	}
 	e.mu.Unlock()
-	e.cancel() // builds under way end; their result is closed on arrival
+	// No session takes a new call or an answer from here on: all are marked
+	// closed and cancelled before any wait.
+	for _, s := range sessions {
+		s.begin()
+	}
+	e.cancel() // the sessions' contexts and builds under way end
 	for _, s := range e.retireAll() {
 		e.closeSrv(s)
 	}
 	for _, s := range sessions {
 		s.Close()
 	}
+	close(e.done)
 }
 
 func errEngineClosed() *Error {
@@ -251,13 +279,15 @@ type EngineSession struct {
 	cancel context.CancelFunc
 	calls  sync.WaitGroup // in-flight Tools and Call
 
-	mu     sync.Mutex
-	closed bool
+	mu         sync.Mutex
+	closed     bool
+	done       chan struct{} // closed when Close has finished
+	finishOnce sync.Once
 }
 
 func (e *Engine) newSession(ctx context.Context, es *engineServer, elicit Elicitor) (*EngineSession, error) {
-	s := &EngineSession{engine: e, es: es, srv: es.srv}
-	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s := &EngineSession{engine: e, es: es, srv: es.srv, done: make(chan struct{})}
+	s.ctx, s.cancel = context.WithCancel(e.ctx)
 	fail := func(err error) (*EngineSession, error) {
 		s.cancel()
 		if _, ok := err.(*Error); ok {
@@ -428,23 +458,33 @@ func (s *EngineSession) Classify(name string, args map[string]any) (cmd.ToolClas
 	return cls, nil
 }
 
-// Close ends the session: it cancels its calls, waits for them to end, and
-// releases the server. It is safe to call more than once.
-func (s *EngineSession) Close() {
+// begin marks the session closed and cancels it: no new call is accepted
+// and the open ones are told to stop. It reports whether this was the first
+// time.
+func (s *EngineSession) begin() bool {
 	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return
-	}
+	first := !s.closed
 	s.closed = true
 	s.mu.Unlock()
 	s.cancel()
-	s.calls.Wait()
-	s.client.Close()
-	s.engine.mu.Lock()
-	delete(s.engine.sessions, s)
-	s.engine.mu.Unlock()
-	s.engine.release(s.es)
+	return first
+}
+
+// Close ends the session: it cancels its calls, waits for them to end, and
+// releases the server. It is safe to call more than once; a later call
+// waits for the first to finish.
+func (s *EngineSession) Close() {
+	s.begin()
+	s.finishOnce.Do(func() {
+		s.calls.Wait()
+		s.client.Close()
+		s.engine.mu.Lock()
+		delete(s.engine.sessions, s)
+		s.engine.mu.Unlock()
+		s.engine.release(s.es)
+		close(s.done)
+	})
+	<-s.done
 }
 
 func (s *EngineSession) live() error {
