@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -60,12 +61,62 @@ func (g *loopRig) waitDone(t *testing.T, n int) ChatDone {
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if d := g.h.named(EventChatDone); len(d) >= n {
+			g.checkHistories(t)
 			return d[n-1].(ChatDone)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("no chat:done #%d; events: %v", n, g.h.named(EventChatError))
 	return ChatDone{}
+}
+
+// checkHistories asserts every stored conversation answers all its tool calls.
+func (g *loopRig) checkHistories(t *testing.T) {
+	t.Helper()
+	convs, err := g.st.ListConversations()
+	if err != nil {
+		return
+	}
+	for _, c := range convs {
+		assertHistoryValid(t, g.messages(t, c.ID))
+	}
+}
+
+// assertHistoryValid checks that every tool_use is answered by exactly one
+// tool_result in the next user message, and that no result answers nothing.
+func assertHistoryValid(t *testing.T, msgs []llm.Message) {
+	t.Helper()
+	for i, m := range msgs {
+		var uses []string
+		for _, p := range m.Parts {
+			if tu, ok := p.(llm.ToolUse); ok {
+				uses = append(uses, tu.ID)
+			}
+		}
+		if len(uses) == 0 {
+			continue
+		}
+		if m.Role != llm.RoleAssistant || i+1 >= len(msgs) || msgs[i+1].Role != llm.RoleUser {
+			t.Errorf("message %d: tool_use without a following user message", i)
+			continue
+		}
+		got := map[string]int{}
+		n := 0
+		for _, p := range msgs[i+1].Parts {
+			if tr, ok := p.(llm.ToolResult); ok {
+				got[tr.ID]++
+				n++
+			}
+		}
+		for _, id := range uses {
+			if got[id] != 1 {
+				t.Errorf("message %d: tool_use %s has %d results", i, id, got[id])
+			}
+		}
+		if n != len(uses) {
+			t.Errorf("message %d: %d tool_use, %d tool_result", i, len(uses), n)
+		}
+	}
 }
 
 func (g *loopRig) messages(t *testing.T, convID string) []llm.Message {
@@ -488,7 +539,7 @@ func TestLoopErrorsEndTheRun(t *testing.T) {
 		code  string
 		reqs  int
 	}{
-		{"auth", []llmtest.Turn{{StreamErr: &llm.APIError{Status: 401, Message: "invalid x-api-key"}}}, CodeAuth, 1},
+		{"auth", []llmtest.Turn{{StreamErr: &llm.APIError{Status: 401, Message: "invalid x-api-key " + key + " (Bearer abcdefgh12345678)"}}}, CodeAuth, 1},
 		{"retries used up", []llmtest.Turn{
 			{StreamErr: &llm.APIError{Status: 500, Message: "boom"}},
 			{StreamErr: &llm.APIError{Status: 500, Message: "boom"}},
@@ -524,8 +575,8 @@ func TestLoopErrorsEndTheRun(t *testing.T) {
 				t.Errorf("run = %+v", run)
 			}
 			b, _ := json.Marshal(g.h.events)
-			if strings.Contains(string(b), key) {
-				t.Error("key in events")
+			if strings.Contains(string(b), key) || strings.Contains(string(b), "abcdefgh12345678") {
+				t.Errorf("secret in events: %s", b)
 			}
 		})
 	}
@@ -601,4 +652,333 @@ func TestLoopOneRunPerConversation(t *testing.T) {
 	if _, err := g.r.start(cid, "late"); err == nil {
 		t.Error("start after shutdown accepted")
 	}
+}
+
+func TestLoopMaxTokensWithCallRunsIt(t *testing.T) {
+	g := newLoopRig(t,
+		llmtest.Turn{Events: []llm.Event{call("c1", "get_doc", `{"doctype":"ToDo","name":"TD-1"}`), llm.Stop{Reason: llm.StopMaxTokens}}},
+		textTurn("TD-1 is alpha"),
+	)
+	cid := g.conv(t, "read")
+	if _, err := g.r.start(cid, "go"); err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunDone || d.StopReason != "" {
+		t.Fatalf("done = %+v", d)
+	}
+	tr := g.messages(t, cid)[2].Parts[0].(llm.ToolResult)
+	if tr.IsError || !strings.Contains(tr.Text, "alpha") {
+		t.Errorf("result = %+v", tr)
+	}
+	if n := len(g.prov.Requests()); n != 2 {
+		t.Errorf("%d turns", n)
+	}
+}
+
+func TestLoopRefusalWithCallAnswersIt(t *testing.T) {
+	g := newLoopRig(t, llmtest.Turn{Events: []llm.Event{
+		call("c1", "get_doc", `{"doctype":"ToDo","name":"TD-1"}`),
+		call("c2", "get_doc", `{"doctype":"ToDo","name":"TD-2"}`),
+		llm.Stop{Reason: llm.StopRefusal, Category: "cyber"},
+	}})
+	cid := g.conv(t, "read")
+	if _, err := g.r.start(cid, "go"); err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunDone || d.StopReason != llm.StopRefusal || d.Category != "cyber" {
+		t.Fatalf("done = %+v", d)
+	}
+	res := g.messages(t, cid)[2].Parts
+	if len(res) != 2 {
+		t.Fatalf("results = %+v", res)
+	}
+	for _, p := range res {
+		if tr := p.(llm.ToolResult); !tr.IsError || !strings.Contains(tr.Text, "Not run") {
+			t.Errorf("result = %+v", tr)
+		}
+	}
+	if len(g.fake.RequestsTo(http.MethodGet, "/api/resource/ToDo/TD-1")) != 0 {
+		t.Error("a refused call reached the site")
+	}
+}
+
+func TestLoopPauseTurnWithCallRunsIt(t *testing.T) {
+	g := newLoopRig(t,
+		llmtest.Turn{Events: []llm.Event{call("c1", "get_doc", `{"doctype":"ToDo","name":"TD-1"}`), llm.Stop{Reason: llm.StopPauseTurn}}},
+		textTurn("done"),
+	)
+	cid := g.conv(t, "read")
+	if _, err := g.r.start(cid, "go"); err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunDone {
+		t.Fatalf("done = %+v", d)
+	}
+	if tr := g.messages(t, cid)[2].Parts[0].(llm.ToolResult); tr.IsError || !strings.Contains(tr.Text, "alpha") {
+		t.Errorf("result = %+v", tr)
+	}
+}
+
+func TestLoopTurnCapPausesAndContinueResets(t *testing.T) {
+	var turns []llmtest.Turn
+	for i := 0; i < loopTurnCap; i++ {
+		turns = append(turns, llmtest.Turn{Events: []llm.Event{llm.TextDelta{Text: "."}, llm.Stop{Reason: llm.StopPauseTurn}}})
+	}
+	turns = append(turns, textTurn("end"))
+	g := newLoopRig(t, turns...)
+	cid := g.conv(t, "read")
+	runID, err := g.r.start(cid, "long")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunPaused {
+		t.Fatalf("done = %+v", d)
+	}
+	if n := len(g.prov.Requests()); n != loopTurnCap {
+		t.Errorf("%d turns before the pause", n)
+	}
+	if err := g.r.continueRun(runID); err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 2); d.Status != RunDone {
+		t.Fatalf("done = %+v", d)
+	}
+	if u, _ := g.st.ListUsage(runID); len(u) != 1 || u[0].Turn != 1 {
+		t.Errorf("usage = %+v", u)
+	}
+}
+
+func TestLoopStepLimitWithinATurn(t *testing.T) {
+	var turns []llmtest.Turn
+	for i := 0; i < loopStepBudget-1; i++ {
+		turns = append(turns, toolTurn(call(fmt.Sprint("c", i), "get_doc", `{"doctype":"ToDo","name":"TD-1"}`)))
+	}
+	turns = append(turns, toolTurn(
+		call("x1", "get_doc", `{"doctype":"ToDo","name":"TD-1"}`),
+		call("x2", "get_doc", `{"doctype":"ToDo","name":"TD-2"}`),
+		call("x3", "get_doc", `{"doctype":"ToDo","name":"TD-3"}`),
+	))
+	g := newLoopRig(t, turns...)
+	cid := g.conv(t, "read")
+	runID, err := g.r.start(cid, "many")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunPaused {
+		t.Fatalf("done = %+v", d)
+	}
+	msgs := g.messages(t, cid)
+	res := msgs[len(msgs)-1].Parts
+	if len(res) != 3 || res[0].(llm.ToolResult).IsError || !res[1].(llm.ToolResult).IsError || !strings.Contains(res[2].(llm.ToolResult).Text, "step limit") {
+		t.Errorf("results = %+v", res)
+	}
+	if run, _ := g.st.GetRun(runID); run.Steps != loopStepBudget {
+		t.Errorf("steps = %d", run.Steps)
+	}
+	if len(g.fake.RequestsTo(http.MethodGet, "/api/resource/ToDo/TD-3")) != 0 {
+		t.Error("a call past the limit ran")
+	}
+}
+
+func TestLoopMixedOrderOnlyReadsReachTheSite(t *testing.T) {
+	g := newLoopRig(t,
+		toolTurn(
+			call("r1", "get_doc", `{"doctype":"ToDo","name":"TD-1"}`),
+			call("w", "create_doc", `{"doctype":"ToDo","data":{"description":"new"}}`),
+			call("r2", "get_doc", `{"doctype":"ToDo","name":"TD-2"}`),
+			call("m", "call_method", `{"method":"frappe.ping"}`),
+		),
+		textTurn("ok"),
+	)
+	cid := g.conv(t, "ask")
+	runID, err := g.r.start(cid, "mix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunDone {
+		t.Fatalf("done = %+v", d)
+	}
+	res := g.messages(t, cid)[2].Parts
+	wantErr := []bool{false, true, false, true}
+	for i, p := range res {
+		tr := p.(llm.ToolResult)
+		if tr.ID != []string{"r1", "w", "r2", "m"}[i] || tr.IsError != wantErr[i] {
+			t.Errorf("result %d = %+v", i, tr)
+		}
+	}
+	if !strings.Contains(res[3].(llm.ToolResult).Text, "Unknown tool") {
+		t.Errorf("call_method = %+v", res[3])
+	}
+	for _, l := range engineAudit(t, g.path) {
+		if l["run_id"] != runID {
+			t.Errorf("audit line = %v", l)
+		}
+	}
+	for _, rq := range g.fake.Requests() {
+		if rq.Method != http.MethodGet && !strings.Contains(rq.Path, "login") {
+			t.Errorf("site got %s %s", rq.Method, rq.Path)
+		}
+	}
+	if g.fake.Count("ToDo") != 3 {
+		t.Error("the site changed")
+	}
+}
+
+func TestLoopConcurrentContinueHasOneWinner(t *testing.T) {
+	var turns []llmtest.Turn
+	for i := 0; i < loopStepBudget; i++ {
+		turns = append(turns, toolTurn(call(fmt.Sprint("c", i), "get_doc", `{"doctype":"ToDo","name":"TD-1"}`)))
+	}
+	turns = append(turns, textTurn("finished"))
+	g := newLoopRig(t, turns...)
+	cid := g.conv(t, "read")
+	runID, err := g.r.start(cid, "loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunPaused {
+		t.Fatalf("done = %+v", d)
+	}
+	var wg sync.WaitGroup
+	var wins atomic.Int32
+	gate := make(chan struct{})
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-gate
+			if g.r.continueRun(runID) == nil {
+				wins.Add(1)
+			}
+		}()
+	}
+	close(gate)
+	wg.Wait()
+	if wins.Load() != 1 {
+		t.Errorf("%d continues won", wins.Load())
+	}
+	if d := g.waitDone(t, 2); d.Status != RunDone {
+		t.Fatalf("done = %+v", d)
+	}
+	if n := len(g.prov.Requests()); n != loopStepBudget+1 {
+		t.Errorf("%d turns", n)
+	}
+}
+
+func TestLoopNewMessageClosesPausedRun(t *testing.T) {
+	var turns []llmtest.Turn
+	for i := 0; i < loopStepBudget; i++ {
+		turns = append(turns, toolTurn(call(fmt.Sprint("c", i), "get_doc", `{"doctype":"ToDo","name":"TD-1"}`)))
+	}
+	turns = append(turns, textTurn("fresh"))
+	g := newLoopRig(t, turns...)
+	cid := g.conv(t, "read")
+	first, _ := g.r.start(cid, "loop")
+	if d := g.waitDone(t, 1); d.Status != RunPaused {
+		t.Fatalf("done = %+v", d)
+	}
+	if _, err := g.r.start(cid, "never mind, new question"); err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 2); d.Status != RunDone {
+		t.Fatalf("done = %+v", d)
+	}
+	if run, _ := g.st.GetRun(first); run.Status != RunDone {
+		t.Errorf("first run = %+v", run)
+	}
+	if err := g.r.continueRun(first); err == nil {
+		t.Error("a closed run continued")
+	}
+}
+
+func TestLoopStoreFailureFailsTheRun(t *testing.T) {
+	g := newLoopRig(t, toolTurn(call("c1", "get_doc", `{"doctype":"ToDo","name":"TD-1"}`)), textTurn("never"))
+	g.fake.Handle("GET /api/resource/ToDo/TD-1", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g.st.Close() // the store dies while the tool runs
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":{"doctype":"ToDo","name":"TD-1"}}`)
+	}))
+	cid := g.conv(t, "read")
+	if _, err := g.r.start(cid, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunError {
+		t.Fatalf("done = %+v", d)
+	}
+	errs := g.h.named(EventChatError)
+	if len(errs) != 1 || errs[0].(ChatError).Error.Code != CodeFailed {
+		t.Errorf("errors = %v", errs)
+	}
+	if n := len(g.prov.Requests()); n != 1 {
+		t.Errorf("%d turns after the store failed", n)
+	}
+}
+
+func TestRepairHistory(t *testing.T) {
+	use := func(ids ...string) llm.Message {
+		m := llm.Message{Role: llm.RoleAssistant, Parts: []llm.Part{llm.Text{Text: "x"}}}
+		for _, id := range ids {
+			m.Parts = append(m.Parts, llm.ToolUse{ID: id, Name: "get_doc", Args: json.RawMessage(`{}`)})
+		}
+		return m
+	}
+	res := func(ids ...string) llm.Message {
+		m := llm.Message{Role: llm.RoleUser}
+		for _, id := range ids {
+			m.Parts = append(m.Parts, llm.ToolResult{ID: id, Text: "ok:" + id})
+		}
+		return m
+	}
+	user := llm.Message{Role: llm.RoleUser, Parts: []llm.Part{llm.Text{Text: "hi"}}}
+
+	t.Run("valid history is unchanged", func(t *testing.T) {
+		in := []llm.Message{user, use("a", "b"), res("a", "b"), use(), user}
+		if out := repairHistory(in); fmt.Sprint(out) != fmt.Sprint(in) {
+			t.Errorf("changed: %v", out)
+		}
+	})
+	t.Run("trailing tool_use", func(t *testing.T) {
+		out := repairHistory([]llm.Message{user, use("a")})
+		assertHistoryValid(t, out)
+		if len(out) != 3 || !out[2].Parts[0].(llm.ToolResult).IsError {
+			t.Errorf("out = %v", out)
+		}
+	})
+	t.Run("missing result merged into the user message", func(t *testing.T) {
+		out := repairHistory([]llm.Message{user, use("a", "b", "c"), res("b")})
+		assertHistoryValid(t, out)
+		if len(out) != 3 || len(out[2].Parts) != 3 {
+			t.Fatalf("out = %v", out)
+		}
+		if tr := out[2].Parts[1].(llm.ToolResult); tr.ID != "b" || tr.Text != "ok:b" || tr.IsError {
+			t.Errorf("existing result changed: %+v", tr)
+		}
+		if tr := out[2].Parts[0].(llm.ToolResult); tr.ID != "a" || tr.Text != interruptedResult || !tr.IsError {
+			t.Errorf("synthetic = %+v", tr)
+		}
+	})
+	t.Run("next user message is plain text", func(t *testing.T) {
+		out := repairHistory([]llm.Message{user, use("a"), user})
+		assertHistoryValid(t, out)
+		if len(out) != 3 || len(out[2].Parts) != 2 {
+			t.Fatalf("out = %v", out)
+		}
+		if _, ok := out[2].Parts[0].(llm.ToolResult); !ok {
+			t.Error("results must come first")
+		}
+	})
+	t.Run("assistant follows", func(t *testing.T) {
+		out := repairHistory([]llm.Message{user, use("a"), use("b")})
+		assertHistoryValid(t, out)
+		if len(out) != 5 {
+			t.Errorf("out = %v", out)
+		}
+	})
+	t.Run("orphan and duplicate results", func(t *testing.T) {
+		out := repairHistory([]llm.Message{user, use("a"), res("zzz", "a", "a")})
+		assertHistoryValid(t, out)
+		if len(out) != 3 || len(out[2].Parts) != 1 {
+			t.Errorf("out = %v", out)
+		}
+	})
 }

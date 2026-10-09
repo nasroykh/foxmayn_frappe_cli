@@ -634,3 +634,33 @@ func TestProvidersTableHasNoSecretColumn(t *testing.T) {
 		t.Fatalf("providers columns = %v", cols)
 	}
 }
+
+func TestResumeRunOnce(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	c, _ := s.CreateConversation("t", "prod", "read", "p", "m")
+	r, _ := s.CreateRun(c.ID)
+	if err := s.ResumeRun(r.ID); !errors.Is(err, ErrNotPaused) {
+		t.Errorf("running run resumed: %v", err)
+	}
+	_ = s.FinishRun(r.ID, "paused", "", 3)
+	if err := s.ResumeRun(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResumeRun(r.ID); !errors.Is(err, ErrNotPaused) {
+		t.Errorf("second resume: %v", err)
+	}
+	if got, _ := s.GetRun(r.ID); got.Status != "running" || !got.Ended.IsZero() {
+		t.Errorf("run = %+v", got)
+	}
+	_ = s.FinishRun(r.ID, "paused", "", 3)
+	if err := s.AbandonPausedRuns(c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetRun(r.ID); got.Status != "done" {
+		t.Errorf("run = %+v", got)
+	}
+}

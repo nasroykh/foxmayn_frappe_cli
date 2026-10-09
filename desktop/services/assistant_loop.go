@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,12 @@ import (
 
 const (
 	// loopStepBudget is how many tool calls a run makes before it pauses.
+	// Calls of a turn past the budget are not run: they get an error result
+	// telling the model the limit was reached, and the run pauses.
 	loopStepBudget = 25
+	// loopTurnCap is how many model turns one segment of a run may take
+	// (pause_turn continuations included) before it pauses.
+	loopTurnCap = 40
 	// loopParallelReads caps the read calls of one group that run at once.
 	loopParallelReads = 4
 	// loopResultLimit caps the characters of a tool result sent to the model.
@@ -68,7 +74,10 @@ type activeRun struct {
 	session *EngineSession
 	tools   map[string]bool
 	steps   int // tool calls made, over the whole run
-	turns   int // model turns, over the whole run
+	turns   int // the highest turn number used, over the whole run
+
+	errMu    sync.Mutex
+	storeErr error // the first store failure while running tools
 }
 
 func newRunner(s *store.Store, e *Engine, p providerFunc, emit func(string, any)) *runner {
@@ -100,6 +109,10 @@ func (r *runner) start(convID, userText string) (string, error) {
 	if err := r.admit(convID); err != nil {
 		return "", err
 	}
+	// Going on without continuing a paused run closes it.
+	if err := r.store.AbandonPausedRuns(convID); err != nil {
+		return "", wrapStoreErr(err)
+	}
 	if _, err := r.store.AppendMessage(convID, string(llm.RoleUser), parts); err != nil {
 		return "", wrapStoreErr(err)
 	}
@@ -111,14 +124,12 @@ func (r *runner) start(convID, userText string) (string, error) {
 	return run.ID, nil
 }
 
-// continueRun resumes a paused run with a fresh step budget.
+// continueRun resumes a paused run with a fresh step and turn budget. Of two
+// concurrent calls only one wins.
 func (r *runner) continueRun(runID string) error {
 	run, err := r.store.GetRun(runID)
 	if err != nil {
 		return wrapStoreErr(err)
-	}
-	if run.Status != RunPaused {
-		return &Error{Code: CodeInvalid, Message: "This run is not paused."}
 	}
 	conv, err := r.store.GetConversation(run.ConvID)
 	if err != nil {
@@ -128,6 +139,12 @@ func (r *runner) continueRun(runID string) error {
 	defer r.mu.Unlock()
 	if err := r.admit(run.ConvID); err != nil {
 		return err
+	}
+	if err := r.store.ResumeRun(runID); err != nil {
+		if errors.Is(err, store.ErrNotPaused) {
+			return &Error{Code: CodeInvalid, Message: "This run is not paused."}
+		}
+		return wrapStoreErr(err)
 	}
 	r.launch(runID, conv, run.Steps)
 	return nil
@@ -197,7 +214,7 @@ type outcome struct {
 
 func (a *activeRun) run(ctx context.Context) {
 	out := a.loop(ctx)
-	if out.status == RunError && ctx.Err() != nil {
+	if out.status == RunError && ctx.Err() != nil && isCancel(out.err) {
 		out.status, out.err = RunCancelled, nil
 	}
 	errText := ""
@@ -222,22 +239,38 @@ func (a *activeRun) run(ctx context.Context) {
 	a.r.emit(EventChatDone, ChatDone{RunID: a.runID, Status: out.status, StopReason: out.stop, Category: out.cat})
 }
 
+// isCancel reports whether err is the cancellation of a run.
+func isCancel(err error) bool {
+	var se *Error
+	return errors.Is(err, context.Canceled) || (errors.As(err, &se) && se.Code == CodeCancelled)
+}
+
 // toServiceError turns a run failure into the *Error the UI shows. Provider
 // error messages never hold the key (llm.APIError's contract).
 func toServiceError(err error) *Error {
 	var se *Error
-	if errors.As(err, &se) {
-		return se
+	switch {
+	case errors.As(err, &se):
+	case llm.IsAuth(err):
+		se = newError(CodeAuth, "The provider did not accept the API key.", err)
+	default:
+		var ae *llm.APIError
+		if errors.As(err, &ae) {
+			se = newError(CodeFailed, "The AI provider returned an error.", err)
+		} else {
+			se = newError(CodeFailed, "The assistant stopped because of an error.", err)
+		}
 	}
-	if llm.IsAuth(err) {
-		return newError(CodeAuth, "The provider did not accept the API key.", err)
-	}
-	var ae *llm.APIError
-	if errors.As(err, &ae) {
-		return newError(CodeFailed, "The AI provider returned an error.", err)
-	}
-	return newError(CodeFailed, "The assistant stopped because of an error.", err)
+	// Adapters keep keys out of their messages; this is the second lock.
+	c := *se
+	c.Message, c.Detail = redactSecrets(c.Message), redactSecrets(c.Detail)
+	return &c
 }
+
+// secretPattern matches what an API key or bearer token looks like.
+var secretPattern = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=\-]{8,}|\b(?:sk|pk|rk)-[A-Za-z0-9_\-]{8,}`)
+
+func redactSecrets(s string) string { return secretPattern.ReplaceAllString(s, "[hidden]") }
 
 func (a *activeRun) loop(ctx context.Context) outcome {
 	prov, model, err := a.r.provider(a.conv)
@@ -268,26 +301,36 @@ func (a *activeRun) loop(ctx context.Context) outcome {
 	if err != nil {
 		return outcome{status: RunError, err: wrapStoreErr(err)}
 	}
-	a.turns = len(usage)
+	for _, u := range usage {
+		a.turns = max(a.turns, u.Turn)
+	}
 	budget := loopStepBudget
+	segTurns := 0
 
 	for {
 		if ctx.Err() != nil {
 			return outcome{status: RunCancelled}
 		}
+		if segTurns >= loopTurnCap {
+			return outcome{status: RunPaused}
+		}
+		segTurns++
 		history, err := a.history()
 		if err != nil {
 			return outcome{status: RunError, err: err}
 		}
 		req := llm.Request{Model: model, System: system, Messages: history, Tools: tools, MaxTokens: loopMaxTokens}
 		t, err := a.turn(ctx, prov, req)
-		if t.text != "" && (err != nil || t.stop == nil) && ctx.Err() != nil {
-			// Keep what the user saw of a turn they stopped.
-			a.appendMessage(llm.RoleAssistant, []llm.Part{llm.Text{Text: t.text}})
-		}
-		if err != nil {
+		if err != nil || t.stop == nil {
 			if ctx.Err() != nil {
+				// Keep what the user saw of a turn they stopped.
+				if perr := a.keepPartial(t.text); perr != nil {
+					return outcome{status: RunError, err: perr}
+				}
 				return outcome{status: RunCancelled}
+			}
+			if err == nil {
+				err = &llm.APIError{Message: "the stream ended before the model finished"}
 			}
 			return outcome{status: RunError, err: err}
 		}
@@ -308,18 +351,27 @@ func (a *activeRun) loop(ctx context.Context) outcome {
 			}
 			msgID = m.ID
 		}
-		switch stop.Reason {
-		case llm.StopPauseTurn:
-			continue
-		case llm.StopToolUse:
-			if len(t.calls) == 0 {
-				return outcome{status: RunDone}
-			}
-			results := a.execute(ctx, msgID, t.calls, offered)
-			budget -= len(t.calls)
-			a.steps += len(t.calls)
+		// Every tool_use the model made must be answered, whatever the stop
+		// reason, or the provider refuses the whole conversation afterwards.
+		calls := answerable(t.calls, stop.Message)
+		switch {
+		case len(calls) > 0 && stop.Reason == llm.StopRefusal:
+			results := notRunResults(calls, "Not run: the model declined to continue.")
 			if _, err := a.appendMessage(llm.RoleUser, results); err != nil {
 				return outcome{status: RunError, err: err}
+			}
+			return outcome{status: RunDone, stop: stop.Reason, cat: stop.Category}
+		case len(calls) > 0:
+			results, xerr := a.execute(ctx, msgID, calls, offered, budget)
+			ran := min(len(calls), budget)
+			budget -= ran
+			a.steps += ran
+			_, aerr := a.appendMessage(llm.RoleUser, results)
+			if xerr != nil {
+				return outcome{status: RunError, err: xerr}
+			}
+			if aerr != nil {
+				return outcome{status: RunError, err: aerr}
 			}
 			if ctx.Err() != nil {
 				return outcome{status: RunCancelled}
@@ -327,12 +379,64 @@ func (a *activeRun) loop(ctx context.Context) outcome {
 			if budget <= 0 {
 				return outcome{status: RunPaused}
 			}
-		case llm.StopMaxTokens, llm.StopRefusal:
+		case stop.Reason == llm.StopPauseTurn:
+			continue
+		case stop.Reason == llm.StopMaxTokens || stop.Reason == llm.StopRefusal:
 			return outcome{status: RunDone, stop: stop.Reason, cat: stop.Category}
 		default:
 			return outcome{status: RunDone}
 		}
 	}
+}
+
+// answerable returns the calls that have a tool_use in the stored message.
+func answerable(calls []llm.ToolCall, m llm.Message) []llm.ToolCall {
+	have := map[string]bool{}
+	for _, p := range m.Parts {
+		if tu, ok := p.(llm.ToolUse); ok {
+			have[tu.ID] = true
+		}
+	}
+	var out []llm.ToolCall
+	for _, c := range calls {
+		if have[c.ID] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func notRunResults(calls []llm.ToolCall, msg string) []llm.Part {
+	out := make([]llm.Part, len(calls))
+	for i, c := range calls {
+		out[i] = llm.ToolResult{ID: c.ID, Text: msg, IsError: true}
+	}
+	return out
+}
+
+// keepPartial stores the text of a turn the user stopped, unless it is blank
+// or would follow an assistant message that still has tool calls.
+func (a *activeRun) keepPartial(text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	rows, err := a.r.store.ListMessages(a.conv.ID)
+	if err != nil {
+		return wrapStoreErr(err)
+	}
+	if n := len(rows); n > 0 && rows[n-1].Role == string(llm.RoleAssistant) {
+		parts, err := llm.UnmarshalParts(rows[n-1].PartsJSON)
+		if err != nil {
+			return newError(CodeFailed, "A saved message could not be read.", err)
+		}
+		for _, p := range parts {
+			if _, ok := p.(llm.ToolUse); ok {
+				return nil
+			}
+		}
+	}
+	_, err = a.appendMessage(llm.RoleAssistant, []llm.Part{llm.Text{Text: text}})
+	return err
 }
 
 // offerTools lists the session's tools for the model, without call_method.
@@ -389,7 +493,69 @@ func (a *activeRun) history() ([]llm.Message, error) {
 		}
 		out = append(out, llm.Message{Role: llm.Role(m.Role), Parts: parts})
 	}
-	return out, nil
+	return repairHistory(out), nil
+}
+
+const interruptedResult = "not run (interrupted)"
+
+// repairHistory makes sure every tool_use of an assistant message has exactly
+// one tool_result in the user message that follows, which providers demand. A
+// missing result is added as an error result, merged into that user message
+// (results first) or inserted as a new one. Results that answer nothing are
+// dropped. The stored rows are never changed.
+func repairHistory(in []llm.Message) []llm.Message {
+	out := make([]llm.Message, 0, len(in))
+	for i := 0; i < len(in); i++ {
+		m := in[i]
+		out = append(out, m)
+		if m.Role != llm.RoleAssistant {
+			continue
+		}
+		var uses []string
+		for _, p := range m.Parts {
+			if tu, ok := p.(llm.ToolUse); ok {
+				uses = append(uses, tu.ID)
+			}
+		}
+		if len(uses) == 0 {
+			continue
+		}
+		var next *llm.Message
+		if i+1 < len(in) && in[i+1].Role == llm.RoleUser {
+			next = &in[i+1]
+		}
+		existing := map[string]llm.ToolResult{}
+		var rest []llm.Part
+		if next != nil {
+			for _, p := range next.Parts {
+				if tr, ok := p.(llm.ToolResult); ok {
+					if _, dup := existing[tr.ID]; !dup {
+						existing[tr.ID] = tr
+					}
+					continue
+				}
+				rest = append(rest, p)
+			}
+		}
+		var parts []llm.Part
+		seen := map[string]bool{}
+		for _, id := range uses {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			if tr, ok := existing[id]; ok {
+				parts = append(parts, tr)
+			} else {
+				parts = append(parts, llm.ToolResult{ID: id, Text: interruptedResult, IsError: true})
+			}
+		}
+		out = append(out, llm.Message{Role: llm.RoleUser, Parts: append(parts, rest...)})
+		if next != nil {
+			i++
+		}
+	}
+	return out
 }
 
 func (a *activeRun) appendMessage(role llm.Role, parts []llm.Part) (store.Message, error) {
@@ -523,12 +689,15 @@ type callEntry struct {
 	result string
 	isErr  bool
 	status string
+	pre    string // when set, the call is not run and this is its error result
 }
 
 // execute answers every call of a turn and returns the ToolResult parts in
 // the model's order. Consecutive plain reads run in parallel groups; any
-// other call runs alone, in order.
-func (a *activeRun) execute(ctx context.Context, msgID string, calls []llm.ToolCall, offered map[string]bool) []llm.Part {
+// other call runs alone, in order. Only the first allowed calls run: the rest
+// get an error result saying the step limit was reached. The error is the
+// first store failure; the results are complete either way.
+func (a *activeRun) execute(ctx context.Context, msgID string, calls []llm.ToolCall, offered map[string]bool, allowed int) ([]llm.Part, error) {
 	entries := make([]*callEntry, len(calls))
 	for i, c := range calls {
 		argsJSON := string(c.Args)
@@ -537,7 +706,14 @@ func (a *activeRun) execute(ctx context.Context, msgID string, calls []llm.ToolC
 		}
 		e := &callEntry{call: c}
 		row, err := a.r.store.InsertToolCall(a.runID, msgID, c.Name, a.conv.Site, argsJSON, ToolRunning)
-		if err == nil {
+		switch {
+		case err != nil:
+			a.noteStoreErr(err)
+			e.pre = "Not run: the conversation could not be saved."
+		case i >= allowed:
+			e.row = row
+			e.pre = "Not run: the step limit was reached. Ask the user to continue."
+		default:
 			e.row = row
 		}
 		entries[i] = e
@@ -564,7 +740,20 @@ func (a *activeRun) execute(ctx context.Context, msgID string, calls []llm.ToolC
 	for i, e := range entries {
 		out[i] = llm.ToolResult{ID: e.call.ID, Text: cutForModel(e.result), IsError: e.isErr}
 	}
-	return out
+	a.errMu.Lock()
+	defer a.errMu.Unlock()
+	if a.storeErr != nil {
+		return out, wrapStoreErr(a.storeErr)
+	}
+	return out, nil
+}
+
+func (a *activeRun) noteStoreErr(err error) {
+	a.errMu.Lock()
+	defer a.errMu.Unlock()
+	if a.storeErr == nil {
+		a.storeErr = err
+	}
 }
 
 type planKind int
@@ -586,6 +775,8 @@ func (a *activeRun) plan(ctx context.Context, e *callEntry, offered map[string]b
 	case ctx.Err() != nil:
 		e.result, e.isErr, e.status = "Stopped by the user before this tool ran.", true, ToolStopped
 		return planDone
+	case e.pre != "":
+		return fail(e.pre)
 	case c.ArgsError != "":
 		return fail(fmt.Sprintf("The arguments for %s were not valid (%s). Call it again with a valid JSON object of arguments.", c.Name, c.ArgsError))
 	case !offered[c.Name]:
@@ -647,7 +838,9 @@ func (a *activeRun) call(ctx context.Context, e *callEntry) {
 // finish stores a call's outcome and reports it.
 func (a *activeRun) finish(e *callEntry) {
 	if e.row.ID != "" {
-		_ = a.r.store.FinishToolCall(e.row.ID, e.result, e.status, "")
+		if err := a.r.store.FinishToolCall(e.row.ID, e.result, e.status, ""); err != nil {
+			a.noteStoreErr(err)
+		}
 	}
 	summary := ""
 	if e.status != ToolOK {

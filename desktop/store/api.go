@@ -412,3 +412,29 @@ func (s *Store) Search(query string, limit int) ([]Message, error) {
 	}
 	return msgs, nil
 }
+
+// ErrNotPaused is returned by ResumeRun when the run is not paused (or is
+// unknown), for instance because another caller resumed it first.
+var ErrNotPaused = errors.New("store: run is not paused")
+
+// ResumeRun atomically turns a paused run back into a running one. Of two
+// concurrent callers only one succeeds.
+func (s *Store) ResumeRun(id string) error {
+	res, err := s.db.Exec(`UPDATE runs SET status='running',ended=0 WHERE id=? AND status='paused'`, id)
+	if err != nil {
+		return fmt.Errorf("resume run: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("resume run: %w", ErrNotPaused)
+	}
+	return nil
+}
+
+// AbandonPausedRuns marks the conversation's paused runs done: the user went
+// on without continuing them.
+func (s *Store) AbandonPausedRuns(convID string) error {
+	if _, err := s.db.Exec(`UPDATE runs SET status='done',ended=? WHERE conv_id=? AND status='paused'`, nowMS(), convID); err != nil {
+		return fmt.Errorf("abandon paused runs: %w", err)
+	}
+	return nil
+}
