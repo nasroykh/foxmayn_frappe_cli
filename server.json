@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.nasroykh/ffc",
+  "title": "Foxmayn Frappe CLI",
+  "description": "Read and change documents, reports and workflows on Frappe and ERPNext sites.",
+  "repository": {
+    "url": "https://github.com/nasroykh/foxmayn_frappe_cli",
+    "source": "github",
+    "id": "1176896655"
+  },
+  "websiteUrl": "https://github.com/nasroykh/foxmayn_frappe_cli/blob/main/docs/mcp/README.md",
+  "version": "1.16.0",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/nasroykh/foxmayn_frappe_cli/releases/download/v1.16.0/ffc_1.16.0.mcpb",
+      "fileSha256": "62bd2e5d40baeb1ab3b3cd2d0d871636ec36ff8a319ac1510babf3b11bd6c25a",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

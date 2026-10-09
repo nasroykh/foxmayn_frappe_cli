@@ -1,0 +1,84 @@
+name: MCP Registry
+
+# Publishes server.json to the MCP Registry (registry.modelcontextprotocol.io)
+# with the release's ffc_<version>.mcpb as its package. Published versions
+# cannot be changed or removed, so a release only publishes when the
+# repository variable MCP_REGISTRY_PUBLISH is "true"; a manual run publishes
+# the tag it is given.
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (vX.Y.Z)
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # mcp-publisher login github-oidc
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  MCP_PUBLISHER_VERSION: v1.8.1
+  MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+
+jobs:
+  publish:
+    # Release runs only on v* tag pushes; an rc tag (with "-") is skipped.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.MCP_REGISTRY_PUBLISH == 'true' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       !contains(github.event.workflow_run.head_branch, '-'))
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # The bundle's hash comes from the release's signed checksums.txt.
+      - name: Fill in server.json
+        run: |
+          if ! printf '%s\n' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "not a final release tag: $TAG" >&2
+            exit 1
+          fi
+          version="${TAG#v}"
+          bundle="ffc_${version}.mcpb"
+          gh release download "$TAG" -p checksums.txt -p checksums.txt.sig -D "$RUNNER_TEMP/rel"
+          go run ./tools/relsign verify "$RUNNER_TEMP/rel/checksums.txt" "$RUNNER_TEMP/rel/checksums.txt.sig"
+          sha=$(awk -v f="$bundle" '$2 == f { print $1 }' "$RUNNER_TEMP/rel/checksums.txt")
+          if ! printf '%s\n' "$sha" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "no checksum for $bundle in $TAG" >&2
+            exit 1
+          fi
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${bundle}"
+          jq --arg v "$version" --arg url "$url" --arg sha "$sha" \
+            '.version = $v | .packages[0].identifier = $url | .packages[0].fileSha256 = $sha' \
+            server.json > "$RUNNER_TEMP/server.json"
+          mv "$RUNNER_TEMP/server.json" server.json
+          cat server.json
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/mcp-publisher.tar.gz" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  $RUNNER_TEMP/mcp-publisher.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/mcp-publisher.tar.gz" -C "$RUNNER_TEMP" mcp-publisher
+
+      - name: Publish
+        run: |
+          "$RUNNER_TEMP/mcp-publisher" validate
+          "$RUNNER_TEMP/mcp-publisher" login github-oidc
+          "$RUNNER_TEMP/mcp-publisher" publish
