@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
 	"strings"
 	"sync"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 )
@@ -35,6 +38,7 @@ type MCPServer struct {
 	Sites []string
 	// Warnings are the lines `ffc mcp` prints to stderr at start.
 	Warnings []string
+	env      *mcpEnv
 	close    func()
 }
 
@@ -93,11 +97,142 @@ func NewMCPServer(ctx context.Context, o MCPOptions) (*MCPServer, error) {
 	}); err != nil {
 		return nil, err
 	}
-	s, sites, warnings, closeEnv, err := buildMCP(ctx, opts)
+	s, env, sites, warnings, closeEnv, err := buildMCP(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	return &MCPServer{MCPServer: s, Sites: slices.Clone(sites), Warnings: warnings, close: sync.OnceFunc(closeEnv)}, nil
+	return &MCPServer{MCPServer: s, Sites: slices.Clone(sites), Warnings: warnings, env: env, close: sync.OnceFunc(closeEnv)}, nil
+}
+
+type runIDCtxKey struct{}
+
+// WithRunID returns a context that makes the audit lines of the tool calls
+// made with it carry id as run_id, so a program that embeds the server (the
+// desktop app) can tie the lines to a run of its own. It is a Go context
+// value, read by the server of an in-process client: an MCP client outside
+// the process cannot set it, there is no request field for it.
+func WithRunID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, runIDCtxKey{}, id)
+}
+
+// runIDFrom returns the id WithRunID stored, or "".
+func runIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(runIDCtxKey{}).(string)
+	return id
+}
+
+// ToolClass is what the server's rules say about a call before it is made.
+type ToolClass struct {
+	Action  string `json:"action"`  // "read", "write" or "method" (call_method)
+	Confirm bool   `json:"confirm"` // the call destroys, cancels or merges documents, or widens access
+	Mode    string `json:"mode"`    // the site's confirm mode: never, if-supported or always
+	// WillAsk is true when ffc itself is certain to put the question to the
+	// user: the call needs confirmation, the policy allows it and the mode is
+	// always, where a client that cannot ask is refused, never run. Under
+	// if-supported (the default) a client that cannot ask runs the call with
+	// no question, so WillAsk is false and a caller that wants a card must
+	// show its own. An embedding app that wants ffc's question to be the card
+	// sets MCPOptions.Policy.Confirm to "always", which can only tighten the
+	// site's own mode, "never" included.
+	WillAsk  bool     `json:"will_ask"`
+	Site     string   `json:"site,omitempty"`     // the site the call is for
+	Doctypes []string `json:"doctypes,omitempty"` // the DocTypes the call names
+	Names    []string `json:"names,omitempty"`    // the document names the call names
+	Method   string   `json:"method,omitempty"`   // call_method: the method
+	Denied   string   `json:"denied,omitempty"`   // the policy's refusal; "" when it allows the call
+}
+
+// Classify says how the server would treat a call of tool with args, by the
+// rules a tool call applies: its argument checks, the policy of the site the
+// call is for, and whether it needs the user's confirmation and in which
+// mode. The arguments are read as the server reads a real call (through
+// JSON). The tool must be registered on this server and the arguments valid
+// for it, else it is an error, exactly when the call would be refused as
+// invalid. The answer is for the site config as read now (a call reads it
+// again). Classify sends no request to the site and writes no audit line, so
+// it covers only the rules checked before any request: checkReport,
+// checkRestore and checkCommentAuthor run later and can still refuse a call
+// it allows.
+//
+// Classify assumes the tools are ffc's own: a tool replaced through the
+// embedded server.MCPServer is unsupported, is reported as an error, and its
+// handler may have been run.
+func (s *MCPServer) Classify(tool string, args map[string]any) (cls ToolClass, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			cls, err = ToolClass{}, fmt.Errorf("classify %s: %v", tool, r)
+		}
+	}()
+	if s == nil || s.env == nil || s.MCPServer == nil {
+		return ToolClass{}, errors.New("no MCP server")
+	}
+	action, known := toolActions[tool]
+	if !known {
+		return ToolClass{}, fmt.Errorf("unknown tool %q", tool)
+	}
+	registered, ok := s.ListTools()[tool]
+	if !ok {
+		return ToolClass{}, fmt.Errorf("tool %q is not served by this MCP server", tool)
+	}
+	// A real call arrives as JSON: 0 is a float64, a typed nil is null.
+	var wire map[string]any
+	if args != nil {
+		raw, err := json.Marshal(args)
+		if err != nil {
+			return ToolClass{}, fmt.Errorf("arguments: %w", err)
+		}
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			return ToolClass{}, fmt.Errorf("arguments: %w", err)
+		}
+	}
+	req := mcp.CallToolRequest{}
+	req.Params.Name, req.Params.Arguments = tool, wire
+	// The tool's own handler holds its argument parse; with this context it
+	// runs the checks of a call up to the policy and stops.
+	out := &classifyOut{}
+	if _, err := registered.Handler(withClassify(context.Background(), out), req); err != nil {
+		return ToolClass{}, err
+	}
+	if !out.ran {
+		return ToolClass{}, fmt.Errorf("tool %q is not served by ffc's own handler (replacing a tool on the server is unsupported); it may have run", tool)
+	}
+	if out.err != nil {
+		return ToolClass{}, out.err
+	}
+	p := out.p
+	cls = ToolClass{
+		Action:   map[toolAction]string{actRead: "read", actWrite: "write", actMethod: "method"}[action],
+		Confirm:  p.scope.Confirm,
+		Doctypes: p.scope.Doctypes, Names: p.scope.Names, Method: p.scope.Method,
+	}
+	if p.site == nil { // a siteless tool
+		return cls, nil
+	}
+	cls.Site, cls.Mode = p.site.Name, p.policy.confirmMode()
+	if err := p.policy.check(tool, p.scope); err != nil {
+		cls.Denied = err.Error()
+	}
+	cls.WillAsk = cls.Confirm && cls.Denied == "" && cls.Mode == config.ConfirmAlways
+	return cls, nil
+}
+
+type classifyCtxKey struct{}
+
+// classifyOut receives what a handler found out when it ran for Classify.
+type classifyOut struct {
+	ran    bool // toolHandler saw the marker; false means another handler ran
+	p      preparedCall
+	status string
+	err    error
+}
+
+func withClassify(ctx context.Context, out *classifyOut) context.Context {
+	return context.WithValue(ctx, classifyCtxKey{}, out)
+}
+
+func classifyFrom(ctx context.Context) *classifyOut {
+	out, _ := ctx.Value(classifyCtxKey{}).(*classifyOut)
+	return out
 }
 
 // cleanMCPOptions validates o the way the flags of `ffc mcp` are: it trims

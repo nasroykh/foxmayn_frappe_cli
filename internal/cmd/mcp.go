@@ -199,20 +199,20 @@ func cleanMCPFlags(cmd *cobra.Command) error {
 // that is down must not stop the others. Their first call signs in. The
 // warnings are returned for the caller to print.
 func startMCP(ctx context.Context, o mcpOptions) (*server.MCPServer, []string, func(), error) {
-	s, _, warnings, closeEnv, err := buildMCP(ctx, o)
+	s, _, _, warnings, closeEnv, err := buildMCP(ctx, o)
 	return s, warnings, closeEnv, err
 }
 
-// buildMCP is startMCP that also returns the served sites, the default one
-// first.
-func buildMCP(ctx context.Context, o mcpOptions) (*server.MCPServer, []string, []string, func(), error) {
+// buildMCP is startMCP that also returns the environment of the tools and
+// the served sites, the default one first.
+func buildMCP(ctx context.Context, o mcpOptions) (*server.MCPServer, *mcpEnv, []string, []string, func(), error) {
 	sites, err := mcpSites(o)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	env, closeEnv, err := newMCPEnv(o, sites)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	var warnings []string
 	var policies []mcpPolicy
@@ -227,7 +227,7 @@ func buildMCP(ctx context.Context, o mcpOptions) (*server.MCPServer, []string, [
 		switch {
 		case err != nil && i == 0:
 			closeEnv()
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		case err != nil:
 			warnings = append(warnings, fmt.Sprintf("warning: site %q: %v", name, err))
 		}
@@ -237,7 +237,7 @@ func buildMCP(ctx context.Context, o mcpOptions) (*server.MCPServer, []string, [
 	if len(sites) > 1 {
 		warnings = append(warnings, fmt.Sprintf("Serving %d sites: %s. Every tool call must name its site.", len(sites), strings.Join(sites, ", ")))
 	}
-	return s, sites, warnings, closeEnv, nil
+	return s, env, sites, warnings, closeEnv, nil
 }
 
 var (
