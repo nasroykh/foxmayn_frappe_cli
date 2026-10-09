@@ -560,3 +560,70 @@ func TestApprovalNoChangesAndDiffNormalisation(t *testing.T) {
 	}
 	g.waitDone(t, 1)
 }
+
+// Every chat payload names the conversation of its run: a pane shows only its
+// own events, and runs in different conversations overlap.
+func TestChatEventsCarryTheConversation(t *testing.T) {
+	g := newLoopRig(t,
+		textTurn("looking"),
+	)
+	cid := g.conv(t, "read")
+	if _, err := g.r.start(cid, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	g.waitDone(t, 1)
+
+	g2 := newLoopRig(t,
+		toolTurn(call("c1", "create_doc", `{"doctype":"ToDo","data":{"description":"new"}}`)),
+		textTurn("done"),
+	)
+	cid2 := g2.conv(t, "ask")
+	if _, err := g2.r.start(cid2, "add a todo"); err != nil {
+		t.Fatal(err)
+	}
+	card := g2.waitApproval(t, 1)
+	if err := g2.r.answer(cid2, card.ApprovalID, true); err != nil {
+		t.Fatal(err)
+	}
+	g2.waitDone(t, 1)
+
+	check := func(g *loopRig, want string) int {
+		n := 0
+		for _, e := range g.h.events {
+			var got string
+			switch p := e.data.(type) {
+			case ChatDelta:
+				got = p.ConvID
+			case ChatTool:
+				got = p.ConvID
+			case ChatUsage:
+				got = p.ConvID
+			case ChatDone:
+				got = p.ConvID
+			case ChatError:
+				got = p.ConvID
+			case ChatApproval:
+				got = p.ConvID
+			case ChatApprovalClosed:
+				got = p.ConvID
+			default:
+				continue
+			}
+			n++
+			if got != want {
+				t.Errorf("%s carries convID %q, want %q", e.name, got, want)
+			}
+		}
+		return n
+	}
+	g.h.mu.Lock()
+	defer g.h.mu.Unlock()
+	g2.h.mu.Lock()
+	defer g2.h.mu.Unlock()
+	if n := check(g, cid); n < 2 {
+		t.Errorf("only %d chat events in the read run", n)
+	}
+	if n := check(g2, cid2); n < 4 {
+		t.Errorf("only %d chat events in the approval run", n)
+	}
+}

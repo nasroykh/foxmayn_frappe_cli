@@ -10,8 +10,8 @@ import (
 	"math"
 	"reflect"
 	"regexp"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -50,6 +50,7 @@ func newApprovalBroker(emit func(string, any)) *approvalBroker {
 func (b *approvalBroker) open(convID string, card ChatApproval) *pendingApproval {
 	var raw [12]byte
 	_, _ = rand.Read(raw[:])
+	card.ConvID = convID
 	card.ApprovalID = hex.EncodeToString(raw[:])
 	p := &pendingApproval{convID: convID, card: card, ch: make(chan bool, 1)}
 	b.mu.Lock()
@@ -79,7 +80,7 @@ func (b *approvalBroker) wait(ctx context.Context, p *pendingApproval) string {
 		delete(b.pending, p.card.ApprovalID)
 		b.mu.Unlock()
 	}
-	b.emit(EventChatApprovalClosed, ChatApprovalClosed{RunID: p.card.RunID, ApprovalID: p.card.ApprovalID, Outcome: outcome})
+	b.emit(EventChatApprovalClosed, ChatApprovalClosed{ConvID: p.convID, RunID: p.card.RunID, ApprovalID: p.card.ApprovalID, Outcome: outcome})
 	return outcome
 }
 

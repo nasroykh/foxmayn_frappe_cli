@@ -2,6 +2,7 @@
 // rendered, never parsed with rehype-raw), images are dropped to their alt
 // text (no request leaves the app), and links open in the system browser
 // through the backend, never in this web view.
+import { isValidElement } from "react"
 import type * as React from "react"
 import Markdown, { type Components } from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -11,25 +12,53 @@ import { backend } from "@/lib/backend"
 
 const remarkPlugins = [remarkGfm]
 
+function textOf(node: React.ReactNode): string {
+  if (node == null || typeof node === "boolean") return ""
+  if (typeof node === "string" || typeof node === "number") return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join("")
+  if (isValidElement<{ children?: React.ReactNode }>(node)) return textOf(node.props.children)
+  return ""
+}
+
+function hostOf(href: string): string {
+  try {
+    return new URL(href).host
+  } catch {
+    return ""
+  }
+}
+
 function Link({ href, children }: { href?: string; children?: React.ReactNode }) {
   // Only web addresses open; anything else (mailto:, relative, odd schemes) stays text.
   if (!href || !/^https?:\/\//i.test(href)) return <span>{children}</span>
+  const host = hostOf(href)
+  // The text of a link must not fake where it goes: show the real host when the text does not.
+  const text = textOf(children).toLowerCase()
+  const showHost = !!host && !text.includes(host.toLowerCase())
   const open = (e: React.SyntheticEvent) => {
     e.preventDefault()
     e.stopPropagation()
     void backend.openWebsite(href).catch(() => {})
   }
   return (
-    <a
-      href={href}
-      title={href}
-      rel="noreferrer noopener"
-      onClick={open}
-      onAuxClick={open}
-      className="text-primary underline underline-offset-2"
-    >
-      {children}
-    </a>
+    <>
+      <a
+        href={href}
+        title={href}
+        rel="noreferrer noopener"
+        draggable={false}
+        onClick={open}
+        onAuxClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          if (e.button === 1) void backend.openWebsite(href).catch(() => {})
+        }}
+        className="text-primary underline underline-offset-2"
+      >
+        {children}
+      </a>
+      {showHost && <span className="text-muted-foreground text-xs"> ({host})</span>}
+    </>
   )
 }
 

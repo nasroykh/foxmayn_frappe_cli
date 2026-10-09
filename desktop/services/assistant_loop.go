@@ -84,7 +84,7 @@ type activeRun struct {
 	asking *callEntry // the call ffc may ask about
 
 	errMu     sync.Mutex
-	storeErr  error // the first store failure while running tools
+	storeErr  error  // the first store failure while running tools
 	violation string // set when a change ran without the confirmation ffc owed
 }
 
@@ -269,9 +269,9 @@ func (a *activeRun) run(ctx context.Context) {
 	delete(a.r.active, a.runID)
 	a.r.mu.Unlock()
 	if out.status == RunError && pub != nil {
-		a.r.emit(EventChatError, ChatError{RunID: a.runID, Error: pub})
+		a.r.emit(EventChatError, ChatError{ConvID: a.conv.ID, RunID: a.runID, Error: pub})
 	}
-	a.r.emit(EventChatDone, ChatDone{RunID: a.runID, Status: out.status, StopReason: out.stop, Category: out.cat})
+	a.r.emit(EventChatDone, ChatDone{ConvID: a.conv.ID, RunID: a.runID, Status: out.status, StopReason: out.stop, Category: out.cat})
 }
 
 // isCancel reports whether err is the cancellation of a run.
@@ -375,7 +375,7 @@ func (a *activeRun) loop(ctx context.Context) outcome {
 			if err := a.r.store.AddUsage(u); err != nil {
 				return outcome{status: RunError, err: wrapStoreErr(err)}
 			}
-			a.r.emit(EventChatUsage, ChatUsage{RunID: a.runID, Turn: u.Turn, Input: u.Input, Output: u.Output, Cached: u.Cached})
+			a.r.emit(EventChatUsage, ChatUsage{ConvID: a.conv.ID, RunID: a.runID, Turn: u.Turn, Input: u.Input, Output: u.Output, Cached: u.Cached})
 		}
 		var msgID string
 		if len(stop.Message.Parts) > 0 {
@@ -643,7 +643,7 @@ func (a *activeRun) streamOnce(ctx context.Context, prov llm.Provider, req llm.R
 	defer st.Close()
 	// A stream that ignores ctx must not hold the run past a cancel.
 	defer context.AfterFunc(ctx, func() { st.Close() })()
-	d := &deltaBatcher{emit: a.r.emit, runID: a.runID}
+	d := &deltaBatcher{emit: a.r.emit, convID: a.conv.ID, runID: a.runID}
 	defer func() {
 		d.flush()
 		t.text = d.all()
@@ -678,8 +678,9 @@ func (a *activeRun) streamOnce(ctx context.Context, prov llm.Provider, req llm.R
 
 // deltaBatcher joins text deltas into one chat:delta about every 40 ms.
 type deltaBatcher struct {
-	emit  func(string, any)
-	runID string
+	emit   func(string, any)
+	convID string
+	runID  string
 
 	mu    sync.Mutex
 	buf   strings.Builder
@@ -709,7 +710,7 @@ func (d *deltaBatcher) flush() {
 	}
 	text := d.buf.String()
 	d.buf.Reset()
-	d.emit(EventChatDelta, ChatDelta{RunID: d.runID, Text: text})
+	d.emit(EventChatDelta, ChatDelta{ConvID: d.convID, RunID: d.runID, Text: text})
 }
 
 func (d *deltaBatcher) all() string {
@@ -898,7 +899,7 @@ func (a *activeRun) finish(e *callEntry) {
 
 func (a *activeRun) emitTool(e *callEntry, status, summary string) {
 	a.r.emit(EventChatTool, ChatTool{
-		RunID: a.runID, CallID: e.row.ID, Tool: e.call.Name, Site: a.conv.Site, Status: status, Summary: summary,
+		ConvID: a.conv.ID, RunID: a.runID, CallID: e.row.ID, Tool: e.call.Name, Site: a.conv.Site, Status: status, Summary: summary,
 	})
 }
 

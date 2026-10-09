@@ -1,4 +1,5 @@
 import { IconShieldQuestion } from "@tabler/icons-react"
+import * as React from "react"
 import { useTranslation } from "react-i18next"
 
 import { DiffView } from "@/components/diff-view"
@@ -37,6 +38,11 @@ export function ApprovalCard({
   onAnswer: (approve: boolean) => void
 }) {
   const { t } = useTranslation()
+  const declineRef = React.useRef<HTMLButtonElement>(null)
+  // Decline has the focus whenever a card appears (autoFocus alone is lost when another card closes).
+  React.useEffect(() => {
+    declineRef.current?.focus()
+  }, [card.approvalID, busy])
   const isUpdate = card.tool === "update_doc"
   const title = card.kind === "ffc" ? card.message || t("chat.approval.ffcFallback") : t("chat.approval.appTitle")
 
@@ -73,13 +79,13 @@ export function ApprovalCard({
         (card.noChanges ? (
           <p className="text-muted-foreground">{t("chat.approval.noChanges")}</p>
         ) : (
-          card.diff.length > 0 && <DiffView diff={fieldDiffText(card.diff)} label={t("chat.approval.diffLabel")} />
+          card.diff.length > 0 && <DiffView diff={fieldDiffText(card.diff)} label={t("chat.approval.diffLabel")} headers={false} />
         ))}
 
-      <Details label={t("chat.approval.args")}>{JSON.stringify(card.args, null, 2)}</Details>
+      <Details label={t("chat.approval.args")} defaultOpen>{JSON.stringify(card.args, null, 2)}</Details>
 
       <div className="flex justify-end gap-2">
-        <Button variant="outline" autoFocus disabled={busy} onClick={() => onAnswer(false)}>
+        <Button ref={declineRef} variant="outline" autoFocus disabled={busy} onClick={() => onAnswer(false)}>
           {t("chat.approval.decline")}
         </Button>
         <Button disabled={busy} onClick={() => onAnswer(true)}>

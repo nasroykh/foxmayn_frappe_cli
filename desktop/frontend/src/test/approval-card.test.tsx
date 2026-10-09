@@ -8,6 +8,7 @@ import type { ChatApproval } from "@/lib/backend-types"
 afterEach(cleanup)
 
 const base: ChatApproval = {
+  convID: "c1",
   runID: "r1",
   approvalID: "a1",
   kind: "app",
@@ -30,8 +31,6 @@ describe("ApprovalCard", () => {
     const diff = screen.getByLabelText("Field changes")
     expect(diff.textContent).toContain("Open")
     expect(diff.textContent).toContain("Closed")
-    expect(container.textContent).not.toContain('"status": "Closed"')
-    fireEvent.click(screen.getByRole("button", { name: "Exact request" }))
     expect(container.textContent).toContain('"status": "Closed"')
   })
 
@@ -46,6 +45,9 @@ describe("ApprovalCard", () => {
     render(<ApprovalCard card={card} onAnswer={() => {}} />)
     expect(screen.getByText("Delete ToDo TD-0001?")).toBeTruthy()
     expect(screen.queryByLabelText("Field changes")).toBeNull()
+    // The exact request is open without a click, and Decline has the focus here too.
+    expect(document.body.textContent).toContain('"doctype": "ToDo"')
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Decline" }))
   })
 
   it("focuses Decline and reports the answer", () => {
@@ -56,6 +58,14 @@ describe("ApprovalCard", () => {
     fireEvent.click(decline)
     fireEvent.click(screen.getByRole("button", { name: "Approve" }))
     expect(answers).toEqual([false, true])
+  })
+
+  it("does not treat +++ or --- in a value as headers", () => {
+    const card = { ...base, diff: [{ field: "d", old: "---x", new: "+++y" }] }
+    render(<ApprovalCard card={card} onAnswer={() => {}} />)
+    const lines = [...screen.getByLabelText("Field changes").querySelectorAll("div")]
+    expect(lines.find((l) => l.textContent?.includes("+++y"))?.className).toContain("bg-primary/10")
+    expect(lines.find((l) => l.textContent?.includes("---x"))?.className).toContain("bg-destructive/10")
   })
 
   it("writes every line of a multi-line value with its sign", () => {

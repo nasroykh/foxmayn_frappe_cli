@@ -16,15 +16,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { backend } from "@/lib/backend"
 import type { ChatMessage, Conversation, ConversationMode, ProviderInfo, ToolApproval, ToolStatus } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
-import { chatReducer, initialState, ownsRun } from "@/screens/assistant/chat-reducer"
+import { chatReducer, initialState } from "@/screens/assistant/chat-reducer"
 
 function notify(err: unknown) {
   const e = appError(err)
   toast.add({ title: errorTitle(e), description: e.message, type: "error" })
 }
 
-function dialogOpen() {
-  return !!document.querySelector('[role="dialog"],[role="alertdialog"]')
+const OVERLAYS = '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]'
+
+/** Esc belongs to an open dialog, menu or list first. */
+function escapeIsTaken(e: KeyboardEvent) {
+  return e.defaultPrevented || !!document.querySelector(OVERLAYS) || (e.target instanceof Element && !!e.target.closest(OVERLAYS))
 }
 
 /** One open conversation: header, messages, live run and composer. */
@@ -50,6 +53,8 @@ export function ChatPane({
   stateRef.current = state
   const convRef = React.useRef(convID)
   convRef.current = convID
+  const [announce, setAnnounce] = React.useState("")
+  const reloadAfterStart = React.useRef(false)
   const endRef = React.useRef<HTMLDivElement>(null)
   const inputRef = React.useRef<HTMLTextAreaElement>(null)
   const onChangedRef = React.useRef(onChanged)
@@ -91,20 +96,20 @@ export function ChatPane({
   // The chat events. Cleaned up on unmount; the reducer drops other runs' events.
   React.useEffect(() => {
     const offs = [
-      backend.onChatDelta((ev) => dispatch({ type: "delta", runID: ev.runID, text: ev.text })),
+      backend.onChatDelta((ev) => dispatch({ type: "delta", convID: ev.convID, runID: ev.runID, text: ev.text })),
       backend.onChatTool((ev) => dispatch({ type: "tool", ev })),
       backend.onChatApproval((ev) => dispatch({ type: "approval", ev })),
       backend.onChatApprovalClosed((ev) =>
-        dispatch({ type: "approvalClosed", runID: ev.runID, approvalID: ev.approvalID }),
+        dispatch({ type: "approvalClosed", convID: ev.convID, runID: ev.runID, approvalID: ev.approvalID }),
       ),
       backend.onChatError((ev) => dispatch({ type: "error", ev })),
       backend.onChatDone((ev) => {
-        const mineRun = ownsRun(stateRef.current, ev.runID)
+        // Events carry their conversation: those of another one are not ours.
+        if (ev.convID !== convRef.current) return
         dispatch({ type: "done", ev })
-        if (mineRun) {
-          void load()
-          onChangedRef.current()
-        }
+        if (stateRef.current.phase === "starting") reloadAfterStart.current = true
+        else void load()
+        onChangedRef.current()
       }),
     ]
     return () => offs.forEach((off) => off())
@@ -113,7 +118,7 @@ export function ChatPane({
   // Esc stops the run, unless a dialog is open (Esc closes that first).
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented || dialogOpen()) return
+      if (e.key !== "Escape" || escapeIsTaken(e)) return
       const s = stateRef.current
       if (s.phase === "running" && s.runID) void stop(s.runID)
     }
@@ -124,6 +129,24 @@ export function ChatPane({
   React.useEffect(() => {
     endRef.current?.scrollIntoView?.({ block: "end" })
   }, [messages, state.text, state.tools, state.approvals, state.pending, state.error, state.phase])
+
+  // Forget answered cards once they are gone.
+  React.useEffect(() => {
+    setAnswering((s) => {
+      const open = new Set(state.approvals.map((c) => c.approvalID))
+      const next = new Set([...s].filter((id) => open.has(id)))
+      return next.size === s.size ? s : next
+    })
+  }, [state.approvals])
+
+  // What a screen reader hears, apart from the streaming text itself.
+  const wasActive = React.useRef(false)
+  React.useEffect(() => {
+    if (state.approvals.length > 0) setAnnounce(t("chat.announce.approval"))
+    else if (active) setAnnounce("")
+    else if (wasActive.current && !state.error) setAnnounce(t("chat.announce.finished"))
+    wasActive.current = active
+  }, [active, state.approvals.length, state.error, t])
 
   // Back to typing once a run is over.
   React.useEffect(() => {
@@ -142,10 +165,16 @@ export function ChatPane({
     const text = draft.trim()
     if (!text || active) return
     setDraft("")
+    reloadAfterStart.current = false
     dispatch({ type: "sending", text })
     try {
       const runID = await backend.sendMessage(convID, text)
       dispatch({ type: "started", runID })
+      // The run ended before its id came back: the store has the rest.
+      if (reloadAfterStart.current) {
+        reloadAfterStart.current = false
+        void load()
+      }
     } catch (err) {
       const e = appError(err)
       setDraft(text)
@@ -160,14 +189,14 @@ export function ChatPane({
     } catch (err) {
       notify(err)
       // A card that is gone on the other side (run ended) must not stay.
-      if (appError(err).code === "not_found") dispatch({ type: "approvalClosed", runID: state.runID, approvalID })
-    } finally {
+      if (appError(err).code === "not_found") dispatch({ type: "approvalClosed", convID, runID: state.runID, approvalID })
       setAnswering((s) => {
         const next = new Set(s)
         next.delete(approvalID)
         return next
       })
     }
+    // On success the card stays busy until chat:approval-closed (or done) removes it.
   }
 
   async function resume() {
@@ -254,7 +283,7 @@ export function ChatPane({
           )}
 
           {/* The streaming reply: announced politely as it grows. */}
-          <div aria-live="polite" aria-atomic="false" aria-busy={active}>
+          <div aria-busy={active}>
             {state.text && <ChatMarkdown text={state.text} />}
             {active && !state.text && state.approvals.length === 0 && (
               <p className="text-muted-foreground text-sm" role="status">
@@ -294,6 +323,9 @@ export function ChatPane({
               </AlertAction>
             </Alert>
           )}
+          <p role="status" aria-live="polite" className="sr-only">
+            {announce}
+          </p>
           <div ref={endRef} />
         </div>
       </div>

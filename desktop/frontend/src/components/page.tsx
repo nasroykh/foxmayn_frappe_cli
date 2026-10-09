@@ -29,9 +29,17 @@ export function PageHeader({
 }
 
 /** Technical detail behind a disclosure, so the main text stays friendly. */
-export function Details({ children, label = "Technical details" }: { children: React.ReactNode; label?: string }) {
+export function Details({
+  children,
+  label = "Technical details",
+  defaultOpen,
+}: {
+  children: React.ReactNode
+  label?: string
+  defaultOpen?: boolean
+}) {
   return (
-    <Collapsible>
+    <Collapsible defaultOpen={defaultOpen}>
       <CollapsibleTrigger render={<Button variant="link" size="xs" className="text-muted-foreground h-auto px-0" />}>
         <IconChevronDown data-icon="inline-start" className="transition-transform in-aria-expanded:rotate-180" />
         {label}

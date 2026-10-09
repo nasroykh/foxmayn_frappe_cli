@@ -92,6 +92,10 @@
       "title": "Paused after many steps",
       "body": "The assistant paused so it does not run on forever. Continue to let it go on.",
       "continue": "Continue"
+    },
+    "announce": {
+      "approval": "Waiting for your approval",
+      "finished": "Reply finished"
     }
   },
   "onboarding": {
@@ -166,6 +170,13 @@
       "failed": "The models could not be listed",
       "none": "This provider lists no models.",
       "defaultFlag": "{{name}} (default)"
-    }
+    },
+    "keyCleared": "The address changed, so the saved key was removed. Enter it again."
+  },
+  "diff": {
+    "none": "No changes.",
+    "settingsLabel": "Changes to the settings file",
+    "added": "Added: ",
+    "removed": "Removed: "
   }
 }

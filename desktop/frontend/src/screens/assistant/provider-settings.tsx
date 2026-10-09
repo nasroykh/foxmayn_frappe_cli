@@ -45,7 +45,7 @@ function kindName(kind: string): string {
   }
 }
 
-type Dialog_ = { type: "add" } | { type: "edit"; p: ProviderInfo } | { type: "key"; p: ProviderInfo }
+type Dialog_ = { type: "add" } | { type: "edit"; p: ProviderInfo } | { type: "key"; p: ProviderInfo; cleared?: boolean }
 
 export function ProviderSettings() {
   const { t } = useTranslation()
@@ -268,6 +268,12 @@ function ProviderDialog({
               <DialogTitle>{t("provider.keyDialogTitle", { name: d.p.label || d.p.id })}</DialogTitle>
               <DialogDescription>{t("provider.keyDialogBody")}</DialogDescription>
             </DialogHeader>
+            {d.cleared && (
+              <Alert role="alert">
+                <IconAlertTriangle />
+                <AlertDescription>{t("provider.keyCleared")}</AlertDescription>
+              </Alert>
+            )}
             <KeyForm
               providerID={d.p.id}
               providerLabel={d.p.label || d.p.id}
@@ -324,8 +330,10 @@ function ProviderForm({
         defaultModel: model,
       })
       onChanged()
-      // A new provider that needs its key goes on to the key.
-      if (!editing && needsKey(saved.kind)) onSwitch({ type: "key", p: saved })
+      // A new provider that needs its key goes on to the key; so does one whose address
+      // changed, since the saved key was removed with the old address.
+      if (saved.keyCleared) onSwitch({ type: "key", p: saved, cleared: true })
+      else if (!editing && needsKey(saved.kind)) onSwitch({ type: "key", p: saved })
       else onClose()
     } catch (err) {
       setError(appError(err))

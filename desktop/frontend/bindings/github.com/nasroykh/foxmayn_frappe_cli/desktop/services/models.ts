@@ -124,6 +124,7 @@ export interface BrowserSignInRequest {
  * the UI reads to show open cards again after a reload.
  */
 export interface ChatApproval {
+    "convID": string;
     "runID": string;
     "approvalID": string;
 
@@ -163,6 +164,7 @@ export interface ChatApproval {
  * "approved", "declined" or "cancelled".
  */
 export interface ChatApprovalClosed {
+    "convID": string;
     "runID": string;
     "approvalID": string;
     "outcome": string;
@@ -172,6 +174,7 @@ export interface ChatApprovalClosed {
  * ChatDelta is the payload of EventChatDelta.
  */
 export interface ChatDelta {
+    "convID": string;
     "runID": string;
     "text": string;
 }
@@ -180,6 +183,7 @@ export interface ChatDelta {
  * ChatDone is the payload of EventChatDone.
  */
 export interface ChatDone {
+    "convID": string;
     "runID": string;
     "status": string;
 
@@ -199,6 +203,7 @@ export interface ChatDone {
  * ChatError is the payload of EventChatError.
  */
 export interface ChatError {
+    "convID": string;
     "runID": string;
     "error": Error | null;
 }
@@ -223,6 +228,7 @@ export interface ChatMessage {
  * ChatTool is the payload of EventChatTool.
  */
 export interface ChatTool {
+    "convID": string;
     "runID": string;
     "callID": string;
     "tool": string;
@@ -259,6 +265,7 @@ export interface ChatToolCall {
  * ChatUsage is the payload of EventChatUsage.
  */
 export interface ChatUsage {
+    "convID": string;
     "runID": string;
     "turn": number;
     "input": number;

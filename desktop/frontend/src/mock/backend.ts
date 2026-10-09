@@ -351,7 +351,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 async function streamText(run: MockRun, text: string) {
   for (const chunk of text.match(/.{1,12}(\s|$)/g) ?? [text]) {
     if (run.cancelled) return false
-    emit(chat.delta, { runID: run.id, text: chunk })
+    emit(chat.delta, { convID: run.convID, runID: run.id, text: chunk })
     await sleep(40)
   }
   return !run.cancelled
@@ -359,22 +359,22 @@ async function streamText(run: MockRun, text: string) {
 
 async function toolCall(run: MockRun, tool: string, site: string, summary: string, outcome: ToolStatus = "ok") {
   const callID = newID("call")
-  emit(chat.tool, { runID: run.id, callID, tool, site, status: "running", summary })
+  emit(chat.tool, { convID: run.convID, runID: run.id, callID, tool, site, status: "running", summary })
   await sleep(500)
   const status: ToolStatus = run.cancelled ? "stopped" : outcome
-  emit(chat.tool, { runID: run.id, callID, tool, site, status, summary })
+  emit(chat.tool, { convID: run.convID, runID: run.id, callID, tool, site, status, summary })
   return { callID, status }
 }
 
 // ask opens a card and waits for the answer (or the stop).
-function ask(run: MockRun, card: Omit<ChatApproval, "runID" | "approvalID">) {
-  const full: ChatApproval = { ...card, runID: run.id, approvalID: newID("appr") }
+function ask(run: MockRun, card: Omit<ChatApproval, "convID" | "runID" | "approvalID">) {
+  const full: ChatApproval = { ...card, convID: run.convID, runID: run.id, approvalID: newID("appr") }
   openCards.set(full.approvalID, full)
   emit(chat.approval, full)
   return new Promise<ApprovalOutcome>((resolve) => {
     run.settle = (outcome) => {
       openCards.delete(full.approvalID)
-      emit(chat.closed, { runID: run.id, approvalID: full.approvalID, outcome })
+      emit(chat.closed, { convID: run.convID, runID: run.id, approvalID: full.approvalID, outcome })
       run.settle = undefined
       resolve(outcome)
     }
@@ -384,8 +384,8 @@ function ask(run: MockRun, card: Omit<ChatApproval, "runID" | "approvalID">) {
 function finish(run: MockRun, c: MockConv, status: RunStatus, paused = false) {
   runs.delete(run.id)
   c.pausedRunID = paused ? run.id : ""
-  emit(chat.usage, { runID: run.id, turn: 1, input: 1840, output: 212, cached: 1500 })
-  emit(chat.done, { runID: run.id, status })
+  emit(chat.usage, { convID: run.convID, runID: run.id, turn: 1, input: 1840, output: 212, cached: 1500 })
+  emit(chat.done, { convID: run.convID, runID: run.id, status })
 }
 
 async function script(run: MockRun, c: MockConv, text: string) {
@@ -406,6 +406,7 @@ async function script(run: MockRun, c: MockConv, text: string) {
   if (/\b(error|fail)/.test(lower)) {
     if (!(await say("Let me check that. "))) return finish(run, c, "cancelled")
     emit(chat.error, {
+      convID: run.convID,
       runID: run.id,
       error: { code: "failed", message: "The AI provider returned an error.", detail: "provider error (HTTP 529): overloaded" },
     })
@@ -448,7 +449,7 @@ async function script(run: MockRun, c: MockConv, text: string) {
             if_unmodified: "2026-10-08 09:14:03.512",
           }
     const callID = newID("call")
-    emit(chat.tool, { runID: run.id, callID, tool, site, status: "running", summary: "doctype=ToDo" })
+    emit(chat.tool, { convID: run.convID, runID: run.id, callID, tool, site, status: "running", summary: "doctype=ToDo" })
     const outcome = await ask(run, {
       kind: isDelete ? "ffc" : "app",
       tool,
@@ -475,7 +476,7 @@ async function script(run: MockRun, c: MockConv, text: string) {
           : "cancelled"
       : outcome
     const summary = approved ? "doctype=ToDo" : outcome === "declined" ? "The user declined this change. Nothing was changed." : "Stopped by the user before this change ran."
-    emit(chat.tool, { runID: run.id, callID, tool, site, status, summary })
+    emit(chat.tool, { convID: run.convID, runID: run.id, callID, tool, site, status, summary })
     record(callID, tool, status, approval, summary)
     if (outcome === "cancelled") return finish(run, c, "cancelled")
     await say(approved ? "Done. The change was saved." : "Understood, I left it as it was.")
@@ -1015,6 +1016,13 @@ export const backend: Backend = {
       defaultModel: p.defaultModel.trim() || (p.kind === "anthropic" ? "claude-sonnet-5-5" : ""),
       keySet: !!keys.get(id),
       keyLast4: old?.keyLast4 ?? "",
+    }
+    // A new address does not get the old key.
+    if (old && keys.has(id) && old.baseURL !== saved.baseURL) {
+      keys.delete(id)
+      saved.keySet = false
+      saved.keyLast4 = ""
+      saved.keyCleared = true
     }
     providers = old ? providers.map((x) => (x.id === id ? saved : x)) : [...providers, saved]
     return { ...saved }

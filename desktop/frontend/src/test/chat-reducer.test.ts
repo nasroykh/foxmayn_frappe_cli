@@ -8,6 +8,7 @@ function run(actions: ChatAction[], from: ChatState = initialState("c1")) {
 }
 
 const card = (over: Partial<ChatApproval> = {}): ChatApproval => ({
+  convID: "c1",
   runID: "r1",
   approvalID: "a1",
   kind: "app",
@@ -38,8 +39,8 @@ describe("chat reducer", () => {
   it("appends deltas of the active run", () => {
     const s = run(
       [
-        { type: "delta", runID: "r1", text: "Hel" },
-        { type: "delta", runID: "r1", text: "lo" },
+        { type: "delta", convID: "c1", runID: "r1", text: "Hel" },
+        { type: "delta", convID: "c1", runID: "r1", text: "lo" },
       ],
       started(),
     )
@@ -47,17 +48,53 @@ describe("chat reducer", () => {
     expect(s.phase).toBe("running")
   })
 
-  it("adopts the run id from the first event while the send is in flight", () => {
+  it("binds the run on sendMessage's answer and replays this conversation's early events", () => {
     const s = run([
       { type: "sending", text: "hi" },
-      { type: "delta", runID: "r9", text: "x" },
-      { type: "started", runID: "r9" },
+      { type: "delta", convID: "c1", runID: "r9", text: "x" },
+      { type: "delta", convID: "c1", runID: "r9", text: "y" },
     ])
-    expect(s).toMatchObject({ runID: "r9", phase: "running", text: "x", pending: "hi" })
+    expect(s).toMatchObject({ phase: "starting", runID: "", text: "" })
+    const bound = chatReducer(s, { type: "started", runID: "r9" })
+    expect(bound).toMatchObject({ runID: "r9", phase: "running", text: "xy", pending: "hi", buffer: [] })
+  })
+
+  it("never takes a run id from another conversation's events during starting", () => {
+    const s = run([
+      { type: "sending", text: "hi" },
+      { type: "delta", convID: "c2", runID: "r-other", text: "no" },
+      { type: "tool", ev: { convID: "c2", runID: "r-other", callID: "k", tool: "t", site: "", status: "running", summary: "" } },
+      { type: "approval", ev: card({ convID: "c2", runID: "r-other" }) },
+      { type: "done", ev: { convID: "c2", runID: "r-other", status: "done" } },
+      { type: "started", runID: "r1" },
+      { type: "delta", convID: "c2", runID: "r-other", text: "no" },
+    ])
+    expect(s).toMatchObject({ phase: "running", runID: "r1", text: "", tools: [], approvals: [] })
+    expect(ownsRun(s, "c2", "r-other")).toBe(false)
+    expect(ownsRun(s, "c2", "r1")).toBe(false)
+  })
+
+  it("drops buffered events of a run other than the one sendMessage returned", () => {
+    const s = run([
+      { type: "sending", text: "hi" },
+      { type: "delta", convID: "c1", runID: "stale", text: "no" },
+      { type: "started", runID: "r1" },
+    ])
+    expect(s.text).toBe("")
+  })
+
+  it("a run that ended before its id came back ends on started", () => {
+    const s = run([
+      { type: "sending", text: "hi" },
+      { type: "delta", convID: "c1", runID: "r1", text: "ok" },
+      { type: "done", ev: { convID: "c1", runID: "r1", status: "done" } },
+      { type: "started", runID: "r1" },
+    ])
+    expect(s).toMatchObject({ phase: "idle", runID: "", text: "ok" })
   })
 
   it("tracks a tool call from running to ok", () => {
-    const ev = { runID: "r1", callID: "k1", tool: "get_doc", site: "acme", status: "running", summary: "ToDo" }
+    const ev = { convID: "c1", runID: "r1", callID: "k1", tool: "get_doc", site: "acme", status: "running", summary: "ToDo" }
     const s = run([{ type: "tool", ev }, { type: "tool", ev: { ...ev, status: "ok" } }], started())
     expect(s.tools).toEqual([{ callID: "k1", tool: "get_doc", site: "acme", status: "ok", summary: "ToDo" }])
   })
@@ -65,7 +102,7 @@ describe("chat reducer", () => {
   it("opens and closes approval cards", () => {
     let s = run([{ type: "approval", ev: card() }, { type: "approval", ev: card() }], started())
     expect(s.approvals).toHaveLength(1)
-    s = chatReducer(s, { type: "approvalClosed", runID: "r1", approvalID: "a1" })
+    s = chatReducer(s, { type: "approvalClosed", convID: "c1", runID: "r1", approvalID: "a1" })
     expect(s.approvals).toHaveLength(0)
   })
 
@@ -76,14 +113,14 @@ describe("chat reducer", () => {
   })
 
   it("ends on done and lets the stored conversation replace the live view", () => {
-    let s = run([{ type: "delta", runID: "r1", text: "ok" }, { type: "done", ev: { runID: "r1", status: "done" } }], started())
+    let s = run([{ type: "delta", convID: "c1", runID: "r1", text: "ok" }, { type: "done", ev: { convID: "c1", runID: "r1", status: "done" } }], started())
     expect(s.phase).toBe("idle")
     s = chatReducer(s, { type: "loaded", detail: detail() })
     expect(s).toMatchObject({ text: "", pending: "", tools: [], phase: "idle" })
   })
 
   it("pauses on done(paused) and resumes", () => {
-    let s = run([{ type: "done", ev: { runID: "r1", status: "paused" } }], started())
+    let s = run([{ type: "done", ev: { convID: "c1", runID: "r1", status: "paused" } }], started())
     expect(s).toMatchObject({ phase: "paused", runID: "r1" })
     s = chatReducer(s, { type: "resumed" })
     expect(s.phase).toBe("running")
@@ -92,8 +129,8 @@ describe("chat reducer", () => {
   it("keeps the error through the reload that follows", () => {
     let s = run(
       [
-        { type: "error", ev: { runID: "r1", error: { code: "failed", message: "boom" } } },
-        { type: "done", ev: { runID: "r1", status: "error" } },
+        { type: "error", ev: { convID: "c1", runID: "r1", error: { code: "failed", message: "boom" } } },
+        { type: "done", ev: { convID: "c1", runID: "r1", status: "error" } },
         { type: "loaded", detail: detail() },
       ],
       started(),
@@ -107,23 +144,23 @@ describe("chat reducer", () => {
     const s0 = started("r1")
     const s = run(
       [
-        { type: "delta", runID: "other", text: "x" },
-        { type: "tool", ev: { runID: "other", callID: "k", tool: "t", site: "", status: "running", summary: "" } },
+        { type: "delta", convID: "c1", runID: "other", text: "x" },
+        { type: "tool", ev: { convID: "c1", runID: "other", callID: "k", tool: "t", site: "", status: "running", summary: "" } },
         { type: "approval", ev: card({ runID: "other" }) },
-        { type: "approvalClosed", runID: "other", approvalID: "a1" },
-        { type: "error", ev: { runID: "other", error: { code: "failed", message: "no" } } },
-        { type: "done", ev: { runID: "other", status: "done" } },
+        { type: "approvalClosed", convID: "c1", runID: "other", approvalID: "a1" },
+        { type: "error", ev: { convID: "c1", runID: "other", error: { code: "failed", message: "no" } } },
+        { type: "done", ev: { convID: "c1", runID: "other", status: "done" } },
       ],
       s0,
     )
     expect(s).toEqual(s0)
-    expect(ownsRun(s, "other")).toBe(false)
-    expect(ownsRun(s, "r1")).toBe(true)
+    expect(ownsRun(s, "c1", "other")).toBe(false)
+    expect(ownsRun(s, "c1", "r1")).toBe(true)
   })
 
   it("ignores events when idle, and a load for another conversation", () => {
     const idle = initialState("c1")
-    expect(chatReducer(idle, { type: "delta", runID: "r1", text: "x" })).toBe(idle)
+    expect(chatReducer(idle, { type: "delta", convID: "c1", runID: "r1", text: "x" })).toBe(idle)
     const other = detail({ conversation: { ...detail().conversation, id: "c2" } })
     expect(chatReducer(idle, { type: "loaded", detail: other })).toBe(idle)
   })

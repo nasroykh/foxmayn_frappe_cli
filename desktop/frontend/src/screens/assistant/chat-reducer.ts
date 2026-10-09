@@ -33,7 +33,18 @@ export interface ChatState {
   tools: LiveTool[]
   approvals: ChatApproval[]
   error: ChatFailure | null
+  /** This conversation's events that came before sendMessage answered with the run id. */
+  buffer: LiveAction[]
 }
+
+/** The chat:* events. Each names its conversation and its run. */
+export type LiveAction =
+  | { type: "delta"; convID: string; runID: string; text: string }
+  | { type: "tool"; ev: ChatTool }
+  | { type: "approval"; ev: ChatApproval }
+  | { type: "approvalClosed"; convID: string; runID: string; approvalID: string }
+  | { type: "done"; ev: ChatDone }
+  | { type: "error"; ev: ChatError }
 
 export type ChatAction =
   | { type: "select"; convID: string }
@@ -42,35 +53,63 @@ export type ChatAction =
   | { type: "started"; runID: string }
   | { type: "sendFailed"; error: ChatFailure }
   | { type: "resumed" }
-  | { type: "delta"; runID: string; text: string }
-  | { type: "tool"; ev: ChatTool }
-  | { type: "approval"; ev: ChatApproval }
-  | { type: "approvalClosed"; runID: string; approvalID: string }
   | { type: "approvals"; list: ChatApproval[] }
-  | { type: "done"; ev: ChatDone }
-  | { type: "error"; ev: ChatError }
+  | LiveAction
 
 export function initialState(convID = ""): ChatState {
-  return { convID, phase: "idle", runID: "", pending: "", text: "", tools: [], approvals: [], error: null }
+  return { convID, phase: "idle", runID: "", pending: "", text: "", tools: [], approvals: [], error: null, buffer: [] }
+}
+
+function idsOf(a: LiveAction): { convID: string; runID: string } {
+  switch (a.type) {
+    case "delta":
+    case "approvalClosed":
+      return { convID: a.convID, runID: a.runID }
+    default:
+      return { convID: a.ev.convID, runID: a.ev.runID }
+  }
 }
 
 /**
- * Whether an event belongs to the run on screen. While a send is in flight the
- * run id is not known yet, and the first event names it.
+ * True when the run is the one on screen: this conversation's, and bound by
+ * sendMessage's answer or by the store. A run id is never taken from an event.
  */
-function mine(s: ChatState, runID: string): boolean {
-  if (!runID) return false
-  if (s.phase === "starting" && s.runID === "") return true
-  return (s.phase === "running" || s.phase === "starting") && s.runID === runID
+export function ownsRun(s: ChatState, convID: string, runID: string): boolean {
+  if (!runID || convID !== s.convID || runID !== s.runID) return false
+  return s.phase === "running" || s.phase === "paused"
 }
 
-/** True when the run belongs to the conversation on screen (events of other runs are ignored). */
-export function ownsRun(s: ChatState, runID: string): boolean {
-  return mine(s, runID) || (s.phase === "paused" && s.runID === runID)
-}
-
-function adopt(s: ChatState, runID: string): ChatState {
-  return s.phase === "starting" && s.runID === "" ? { ...s, runID, phase: "running" } : s
+function live(s: ChatState, a: LiveAction): ChatState {
+  const { runID } = idsOf(a)
+  if (!ownsRun(s, a.type === "delta" || a.type === "approvalClosed" ? a.convID : a.ev.convID, runID)) return s
+  const running = s.phase === "running"
+  switch (a.type) {
+    case "delta":
+      return running ? { ...s, text: s.text + a.text } : s
+    case "tool": {
+      if (!running) return s
+      const row: LiveTool = {
+        callID: a.ev.callID,
+        tool: a.ev.tool,
+        site: a.ev.site,
+        status: a.ev.status as ToolStatus,
+        summary: a.ev.summary,
+      }
+      const i = s.tools.findIndex((t) => t.callID === row.callID)
+      const tools = i < 0 ? [...s.tools, row] : s.tools.map((t, j) => (j === i ? row : t))
+      return { ...s, tools }
+    }
+    case "approval":
+      if (!running || s.approvals.some((c) => c.approvalID === a.ev.approvalID)) return s
+      return { ...s, approvals: [...s.approvals, a.ev] }
+    case "approvalClosed":
+      return { ...s, approvals: s.approvals.filter((c) => c.approvalID !== a.approvalID) }
+    case "done":
+      if (a.ev.status === "paused") return { ...s, phase: "paused", approvals: [] }
+      return { ...s, phase: "idle", runID: "", approvals: [] }
+    case "error":
+      return running ? { ...s, error: a.ev.error } : s
+  }
 }
 
 export function chatReducer(s: ChatState, a: ChatAction): ChatState {
@@ -81,55 +120,34 @@ export function chatReducer(s: ChatState, a: ChatAction): ChatState {
       if (a.detail.conversation.id !== s.convID) return s
       // A send in flight is not overwritten by a late load.
       if (s.phase === "starting") return s
-      const base = { ...s, pending: "", text: "", tools: [], approvals: [] }
+      const base = { ...s, pending: "", text: "", tools: [], approvals: [], buffer: [] }
       if (a.detail.activeRunID) return { ...base, phase: "running", runID: a.detail.activeRunID }
       if (a.detail.pausedRunID) return { ...base, phase: "paused", runID: a.detail.pausedRunID }
       return { ...base, phase: "idle", runID: "" }
     }
     case "sending":
-      return { ...s, phase: "starting", runID: "", pending: a.text, text: "", tools: [], approvals: [], error: null }
-    case "started":
-      if (s.phase === "starting" && s.runID === "") return { ...s, phase: "running", runID: a.runID }
-      return s
+      return { ...s, phase: "starting", runID: "", pending: a.text, text: "", tools: [], approvals: [], error: null, buffer: [] }
+    case "started": {
+      if (s.phase !== "starting" || s.runID !== "") return s
+      // Bound by sendMessage's answer; replay what this conversation's run said meanwhile.
+      const buffered = s.buffer.filter((e) => idsOf(e).runID === a.runID)
+      return buffered.reduce(live, { ...s, phase: "running", runID: a.runID, buffer: [] })
+    }
     case "sendFailed":
-      return s.phase === "starting" ? { ...s, phase: "idle", runID: "", pending: "", error: a.error } : s
+      return s.phase === "starting" ? { ...s, phase: "idle", runID: "", pending: "", buffer: [], error: a.error } : s
     case "resumed":
       return s.phase === "paused" ? { ...s, phase: "running", error: null } : s
-    case "delta":
-      return mine(s, a.runID) ? { ...adopt(s, a.runID), text: s.text + a.text } : s
-    case "tool": {
-      if (!mine(s, a.ev.runID)) return s
-      const row: LiveTool = {
-        callID: a.ev.callID,
-        tool: a.ev.tool,
-        site: a.ev.site,
-        status: a.ev.status as ToolStatus,
-        summary: a.ev.summary,
-      }
-      const i = s.tools.findIndex((t) => t.callID === row.callID)
-      const tools = i < 0 ? [...s.tools, row] : s.tools.map((t, j) => (j === i ? row : t))
-      return { ...adopt(s, a.ev.runID), tools }
-    }
-    case "approval": {
-      if (!mine(s, a.ev.runID)) return s
-      if (s.approvals.some((c) => c.approvalID === a.ev.approvalID)) return adopt(s, a.ev.runID)
-      return { ...adopt(s, a.ev.runID), approvals: [...s.approvals, a.ev] }
-    }
-    case "approvalClosed":
-      if (s.runID !== a.runID) return s
-      return { ...s, approvals: s.approvals.filter((c) => c.approvalID !== a.approvalID) }
     case "approvals": {
       // Cards from before a reload; ones already shown stay as they are.
       const known = new Set(s.approvals.map((c) => c.approvalID))
-      const add = a.list.filter((c) => !known.has(c.approvalID))
+      const add = a.list.filter((c) => c.convID === s.convID && !known.has(c.approvalID))
       return add.length ? { ...s, approvals: [...s.approvals, ...add] } : s
     }
-    case "done": {
-      if (!ownsRun(s, a.ev.runID)) return s
-      if (a.ev.status === "paused") return { ...s, phase: "paused", runID: a.ev.runID, approvals: [] }
-      return { ...s, phase: "idle", runID: "", approvals: [] }
+    default: {
+      // A chat event: only this conversation's; before the run id is known, keep it for later.
+      if (idsOf(a).convID !== s.convID) return s
+      if (s.phase === "starting" && s.runID === "") return { ...s, buffer: [...s.buffer, a] }
+      return live(s, a)
     }
-    case "error":
-      return mine(s, a.ev.runID) ? { ...adopt(s, a.ev.runID), error: a.ev.error } : s
   }
 }

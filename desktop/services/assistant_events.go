@@ -39,14 +39,19 @@ const (
 	RunError     = "error"
 )
 
+// Every chat payload carries ConvID, the conversation of its run, so a pane
+// shows only its own events (runs in different conversations overlap).
+
 // ChatDelta is the payload of EventChatDelta.
 type ChatDelta struct {
-	RunID string `json:"runID"`
-	Text  string `json:"text"`
+	ConvID string `json:"convID"`
+	RunID  string `json:"runID"`
+	Text   string `json:"text"`
 }
 
 // ChatTool is the payload of EventChatTool.
 type ChatTool struct {
+	ConvID  string `json:"convID"`
 	RunID   string `json:"runID"`
 	CallID  string `json:"callID"`
 	Tool    string `json:"tool"`
@@ -57,6 +62,7 @@ type ChatTool struct {
 
 // ChatUsage is the payload of EventChatUsage.
 type ChatUsage struct {
+	ConvID string `json:"convID"`
 	RunID  string `json:"runID"`
 	Turn   int    `json:"turn"`
 	Input  int    `json:"input"`
@@ -66,6 +72,7 @@ type ChatUsage struct {
 
 // ChatDone is the payload of EventChatDone.
 type ChatDone struct {
+	ConvID string `json:"convID"`
 	RunID  string `json:"runID"`
 	Status string `json:"status"`
 	// StopReason is set when the model ended the run for a reason the user
@@ -77,8 +84,9 @@ type ChatDone struct {
 
 // ChatError is the payload of EventChatError.
 type ChatError struct {
-	RunID string `json:"runID"`
-	Error *Error `json:"error"`
+	ConvID string `json:"convID"`
+	RunID  string `json:"runID"`
+	Error  *Error `json:"error"`
 }
 
 // Approval kinds in ChatApproval: the app's own card or ffc's question.
@@ -106,6 +114,7 @@ type DiffField struct {
 // ChatApproval is the payload of EventChatApproval and an item of the list
 // the UI reads to show open cards again after a reload.
 type ChatApproval struct {
+	ConvID     string `json:"convID"`
 	RunID      string `json:"runID"`
 	ApprovalID string `json:"approvalID"`
 	// Kind is "app" (the app's card) or "ffc" (ffc's own confirmation).
@@ -128,6 +137,7 @@ type ChatApproval struct {
 // ChatApprovalClosed is the payload of EventChatApprovalClosed. Outcome is
 // "approved", "declined" or "cancelled".
 type ChatApprovalClosed struct {
+	ConvID     string `json:"convID"`
 	RunID      string `json:"runID"`
 	ApprovalID string `json:"approvalID"`
 	Outcome    string `json:"outcome"`
