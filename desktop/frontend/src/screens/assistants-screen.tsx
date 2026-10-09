@@ -10,6 +10,7 @@ import {
   IconSettingsExclamation,
 } from "@tabler/icons-react"
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 
 import { useApp } from "@/app/app-context"
 import { FFCMissingAlert, LoadError, PageHeader } from "@/components/page"
@@ -41,6 +42,7 @@ function notDetectedReason(a: Assistant) {
 }
 
 export function AssistantsScreen() {
+  const { t } = useTranslation()
   const { assistants, reloadAssistants, connectAssistant, sites, addSite } = useApp()
   const [disconnect, setDisconnect] = React.useState<Assistant | null>(null)
   const list = assistants.data?.assistants ?? []
@@ -49,7 +51,7 @@ export function AssistantsScreen() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Assistants"
+        title={t("connectApps.title")}
         description="Connect the AI assistants on this computer to your Frappe sites. Each gets a “frappe” entry in its settings that runs ffc."
         actions={
           <Tooltip>

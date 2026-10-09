@@ -11,6 +11,8 @@ import {
   IconWorldCheck,
 } from "@tabler/icons-react"
 
+import { useTranslation } from "react-i18next"
+
 import { useApp } from "@/app/app-context"
 import { useTheme } from "@/app/theme"
 import {
@@ -27,6 +29,7 @@ import { toast } from "@/components/ui/toast"
 import { appError, errorTitle } from "@/lib/errors"
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const { t } = useTranslation()
   const { setScreen, addSite, connectAssistant, installFFC, sites, env, checkSite } = useApp()
   const { setTheme } = useTheme()
 
@@ -71,7 +74,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             </CommandItem>
             <CommandItem onSelect={run(() => setScreen("assistants"))}>
               <IconRobot />
-              Assistants
+              {t("nav.connectApps")}
             </CommandItem>
             <CommandItem onSelect={run(() => setScreen("settings"))}>
               <IconSettings />

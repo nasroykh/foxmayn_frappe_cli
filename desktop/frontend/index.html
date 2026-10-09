@@ -1,24 +1,29 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" dir="ltr">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Content Security Policy. Every source is 'self' (the Wails asset origin:
+      http://wails.localhost on Windows, wails:// on macOS) except:
+        - img-src data:  small inline images (data: URIs).
+        - connect-src 'self'  is enough: the Wails runtime calls the backend with
+          fetch() to window.location.origin + "/wails/runtime".
+      No 'unsafe-inline' and no 'unsafe-eval' anywhere. The theme script lives in
+      public/theme-init.js. Base UI's injected <style> tags are turned off with
+      CSPProvider (src/main.tsx); their CSS is in src/index.css. Inline style=""
+      set by React goes through the CSSOM, which style-src does not block.
+      frame-ancestors is ignored in a meta tag, so it is omitted.
+      `npm run dev` relaxes this policy for Vite (see vite.config.ts).
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <link rel="icon" type="image/png" sizes="64x64" href="/brand/favicon-64.png" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Foxmayn Frappe Desktop</title>
-    <script>
-      // Apply the saved theme before the first paint so there is no flash.
-      (function () {
-        var theme = "system";
-        try {
-          theme = localStorage.getItem("ffd-theme") || "system";
-        } catch (e) {}
-        var dark =
-          theme === "dark" ||
-          (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.classList.toggle("dark", dark);
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>
