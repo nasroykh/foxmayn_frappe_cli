@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
@@ -102,12 +103,12 @@ func newMCPEnv(o mcpOptions, sites []string) (*mcpEnv, func(), error) {
 	}
 	var (
 		mu      sync.Mutex
-		closed  bool
+		closed  atomic.Bool // set by closeFn; checked again under sc.mu
 		clients = map[string]*siteClient{}
 	)
 	get := func(ctx context.Context, site *config.SiteConfig) (*client.FrappeClient, error) {
 		mu.Lock()
-		if closed {
+		if closed.Load() {
 			mu.Unlock()
 			return nil, errors.New("MCP server closed")
 		}
@@ -119,6 +120,11 @@ func newMCPEnv(o mcpOptions, sites []string) (*mcpEnv, func(), error) {
 		mu.Unlock()
 		sc.mu.Lock()
 		defer sc.mu.Unlock()
+		// A call that got sc before Close and its lock after it must not
+		// build a client Close will never see.
+		if closed.Load() {
+			return nil, errors.New("MCP server closed")
+		}
 		cfg := refreshSite(ctx, env.cfgPath, site)
 		k := strings.Join([]string{cfg.URL, cfg.AccessToken, cfg.APIKey, cfg.APISecret, cfg.Username, cfg.Password}, "\x00")
 		if sc.fc != nil && k == sc.key {
@@ -140,7 +146,7 @@ func newMCPEnv(o mcpOptions, sites []string) (*mcpEnv, func(), error) {
 	closeFn := func() {
 		mu.Lock()
 		defer mu.Unlock()
-		closed = true
+		closed.Store(true)
 		for _, sc := range clients {
 			sc.mu.Lock()
 			if sc.fc != nil {
