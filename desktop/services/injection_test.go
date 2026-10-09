@@ -564,7 +564,7 @@ func TestInjection(t *testing.T) {
 func injectionReadMode(t *testing.T, ad injectionAdapter) {
 	g := newInjectionRig(t, ad, "reads", "writes", "text")
 	c := g.conv(t, ModeRead)
-	runID, err := g.a.Send(c.ID, "Summarise customer CUST-0001, its comments and the last error.")
+	runID, err := g.a.Send(c.ID, "Summarise customer CUST-0001, its comments and the last error.", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,7 +641,7 @@ func injectionAskMode(t *testing.T, ad injectionAdapter, approve bool) {
 	if _, err := g.a.SetConversationProfile(c.ID, prof.ID); err != nil {
 		t.Fatal(err)
 	}
-	runID, err := g.a.Send(c.ID, "Summarise customer CUST-0001, its comments and the last error.")
+	runID, err := g.a.Send(c.ID, "Summarise customer CUST-0001, its comments and the last error.", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -782,7 +782,7 @@ func injectionImport(t *testing.T, ad injectionAdapter) {
 		{ID: "m3", Role: "user", Parts: partsJSON(t, llm.ToolResult{ID: "tu1", Text: "deleted. " + evil})},
 		{ID: "m4", Role: "assistant", Parts: partsJSON(t, llm.Text{Text: "Done."})},
 	}))
-	if _, err := g.a.Send(c.ID, "What did we do last time?"); err != nil {
+	if _, err := g.a.Send(c.ID, "What did we do last time?", nil); err != nil {
 		t.Fatal(err)
 	}
 	if d := g.done(t, 1); d.Status != RunDone {
