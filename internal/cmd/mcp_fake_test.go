@@ -41,6 +41,7 @@ func newMCPFake(t *testing.T, readOnly bool) (*server.MCPServer, *frappetest.Sit
 // site's policy and an audit log when audit is set.
 func mcpTRegister(s *server.MCPServer, c *client.FrappeClient, site *config.SiteConfig, audit *auditLog) *mcpEnv {
 	env := &mcpEnv{
+		confirm:  newConfirmer(),
 		sites:    []string{site.Name},
 		site:     func(context.Context, string) (*config.SiteConfig, error) { return site, nil },
 		client:   func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
@@ -938,7 +939,8 @@ func TestMCPParallelCallsReadConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := &mcpEnv{
-		sites: []string{"test"},
+		confirm: newConfirmer(),
+		sites:   []string{"test"},
 		site: func(_ context.Context, name string) (*config.SiteConfig, error) {
 			return config.LoadSite(name, cfgPath)
 		},

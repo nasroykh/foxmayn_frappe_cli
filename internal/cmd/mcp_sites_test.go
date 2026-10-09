@@ -53,7 +53,7 @@ func mcpTAuth(t *testing.T, s *frappetest.Site, want string) {
 
 func mcpTStart(t *testing.T) *server.MCPServer {
 	t.Helper()
-	s, closeEnv, err := startMCP(context.Background())
+	s, _, closeEnv, err := startMCP(context.Background(), mcpOptionsFromFlags())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestMCPSites(t *testing.T) {
 				t.Setenv("FFC_API_KEY", "k")
 				t.Setenv("FFC_API_SECRET", "s")
 			}
-			sites, err := mcpSites()
+			sites, err := mcpSites(mcpOptionsFromFlags())
 			got := strings.Join(sites, " ")
 			if err != nil {
 				got = err.Error()
@@ -234,7 +234,7 @@ func TestDaemonArgsCarryTheSites(t *testing.T) {
 	prevFlags := mcpFlags
 	t.Cleanup(func() { mcpFlags = prevFlags })
 	mcpFlags = config.MCPPolicy{DenyDoctypes: []string{`a,"b"`}}
-	got := strings.Join(daemonArgs([]string{"dev", "Prod", "x,y"}, 1), " ")
+	got := strings.Join(daemonArgs(mcpOptionsFromFlags(), []string{"dev", "Prod", "x,y"}, 1), " ")
 	want := `mcp --port 1 --site dev --sites=dev --sites=Prod --sites="x,y" --deny-doctypes="a,""b"""`
 	if got != want {
 		t.Errorf("args = %s\nwant   %s", got, want)
@@ -245,7 +245,7 @@ func TestDaemonArgsCarryTheSites(t *testing.T) {
 	deny := fs.StringSlice("deny-doctypes", nil, "")
 	fs.String("site", "", "")
 	fs.Int("port", 0, "")
-	if err := fs.Parse(daemonArgs([]string{"dev", "Prod", "x,y"}, 1)[1:]); err != nil {
+	if err := fs.Parse(daemonArgs(mcpOptionsFromFlags(), []string{"dev", "Prod", "x,y"}, 1)[1:]); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(*sites, "|") != "dev|Prod|x,y" || strings.Join(*deny, "|") != `a,"b"` {

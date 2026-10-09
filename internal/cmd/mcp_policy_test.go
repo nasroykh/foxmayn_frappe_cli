@@ -36,6 +36,7 @@ func mcpTPolicy(t *testing.T, cfg *config.MCPPolicy, flags config.MCPPolicy) (*s
 	sc := &config.SiteConfig{Name: "prod", MCP: cfg}
 	audit := &auditLog{path: filepath.Join(t.TempDir(), auditFileName)}
 	env := &mcpEnv{
+		confirm:  newConfirmer(),
 		sites:    []string{sc.Name},
 		site:     func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
 		client:   func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
@@ -435,7 +436,7 @@ func TestDaemonArgsCarryThePolicy(t *testing.T) {
 	t.Cleanup(func() { mcpFlags, mcpReadOnly = prevFlags, prevRO })
 	mcpReadOnly = true
 	mcpFlags = config.MCPPolicy{AllowDoctypes: []string{"Sales Invoice", "ToDo"}, DenyMethods: []string{"frappe.client.*"}}
-	got := strings.Join(daemonArgs([]string{"prod"}, 8765), " ")
+	got := strings.Join(daemonArgs(mcpOptionsFromFlags(), []string{"prod"}, 8765), " ")
 	want := "mcp --port 8765 --site prod --read-only --allow-doctypes=Sales Invoice --allow-doctypes=ToDo --deny-methods=frappe.client.*"
 	if got != want {
 		t.Errorf("args = %q\nwant   %q", got, want)
@@ -445,11 +446,11 @@ func TestDaemonArgsCarryThePolicy(t *testing.T) {
 func TestDaemonArgsCarryTheTimeout(t *testing.T) {
 	prev := client.Timeout
 	t.Cleanup(func() { client.Timeout = prev })
-	if got := strings.Join(daemonArgs(nil, 1), " "); strings.Contains(got, "--timeout") {
+	if got := strings.Join(daemonArgs(mcpOptionsFromFlags(), nil, 1), " "); strings.Contains(got, "--timeout") {
 		t.Errorf("default timeout forwarded: %q", got)
 	}
 	client.Timeout = 2 * time.Minute
-	if got := strings.Join(daemonArgs(nil, 1), " "); !strings.Contains(got, " --timeout=2m0s") {
+	if got := strings.Join(daemonArgs(mcpOptionsFromFlags(), nil, 1), " "); !strings.Contains(got, " --timeout=2m0s") {
 		t.Errorf("args = %q, want --timeout=2m0s", got)
 	}
 }

@@ -15,6 +15,53 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// mcpOptions is everything an MCP server is built from, so no part of the
+// build reads a flag variable. mcpOptionsFromFlags is the one place the
+// command line becomes options.
+type mcpOptions struct {
+	configPath string   // config file; "" is the default path
+	site       string   // the default site; "" is the config's default_site
+	sites      []string // --sites
+	allSites   bool     // --all-sites
+	// policy narrows every served site's own policy (the flags); ReadOnly is
+	// --read-only.
+	policy   config.MCPPolicy
+	toolsets []string // nil: defaultToolsets
+}
+
+// mcpOptionsFromFlags reads the global flag variables of `ffc mcp`.
+func mcpOptionsFromFlags() mcpOptions {
+	o := mcpOptions{
+		configPath: configPath,
+		site:       siteName,
+		sites:      mcpSiteList,
+		allSites:   mcpAllSites,
+		policy:     mcpFlags,
+		toolsets:   mcpToolsets,
+	}
+	o.policy.ReadOnly = mcpReadOnly
+	return o
+}
+
+// cfgPath returns the config file path: configPath or the default one.
+func (o mcpOptions) cfgPath() (string, error) {
+	if o.configPath != "" {
+		return o.configPath, nil
+	}
+	p, err := config.DefaultConfigPath()
+	if err != nil {
+		return "", fmt.Errorf("resolving config path: %w", err)
+	}
+	return p, nil
+}
+
+// printMCPWarnings writes startMCP's warnings to stderr, one per line.
+func printMCPWarnings(warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, w)
+	}
+}
+
 // newMCPEnv returns the environment the MCP tools run in for the served
 // sites, plus a close func to call on shutdown. A site is read from the
 // config on every call, so a policy or credential edit applies to the next
@@ -22,11 +69,12 @@ import (
 // login for session-auth sites) while its credentials are unchanged; an
 // expired OAuth token is refreshed, and a token refreshed by another ffc
 // process is picked up by rebuilding the client.
-func newMCPEnv(sites []string) (*mcpEnv, func(), error) {
-	audit, err := newAuditLog()
+func newMCPEnv(o mcpOptions, sites []string) (*mcpEnv, func(), error) {
+	cfgPath, err := o.cfgPath()
 	if err != nil {
 		return nil, nil, err
 	}
+	env := &mcpEnv{cfgPath: cfgPath}
 	type siteClient struct {
 		mu  sync.Mutex // one build or login per site at a time
 		key string
@@ -46,7 +94,7 @@ func newMCPEnv(sites []string) (*mcpEnv, func(), error) {
 		mu.Unlock()
 		sc.mu.Lock()
 		defer sc.mu.Unlock()
-		cfg := refreshSite(ctx, site)
+		cfg := refreshSite(ctx, env.cfgPath, site)
 		k := strings.Join([]string{cfg.URL, cfg.AccessToken, cfg.APIKey, cfg.APISecret, cfg.Username, cfg.Password}, "\x00")
 		if sc.fc != nil && k == sc.key {
 			return sc.fc, nil
@@ -55,7 +103,7 @@ func newMCPEnv(sites []string) (*mcpEnv, func(), error) {
 		// refreshes it itself (newSiteClient); the next call then finds the
 		// new token in the config and builds a new client, as it does after
 		// a refresh by another process.
-		c, err := newSiteClient(ctx, cfg)
+		c, err := newSiteClient(ctx, env.cfgPath, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -76,27 +124,25 @@ func newMCPEnv(sites []string) (*mcpEnv, func(), error) {
 			sc.mu.Unlock()
 		}
 	}
-	env := &mcpEnv{
-		sites: sites,
-		site: func(_ context.Context, name string) (*config.SiteConfig, error) {
-			site, err := config.LoadSite(name, configPath)
-			if err != nil {
-				return nil, fmt.Errorf("config: %w", err)
-			}
-			// Load falls back to a case-insensitive match: a served site
-			// removed or renamed since the start must not resolve to another
-			// site ("Prod" gone, "PROD" added).
-			if name != "" && site.Name != name {
-				return nil, fmt.Errorf("config: site %q not found in config", name)
-			}
-			return site, nil
-		},
-		client:   get,
-		flags:    mcpFlags,
-		audit:    audit,
-		toolsets: mcpToolsets,
+	env.sites = sites
+	env.site = func(_ context.Context, name string) (*config.SiteConfig, error) {
+		site, err := config.LoadSite(name, o.configPath)
+		if err != nil {
+			return nil, fmt.Errorf("config: %w", err)
+		}
+		// Load falls back to a case-insensitive match: a served site
+		// removed or renamed since the start must not resolve to another
+		// site ("Prod" gone, "PROD" added).
+		if name != "" && site.Name != name {
+			return nil, fmt.Errorf("config: site %q not found in config", name)
+		}
+		return site, nil
 	}
-	env.flags.ReadOnly = mcpReadOnly
+	env.client = get
+	env.flags = o.policy
+	env.audit = newAuditLog(cfgPath)
+	env.toolsets = o.toolsets
+	env.confirm = newConfirmer()
 	return env, closeFn, nil
 }
 
@@ -137,16 +183,18 @@ func cleanMCPFlags(cmd *cobra.Command) error {
 // so a misconfiguration fails at start rather than on the first tool call.
 // The other sites are only read (config and policy): signing in to each
 // could take longer than a client or the detached start waits, and a site
-// that is down must not stop the others. Their first call signs in.
-func startMCP(ctx context.Context) (*server.MCPServer, func(), error) {
-	sites, err := mcpSites()
+// that is down must not stop the others. Their first call signs in. The
+// warnings are returned for the caller to print.
+func startMCP(ctx context.Context, o mcpOptions) (*server.MCPServer, []string, func(), error) {
+	sites, err := mcpSites(o)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	env, closeEnv, err := newMCPEnv(sites)
+	env, closeEnv, err := newMCPEnv(o, sites)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	var warnings []string
 	var policies []mcpPolicy
 	for i, name := range sites {
 		site, err := env.site(ctx, name)
@@ -159,17 +207,17 @@ func startMCP(ctx context.Context) (*server.MCPServer, func(), error) {
 		switch {
 		case err != nil && i == 0:
 			closeEnv()
-			return nil, nil, err
+			return nil, nil, nil, err
 		case err != nil:
-			fmt.Fprintf(os.Stderr, "warning: site %q: %v\n", name, err)
+			warnings = append(warnings, fmt.Sprintf("warning: site %q: %v", name, err))
 		}
 	}
 	s := server.NewMCPServer("ffc", version.Version, mcpServerOptions()...)
 	registerTools(s, env, policies)
 	if len(sites) > 1 {
-		fmt.Fprintf(os.Stderr, "Serving %d sites: %s. Every tool call must name its site.\n", len(sites), strings.Join(sites, ", "))
+		warnings = append(warnings, fmt.Sprintf("Serving %d sites: %s. Every tool call must name its site.", len(sites), strings.Join(sites, ", ")))
 	}
-	return s, closeEnv, nil
+	return s, warnings, closeEnv, nil
 }
 
 var (
@@ -217,7 +265,7 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 		if port == 0 {
 			port = defaultMCPPort
 		}
-		if err := startDetached(cmd.Context(), port); err != nil {
+		if err := startDetached(cmd.Context(), mcpOptionsFromFlags(), port); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "MCP server started in background on http://127.0.0.1:%d/mcp\n", port)
@@ -227,15 +275,16 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 	}
 
 	if mcpPort != 0 {
-		return runHTTPServer(cmd.Context(), mcpPort)
+		return runHTTPServer(cmd.Context(), mcpOptionsFromFlags(), mcpPort)
 	}
 
 	// Default: stdio server.
-	s, closeEnv, err := startMCP(cmd.Context())
+	s, warnings, closeEnv, err := startMCP(cmd.Context(), mcpOptionsFromFlags())
 	if err != nil {
 		return err
 	}
 	defer closeEnv()
+	printMCPWarnings(warnings)
 
 	fmt.Fprintf(os.Stderr, "ffc MCP server running (stdio). Press Ctrl+C to stop.\n")
 

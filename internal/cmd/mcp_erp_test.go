@@ -602,7 +602,8 @@ func TestMCPERPPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := &mcpEnv{
-		sites: []string{"test"}, toolsets: knownToolsets,
+		confirm: newConfirmer(),
+		sites:   []string{"test"}, toolsets: knownToolsets,
 		flags:  config.MCPPolicy{DenyDoctypes: []string{"Bin"}},
 		site:   func(context.Context, string) (*config.SiteConfig, error) { return sc, nil },
 		client: func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
@@ -669,7 +670,8 @@ func TestMCPERPMultiSite(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := &mcpEnv{
-		sites: []string{"a", "b"}, toolsets: []string{"erp"},
+		confirm: newConfirmer(),
+		sites:   []string{"a", "b"}, toolsets: []string{"erp"},
 		site: func(_ context.Context, name string) (*config.SiteConfig, error) {
 			cp := *sc
 			cp.Name = name

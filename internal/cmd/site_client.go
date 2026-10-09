@@ -18,7 +18,11 @@ func loadSite(ctx context.Context) (*config.SiteConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return refreshSite(ctx, cfg), nil
+	path, err := resolveCfgPath()
+	if err != nil {
+		return nil, err
+	}
+	return refreshSite(ctx, path, cfg), nil
 }
 
 // loadSiteConfig loads the selected site without touching the network.
@@ -33,7 +37,7 @@ func loadSiteConfig() (*config.SiteConfig, error) {
 // refreshSite returns cfg with a fresh access token when cfg is an OAuth
 // site whose token has expired. A failure is a warning: the request then
 // gets a 401.
-func refreshSite(ctx context.Context, cfg *config.SiteConfig) *config.SiteConfig {
+func refreshSite(ctx context.Context, path string, cfg *config.SiteConfig) *config.SiteConfig {
 	if cfg.Name == "" || !cfg.IsOAuth() || !cfg.IsTokenExpired() {
 		return cfg
 	}
@@ -41,7 +45,7 @@ func refreshSite(ctx context.Context, cfg *config.SiteConfig) *config.SiteConfig
 		fmt.Fprintf(os.Stderr, "warning: the OAuth token for site %q has expired and there is no refresh token; run 'ffc site add --oauth' again\n", cfg.Name)
 		return cfg
 	}
-	refreshed, err := refreshOAuth(ctx, cfg, "")
+	refreshed, err := refreshOAuth(ctx, path, cfg, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: refreshing the OAuth token for site %q failed: %v\n", cfg.Name, err)
 		return cfg
@@ -49,25 +53,21 @@ func refreshSite(ctx context.Context, cfg *config.SiteConfig) *config.SiteConfig
 	return refreshed
 }
 
-// refreshOAuth refreshes cfg's access token and persists it, rotated refresh
-// token included. The read, the refresh and the write all happen under the
+// refreshOAuth refreshes cfg's access token and persists it in the config
+// file at path, rotated refresh token included. The read, the refresh and the write all happen under the
 // config lock: if another ffc process (e.g. a detached MCP server) refreshed
 // while we waited, its fresh token is reused instead of spending the refresh
 // token a second time. rejected is a token the site refused (a 401 during a
 // run, see tokenRefresher): the stored token is reused only when it differs
 // from it, even if it has not expired on paper. "" (refreshSite) reuses any
 // unexpired stored token.
-func refreshOAuth(ctx context.Context, cfg *config.SiteConfig, rejected string) (*config.SiteConfig, error) {
-	path, err := resolveCfgPath()
-	if err != nil {
-		return nil, err
-	}
+func refreshOAuth(ctx context.Context, path string, cfg *config.SiteConfig, rejected string) (*config.SiteConfig, error) {
 	out := *cfg
 	// The refresh runs under the config lock, so it must finish well before
 	// another process may consider the lock stale, whatever --timeout says.
 	ctx, cancel := context.WithTimeout(ctx, config.MaxLockHold)
 	defer cancel()
-	err = config.Edit(path, func(f *config.File) error {
+	err := config.Edit(path, func(f *config.File) error {
 		cur, ok := f.Site(cfg.Name)
 		if !ok {
 			return fmt.Errorf("site %q not found in %s", cfg.Name, path)
@@ -101,12 +101,12 @@ func refreshOAuth(ctx context.Context, cfg *config.SiteConfig, rejected string) 
 // is refreshOAuth with the rejected token, so concurrent ffc processes still
 // refresh once. nil when cfg is not an OAuth site of the config file (FFC_*
 // environment credentials have nothing to refresh or persist).
-func tokenRefresher(cfg *config.SiteConfig) client.TokenRefresher {
+func tokenRefresher(path string, cfg *config.SiteConfig) client.TokenRefresher {
 	if cfg.Name == "" || !cfg.IsOAuth() {
 		return nil
 	}
 	return func(ctx context.Context, rejected string) (string, error) {
-		out, err := refreshOAuth(ctx, cfg, rejected)
+		out, err := refreshOAuth(ctx, path, cfg, rejected)
 		if err != nil {
 			return "", err
 		}
@@ -116,12 +116,12 @@ func tokenRefresher(cfg *config.SiteConfig) client.TokenRefresher {
 
 // newSiteClient builds the client for a loaded site; an OAuth client
 // refreshes its token on a 401 (tokenRefresher).
-func newSiteClient(ctx context.Context, cfg *config.SiteConfig) (*client.FrappeClient, error) {
+func newSiteClient(ctx context.Context, path string, cfg *config.SiteConfig) (*client.FrappeClient, error) {
 	c, err := client.New(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	c.SetTokenRefresher(tokenRefresher(cfg))
+	c.SetTokenRefresher(tokenRefresher(path, cfg))
 	return c, nil
 }
 
@@ -137,7 +137,11 @@ func newClientCfg(ctx context.Context) (*client.FrappeClient, *config.SiteConfig
 	if err != nil {
 		return nil, nil, err
 	}
-	c, err := newSiteClient(ctx, cfg)
+	path, err := resolveCfgPath()
+	if err != nil {
+		return nil, nil, err
+	}
+	c, err := newSiteClient(ctx, path, cfg)
 	if err != nil {
 		return nil, nil, err
 	}

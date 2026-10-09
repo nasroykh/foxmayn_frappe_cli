@@ -214,8 +214,6 @@ type confirmer struct {
 	used map[string]time.Time // spent states, kept until they expire
 }
 
-var mcpConfirm = newConfirmer()
-
 func newConfirmer() *confirmer {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -290,7 +288,7 @@ var confirmSchema = map[string]interface{}{
 // confirm runs before a destructive call. It returns nil to let the call
 // go ahead, or the result to send instead: a question for the user, a
 // refusal, or the user's "no".
-func (p mcpPolicy) confirm(ctx context.Context, req mcp.CallToolRequest, sc toolScope, rec *auditRecord) *mcp.CallToolResult {
+func (p mcpPolicy) confirm(ctx context.Context, cf *confirmer, req mcp.CallToolRequest, sc toolScope, rec *auditRecord) *mcp.CallToolResult {
 	if !sc.Confirm {
 		return nil
 	}
@@ -299,9 +297,14 @@ func (p mcpPolicy) confirm(ctx context.Context, req mcp.CallToolRequest, sc tool
 		rec.Confirm = confirmOff
 		return nil
 	}
+	if cf == nil { // fail closed: no confirmer, no way to ask
+		err := fmt.Errorf("policy: %s needs the user's confirmation and this server cannot ask for it; nothing was changed", req.Params.Name)
+		rec.Status, rec.Error = auditError, err.Error()
+		return mcp.NewToolResultError(err.Error())
+	}
 	// A retry carries the answer. A missing answer or a state that is not
 	// ours, has expired or was used asks again rather than going ahead.
-	if answer := server.ElicitationResponse(req.Params.InputResponses, confirmID); answer != nil && mcpConfirm.spend(p.site, req) {
+	if answer := server.ElicitationResponse(req.Params.InputResponses, confirmID); answer != nil && cf.spend(p.site, req) {
 		if answer.Action == mcp.ElicitationResponseActionAccept && confirmed(answer.Content) {
 			rec.Confirm = confirmYes
 			return nil
@@ -324,7 +327,7 @@ func (p mcpPolicy) confirm(ctx context.Context, req mcp.CallToolRequest, sc tool
 		return mcp.NewToolResultError(err.Error())
 	}
 	rec.Status = auditPending
-	state := mcpConfirm.newState(p.site, req, time.Now().Add(confirmTTL))
+	state := cf.newState(p.site, req, time.Now().Add(confirmTTL))
 	return server.NewInputRequestBuilder(state).Elicit(confirmID, mcp.ElicitationParams{
 		Message:         confirmMessage(p.site, req, sc),
 		RequestedSchema: confirmSchema,
