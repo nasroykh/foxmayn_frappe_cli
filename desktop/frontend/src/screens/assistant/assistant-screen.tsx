@@ -12,6 +12,7 @@ import { toast } from "@/components/ui/toast"
 import { backend } from "@/lib/backend"
 import type { Conversation, ProviderInfo } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
+import { AssistantOnboarding } from "@/screens/assistant/assistant-onboarding"
 import { ChatPane } from "@/screens/assistant/chat-pane"
 import { ConversationList } from "@/screens/assistant/conversation-list"
 import { NewConversationForm } from "@/screens/assistant/new-conversation-form"
@@ -101,15 +102,20 @@ export function AssistantScreen() {
 
   if (onboarding) {
     return (
-      <Empty className="h-full">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <IconMessageChatbot />
-          </EmptyMedia>
-          <EmptyTitle>{t("chat.title")}</EmptyTitle>
-          <EmptyDescription>{t("chat.noProvider")}</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <div className="h-full overflow-y-auto">
+        <AssistantOnboarding
+          sites={siteList}
+          defaultSite={sites.data?.defaultSite}
+          providers={providers}
+          onProvidersChanged={() => void reloadProviders()}
+          onDone={(c) => {
+            select(c.id)
+            setOnboarding(false)
+            void reloadConversations()
+            void reloadProviders()
+          }}
+        />
+      </div>
     )
   }
 
