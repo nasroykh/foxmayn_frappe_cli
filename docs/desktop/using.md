@@ -178,7 +178,7 @@ Delete a conversation from the list to remove it. Provider names and addresses a
 - **Search.** The box above the list (Ctrl+Shift+F, Cmd+Shift+F on macOS) searches the messages, with highlighted snippets and filters for site, profile and date. It can search the archive instead of the other conversations.
 - **Pin and archive.** **Pin to the top** keeps a conversation first in the list. **Archive** moves it out of the list without deleting it; **Move out of the archive** brings it back.
 - **Retention.** Settings > Assistant > History: keep conversations **Forever** (the default), or delete those with no message for **90** or **30 days**. The sweep runs when the app starts and once a day, archived conversations included, and asks you to confirm the change first. Pinned conversations and ones being answered are always kept.
-- **Not kept.** A conversation from a profile that keeps no history is marked "not kept" and removed the next time the app starts. The profile editor has no switch for this.
+- **Not kept.** Turn off **Keep history** in a profile, and its conversations are marked "not kept" and removed the next time the app starts.
 
 ### Export and import
 
