@@ -74,6 +74,7 @@ func newMCPEnv(o mcpOptions, sites []string) (*mcpEnv, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	env := &mcpEnv{cfgPath: cfgPath}
 	type siteClient struct {
 		mu  sync.Mutex // one build or login per site at a time
 		key string
@@ -93,7 +94,7 @@ func newMCPEnv(o mcpOptions, sites []string) (*mcpEnv, func(), error) {
 		mu.Unlock()
 		sc.mu.Lock()
 		defer sc.mu.Unlock()
-		cfg := refreshSite(ctx, cfgPath, site)
+		cfg := refreshSite(ctx, env.cfgPath, site)
 		k := strings.Join([]string{cfg.URL, cfg.AccessToken, cfg.APIKey, cfg.APISecret, cfg.Username, cfg.Password}, "\x00")
 		if sc.fc != nil && k == sc.key {
 			return sc.fc, nil
@@ -102,7 +103,7 @@ func newMCPEnv(o mcpOptions, sites []string) (*mcpEnv, func(), error) {
 		// refreshes it itself (newSiteClient); the next call then finds the
 		// new token in the config and builds a new client, as it does after
 		// a refresh by another process.
-		c, err := newSiteClient(ctx, cfgPath, cfg)
+		c, err := newSiteClient(ctx, env.cfgPath, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -123,28 +124,25 @@ func newMCPEnv(o mcpOptions, sites []string) (*mcpEnv, func(), error) {
 			sc.mu.Unlock()
 		}
 	}
-	env := &mcpEnv{
-		sites: sites,
-		site: func(_ context.Context, name string) (*config.SiteConfig, error) {
-			site, err := config.LoadSite(name, o.configPath)
-			if err != nil {
-				return nil, fmt.Errorf("config: %w", err)
-			}
-			// Load falls back to a case-insensitive match: a served site
-			// removed or renamed since the start must not resolve to another
-			// site ("Prod" gone, "PROD" added).
-			if name != "" && site.Name != name {
-				return nil, fmt.Errorf("config: site %q not found in config", name)
-			}
-			return site, nil
-		},
-		client:   get,
-		flags:    o.policy,
-		audit:    newAuditLog(cfgPath),
-		toolsets: o.toolsets,
-		cfgPath:  cfgPath,
-		confirm:  newConfirmer(),
+	env.sites = sites
+	env.site = func(_ context.Context, name string) (*config.SiteConfig, error) {
+		site, err := config.LoadSite(name, o.configPath)
+		if err != nil {
+			return nil, fmt.Errorf("config: %w", err)
+		}
+		// Load falls back to a case-insensitive match: a served site
+		// removed or renamed since the start must not resolve to another
+		// site ("Prod" gone, "PROD" added).
+		if name != "" && site.Name != name {
+			return nil, fmt.Errorf("config: site %q not found in config", name)
+		}
+		return site, nil
 	}
+	env.client = get
+	env.flags = o.policy
+	env.audit = newAuditLog(cfgPath)
+	env.toolsets = o.toolsets
+	env.confirm = newConfirmer()
 	return env, closeFn, nil
 }
 

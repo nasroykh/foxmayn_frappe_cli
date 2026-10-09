@@ -44,8 +44,9 @@ type mcpEnv struct {
 	client func(ctx context.Context, site *config.SiteConfig) (*client.FrappeClient, error)
 	flags  config.MCPPolicy
 	audit  *auditLog // nil: no audit log
-	// cfgPath is the config file the served sites live in; an OAuth refresh
-	// during a call writes the new token there.
+	// cfgPath is the config file the served sites live in; the client
+	// provider reads it, so an OAuth refresh during a call writes the new
+	// token there.
 	cfgPath string
 	// confirm issues and checks the states of this server's confirmations.
 	confirm *confirmer

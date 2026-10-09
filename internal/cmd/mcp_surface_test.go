@@ -220,7 +220,7 @@ func TestDaemonArgsCarryTheToolsets(t *testing.T) {
 	prev := mcpToolsets
 	t.Cleanup(func() { mcpToolsets = prev })
 	mcpToolsets = []string{"lifecycle"}
-	got := strings.Join(daemonArgs([]string{"prod"}, 8765), " ")
+	got := strings.Join(daemonArgs(mcpOptionsFromFlags(), []string{"prod"}, 8765), " ")
 	if want := "mcp --port 8765 --site prod --toolsets=lifecycle"; got != want {
 		t.Errorf("args = %q\nwant   %q", got, want)
 	}

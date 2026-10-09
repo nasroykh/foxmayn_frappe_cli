@@ -260,7 +260,7 @@ func startDetached(ctx context.Context, o mcpOptions, port int) error {
 		return fmt.Errorf("finding executable: %w", err)
 	}
 
-	args := daemonArgs(sites, port)
+	args := daemonArgs(o, sites, port)
 
 	cmd := exec.Command(exe, args...)
 	cmd.Stdin = nil
@@ -562,7 +562,7 @@ func init() {
 // --detach. Pinning the sites keeps a later default_site change (or a site
 // added for --all-sites) from changing a running daemon. An env-only site
 // (FFC_* vars) has no name.
-func daemonArgs(sites []string, port int) []string {
+func daemonArgs(o mcpOptions, sites []string, port int) []string {
 	args := []string{"mcp", "--port", strconv.Itoa(port)}
 	if len(sites) > 0 && sites[0] != "" {
 		args = append(args, "--site", sites[0])
@@ -572,29 +572,29 @@ func daemonArgs(sites []string, port int) []string {
 			args = append(args, "--sites="+csvField(s))
 		}
 	}
-	if configPath != "" {
-		args = append(args, "--config", configPath)
+	if o.configPath != "" {
+		args = append(args, "--config", o.configPath)
 	}
-	if mcpReadOnly {
+	if o.policy.ReadOnly {
 		args = append(args, "--read-only")
 	}
-	for _, v := range mcpToolsets {
+	for _, v := range o.toolsets {
 		args = append(args, "--toolsets="+csvField(v))
 	}
 	for _, f := range []struct {
 		flag string
 		list []string
 	}{
-		{"--allow-tools", mcpFlags.AllowTools}, {"--allow-doctypes", mcpFlags.AllowDoctypes},
-		{"--deny-doctypes", mcpFlags.DenyDoctypes}, {"--allow-methods", mcpFlags.AllowMethods},
-		{"--deny-methods", mcpFlags.DenyMethods},
+		{"--allow-tools", o.policy.AllowTools}, {"--allow-doctypes", o.policy.AllowDoctypes},
+		{"--deny-doctypes", o.policy.DenyDoctypes}, {"--allow-methods", o.policy.AllowMethods},
+		{"--deny-methods", o.policy.DenyMethods},
 	} {
 		for _, v := range f.list {
 			args = append(args, f.flag+"="+csvField(v))
 		}
 	}
-	if mcpFlags.Confirm != "" {
-		args = append(args, "--confirm="+mcpFlags.Confirm)
+	if o.policy.Confirm != "" {
+		args = append(args, "--confirm="+o.policy.Confirm)
 	}
 	if level := debugLevelName(client.Debug); level != "" {
 		args = append(args, "--debug="+level) // the trace goes to mcp.log (0600)

@@ -297,6 +297,11 @@ func (p mcpPolicy) confirm(ctx context.Context, cf *confirmer, req mcp.CallToolR
 		rec.Confirm = confirmOff
 		return nil
 	}
+	if cf == nil { // fail closed: no confirmer, no way to ask
+		err := fmt.Errorf("policy: %s needs the user's confirmation and this server cannot ask for it; nothing was changed", req.Params.Name)
+		rec.Status, rec.Error = auditError, err.Error()
+		return mcp.NewToolResultError(err.Error())
+	}
 	// A retry carries the answer. A missing answer or a state that is not
 	// ours, has expired or was used asks again rather than going ahead.
 	if answer := server.ElicitationResponse(req.Params.InputResponses, confirmID); answer != nil && cf.spend(p.site, req) {
