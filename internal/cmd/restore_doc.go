@@ -39,12 +39,9 @@ Examples:
 		}
 		type restored struct{ deleted, name string }
 		res, err := callSite(cmd, "Restoring…", func(ctx context.Context, c *client.FrappeClient) (restored, error) {
-			id := rsDeleted
-			if id == "" {
-				var err error
-				if id, err = findDeleted(ctx, c, rsDoctype, rsName); err != nil {
-					return restored{}, err
-				}
+			id, err := resolveDeleted(ctx, c, rsDeleted, rsDoctype, rsName)
+			if err != nil {
+				return restored{}, err
 			}
 			name, err := c.RestoreDeleted(ctx, id)
 			return restored{id, name}, err
@@ -58,6 +55,16 @@ Examples:
 		output.PrintSuccess(fmt.Sprintf("Restored %s from Deleted Document %s", res.name, res.deleted))
 		return nil
 	},
+}
+
+// resolveDeleted returns the Deleted Document to restore: the one named, or
+// the latest unrestored deletion of doctype and name. The CLI and the MCP
+// restore_doc tool share it.
+func resolveDeleted(ctx context.Context, c *client.FrappeClient, deleted, doctype, name string) (string, error) {
+	if deleted != "" {
+		return deleted, nil
+	}
+	return findDeleted(ctx, c, doctype, name)
 }
 
 // findDeleted returns the latest unrestored Deleted Document of a document.

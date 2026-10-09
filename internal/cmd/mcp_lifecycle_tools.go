@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -133,6 +134,44 @@ func registerLifecycleTools(s *server.MCPServer, env *mcpEnv) {
 				return c.ApplyWorkflow(ctx, doctype, name, action)
 			}, nil
 		}))
+
+	s.AddTool(mcp.NewTool("restore_doc",
+		mcp.WithDescription("Restore a deleted document from its \"Deleted Document\" record, the undo of delete_doc. Name the Deleted Document (deleted_document), or the deleted document (doctype and name: its latest unrestored deletion is used), not both. The DocType rules apply to the deleted document's own DocType, so a deleted Server Script, User or Webhook is refused unless allow_doctypes lists it. A DocType named by hash or naming series may get a new name. Returns restored, deleted_document and the restored name."),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(true),
+		mcp.WithString("deleted_document", mcp.Description("Name of the Deleted Document record")),
+		mcp.WithString("doctype", mcp.Description("DocType of the deleted document (with name)")),
+		mcp.WithString("name", mcp.Description("Name of the deleted document (with doctype)")),
+	), toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
+		deleted, err := nameArg(req, "deleted_document", false)
+		if err != nil {
+			return nil, err
+		}
+		doctype := strings.TrimSpace(req.GetString("doctype", ""))
+		name, err := nameArg(req, "name", false)
+		if err != nil {
+			return nil, err
+		}
+		byID := deleted != "" && doctype == "" && name == ""
+		byName := deleted == "" && doctype != "" && name != ""
+		if !byID && !byName {
+			return nil, fmt.Errorf("name the Deleted Document with deleted_document, or the deleted document with doctype and name, not both")
+		}
+		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
+			// env.run resolved and checked the record; restore exactly it.
+			id, _ := ctx.Value(restoreCtxKey{}).(string)
+			if id == "" {
+				return nil, fmt.Errorf("restore_doc: the policy check did not run")
+			}
+			restored, err := c.RestoreDeleted(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]interface{}{"restored": true, "deleted_document": id, "name": restored}, nil
+		}, nil
+	}))
 }
 
 // registerBulkLifecycle adds bulk_submit and bulk_cancel: the CLI's

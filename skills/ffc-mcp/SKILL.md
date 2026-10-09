@@ -1,6 +1,6 @@
 ---
 name: ffc-mcp
-description: Run and configure ffc's MCP server so AI clients (Claude Code, Claude Desktop, Cursor, VS Code, Codex) can use a Frappe or ERPNext site - ffc mcp install/uninstall per client, stdio, HTTP and detached modes, read-only servers, tool sets, the per-site mcp policy (allowed DocTypes and methods, sensitive DocTypes, confirmations, audit log), multi-site servers, and how to use the 49 tools well. Use it whenever the user wants an assistant or agent connected to Frappe through MCP, asks why an MCP tool call was refused with "policy:", or wants to limit what an AI may do on their site.
+description: Run and configure ffc's MCP server so AI clients (Claude Code, Claude Desktop, Cursor, VS Code, Codex) can use a Frappe or ERPNext site - ffc mcp install/uninstall per client, stdio, HTTP and detached modes, read-only servers, tool sets, the per-site mcp policy (allowed DocTypes and methods, sensitive DocTypes, confirmations, audit log), multi-site servers, and how to use the 50 tools well. Use it whenever the user wants an assistant or agent connected to Frappe through MCP, asks why an MCP tool call was refused with "policy:", or wants to limit what an AI may do on their site.
 ---
 
 # ffc MCP server
@@ -45,7 +45,7 @@ HTTP binds 127.0.0.1 only and requires `Authorization: Bearer <token>` (printed 
 | `--sites A,B` / `--all-sites` | serve several sites; every call then needs a `site` argument |
 | `-p, --port`, `-d, --detach` | HTTP transport; background |
 
-Tool sets: `core` (documents, reports, search, aggregate, bulk, `call_method`, whoami, check_permission), `lifecycle` (submit, cancel, bulk_submit, bulk_cancel, amend, copy, rename, workflow), `collab` (comments, assignments, tags), `admin` (share, unshare, site_health, list_jobs, list_errors, scheduler_status), `files` (list_attachments, attach_file, get_print_html), `erp` (erp_map, erp_payment, erp_item, erp_stock, erp_party: ERPNext drafts and lookups, all reads). `list_sites` is always there.
+Tool sets: `core` (documents, reports, search, aggregate, bulk, `call_method`, whoami, check_permission), `lifecycle` (submit, cancel, bulk_submit, bulk_cancel, amend, copy, rename, restore_doc, workflow), `collab` (comments, assignments, tags), `admin` (share, unshare, site_health, list_jobs, list_errors, scheduler_status), `files` (list_attachments, attach_file, get_print_html), `erp` (erp_map, erp_payment, erp_item, erp_stock, erp_party: ERPNext drafts and lookups, all reads). `list_sites` is always there.
 
 The durable way is a `mcp:` block under the site in `config.yaml`, read on every call:
 
@@ -62,7 +62,7 @@ sites:
       confirm: always
 ```
 
-Built-in rules: sensitive DocTypes (User, Role, DocType, System Settings, Server Script, File, DocShare...) are readable but not writable unless `allow_doctypes` lists them; code-running methods are refused unless `allow_methods` lists them. A refused call returns an error starting with `policy:` that names the setting, and sends nothing. Every call is appended to `~/.config/ffc/mcp-audit.jsonl` (secrets redacted). Full rules: [references/policy.md](references/policy.md).
+Built-in rules: sensitive DocTypes (User, Role, DocType, System Settings, Server Script, File, DocShare, Deleted Document...) are readable but not writable unless `allow_doctypes` lists them; code-running methods are refused unless `allow_methods` lists them. A refused call returns an error starting with `policy:` that names the setting, and sends nothing. Every call is appended to `~/.config/ffc/mcp-audit.jsonl` (secrets redacted). Full rules: [references/policy.md](references/policy.md).
 
 ## Using the tools (for the agent on the other side)
 
