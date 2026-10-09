@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -135,7 +137,7 @@ func buildExport(d store.ExportData, profile *Profile) (exportFile, error) {
 	f := exportFile{
 		Format: exportFormat, Version: exportVersion,
 		Conversation: exportConv{
-			ID: c.ID, Title: c.Title, Site: c.Site, SiteURL: c.SiteURL, Mode: c.Mode, ProviderID: c.ProviderID, Model: c.Model,
+			ID: c.ID, Title: c.Title, Site: c.Site, SiteURL: stripUserinfo(c.SiteURL), Mode: c.Mode, ProviderID: c.ProviderID, Model: c.Model,
 			ProfileID: c.ProfileID, SiteContext: c.SiteContext, SiteContextKey: c.SiteContextKey,
 			Created: fmtTime(c.Created), Updated: fmtTime(c.Updated),
 		},
@@ -173,6 +175,20 @@ func buildExport(d store.ExportData, profile *Profile) (exportFile, error) {
 			CacheWrite: u.CacheWrite, CostUSD: u.CostUSD, CostSource: u.CostSource, PriceDate: u.PriceDate})
 	}
 	return f, nil
+}
+
+// stripUserinfo removes a user name and password from an address; an
+// address that cannot be read is dropped, since it could hold them in any form.
+func stripUserinfo(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	u.User = nil
+	return u.String()
 }
 
 func (f exportFile) json() ([]byte, error) {
@@ -226,22 +242,25 @@ func parseImport(data []byte) (store.ExportData, error) {
 	if c.Site == "" || len(c.Site) > maxShortField {
 		return store.ExportData{}, badFile("The file does not name a site.")
 	}
-	if utf8.RuneCountInString(c.Title) > maxTitleField || len(c.SiteURL) > maxURLField || len(c.SiteContext) > maxContextField {
-		return store.ExportData{}, badFile("The file has a title, address or site description that is too long.")
+	if utf8.RuneCountInString(c.Title) > maxTitleField || len(c.SiteURL) > maxURLField {
+		return store.ExportData{}, badFile("The file has a title or address that is too long.")
 	}
-	for what, s := range map[string]string{"provider": c.ProviderID, "model": c.Model, "profile": c.ProfileID, "site context key": c.SiteContextKey} {
+	for what, s := range map[string]string{"provider": c.ProviderID, "model": c.Model, "profile": c.ProfileID} {
 		if err := checkShort(what, s); err != nil {
 			return store.ExportData{}, err
 		}
 	}
 	var out store.ExportData
 	out.Conversation = store.Conversation{
-		Title: c.Title, Site: c.Site, SiteURL: c.SiteURL,
+		Title: c.Title, Site: c.Site, SiteURL: stripUserinfo(c.SiteURL),
 		// Whatever the file says, an imported conversation starts read only:
 		// its write mode is a safety setting the file must not grant.
 		Mode:       ModeRead,
 		ProviderID: c.ProviderID, Model: c.Model, ProfileID: c.ProfileID,
-		SiteContext: c.SiteContext, SiteContextKey: c.SiteContextKey,
+		// The site context goes into the system prompt when its key matches
+		// the one the app computes (a preset's, for one): never take either
+		// from a file. The first run collects its own.
+		SiteContext: "", SiteContextKey: "",
 	}
 	for i, m := range f.Messages {
 		if m.Role != "user" && m.Role != "assistant" {
@@ -258,12 +277,19 @@ func parseImport(data []byte) (store.ExportData, error) {
 			return store.ExportData{}, badFile(fmt.Sprintf("Message %d could not be read.", i+1))
 		}
 		// The attachments are not in the file: an image becomes a note, so a
-		// later run never points at an attachment that is not there.
-		for j, p := range parts {
-			if img, ok := p.(llm.Image); ok {
-				parts[j] = llm.Text{Text: "[image not included: " + clipRunes(img.MediaType, 40) + "]"}
+		// later run never points at an attachment that is not there. Thinking
+		// is not kept: it is the model's, and a file cannot speak for it.
+		kept := parts[:0]
+		for _, p := range parts {
+			switch v := p.(type) {
+			case llm.Thinking:
+				continue
+			case llm.Image:
+				p = llm.Text{Text: "[image not included: " + clipRunes(v.MediaType, 40) + "]"}
 			}
+			kept = append(kept, p)
 		}
+		parts = kept
 		stored, err := llm.MarshalParts(parts)
 		if err != nil {
 			return store.ExportData{}, badFile(fmt.Sprintf("Message %d could not be read.", i+1))
@@ -321,7 +347,9 @@ func parseImport(data []byte) (store.ExportData, error) {
 			status = ToolStopped
 		}
 		out.ToolCalls = append(out.ToolCalls, store.ToolCall{ID: t.ID, RunID: t.RunID, MsgID: t.MsgID, Tool: t.Tool, Site: t.Site,
-			ArgsJSON: t.ArgsJSON, ResultText: t.ResultText, Status: status, Approval: t.Approval, Started: started, Ended: ended})
+			ArgsJSON: t.ArgsJSON, ResultText: t.ResultText, Status: status,
+			// Nobody approved this call here: the file's word for it is not kept.
+			Approval: "", Started: started, Ended: ended})
 	}
 	for _, u := range f.Usage {
 		for what, s := range map[string]string{"run id": u.RunID, "usage kind": u.Kind, "cost source": u.CostSource, "price date": u.PriceDate} {
@@ -407,10 +435,42 @@ func (a *AssistantService) ExportConversation(convID, format string) (string, er
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := writeFileAtomic(path, data); err != nil {
 		return "", newError(CodeFailed, "The file could not be saved.", err)
 	}
 	return path, nil
+}
+
+// writeFileAtomic writes data to a temporary file (0600) in path's folder and
+// renames it over path, so a failure leaves the old file or nothing, never half
+// of a new one.
+func writeFileAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".foxmayn-export-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			_ = f.Close()
+			_ = os.Remove(tmp)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	ok = true
+	return nil
 }
 
 // exportBytes is the content of an export file.
@@ -435,7 +495,7 @@ func (a *AssistantService) exportBytes(st *store.Store, convID, format string) (
 	} else if data, err = f.json(); err != nil {
 		return nil, err
 	}
-	return a.scrubKeys(st, data), nil
+	return a.scrubKeys(st, data)
 }
 
 // ImportConversation reads a conversation file (made by ExportConversation)
@@ -471,6 +531,22 @@ func (a *AssistantService) importBytes(data []byte) (Conversation, error) {
 	if err != nil {
 		return Conversation{}, err
 	}
+	// A model is kept only when the provider offers it now. When the list
+	// cannot be read (offline) the model is cleared and the conversation uses
+	// the provider's default.
+	if c := &d.Conversation; c.ProviderID != "" && c.Model != "" {
+		keep := false
+		if models, err := a.ListModels(c.ProviderID); err == nil {
+			for _, m := range models {
+				if m.ID == c.Model {
+					keep = true
+				}
+			}
+		}
+		if !keep {
+			c.Model = ""
+		}
+	}
 	_, st, done, err := a.enter()
 	if err != nil {
 		return Conversation{}, err
@@ -494,9 +570,12 @@ func (a *AssistantService) importBytes(data []byte) (Conversation, error) {
 			c.ProviderID, c.Model = "", ""
 		}
 	}
+	ephemeral := false
 	if c.ProfileID != "" {
-		if _, err := resolveProfile(st, c.ProfileID); err != nil {
-			c.ProfileID, c.SiteContext, c.SiteContextKey = "", "", ""
+		if p, err := resolveProfile(st, c.ProfileID); err != nil {
+			c.ProfileID = ""
+		} else {
+			ephemeral = !p.KeepHistory
 		}
 	}
 	stored, err := st.ImportConversation(d)
@@ -506,5 +585,14 @@ func (a *AssistantService) importBytes(data []byte) (Conversation, error) {
 	if err != nil {
 		return Conversation{}, wrapStoreErr(err)
 	}
-	return toConversation(stored), nil
+	// A profile that keeps no history makes the conversation ephemeral, as
+	// choosing it does.
+	if ephemeral {
+		if err := st.SetEphemeral(stored.ID, true); err != nil {
+			return Conversation{}, wrapStoreErr(err)
+		}
+	}
+	out := toConversation(stored)
+	out.Ephemeral = ephemeral
+	return out, nil
 }

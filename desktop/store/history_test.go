@@ -271,17 +271,56 @@ func seedBulk(t *testing.T, s *Store, convs, msgs int) []string {
 	return vocab
 }
 
-// TestSearchSpeed: 500 conversations of 20 messages, 20 queries (some with
-// filters), p95 under 200 ms. The timing is not checked under -race.
+// seedHeavy adds n messages of about 38 000 characters (a tool result near
+// the 40 000 cap the model sees), spread over the first conversations. One in
+// ten holds rare.
+func seedHeavy(t *testing.T, s *Store, vocab []string, n int, rare string) {
+	t.Helper()
+	rng := rand.New(rand.NewSource(13))
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := nowMS()
+	for k := 0; k < n; k++ {
+		var b strings.Builder
+		for b.Len() < 38_000 {
+			b.WriteString(vocab[rng.Intn(len(vocab))])
+			b.WriteByte(' ')
+		}
+		text := b.String()
+		if k%10 == 0 {
+			text += rare
+		}
+		if _, err := tx.Exec(`INSERT INTO messages(id,conv_id,seq,role,parts_json,created) VALUES(?,?,?,?,?,?)`,
+			fmt.Sprintf("heavy%04d", k), fmt.Sprintf("conv%04d", k%100), 1000+k, "user", fmt.Sprintf(`[{"type":"text","text":%q}]`, text), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSearchSpeed: 500 conversations of 20 messages plus 300 messages of
+// about 38 000 characters (30 with a rare term), 20 queries (some with
+// filters, some for the rare term), p95 under 200 ms. The timing is not
+// checked under -race.
 func TestSearchSpeed(t *testing.T) {
 	s, _ := openTemp(t)
 	vocab := seedBulk(t, s, 500, 20)
+	const rare = "zyxquarkrare"
+	seedHeavy(t, s, vocab, 300, rare)
 	rng := rand.New(rand.NewSource(11))
 	var times []time.Duration
 	for i := 0; i < 20; i++ {
 		q := vocab[rng.Intn(len(vocab))]
 		if i%2 == 1 {
 			q += " " + vocab[rng.Intn(len(vocab))]
+		}
+		if i%5 == 4 {
+			q = rare
 		}
 		f := SearchFilter{}
 		if i%4 == 3 {
@@ -294,7 +333,7 @@ func TestSearchSpeed(t *testing.T) {
 		if err != nil {
 			t.Fatalf("query %q: %v", q, err)
 		}
-		if i == 0 && len(hits) == 0 {
+		if (i == 0 || q == rare) && len(hits) == 0 {
 			t.Errorf("query %q found nothing", q)
 		}
 	}
@@ -370,5 +409,27 @@ func TestImportConversationMakesNewIDsAndRefusesBadRefs(t *testing.T) {
 	}
 	if got := count(t, s, "conversations"); got != before {
 		t.Errorf("a refused import left %d conversations behind", got-before)
+	}
+}
+
+func TestImportedMessagesAreMarkedAndSearchCanBeOptimized(t *testing.T) {
+	s, _ := openTemp(t)
+	c, err := s.ImportConversation(ExportData{
+		Conversation: Conversation{Title: "T", Site: "prod", Mode: "read"},
+		Messages:     []Message{{ID: "file-id", Role: "user", PartsJSON: `[{"type":"text","text":"hello there"}]`}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := s.ListMessages(c.ID)
+	if err != nil || len(msgs) != 1 || !IsImportedID(msgs[0].ID) || strings.Contains(msgs[0].ID, "file-id") {
+		t.Fatalf("messages: %+v %v", msgs, err)
+	}
+	m, err := s.AppendMessage(c.ID, "user", `[{"type":"text","text":"new"}]`)
+	if err != nil || IsImportedID(m.ID) {
+		t.Errorf("a new message is marked as imported: %+v %v", m, err)
+	}
+	if err := s.OptimizeSearch(); err != nil {
+		t.Error(err)
 	}
 }

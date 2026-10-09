@@ -261,9 +261,21 @@ func (a *AssistantService) sweep() (int, error) {
 	if days == 0 {
 		return 0, nil
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return st.SweepRetention(time.Now().AddDate(0, 0, -days), r.activeConvIDs())
+	n, err := func() (int, error) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return st.SweepRetention(time.Now().AddDate(0, 0, -days), r.activeConvIDs())
+	}()
+	if err != nil {
+		return n, err
+	}
+	// Compacting the index can be slow: do it after runs may start again.
+	if n > 0 {
+		if err := st.OptimizeSearch(); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 // historyState is the retention sweep's goroutine.
@@ -329,22 +341,34 @@ func clipRunes(s string, n int) string {
 	return string([]rune(s)[:n])
 }
 
-// scrubKeys removes every provider key from data. No key is ever stored in
-// a conversation, but a person may have pasted one into the chat, and a file
-// that leaves the app must not carry it.
-func (a *AssistantService) scrubKeys(st *store.Store, data []byte) []byte {
+// scrubKeys removes every provider key from data, then anything shaped like a
+// key or token. No key is ever stored in a conversation, but a person may have
+// pasted one into the chat, and a file that leaves the app must not carry it.
+// It fails closed: when the providers or the keychain cannot be read, the keys
+// cannot be known, so nothing is exported.
+func (a *AssistantService) scrubKeys(st *store.Store, data []byte) ([]byte, error) {
+	cannot := func(err error) error {
+		return newError(CodeFailed, "The export was stopped: the saved keys could not be checked, so they could not be kept out of the file.", err)
+	}
 	ps, err := st.ListProviders()
 	if err != nil {
-		return data
+		return nil, cannot(err)
 	}
 	for _, p := range ps {
 		key, err := a.keys.Get(p.ID)
-		if err != nil || len(key) < 8 {
+		if err != nil {
+			var se *Error
+			if errors.As(err, &se) && se.Code == CodeNotFound {
+				continue // no key saved for it
+			}
+			return nil, cannot(err)
+		}
+		if len(key) < 8 {
 			continue
 		}
 		data = bytes.ReplaceAll(data, []byte(key), []byte("[removed]"))
 	}
-	return data
+	return []byte(redactSecrets(string(data))), nil
 }
 
 var errNoDialogs = &Error{Code: CodeUnavailable, Message: "Choosing a file is not possible here."}

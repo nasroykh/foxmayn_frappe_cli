@@ -105,6 +105,8 @@ func normalize(t *testing.T, raw []byte) map[string]any {
 	delete(conv, "id")
 	delete(conv, "created")
 	delete(conv, "updated")
+	// An import never takes the site context: the first run collects its own.
+	conv["site_context"], conv["site_context_key"] = "", ""
 	msgIdx, runIdx := map[string]string{}, map[string]string{}
 	for i, m := range f["messages"].([]any) {
 		mm := m.(map[string]any)

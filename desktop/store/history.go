@@ -103,7 +103,7 @@ func (s *Store) SetSetting(key, value string) error {
 // SweepRetention deletes the conversations last updated before cutoff, with
 // everything in them. Pinned conversations, conversations with a paused run
 // and the ids in keep (conversations with a run in progress) stay. It returns
-// how many were deleted, then compacts the search index.
+// how many were deleted. OptimizeSearch compacts the search index afterwards.
 func (s *Store) SweepRetention(cutoff time.Time, keep []string) (int, error) {
 	q := `DELETE FROM conversations WHERE updated<? AND pinned=0
 		AND id NOT IN (SELECT conv_id FROM runs WHERE status='paused')`
@@ -119,10 +119,17 @@ func (s *Store) SweepRetention(cutoff time.Time, keep []string) (int, error) {
 		return 0, fmt.Errorf("sweep conversations: %w", err)
 	}
 	n, _ := res.RowsAffected()
-	if _, err := s.db.Exec(`INSERT INTO messages_fts(messages_fts) VALUES('optimize')`); err != nil {
-		return int(n), fmt.Errorf("optimize search index: %w", err)
-	}
 	return int(n), nil
+}
+
+// OptimizeSearch compacts the search index. It can take a while on a large
+// history, so a caller does it after a sweep that deleted something, not
+// while it holds a lock the runs wait for.
+func (s *Store) OptimizeSearch() error {
+	if _, err := s.db.Exec(`INSERT INTO messages_fts(messages_fts) VALUES('optimize')`); err != nil {
+		return fmt.Errorf("optimize search index: %w", err)
+	}
+	return nil
 }
 
 // SearchFilter narrows a search. Zero values mean no limit on that field.
@@ -301,6 +308,14 @@ func endMS(t time.Time) int64 {
 	return t.UTC().UnixMilli()
 }
 
+// ImportedPrefix starts the id of every message ImportConversation stores. A
+// message with it came from a file, so it is shown but never replayed to a
+// model as a turn of its own (see IsImportedID).
+const ImportedPrefix = "imp_"
+
+// IsImportedID reports whether a message id belongs to an imported message.
+func IsImportedID(id string) bool { return strings.HasPrefix(id, ImportedPrefix) }
+
 // ImportConversation stores d as a new conversation. Every id is made anew:
 // the ids in d only link its rows to each other, and a row that points to an
 // id d does not hold is ErrBadImport. The conversation's own times are now;
@@ -324,7 +339,7 @@ func (s *Store) ImportConversation(d ExportData) (Conversation, error) {
 		if _, dup := msgs[m.ID]; dup || m.ID == "" {
 			return Conversation{}, fmt.Errorf("import conversation: message id %q: %w", m.ID, ErrBadImport)
 		}
-		id := newID()
+		id := ImportedPrefix + newID()
 		msgs[m.ID] = id
 		if _, err := tx.Exec(`INSERT INTO messages(id,conv_id,seq,role,parts_json,created) VALUES(?,?,?,?,?,?)`,
 			id, c.ID, i+1, m.Role, m.PartsJSON, endMS(m.Created)); err != nil {
