@@ -2,7 +2,12 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +40,61 @@ const engineClientName = "foxmayn-desktop"
 // (password and OAuth sites) and so could otherwise wait on a dead host.
 const engineBuildTimeout = 60 * time.Second
 
+// engineIdleAfter is how long a cached server nobody uses is kept.
+const engineIdleAfter = 10 * time.Minute
+
+// EngineSpec is what a server serves on a site. Policy is ffc's options
+// layer: its lists can only narrow the site's own policy. The engine sets
+// Policy.Confirm to "always" and Policy.ReadOnly from Mode whatever the spec
+// holds, so neither can be loosened through a spec.
+type EngineSpec struct {
+	Mode   EngineMode
+	Policy config.MCPPolicy
+	// Toolsets are ffc's tool sets; nil is core and lifecycle.
+	Toolsets []string
+}
+
+// canonical returns the spec as ffc gets it: Confirm and ReadOnly forced,
+// lists trimmed, deduplicated and sorted, and empty lists nil (ffc refuses
+// an empty one).
+func (sp EngineSpec) canonical() EngineSpec {
+	clean := func(in []string) []string {
+		var out []string
+		for _, v := range in {
+			if v = strings.TrimSpace(v); v != "" && !slices.Contains(out, v) {
+				out = append(out, v)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	return EngineSpec{
+		Mode: sp.Mode,
+		Policy: config.MCPPolicy{
+			Confirm:       config.ConfirmAlways,
+			ReadOnly:      sp.Mode != EngineAsk,
+			AllowTools:    clean(sp.Policy.AllowTools),
+			AllowDoctypes: clean(sp.Policy.AllowDoctypes),
+			DenyDoctypes:  clean(sp.Policy.DenyDoctypes),
+			AllowMethods:  clean(sp.Policy.AllowMethods),
+			DenyMethods:   clean(sp.Policy.DenyMethods),
+		},
+		Toolsets: clean(sp.Toolsets),
+	}
+}
+
+// hash is the sha256 of the canonical policy and tool sets: two specs that
+// serve the same share a server.
+func (sp EngineSpec) hash() string {
+	c := sp.canonical()
+	b, _ := json.Marshal(struct {
+		Policy   config.MCPPolicy `json:"policy"`
+		Toolsets []string         `json:"toolsets"`
+	}{c.Policy, c.Toolsets})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
 // Elicitor answers an ffc confirmation question. A nil Elicitor declines
 // every question. So does an error, a nil result, and a session that is
 // closed or cancelled before the Elicitor answers: it is run on its own
@@ -43,13 +103,15 @@ const engineBuildTimeout = 60 * time.Second
 type Elicitor func(ctx context.Context, req mcp.ElicitationRequest) (*mcp.ElicitationResult, error)
 
 // Engine hosts the ffc MCP server in this process: one server per (site,
-// mode), built on first use and shared by the sessions that open it. It is
-// safe for concurrent use.
+// spec), built on first use and shared by the sessions that open it, and
+// closed after engineIdleAfter without a session. It is safe for concurrent
+// use.
 type Engine struct {
 	configPath string
 	ctx        context.Context // ends with Close; builds follow it
 	cancel     context.CancelFunc
 	closeSrv   func(*cmd.MCPServer) // a seam for tests
+	idleAfter  time.Duration        // a seam for tests
 
 	startMu  sync.Mutex // see startClient
 	mu       sync.Mutex
@@ -61,19 +123,22 @@ type Engine struct {
 
 type engineKey struct {
 	site string
-	mode EngineMode
+	spec string // EngineSpec.hash
 }
 
 // engineServer is a cached server. It is built once (ready closes when srv
 // or err is set) and closed once, when it is retired and its last
 // reference is gone.
 type engineServer struct {
+	key       engineKey
+	spec      EngineSpec // canonical
 	ready     chan struct{}
 	srv       *cmd.MCPServer
 	err       error
 	refs      int
 	retired   bool
 	srvClosed bool
+	idleGen   int // bumped each time refs drops to 0; see idle
 }
 
 // NewEngine returns an engine over the ffc config file at configPath.
@@ -84,22 +149,29 @@ func NewEngine(configPath string) *Engine {
 		ctx:        ctx,
 		cancel:     cancel,
 		closeSrv:   (*cmd.MCPServer).Close,
+		idleAfter:  engineIdleAfter,
 		done:       make(chan struct{}),
 		servers:    map[engineKey]*engineServer{},
 		sessions:   map[*EngineSession]struct{}{},
 	}
 }
 
-// Open starts a session on site. The session's own in-process MCP client
-// sends elicitation requests to elicit.
+// Open starts a session on site with the site's own policy in mode. The
+// session's own in-process MCP client sends elicitation requests to elicit.
 func (e *Engine) Open(ctx context.Context, site string, mode EngineMode, elicit Elicitor) (*EngineSession, error) {
+	return e.OpenSpec(ctx, site, EngineSpec{Mode: mode}, elicit)
+}
+
+// OpenSpec starts a session on site with spec narrowing the site's policy.
+func (e *Engine) OpenSpec(ctx context.Context, site string, spec EngineSpec, elicit Elicitor) (*EngineSession, error) {
 	if site == "" {
 		return nil, invalid("site", "Choose a site.")
 	}
-	if mode != EngineRead && mode != EngineAsk {
+	if spec.Mode != EngineRead && spec.Mode != EngineAsk {
 		return nil, invalid("mode", "Unknown mode.")
 	}
-	es, err := e.acquire(ctx, engineKey{site, mode})
+	spec = spec.canonical()
+	es, err := e.acquire(ctx, engineKey{site, spec.hash()}, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +185,7 @@ func (e *Engine) Open(ctx context.Context, site string, mode EngineMode, elicit 
 
 // acquire returns the server for key with a reference taken, building it if
 // needed.
-func (e *Engine) acquire(ctx context.Context, key engineKey) (*engineServer, error) {
+func (e *Engine) acquire(ctx context.Context, key engineKey, spec EngineSpec) (*engineServer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, newError(CodeCancelled, "Cancelled.", err)
 	}
@@ -125,7 +197,7 @@ func (e *Engine) acquire(ctx context.Context, key engineKey) (*engineServer, err
 	es := e.servers[key]
 	build := es == nil
 	if build {
-		es = &engineServer{ready: make(chan struct{})}
+		es = &engineServer{key: key, spec: spec, ready: make(chan struct{})}
 		e.servers[key] = es
 	}
 	es.refs++
@@ -139,7 +211,7 @@ func (e *Engine) acquire(ctx context.Context, key engineKey) (*engineServer, err
 		e.mu.Lock()
 		es.refs++
 		e.mu.Unlock()
-		go e.build(key, es)
+		go e.build(es)
 	}
 
 	select {
@@ -156,15 +228,17 @@ func (e *Engine) acquire(ctx context.Context, key engineKey) (*engineServer, err
 }
 
 // build builds es's server and publishes the result to its waiters.
-func (e *Engine) build(key engineKey, es *engineServer) {
+func (e *Engine) build(es *engineServer) {
 	defer e.release(es)
+	key := es.key
 	bctx, cancel := context.WithTimeout(e.ctx, engineBuildTimeout)
 	defer cancel()
 	srv, err := cmd.NewMCPServer(bctx, cmd.MCPOptions{
 		ConfigPath: e.configPath,
 		Site:       key.site,
 		Sites:      []string{key.site},
-		Policy:     config.MCPPolicy{Confirm: "always", ReadOnly: key.mode != EngineAsk},
+		Policy:     es.spec.Policy,
+		Toolsets:   es.spec.Toolsets,
 	})
 	e.mu.Lock()
 	var late *cmd.MCPServer
@@ -198,10 +272,35 @@ func (e *Engine) takeClose(es *engineServer) *cmd.MCPServer {
 	return es.srv
 }
 
-// release drops one reference and closes a retired server nobody uses.
+// release drops one reference and closes a retired server nobody uses. A
+// cached server nobody uses any more is closed after idleAfter, unless it
+// is used again meanwhile.
 func (e *Engine) release(es *engineServer) {
 	e.mu.Lock()
 	es.refs--
+	srv := e.takeClose(es)
+	if es.refs == 0 && !es.retired && !e.closed && es.srv != nil {
+		es.idleGen++
+		gen := es.idleGen
+		time.AfterFunc(e.idleAfter, func() { e.idle(es, gen) })
+	}
+	e.mu.Unlock()
+	if srv != nil {
+		e.closeSrv(srv)
+	}
+}
+
+// idle retires es if nobody used it since its refs dropped to 0 the gen-th
+// time. A server with a session (an active run holds one) has refs > 0 and
+// is never closed here.
+func (e *Engine) idle(es *engineServer, gen int) {
+	e.mu.Lock()
+	if e.closed || es.retired || es.refs > 0 || es.idleGen != gen || e.servers[es.key] != es {
+		e.mu.Unlock()
+		return
+	}
+	delete(e.servers, es.key)
+	es.retired = true
 	srv := e.takeClose(es)
 	e.mu.Unlock()
 	if srv != nil {

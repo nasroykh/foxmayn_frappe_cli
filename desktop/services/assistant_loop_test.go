@@ -42,6 +42,7 @@ func newLoopRig(t *testing.T, turns ...llmtest.Turn) *loopRig {
 	prov := llmtest.New(turns...)
 	r := newRunner(st, e, func(store.Conversation) (llm.Provider, string, error) { return prov, "test-model", nil }, h.Emit)
 	r.backoff = []time.Duration{time.Millisecond, time.Millisecond}
+	r.noSiteContext = true
 	t.Cleanup(r.shutdown)
 	return &loopRig{r: r, h: h, st: st, fake: fake, path: path, prov: prov}
 }

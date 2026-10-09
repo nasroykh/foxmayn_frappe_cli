@@ -212,6 +212,69 @@ var migrations = []string{
 	CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
 		DELETE FROM messages_fts WHERE rowid = old.n;
 	END;`,
+
+	// v2 holds every schema change of 0.3.0, so later work never races on
+	// user_version. profile_id names a preset (a code constant) or a row of
+	// profiles, so it has no foreign key. A NULL cost_usd is "cost unknown".
+	`CREATE TABLE profiles (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		preset TEXT NOT NULL DEFAULT '',
+		mode TEXT NOT NULL,
+		toolsets_json TEXT NOT NULL DEFAULT '[]',
+		policy_json TEXT NOT NULL DEFAULT '{}',
+		deny_tools_json TEXT NOT NULL DEFAULT '[]',
+		call_method INTEGER NOT NULL DEFAULT 0,
+		step_limit INTEGER NOT NULL DEFAULT 25,
+		provider_id TEXT NOT NULL DEFAULT '',
+		model TEXT NOT NULL DEFAULT '',
+		instructions TEXT NOT NULL DEFAULT '',
+		keep_history INTEGER NOT NULL DEFAULT 1,
+		created INTEGER NOT NULL,
+		updated INTEGER NOT NULL
+	);
+
+	ALTER TABLE conversations ADD COLUMN profile_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE conversations ADD COLUMN ephemeral INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE conversations ADD COLUMN site_url TEXT NOT NULL DEFAULT '';
+	ALTER TABLE conversations ADD COLUMN site_context TEXT NOT NULL DEFAULT '';
+	ALTER TABLE conversations ADD COLUMN title_source TEXT NOT NULL DEFAULT '';
+	CREATE INDEX conversations_site_updated ON conversations(site, updated DESC);
+
+	CREATE TABLE site_settings (
+		site TEXT PRIMARY KEY,
+		url TEXT NOT NULL DEFAULT '',
+		instructions TEXT NOT NULL DEFAULT '',
+		local_only INTEGER NOT NULL DEFAULT 0,
+		updated INTEGER NOT NULL
+	);
+
+	ALTER TABLE usage ADD COLUMN cache_write INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE usage ADD COLUMN cost_usd REAL;
+	ALTER TABLE usage ADD COLUMN cost_source TEXT NOT NULL DEFAULT '';
+	ALTER TABLE usage ADD COLUMN price_date TEXT NOT NULL DEFAULT '';
+	ALTER TABLE usage ADD COLUMN kind TEXT NOT NULL DEFAULT 'turn';
+
+	CREATE TABLE attachments (
+		id TEXT PRIMARY KEY,
+		conv_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+		msg_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+		name TEXT NOT NULL,
+		mime TEXT NOT NULL,
+		size INTEGER NOT NULL,
+		sha256 TEXT NOT NULL,
+		text TEXT NOT NULL DEFAULT '',
+		data BLOB,
+		created INTEGER NOT NULL
+	);
+	CREATE INDEX attachments_conv ON attachments(conv_id);
+
+	CREATE TABLE settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);`,
 }
 
 func (s *Store) migrate() error {
