@@ -1,0 +1,488 @@
+{
+ "price_date": "2026-10-09",
+ "unit": "USD per million tokens",
+ "notes": [
+  "Read from the providers' official pricing pages on price_date; a model that could not be confirmed there is absent (its cost is unknown). Prices are standard (not batch, flex, priority or regional).",
+  "in is the fresh input price, out the output price (reasoning included), cache_read the cached input price.",
+  "cache_write is the price of tokens written to the prompt cache. Anthropic: the 5-minute write price (the 1-hour write costs more and is not used). Omitted for OpenAI and Gemini, which charge nothing extra to write: such tokens are priced as input.",
+  "long is the price of a request whose whole prompt (fresh input, cache reads and cache writes) is over long.over tokens: Anthropic Haiku 5.5 over 100000; OpenAI over 272000 (the page says short context is up to and including 272K); Gemini 3.1 Pro and 2.5 Pro over 200000.",
+  "valid_until: the last day (UTC) the price is valid; the provider announced a change after it, so later requests have an unknown cost.",
+  "Gemini audio input costs more than text; this app sends text and images only, so the text price is used."
+ ],
+ "models": [
+  {
+   "kind": "anthropic",
+   "model": "claude-fable-5-1",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 10,
+   "out": 50,
+   "cache_read": 0.25,
+   "cache_write": 12.5
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-opus-5-5",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 4,
+   "out": 20,
+   "cache_read": 0.2,
+   "cache_write": 5
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-opus-5",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 5,
+   "out": 25,
+   "cache_read": 0.5,
+   "cache_write": 6.25
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-opus-4-8",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 5,
+   "out": 25,
+   "cache_read": 0.5,
+   "cache_write": 6.25
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-opus-4-7",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 5,
+   "out": 25,
+   "cache_read": 0.5,
+   "cache_write": 6.25
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-opus-4-6",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 5,
+   "out": 25,
+   "cache_read": 0.5,
+   "cache_write": 6.25
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-sonnet-5-5",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 2,
+   "out": 10,
+   "cache_read": 0.1,
+   "cache_write": 2.5
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-sonnet-5",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 2,
+   "out": 10,
+   "cache_read": 0.2,
+   "cache_write": 2.5
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-sonnet-4-6",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 3,
+   "out": 15,
+   "cache_read": 0.3,
+   "cache_write": 3.75
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-sonnet-4-5",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 3,
+   "out": 15,
+   "cache_read": 0.3,
+   "cache_write": 3.75
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-sonnet-4-5-20250929",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 3,
+   "out": 15,
+   "cache_read": 0.3,
+   "cache_write": 3.75
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-haiku-5-5",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 0.1,
+   "out": 0.5,
+   "cache_read": 0.01,
+   "cache_write": 0.125,
+   "long": {
+    "over": 100000,
+    "in": 0.5,
+    "out": 2.5,
+    "cache_read": 0.05,
+    "cache_write": 0.625
+   }
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-haiku-4-5",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 1,
+   "out": 5,
+   "cache_read": 0.1,
+   "cache_write": 1.25
+  },
+  {
+   "kind": "anthropic",
+   "model": "claude-haiku-4-5-20251001",
+   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+   "in": 1,
+   "out": 5,
+   "cache_read": 0.1,
+   "cache_write": 1.25
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-6-astra",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 10,
+   "out": 50,
+   "cache_read": 1,
+   "long": {
+    "over": 272000,
+    "in": 20,
+    "out": 75,
+    "cache_read": 2
+   }
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-6.1-sol",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 2,
+   "out": 10,
+   "cache_read": 0.1,
+   "long": {
+    "over": 272000,
+    "in": 4,
+    "out": 15,
+    "cache_read": 0.2
+   }
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-6-luna",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 0.1,
+   "out": 0.5,
+   "cache_read": 0.01,
+   "long": {
+    "over": 272000,
+    "in": 0.2,
+    "out": 0.75,
+    "cache_read": 0.02
+   }
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-6-sol",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 2,
+   "out": 10,
+   "cache_read": 0.2,
+   "long": {
+    "over": 272000,
+    "in": 4,
+    "out": 15,
+    "cache_read": 0.4
+   }
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5.6-sol",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 4,
+   "out": 20,
+   "cache_read": 0.4,
+   "long": {
+    "over": 272000,
+    "in": 8,
+    "out": 30,
+    "cache_read": 0.8
+   }
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5.6-terra",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 2,
+   "out": 12,
+   "cache_read": 0.2,
+   "long": {
+    "over": 272000,
+    "in": 4,
+    "out": 18,
+    "cache_read": 0.4
+   }
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5.6-luna",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 0.2,
+   "out": 1.2,
+   "cache_read": 0.02,
+   "long": {
+    "over": 272000,
+    "in": 0.4,
+    "out": 1.8,
+    "cache_read": 0.04
+   }
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5.5",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 5,
+   "out": 30,
+   "cache_read": 0.5,
+   "long": {
+    "over": 272000,
+    "in": 10,
+    "out": 45,
+    "cache_read": 1
+   }
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5.4",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 2.5,
+   "out": 15,
+   "cache_read": 0.25,
+   "long": {
+    "over": 272000,
+    "in": 5,
+    "out": 22.5,
+    "cache_read": 0.5
+   }
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5.4-mini",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 0.75,
+   "out": 4.5,
+   "cache_read": 0.075
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5.4-nano",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 0.2,
+   "out": 1.25,
+   "cache_read": 0.02
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5.2",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 1.75,
+   "out": 14,
+   "cache_read": 0.175
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5.1",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 1.25,
+   "out": 10,
+   "cache_read": 0.125
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 1.25,
+   "out": 10,
+   "cache_read": 0.125
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5-mini",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 0.25,
+   "out": 2,
+   "cache_read": 0.025
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-5-nano",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 0.05,
+   "out": 0.4,
+   "cache_read": 0.005
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-4.1",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 2,
+   "out": 8,
+   "cache_read": 0.5
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-4.1-mini",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 0.4,
+   "out": 1.6,
+   "cache_read": 0.1
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-4.1-nano",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 0.1,
+   "out": 0.4,
+   "cache_read": 0.025
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-4o",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 2.5,
+   "out": 10,
+   "cache_read": 1.25
+  },
+  {
+   "kind": "openai",
+   "model": "gpt-4o-mini",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 0.15,
+   "out": 0.6,
+   "cache_read": 0.075
+  },
+  {
+   "kind": "openai",
+   "model": "o3",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 2,
+   "out": 8,
+   "cache_read": 0.5
+  },
+  {
+   "kind": "openai",
+   "model": "o4-mini",
+   "source": "https://developers.openai.com/api/docs/pricing",
+   "in": 1.1,
+   "out": 4.4,
+   "cache_read": 0.275
+  },
+  {
+   "kind": "gemini",
+   "model": "gemini-3.8-flash",
+   "source": "https://ai.google.dev/gemini-api/docs/pricing",
+   "in": 0.75,
+   "out": 3.75,
+   "cache_read": 0.075,
+   "valid_until": "2026-12-31"
+  },
+  {
+   "kind": "gemini",
+   "model": "gemini-3.7-flash",
+   "source": "https://ai.google.dev/gemini-api/docs/pricing",
+   "in": 0.75,
+   "out": 3.75,
+   "cache_read": 0.075,
+   "valid_until": "2026-12-31"
+  },
+  {
+   "kind": "gemini",
+   "model": "gemini-3.6-flash",
+   "source": "https://ai.google.dev/gemini-api/docs/pricing",
+   "in": 0.75,
+   "out": 3.75,
+   "cache_read": 0.075,
+   "valid_until": "2026-12-31"
+  },
+  {
+   "kind": "gemini",
+   "model": "gemini-3.5-flash",
+   "source": "https://ai.google.dev/gemini-api/docs/pricing",
+   "in": 1.5,
+   "out": 9,
+   "cache_read": 0.15
+  },
+  {
+   "kind": "gemini",
+   "model": "gemini-3.5-flash-lite",
+   "source": "https://ai.google.dev/gemini-api/docs/pricing",
+   "in": 0.3,
+   "out": 2.5,
+   "cache_read": 0.03
+  },
+  {
+   "kind": "gemini",
+   "model": "gemini-3.1-pro-preview",
+   "source": "https://ai.google.dev/gemini-api/docs/pricing",
+   "in": 2,
+   "out": 12,
+   "cache_read": 0.2,
+   "long": {
+    "over": 200000,
+    "in": 4,
+    "out": 18,
+    "cache_read": 0.4
+   }
+  },
+  {
+   "kind": "gemini",
+   "model": "gemini-3.1-flash-lite",
+   "source": "https://ai.google.dev/gemini-api/docs/pricing",
+   "in": 0.25,
+   "out": 1.5,
+   "cache_read": 0.025
+  },
+  {
+   "kind": "gemini",
+   "model": "gemini-3-flash-preview",
+   "source": "https://ai.google.dev/gemini-api/docs/pricing",
+   "in": 0.5,
+   "out": 3,
+   "cache_read": 0.05
+  },
+  {
+   "kind": "gemini",
+   "model": "gemini-2.5-pro",
+   "source": "https://ai.google.dev/gemini-api/docs/pricing",
+   "in": 1.25,
+   "out": 10,
+   "cache_read": 0.125,
+   "long": {
+    "over": 200000,
+    "in": 2.5,
+    "out": 15,
+    "cache_read": 0.25
+   }
+  },
+  {
+   "kind": "gemini",
+   "model": "gemini-2.5-flash",
+   "source": "https://ai.google.dev/gemini-api/docs/pricing",
+   "in": 0.3,
+   "out": 2.5,
+   "cache_read": 0.03
+  },
+  {
+   "kind": "gemini",
+   "model": "gemini-2.5-flash-lite",
+   "source": "https://ai.google.dev/gemini-api/docs/pricing",
+   "in": 0.1,
+   "out": 0.4,
+   "cache_read": 0.01
+  }
+ ]
+}
