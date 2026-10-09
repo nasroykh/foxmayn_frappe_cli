@@ -14,6 +14,8 @@ import (
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/anthropic"
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/gemini"
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/openai"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/openaicompat"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/store"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -40,6 +42,8 @@ const (
 const (
 	KindAnthropic  = "anthropic"
 	KindOpenRouter = "openrouter"
+	KindOpenAI     = "openai"
+	KindGemini     = "gemini"
 	KindOllama     = "ollama"
 	KindLMStudio   = "lmstudio"
 	KindCustom     = "custom"
@@ -555,6 +559,10 @@ func officialBase(kind string) string {
 		return "https://api.anthropic.com"
 	case KindOpenRouter:
 		return openaicompat.OpenRouter.BaseURL
+	case KindOpenAI:
+		return openai.BaseURL
+	case KindGemini:
+		return strings.TrimRight(gemini.BaseURL, "/")
 	}
 	return ""
 }
@@ -569,6 +577,10 @@ func kindLabel(kind string) string {
 		return openaicompat.Ollama.Label
 	case KindLMStudio:
 		return openaicompat.LMStudio.Label
+	case KindOpenAI:
+		return "OpenAI"
+	case KindGemini:
+		return "Google Gemini"
 	}
 	return "Custom"
 }
@@ -587,7 +599,7 @@ func kindBaseURL(kind string) string {
 
 func validKind(kind string) bool {
 	switch kind {
-	case KindAnthropic, KindOpenRouter, KindOllama, KindLMStudio, KindCustom:
+	case KindAnthropic, KindOpenRouter, KindOllama, KindLMStudio, KindCustom, KindOpenAI, KindGemini:
 		return true
 	}
 	return false
@@ -595,7 +607,9 @@ func validKind(kind string) bool {
 
 // keyRequired reports whether a provider of this kind cannot work without a
 // key.
-func keyRequired(kind string) bool { return kind == KindAnthropic || kind == KindOpenRouter }
+func keyRequired(kind string) bool {
+	return kind == KindAnthropic || kind == KindOpenRouter || kind == KindOpenAI || kind == KindGemini
+}
 
 func defaultModelOf(p store.Provider) string {
 	if p.DefaultModel != "" {
@@ -673,7 +687,8 @@ func (a *AssistantService) ListProviders() ([]ProviderInfo, error) {
 
 // SaveProvider adds or changes a provider. An empty ID takes the kind's name
 // (a custom provider gets a numbered one). The key is set apart, with SetKey.
-// Anthropic and OpenRouter are pinned to their own hosts. When a provider's
+// Anthropic, OpenRouter, OpenAI and Gemini are pinned to their own hosts
+// (stored as an empty address, except OpenRouter's). When a provider's
 // address changes the stored key is deleted in the same step (KeyCleared), so
 // a key can never be sent to a host the user did not give it to.
 func (a *AssistantService) SaveProvider(p ProviderInfo) (ProviderInfo, error) {
@@ -949,6 +964,16 @@ func makeProvider(p store.Provider, key string) (llm.Provider, error) {
 	case KindAnthropic:
 		// Pinned to the official host: a stored address is never used.
 		return anthropic.New(key), nil
+	case KindOpenAI:
+		// Pinned too: the Responses API at api.openai.com only.
+		return openai.New(key), nil
+	case KindGemini:
+		// Pinned too: the Gemini API (never Vertex AI).
+		g, err := gemini.New(key)
+		if err != nil {
+			return nil, newError(CodeAuth, "Add the API key for Google Gemini first.", nil)
+		}
+		return g, nil
 	case KindOpenRouter, KindOllama, KindLMStudio, KindCustom:
 		preset := openaicompat.Custom(p.BaseURL)
 		switch p.Kind {

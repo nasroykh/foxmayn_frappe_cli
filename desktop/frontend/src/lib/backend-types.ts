@@ -84,7 +84,7 @@ export type {
 /** What a conversation may do to its site. */
 export type ConversationMode = "read" | "ask"
 /** The kinds of provider SaveProvider accepts. */
-export type ProviderKind = "anthropic" | "openrouter" | "ollama" | "lmstudio" | "custom"
+export type ProviderKind = "anthropic" | "openrouter" | "ollama" | "lmstudio" | "custom" | "openai" | "gemini"
 /** A tool call's state: chat:tool status and ChatToolCall.status. */
 export type ToolStatus = "running" | "ok" | "error" | "stopped"
 /** How a run ended (chat:done status). "paused" waits for continueRun. */

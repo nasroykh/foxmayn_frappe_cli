@@ -105,6 +105,8 @@
     "next": "Next",
     "chooseLabel": "Choose a provider",
     "anthropicHint": "Claude models. You need an API key.",
+    "openaiHint": "GPT models with your OpenAI API key.",
+    "geminiHint": "Gemini models with a Google AI Studio API key.",
     "openrouterHint": "Many models through one key.",
     "detecting": "Looking for a model on this computer…",
     "localFound": "{{name}} (found on this computer)",

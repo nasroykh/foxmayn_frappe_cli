@@ -291,7 +291,7 @@ func TestAssistantSaveProviderValidation(t *testing.T) {
 		p     ProviderInfo
 		field string
 	}{
-		"kind":       {ProviderInfo{Kind: "gemini"}, "kind"},
+		"kind":       {ProviderInfo{Kind: "vertex"}, "kind"},
 		"http":       {ProviderInfo{Kind: KindCustom, BaseURL: "http://example.com/v1"}, "baseURL"},
 		"no host":    {ProviderInfo{Kind: KindCustom, BaseURL: "https://"}, "baseURL"},
 		"userinfo":   {ProviderInfo{Kind: KindCustom, BaseURL: "https://u:p@example.com/v1"}, "baseURL"},

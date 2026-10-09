@@ -146,6 +146,20 @@ export function AssistantOnboarding({
           />
           <ChoiceButton
             icon={<IconCloud aria-hidden="true" />}
+            title="OpenAI"
+            hint={t("onboarding.openaiHint")}
+            disabled={busy}
+            onClick={() => void pick(blankProvider("openai"))}
+          />
+          <ChoiceButton
+            icon={<IconCloud aria-hidden="true" />}
+            title="Google Gemini"
+            hint={t("onboarding.geminiHint")}
+            disabled={busy}
+            onClick={() => void pick(blankProvider("gemini"))}
+          />
+          <ChoiceButton
+            icon={<IconCloud aria-hidden="true" />}
             title="OpenRouter"
             hint={t("onboarding.openrouterHint")}
             disabled={busy}

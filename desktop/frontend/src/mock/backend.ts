@@ -995,14 +995,14 @@ export const backend: Backend = {
   },
   async saveProvider(p) {
     await wait(200)
-    const kinds = ["anthropic", "openrouter", "ollama", "lmstudio", "custom"]
+    const kinds = ["anthropic", "openai", "gemini", "openrouter", "ollama", "lmstudio", "custom"]
     if (!kinds.includes(p.kind)) fail("invalid", "Choose a provider type.", { field: "kind" })
     const base = p.baseURL.trim()
     if (p.kind === "custom" && !base) fail("invalid", "Enter the server's address.", { field: "baseURL" })
     if (base && !/^https:\/\//.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(base)) {
       fail("invalid", "Use https, unless the server runs on this computer.", { field: "baseURL" })
     }
-    const labels: Record<string, string> = { anthropic: "Anthropic", openrouter: "OpenRouter", ollama: "Ollama", lmstudio: "LM Studio", custom: "Custom" }
+    const labels: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI", gemini: "Google Gemini", openrouter: "OpenRouter", ollama: "Ollama", lmstudio: "LM Studio", custom: "Custom" }
     const bases: Record<string, string> = { openrouter: "https://openrouter.ai/api/v1", ollama: "http://localhost:11434/v1", lmstudio: "http://localhost:1234/v1" }
     let id = p.id.trim() || p.kind
     for (let n = 2; !p.id.trim() && p.kind === "custom" && providers.some((x) => x.id === id); n++) id = `custom-${n}`
@@ -1062,6 +1062,11 @@ export const backend: Backend = {
         { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", default: true },
         { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", default: false },
       ]
+    }
+    if (p.kind === "openai" || p.kind === "gemini") {
+      if (!p.keySet) fail("auth", `Add the API key for ${p.label} first.`, { field: "key" })
+      const ids = p.kind === "openai" ? ["gpt-5.5", "gpt-5.5-mini", "gpt-5"] : ["gemini-3-pro", "gemini-3-flash", "gemini-2.5-pro"]
+      return ids.map((id) => ({ id, label: id, default: false }))
     }
     return [
       { id: "llama3.1:8b", label: "llama3.1:8b", default: false },

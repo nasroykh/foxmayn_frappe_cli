@@ -43,6 +43,22 @@ describe("provider settings", () => {
     expect(screen.getByText("Saved, ends in ••••9999")).toBeTruthy()
   })
 
+  it.each([
+    ["openai", "OpenAI"],
+    ["gemini", "Google Gemini"],
+  ])("adds %s without an address field and asks for the key", async (kind, name) => {
+    b.saveProvider.mockImplementation(async (p: ProviderInfo) => ({ ...p, id: p.kind, label: name }))
+    render(<ProviderSettings />)
+    fireEvent.click(await screen.findByRole("button", { name: "Add provider" }))
+    const select = (await screen.findByLabelText("Type")) as HTMLSelectElement
+    expect(Array.from(select.options).map((o) => o.text)).toEqual(expect.arrayContaining(["OpenAI", "Google Gemini"]))
+    fireEvent.change(select, { target: { value: kind } })
+    expect(screen.queryByLabelText("Server address")).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Add and set key" }))
+    expect(await screen.findByLabelText(/API key/)).toBeTruthy()
+    expect(b.saveProvider).toHaveBeenCalledWith(expect.objectContaining({ kind, baseURL: "" }))
+  })
+
   it("tells the user the key was removed when the address changed, and asks for it again", async () => {
     b.saveProvider.mockResolvedValue({ ...custom, baseURL: "https://other.example.com/v1", keySet: false, keyLast4: "", keyCleared: true })
     render(<ProviderSettings />)
