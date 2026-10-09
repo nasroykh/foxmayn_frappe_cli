@@ -596,42 +596,6 @@ func TestLoopEndsOnMaxTokensAndRefusal(t *testing.T) {
 	}
 }
 
-func TestLoopWriteToolNotAvailableYet(t *testing.T) {
-	g := newLoopRig(t,
-		toolTurn(
-			call("w", "create_doc", `{"doctype":"ToDo","data":{"description":"new"}}`),
-			call("x", "delete_doc", `{"doctype":"ToDo","name":"TD-1"}`),
-		),
-		textTurn("I could not change anything."),
-	)
-	cid := g.conv(t, "ask")
-	runID, err := g.r.start(cid, "add a todo and delete TD-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d := g.waitDone(t, 1); d.Status != RunDone {
-		t.Fatalf("done = %+v", d)
-	}
-	for i, p := range g.messages(t, cid)[2].Parts {
-		tr := p.(llm.ToolResult)
-		if !tr.IsError || !strings.Contains(tr.Text, "not available") {
-			t.Errorf("result %d = %+v", i, tr)
-		}
-	}
-	if n := g.fake.Count("ToDo"); n != 3 {
-		t.Errorf("%d ToDos, want 3", n)
-	}
-	for _, rq := range g.fake.Requests() {
-		if rq.Method != http.MethodGet && !strings.Contains(rq.Path, "login") {
-			t.Errorf("site got %s %s", rq.Method, rq.Path)
-		}
-	}
-	calls, _ := g.st.ListToolCalls(runID)
-	if len(calls) != 2 || calls[0].Status != ToolError {
-		t.Errorf("stored calls = %+v", calls)
-	}
-}
-
 func TestLoopOneRunPerConversation(t *testing.T) {
 	g := newLoopRig(t, llmtest.Turn{Hang: true})
 	cid := g.conv(t, "read")
@@ -790,7 +754,7 @@ func TestLoopMixedOrderOnlyReadsReachTheSite(t *testing.T) {
 		),
 		textTurn("ok"),
 	)
-	cid := g.conv(t, "ask")
+	cid := g.conv(t, "read")
 	runID, err := g.r.start(cid, "mix")
 	if err != nil {
 		t.Fatal(err)
