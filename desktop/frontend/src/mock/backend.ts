@@ -36,6 +36,7 @@ import type {
   ChatDone,
   ChatError,
   ChatMessage,
+  ChatTitle,
   ChatTool,
   ChatToolCall,
   ChatUsage,
@@ -46,16 +47,22 @@ import type {
   Environment,
   FFCInfo,
   KeyStatus,
+  OpenRouterAuth,
   Preview,
   Profile,
   ProviderInfo,
+  RetentionDays,
   RunStatus,
+  RunUsage,
+  SearchHit,
   SignInProgress,
   Site,
   SiteList,
   SiteSettings,
   ToolStatus,
+  UsageTotals,
 } from "@/lib/backend-types"
+import { addEvent, mergeTotals, noUsage } from "@/lib/cost"
 import type { AppError } from "@/lib/errors"
 
 const params = new URLSearchParams(window.location.search)
@@ -82,6 +89,7 @@ type Listener<T> = Set<(v: T) => void>
 const configListeners: Listener<ConfigChanged> = new Set()
 const signInListeners: Listener<SignInProgress> = new Set()
 const installListeners: Listener<string> = new Set()
+const openRouterListeners: Listener<OpenRouterAuth> = new Set()
 
 function on<T>(set: Listener<T>, cb: (v: T) => void) {
   set.add(cb)
@@ -267,6 +275,7 @@ function cancellable<T>(run: (signal: AbortSignal) => Promise<T>): Cancellable<T
 }
 
 let signIn: AbortController | null = null
+let openRouterSignIn: AbortController | null = null
 
 // ---- The assistant ----
 // A scripted model. What the user writes picks the script (a conversation in
@@ -308,9 +317,16 @@ interface MockConv {
   conv: Conversation
   messages: ChatMessage[]
   pausedRunID: string
+  runUsage: RunUsage[]
+  /** Every call of the conversation, the title call included. */
+  total: UsageTotals
+  /** The user named it: no automatic title. */
+  named: boolean
+  titled: boolean
 }
 
 const convs = new Map<string, MockConv>()
+let retention: RetentionDays = 0
 const runs = new Map<string, MockRun>()
 const openCards = new Map<string, ChatApproval>() // by approvalID
 const chat = {
@@ -319,6 +335,7 @@ const chat = {
   approval: new Set<(v: ChatApproval) => void>(),
   closed: new Set<(v: ChatApprovalClosed) => void>(),
   usage: new Set<(v: ChatUsage) => void>(),
+  title: new Set<(v: ChatTitle) => void>(),
   done: new Set<(v: ChatDone) => void>(),
   error: new Set<(v: ChatError) => void>(),
 }
@@ -383,12 +400,38 @@ function ask(run: MockRun, card: Omit<ChatApproval, "convID" | "runID" | "approv
   })
 }
 
+// mockPrice stands in for the Go price rules: a local model has tokens only,
+// OpenRouter reports its own price, a known hosted model is in the table, and
+// any other model has an unknown cost.
+function mockPrice(c: MockConv): { cost: number | null; costSource: string } {
+  const kind = providers.find((p) => p.id === c.conv.providerID)?.kind ?? ""
+  if (kind === "ollama" || kind === "lmstudio" || kind === "custom") return { cost: null, costSource: "local" }
+  if (kind === "openrouter") return { cost: 0.0123, costSource: "provider" }
+  if (/^(claude-(sonnet|opus|haiku)-5|gpt-5|gemini-)/.test(c.conv.model)) return { cost: 0.0156, costSource: "table" }
+  return { cost: null, costSource: "unknown" }
+}
+
 function finish(run: MockRun, c: MockConv, status: RunStatus, paused = false) {
   runs.delete(run.id)
   c.pausedRunID = paused ? run.id : ""
-  emit(chat.usage, { convID: run.convID, runID: run.id, turn: 1, input: 1840, output: 212, cached: 1500 })
+  const ev: ChatUsage = { convID: run.convID, runID: run.id, turn: 1, input: 1840, output: 212, cached: 1500, cacheWrite: 0, ...mockPrice(c) }
+  emit(chat.usage, ev)
+  const used = addEvent(noUsage, ev)
+  c.total = mergeTotals(c.total, used)
+  const last = [...c.messages].reverse().find((m) => m.role === "assistant")
+  c.runUsage = [...c.runUsage.filter((u) => u.runID !== run.id), { runID: run.id, msgID: last?.id ?? "", usage: used }]
   emit(chat.done, { convID: run.convID, runID: run.id, status })
+  if (status === "done" && !c.named && !c.titled) {
+    c.titled = true
+    setTimeout(() => {
+      if (c.named) return
+      c.conv.title = "Open ToDos"
+      c.total = mergeTotals(c.total, addEvent(noUsage, { ...ev, input: 220, output: 6, cached: 0 }))
+      emit(chat.title, { convID: run.convID, title: c.conv.title })
+    }, 600)
+  }
 }
+
 
 async function script(run: MockRun, c: MockConv, text: string) {
   const site = c.conv.site
@@ -1059,7 +1102,7 @@ export const backend: Backend = {
       created: now,
       updated: now,
     }
-    convs.set(conv.id, { conv, messages: [], pausedRunID: "" })
+    convs.set(conv.id, { conv, messages: [], pausedRunID: "", runUsage: [], total: noUsage, named: false, titled: false })
     return { ...conv }
   },
   async listConversations() {
@@ -1074,7 +1117,16 @@ export const backend: Backend = {
       messages: c.messages.map((m) => ({ ...m, tools: m.tools.map((t) => ({ ...t })) })),
       activeRunID: activeRun(id)?.id ?? "",
       pausedRunID: c.pausedRunID,
+      runUsage: c.runUsage.map((u) => ({ ...u, usage: { ...u.usage } })),
+      total: { ...c.total },
     }
+  },
+  async renameConversation(id, title) {
+    const c = findConv(id)
+    const name = title.replace(/\s+/g, " ").trim().slice(0, 80)
+    if (!name) fail("invalid", "Write a title.", { field: "title" })
+    c.conv.title = name
+    c.named = true
   },
   async deleteConversation(id) {
     findConv(id)
@@ -1141,6 +1193,52 @@ export const backend: Backend = {
     keys.set(p.id, k)
     p.keySet = true
     p.keyLast4 = k.length >= 12 ? k.slice(-4) : ""
+  },
+  // ?openrouter=denied ends the browser step with a refusal; the key the
+  // mock "creates" never leaves this file (only its end, as the real one).
+  async signInOpenRouter(providerID, attempt) {
+    const p = findProvider(providerID)
+    if (p.kind !== "openrouter") fail("invalid", "Browser sign-in works with OpenRouter only.", { field: "provider" })
+    openRouterSignIn?.abort()
+    const ctl = new AbortController()
+    openRouterSignIn = ctl
+    const send = (ev: Omit<OpenRouterAuth, "providerID" | "attempt">) => {
+      for (const cb of openRouterListeners) cb({ ...ev, providerID, attempt })
+    }
+    const step = async (ev: Omit<OpenRouterAuth, "providerID" | "attempt">, ms: number) => {
+      send(ev)
+      await wait(ms)
+      if (ctl.signal.aborted) {
+        send({ status: "cancelled" })
+        fail("cancelled", "The sign-in was cancelled.")
+      }
+    }
+    await step(
+      {
+        status: "browser",
+        authURL: "https://openrouter.ai/auth?callback_url=http%3A%2F%2Flocalhost%3A51423%2Fcallback&code_challenge_method=S256",
+      },
+      3000,
+    )
+    if (params.get("openrouter") === "denied") {
+      send({ status: "failed" })
+      fail("auth", "OpenRouter did not give the app a key.", { detail: "authorization denied: access_denied" })
+    }
+    await step({ status: "exchanging" }, 500)
+    // The key exists now: a cancel no longer stops the save (as in Go).
+    send({ status: "verifying" })
+    await wait(500)
+    const key = "sk-or-v1-mock0000000000c0de"
+    keys.set(p.id, key)
+    p.keySet = true
+    p.keyLast4 = key.slice(-4)
+    openRouterSignIn = null
+    send({ status: "done" })
+    return { ...p }
+  },
+  async cancelOpenRouterSignIn() {
+    openRouterSignIn?.abort()
+    openRouterSignIn = null
   },
   async keyStatus(providerID) {
     const p = findProvider(providerID)
@@ -1268,13 +1366,76 @@ export const backend: Backend = {
     }
   },
 
+  async search(query, filter, limit) {
+    await wait(120)
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+    if (words.length === 0) return []
+    const from = filter.from ? new Date(`${filter.from}T00:00:00`).getTime() : -Infinity
+    const to = filter.to ? new Date(`${filter.to}T23:59:59.999`).getTime() : Infinity
+    const hits: SearchHit[] = []
+    for (const c of convs.values()) {
+      const cv = c.conv
+      if (!!cv.archived !== filter.archived || cv.ephemeral) continue
+      if ((filter.site && cv.site !== filter.site) || (filter.profileID && cv.profileID !== filter.profileID)) continue
+      const upd = new Date(cv.updated).getTime()
+      if (upd < from || upd > to) continue
+      for (const m of c.messages) {
+        const text = m.text.toLowerCase()
+        if (!words.every((w) => text.includes(w))) continue
+        const start = Math.max(0, text.indexOf(words[0]) - 40)
+        const snippet = (start > 0 ? "…" : "") + m.text.slice(start, start + 120).replace(/\s+/g, " ")
+        hits.push({ convID: cv.id, title: cv.title, site: cv.site, msgID: m.id, snippet, updated: cv.updated, pinned: !!cv.pinned })
+      }
+    }
+    return hits.slice(0, limit > 0 ? Math.min(limit, 200) : 50)
+  },
+  async pinConversation(convID, pinned) {
+    findConv(convID).conv.pinned = pinned
+  },
+  async archiveConversation(convID, archived) {
+    findConv(convID).conv.archived = archived
+  },
+  async getRetention() {
+    return retention
+  },
+  async setRetention(days) {
+    if (days !== 0 && days !== 30 && days !== 90) fail("invalid", "Choose forever, 90 days or 30 days.", { field: "days" })
+    retention = days
+  },
+  async exportConversation(convID, format) {
+    await wait(150)
+    const c = findConv(convID)
+    const slug = c.conv.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "conversation"
+    return [home, "Documents", `${slug}.${format}`].join(sep)
+  },
+  async importConversation() {
+    await wait(200)
+    const now = new Date().toISOString()
+    const conv: Conversation = {
+      id: newID("conv"),
+      title: "Imported conversation",
+      site: sites[0]?.name ?? "acme-prod",
+      mode: "read",
+      providerID: "",
+      model: "",
+      profileID: "",
+      created: now,
+      updated: now,
+    }
+    // An imported title is the user's: no automatic title replaces it.
+    convs.set(conv.id, { conv, messages: [], pausedRunID: "", runUsage: [], total: noUsage, named: true, titled: true })
+    return { cancelled: false, conversation: { ...conv } }
+  },
+
   onChatDelta: (cb) => on(chat.delta, cb),
   onChatTool: (cb) => on(chat.tool, cb),
   onChatApproval: (cb) => on(chat.approval, cb),
   onChatApprovalClosed: (cb) => on(chat.closed, cb),
   onChatUsage: (cb) => on(chat.usage, cb),
+  onChatTitle: (cb) => on(chat.title, cb),
   onChatDone: (cb) => on(chat.done, cb),
   onChatError: (cb) => on(chat.error, cb),
+  onOpenRouterAuth: (cb) => on(openRouterListeners, cb),
 
   onConfigChanged: (cb) => on(configListeners, cb),
   onSignInProgress: (cb) => on(signInListeners, cb),

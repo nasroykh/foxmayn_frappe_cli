@@ -34,6 +34,7 @@ import { backend } from "@/lib/backend"
 import type { UpdateInfo } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 import { ProfileSettings } from "@/screens/assistant/profile-settings"
+import { HistorySettings } from "@/screens/assistant/history-settings"
 import { ProviderSettings } from "@/screens/assistant/provider-settings"
 import { SiteAssistantSettings } from "@/screens/assistant/site-settings"
 import { WSLAlert } from "@/screens/wsl-alert"
@@ -70,6 +71,8 @@ export function SettingsScreen() {
           <ProfileSettings />
           <Separator />
           <SiteAssistantSettings />
+          <Separator />
+          <HistorySettings />
         </TabsContent>
         <TabsContent value="ffc" className="pt-4">
           <FFCTab />

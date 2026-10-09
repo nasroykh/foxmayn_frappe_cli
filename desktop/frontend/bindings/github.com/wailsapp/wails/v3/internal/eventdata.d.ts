@@ -12,11 +12,13 @@ import type * as services$0 from "../../../../nasroykh/foxmayn_frappe_cli/deskto
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
+            "auth:openrouter": services$0.OpenRouterAuth;
             "chat:approval": services$0.ChatApproval;
             "chat:approval-closed": services$0.ChatApprovalClosed;
             "chat:delta": services$0.ChatDelta;
             "chat:done": services$0.ChatDone;
             "chat:error": services$0.ChatError;
+            "chat:title": services$0.ChatTitle;
             "chat:tool": services$0.ChatTool;
             "chat:usage": services$0.ChatUsage;
             "config:changed": services$0.ConfigChanged;

@@ -10,7 +10,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/toast"
 import { backend } from "@/lib/backend"
-import type { Conversation, ProviderInfo } from "@/lib/backend-types"
+import type { Conversation, ExportFormat, ProviderInfo } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 import { AssistantOnboarding } from "@/screens/assistant/assistant-onboarding"
 import { ChatPane } from "@/screens/assistant/chat-pane"
@@ -84,6 +84,49 @@ export function AssistantScreen() {
     }
   }
 
+  async function pin(c: Conversation, pinned: boolean) {
+    try {
+      await backend.pinConversation(c.id, pinned)
+      await reloadConversations()
+    } catch (err) {
+      const e = appError(err)
+      toast.add({ title: errorTitle(e), description: e.message, type: "error" })
+    }
+  }
+
+  async function archive(c: Conversation, archived: boolean) {
+    try {
+      await backend.archiveConversation(c.id, archived)
+      await reloadConversations()
+    } catch (err) {
+      const e = appError(err)
+      toast.add({ title: errorTitle(e), description: e.message, type: "error" })
+    }
+  }
+
+  async function exportConv(c: Conversation, format: ExportFormat) {
+    try {
+      const path = await backend.exportConversation(c.id, format)
+      if (path) toast.add({ title: t("chat.history.exported"), description: path, type: "success" })
+    } catch (err) {
+      const e = appError(err)
+      toast.add({ title: errorTitle(e), description: e.message, type: "error" })
+    }
+  }
+
+  async function importConv() {
+    try {
+      const res = await backend.importConversation()
+      if (res.cancelled) return
+      await reloadConversations()
+      select(res.conversation.id)
+      toast.add({ title: t("chat.history.imported"), description: t("chat.history.importedHint"), type: "success" })
+    } catch (err) {
+      const e = appError(err)
+      toast.add({ title: t("chat.history.importFailed"), description: e.message, type: "error" })
+    }
+  }
+
   if (error && (!providers || !conversations)) {
     return (
       <div className="p-6">
@@ -145,10 +188,15 @@ export function AssistantScreen() {
     <div className="flex h-full min-h-0">
       <ConversationList
         conversations={conversations}
+        sites={siteList.map((s) => s.name)}
         selected={selected}
         onSelect={select}
         onNew={() => setNewOpen(true)}
         onDelete={remove}
+        onPin={pin}
+        onArchive={archive}
+        onExport={exportConv}
+        onImport={importConv}
       />
       {current ? (
         <ChatPane key={current.id} conv={current} providers={providers} onChanged={() => void reloadConversations()} />

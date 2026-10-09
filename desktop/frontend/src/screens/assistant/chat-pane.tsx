@@ -1,4 +1,4 @@
-import { IconAlertTriangle, IconPlayerPlay, IconPlayerStop, IconSend } from "@tabler/icons-react"
+import { IconAlertTriangle, IconCheck, IconPencil, IconPlayerPlay, IconPlayerStop, IconSend, IconX } from "@tabler/icons-react"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "cn"
@@ -6,15 +6,27 @@ import { cn } from "cn"
 import { ApprovalCard } from "@/components/chat/approval-card"
 import { ChatMarkdown } from "@/components/chat/markdown"
 import { ToolRow } from "@/components/chat/tool-row"
+import { UsageLine, useCostText } from "@/components/chat/usage-line"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { backend } from "@/lib/backend"
-import type { ChatMessage, Conversation, ConversationMode, ProviderInfo, ToolApproval, ToolStatus } from "@/lib/backend-types"
+import type {
+  ChatMessage,
+  Conversation,
+  ConversationMode,
+  ProviderInfo,
+  RunUsage,
+  ToolApproval,
+  ToolStatus,
+  UsageTotals,
+} from "@/lib/backend-types"
+import { hasUsage, mergeTotals, noUsage } from "@/lib/cost"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 import { chatReducer, initialState } from "@/screens/assistant/chat-reducer"
 import { ProfilePicker } from "@/screens/assistant/profile-picker"
@@ -42,7 +54,7 @@ export function ChatPane({
   /** The conversation list may be stale (title, order, mode): reload it. */
   onChanged: () => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const convID = conv.id
   const [state, dispatch] = React.useReducer(chatReducer, convID, initialState)
   const [messages, setMessages] = React.useState<ChatMessage[] | null>(null)
@@ -50,6 +62,10 @@ export function ChatPane({
   const [mode, setMode] = React.useState<ConversationMode>(conv.mode === "ask" ? "ask" : "read")
   const [answering, setAnswering] = React.useState<ReadonlySet<string>>(new Set())
   const [draft, setDraft] = React.useState("")
+  const [runUsage, setRunUsage] = React.useState<RunUsage[]>([])
+  const [total, setTotal] = React.useState<UsageTotals>(noUsage)
+  const [renaming, setRenaming] = React.useState<string | null>(null)
+  const costText = useCostText()
   const stateRef = React.useRef(state)
   stateRef.current = state
   const convRef = React.useRef(convID)
@@ -70,6 +86,8 @@ export function ChatPane({
       const detail = await backend.getConversation(id)
       if (convRef.current !== id) return
       setMessages(detail.messages)
+      setRunUsage(detail.runUsage)
+      setTotal(detail.total)
       setMode(detail.conversation.mode === "ask" ? "ask" : "read")
       setLoadError(null)
       dispatch({ type: "loaded", detail })
@@ -86,6 +104,9 @@ export function ChatPane({
   React.useEffect(() => {
     dispatch({ type: "select", convID })
     setMessages(null)
+    setRunUsage([])
+    setTotal(noUsage)
+    setRenaming(null)
     setLoadError(null)
     setDraft("")
     setMode(conv.mode === "ask" ? "ask" : "read")
@@ -99,6 +120,14 @@ export function ChatPane({
     const offs = [
       backend.onChatDelta((ev) => dispatch({ type: "delta", convID: ev.convID, runID: ev.runID, text: ev.text })),
       backend.onChatTool((ev) => dispatch({ type: "tool", ev })),
+      backend.onChatUsage((ev) => dispatch({ type: "usage", ev })),
+      backend.onChatTitle((ev) => {
+        if (ev.convID !== convRef.current) return
+        onChangedRef.current()
+        // The title call is part of the total. A reload during a run would reset its live view;
+        // the reload at the run's end (chat:done) then picks the title call up.
+        if (stateRef.current.phase === "idle") void load()
+      }),
       backend.onChatApproval((ev) => dispatch({ type: "approval", ev })),
       backend.onChatApprovalClosed((ev) =>
         dispatch({ type: "approvalClosed", convID: ev.convID, runID: ev.runID, approvalID: ev.approvalID }),
@@ -222,16 +251,101 @@ export function ChatPane({
     }
   }
 
+  async function saveName() {
+    const name = (renaming ?? "").trim()
+    if (!name) {
+      setRenaming(null)
+      return
+    }
+    // Always sent, even when unchanged: confirming a title locks it as the user's own.
+    try {
+      await backend.renameConversation(convID, name)
+      setRenaming(null)
+      onChanged()
+    } catch (err) {
+      notify(err)
+    }
+  }
+
   const provider = providers.find((p) => p.id === conv.providerID)
+  const usageOf = new Map(runUsage.map((u) => [u.msgID, u.usage]))
+  // The stored total plus the model turns of the run in progress (a reload resets those).
+  const shownTotal = active ? mergeTotals(total, state.usage) : total
 
   return (
     <section aria-label={conv.title || t("chat.title")} className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2">
         <div className="flex min-w-0 flex-1 flex-col">
-          <h2 className="truncate text-sm font-semibold">{conv.title || t("chat.list.untitled")}</h2>
+          {renaming === null ? (
+            <div className="flex min-w-0 items-center gap-1">
+              <h2 className="truncate text-sm font-semibold">{conv.title || t("chat.list.untitled")}</h2>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t("chat.header.renameLabel")}
+                title={t("chat.header.rename")}
+                onClick={() => setRenaming(conv.title)}
+              >
+                <IconPencil />
+              </Button>
+            </div>
+          ) : (
+            <form
+              className="flex items-center gap-1"
+              onSubmit={(e) => {
+                e.preventDefault()
+                void saveName()
+              }}
+            >
+              <Input
+                autoFocus
+                value={renaming}
+                maxLength={80}
+                aria-label={t("chat.header.renameField")}
+                onChange={(e) => setRenaming(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    // Esc closes the editor, not the run.
+                    e.preventDefault()
+                    setRenaming(null)
+                  }
+                }}
+                className="h-7 text-sm"
+              />
+              <Button type="submit" variant="ghost" size="icon-xs" aria-label={t("chat.header.renameSave")}>
+                <IconCheck />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t("chat.header.renameCancel")}
+                onClick={() => setRenaming(null)}
+              >
+                <IconX />
+              </Button>
+            </form>
+          )}
           <p className="text-muted-foreground truncate text-xs">
             {t("chat.header.site", { site: conv.site })} · {provider?.label || conv.providerID}
             {conv.model ? ` · ${conv.model}` : ""}
+            {hasUsage(shownTotal) && (
+              <span title={t("chat.header.totalHelp")} data-testid="usage-total">
+                {" · "}
+                {t("chat.header.total", {
+                  usage: [
+                    t("chat.usage.tokens", {
+                      input: shownTotal.input.toLocaleString(i18n.language),
+                      output: shownTotal.output.toLocaleString(i18n.language),
+                    }),
+                    costText(shownTotal),
+                  ]
+                    .filter(Boolean)
+                    .join(" · "),
+                })}
+              </span>
+            )}
           </p>
         </div>
         <ProfilePicker conv={conv} disabled={active} onChanged={() => onChanged()} />
@@ -273,7 +387,12 @@ export function ChatPane({
           {messages?.length === 0 && !state.pending && (
             <p className="text-muted-foreground text-sm">{t("chat.emptyConversation")}</p>
           )}
-          {messages?.map((m) => <MessageView key={m.id} m={m} />)}
+          {messages?.map((m) => (
+            <React.Fragment key={m.id}>
+              <MessageView m={m} />
+              {usageOf.has(m.id) && <UsageLine usage={usageOf.get(m.id)!} className="-mt-2" />}
+            </React.Fragment>
+          ))}
           {state.pending && <UserBubble text={state.pending} />}
 
           {state.tools.length > 0 && (
@@ -293,6 +412,8 @@ export function ChatPane({
               </p>
             )}
           </div>
+
+          {active && <UsageLine usage={state.usage} />}
 
           {state.approvals.map((card) => (
             <ApprovalCard

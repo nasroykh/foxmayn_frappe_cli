@@ -14,6 +14,7 @@ import type {
   ChatDone,
   ChatError,
   ChatMessage as GeneratedChatMessage,
+  ChatTitle,
   ChatTool,
   ChatToolCall,
   ChatUsage,
@@ -26,19 +27,25 @@ import type {
   Environment,
   FFCInfo,
   FFCUpdate,
+  ImportResult,
   KeyStatus,
   Model,
+  OpenRouterAuth as GeneratedOpenRouterAuth,
   PasswordRequest,
   Preview,
   Profile as GeneratedProfile,
   PromptPreview as GeneratedPromptPreview,
   ProviderInfo,
   RemoveResult,
+  RunUsage,
+  SearchFilter,
+  SearchHit,
   SignInProgress,
   Site,
   SiteList,
   SiteSettings,
   UpdateInfo,
+  UsageTotals,
   Validation,
   WSLInfo,
 } from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services/models"
@@ -54,6 +61,7 @@ export type {
   ChatDelta,
   ChatDone,
   ChatError,
+  ChatTitle,
   ChatTool,
   ChatToolCall,
   ChatUsage,
@@ -65,17 +73,22 @@ export type {
   Environment,
   FFCInfo,
   FFCUpdate,
+  ImportResult,
   KeyStatus,
   Model,
   PasswordRequest,
   Preview,
   ProviderInfo,
   RemoveResult,
+  RunUsage,
+  SearchFilter,
+  SearchHit,
   SignInProgress,
   Site,
   SiteList,
   SiteSettings,
   UpdateInfo,
+  UsageTotals,
   Validation,
   WSLInfo,
 }
@@ -85,6 +98,10 @@ export type {
 // lists; these narrow them. backend.ts fills in the empty lists, so the UI
 // never meets null.
 
+/** How long a conversation is kept after its last message; 0 is forever. */
+export type RetentionDays = 0 | 30 | 90
+/** The formats ExportConversation writes. */
+export type ExportFormat = "json" | "md"
 /** What a conversation may do to its site. */
 export type ConversationMode = "read" | "ask"
 /** The kinds of provider SaveProvider accepts. */
@@ -121,8 +138,10 @@ export interface ChatMessage extends Omit<GeneratedChatMessage, "role" | "tools"
   tools: ChatToolCall[]
 }
 
-export interface ConversationDetail extends Omit<GeneratedConversationDetail, "messages"> {
+export interface ConversationDetail extends Omit<GeneratedConversationDetail, "messages" | "runUsage"> {
   messages: ChatMessage[]
+  /** Tokens and cost of each run, shown under the run's last message (msgID). */
+  runUsage: RunUsage[]
 }
 
 /** ffc's tool sets a profile can serve; none chosen means core and lifecycle. */
@@ -151,6 +170,14 @@ export interface PromptPreview extends Omit<GeneratedPromptPreview, "mode" | "to
   /** The stricter of the profile's mode and the conversation's switch. */
   mode: ConversationMode
   tools: string[]
+}
+
+/** An OpenRouter browser sign-in step; the last one is done, cancelled or failed. */
+export type OpenRouterAuthStatus = "browser" | "exchanging" | "verifying" | "done" | "cancelled" | "failed"
+
+/** auth:openrouter. It never carries the key. */
+export interface OpenRouterAuth extends Omit<GeneratedOpenRouterAuth, "status"> {
+  status: OpenRouterAuthStatus
 }
 
 /** A promise the caller can cancel (the Go side sees its context end). */
@@ -203,6 +230,8 @@ export interface Backend {
   deleteConversation(id: string): Promise<void>
   /** Refused (invalid) while a run is active in the conversation. */
   setConversationMode(id: string, mode: ConversationMode): Promise<void>
+  /** A title the user chose; no automatic title replaces it. Empty is refused (invalid). */
+  renameConversation(id: string, title: string): Promise<void>
 
   listProviders(): Promise<ProviderInfo[]>
   saveProvider(p: ProviderInfo): Promise<ProviderInfo>
@@ -210,6 +239,14 @@ export interface Backend {
   /** Saves the key in the OS keychain and checks it; a rejected key is not kept (code "auth"). */
   setKey(providerID: string, key: string): Promise<void>
   keyStatus(providerID: string): Promise<KeyStatus>
+  /**
+   * Gets an OpenRouter key through the browser (PKCE), checks it like setKey
+   * and saves it in the keychain; progress comes as onOpenRouterAuth, tagged
+   * with attempt. A cancel after the key exchange no longer stops the save.
+   * Cancelled (code "cancelled") by cancelOpenRouterSignIn.
+   */
+  signInOpenRouter(providerID: string, attempt: string): Promise<ProviderInfo>
+  cancelOpenRouterSignIn(): Promise<void>
   /** Looks for Ollama and LM Studio on this computer; saves nothing. */
   detectLocal(): Promise<ProviderInfo[]>
   listModels(providerID: string): Promise<Model[]>
@@ -229,13 +266,29 @@ export interface Backend {
   /** Opens an engine session (may sign in) but calls no tool. */
   promptPreview(convID: string): Promise<PromptPreview>
 
+  /** Finds messages by their words; a date filter is "YYYY-MM-DD". Archived conversations only with filter.archived. */
+  search(query: string, filter: SearchFilter, limit: number): Promise<SearchHit[]>
+  /** Does not change the conversation's updated time. */
+  pinConversation(convID: string, pinned: boolean): Promise<void>
+  archiveConversation(convID: string, archived: boolean): Promise<void>
+  getRetention(): Promise<RetentionDays>
+  /** Older conversations go at the next start and then daily, not at once. */
+  setRetention(days: RetentionDays): Promise<void>
+  /** Asks where to save; answers the path, or "" when the person cancelled. */
+  exportConversation(convID: string, format: ExportFormat): Promise<string>
+  /** Asks for a file; adds a new conversation (read only). */
+  importConversation(): Promise<ImportResult>
+
   onChatDelta(cb: (ev: ChatDelta) => void): () => void
   onChatTool(cb: (ev: ChatTool) => void): () => void
   onChatApproval(cb: (ev: ChatApproval) => void): () => void
   onChatApprovalClosed(cb: (ev: ChatApprovalClosed) => void): () => void
   onChatUsage(cb: (ev: ChatUsage) => void): () => void
+  /** The model named the conversation (after its first answer). */
+  onChatTitle(cb: (ev: ChatTitle) => void): () => void
   onChatDone(cb: (ev: ChatDone) => void): () => void
   onChatError(cb: (ev: ChatError) => void): () => void
+  onOpenRouterAuth(cb: (ev: OpenRouterAuth) => void): () => void
 
   onConfigChanged(cb: (ev: ConfigChanged) => void): () => void
   onSignInProgress(cb: (ev: SignInProgress) => void): () => void

@@ -20,6 +20,8 @@ const (
 	EventChatDone = "chat:done"
 	// EventChatError reports why a run failed.
 	EventChatError = "chat:error"
+	// EventChatTitle reports a conversation's new automatic title.
+	EventChatTitle = "chat:title"
 )
 
 // Tool call statuses in ChatTool and the store.
@@ -68,6 +70,19 @@ type ChatUsage struct {
 	Input  int    `json:"input"`
 	Output int    `json:"output"`
 	Cached int    `json:"cached"`
+	// CacheWrite is the part of Input written to the prompt cache.
+	CacheWrite int `json:"cacheWrite"`
+	// Cost is the turn's price in USD; nil when it is unknown or the model
+	// is local. CostSource is "provider", "table", "local", "unknown", or ""
+	// (a row from before 0.3.0: tokens only).
+	Cost       *float64 `json:"cost"`
+	CostSource string   `json:"costSource"`
+}
+
+// ChatTitle is the payload of EventChatTitle.
+type ChatTitle struct {
+	ConvID string `json:"convID"`
+	Title  string `json:"title"`
 }
 
 // ChatDone is the payload of EventChatDone.

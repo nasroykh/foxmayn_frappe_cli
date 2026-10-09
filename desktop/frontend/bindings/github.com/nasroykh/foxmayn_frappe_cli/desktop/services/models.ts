@@ -225,6 +225,14 @@ export interface ChatMessage {
 }
 
 /**
+ * ChatTitle is the payload of EventChatTitle.
+ */
+export interface ChatTitle {
+    "convID": string;
+    "title": string;
+}
+
+/**
  * ChatTool is the payload of EventChatTool.
  */
 export interface ChatTool {
@@ -271,6 +279,19 @@ export interface ChatUsage {
     "input": number;
     "output": number;
     "cached": number;
+
+    /**
+     * CacheWrite is the part of Input written to the prompt cache.
+     */
+    "cacheWrite": number;
+
+    /**
+     * Cost is the turn's price in USD; nil when it is unknown or the model
+     * is local. CostSource is "provider", "table", "local", "unknown", or ""
+     * (a row from before 0.3.0: tokens only).
+     */
+    "cost": number | null;
+    "costSource": string;
 }
 
 /**
@@ -325,6 +346,15 @@ export interface Conversation {
     "profileID": string;
     "created": string;
     "updated": string;
+
+    /**
+     * Pinned and Archived are the user's marks; Ephemeral is set by a
+     * profile that keeps no history (the conversation is deleted when the
+     * app closes). Only ListConversations fills them.
+     */
+    "pinned"?: boolean;
+    "archived"?: boolean;
+    "ephemeral"?: boolean;
 }
 
 /**
@@ -343,6 +373,13 @@ export interface ConversationDetail {
      * PausedRunID is the run waiting for Continue, if any.
      */
     "pausedRunID": string;
+
+    /**
+     * RunUsage is the tokens and cost of each run, shown under the run's
+     * last message. Total adds up every call of the conversation.
+     */
+    "runUsage": RunUsage[] | null;
+    "total": UsageTotals;
 }
 
 /**
@@ -459,6 +496,17 @@ export interface FFCUpdate {
 }
 
 /**
+ * ImportResult is the answer of ImportConversation.
+ */
+export interface ImportResult {
+    /**
+     * Cancelled is true when the person closed the file dialog.
+     */
+    "cancelled": boolean;
+    "conversation": Conversation;
+}
+
+/**
  * InstallerLine is the payload of EventInstallerLog.
  */
 export interface InstallerLine {
@@ -489,6 +537,31 @@ export interface Model {
      * Default marks the model the app picks first.
      */
     "default": boolean;
+}
+
+/**
+ * OpenRouterAuth is the payload of EventOpenRouterAuth.
+ */
+export interface OpenRouterAuth {
+    "providerID": string;
+
+    /**
+     * Attempt is SignInOpenRouter's attempt of the sign-in it belongs to.
+     */
+    "attempt"?: string;
+    "status": string;
+
+    /**
+     * AuthURL is OpenRouter's sign-in page (status "browser"), so the UI can
+     * offer to copy it when the browser did not open. It carries no secret:
+     * the PKCE verifier stays in Go.
+     */
+    "authURL"?: string;
+
+    /**
+     * BrowserError is set when the browser could not be opened.
+     */
+    "browserError"?: string;
 }
 
 /**
@@ -680,6 +753,54 @@ export interface RemoveResult {
 }
 
 /**
+ * RunUsage is what one run (a question and its answer) used. MsgID is the
+ * last assistant message of the run, where the chat shows the line; "" when
+ * the run left none.
+ */
+export interface RunUsage {
+    "runID": string;
+    "msgID": string;
+    "usage": UsageTotals;
+}
+
+/**
+ * SearchFilter narrows Search. Empty fields mean no limit.
+ */
+export interface SearchFilter {
+    "site": string;
+    "profileID": string;
+
+    /**
+     * From and To are dates ("2026-10-09", local time); a conversation is
+     * found when it was last updated on or between them.
+     */
+    "from": string;
+    "to": string;
+
+    /**
+     * Archived searches the archive instead of the other conversations.
+     */
+    "archived": boolean;
+}
+
+/**
+ * SearchHit is one message that matches a search.
+ */
+export interface SearchHit {
+    "convID": string;
+    "title": string;
+    "site": string;
+    "msgID": string;
+
+    /**
+     * Snippet is the matching words with some text around them.
+     */
+    "snippet": string;
+    "updated": string;
+    "pinned": boolean;
+}
+
+/**
  * SignInProgress is the payload of EventSignInProgress.
  */
 export interface SignInProgress {
@@ -817,6 +938,26 @@ export interface UpdateInfo {
      * FFC compares the installed ffc with the newest ffc release.
      */
     "ffc": FFCUpdate;
+}
+
+/**
+ * UsageTotals adds up the token counts and costs of some calls. When Unknown
+ * is set the cost of some call is not known: CostUSD is then "at least". A
+ * call on a local model, and a row stored before 0.3.0 (cost_source ""), count
+ * tokens only and never make a total unknown.
+ */
+export interface UsageTotals {
+    "input": number;
+    "output": number;
+    "cached": number;
+    "cacheWrite": number;
+
+    /**
+     * CostUSD sums the calls that have a cost; HasCost says any has.
+     */
+    "costUSD": number;
+    "hasCost": boolean;
+    "unknown": boolean;
 }
 
 /**

@@ -26,6 +26,9 @@ function show() {
   )
 }
 
+/** The open conversation's title in the chat header. */
+const chatTitle = () => document.querySelector("section > header h2")?.textContent
+
 async function send(text: string) {
   const input = (await screen.findByLabelText("Message")) as HTMLTextAreaElement
   await waitFor(() => expect(input.disabled).toBe(false))
@@ -59,6 +62,43 @@ describe("Assistant screen with the mock backend", () => {
     fireEvent.click(screen.getByRole("button", { name: "Approve" }))
     await waitFor(() => expect(screen.queryByRole("button", { name: "Decline" })).toBeNull(), { timeout: 5000 })
     await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy(), { timeout: 8000 })
+  }, 20000)
+
+  it("shows the cost of a run and the total, names the conversation, and lets the user rename it", async () => {
+    await backend.newConversation("acme-prod", "read", "anthropic", "claude-sonnet-5-5")
+    show()
+    await send("What is TD-0001?")
+    // The stored line under the answer, and the header total (which includes the title call).
+    await waitFor(() => expect(document.querySelector('[data-cost-kind="exact"]')?.textContent).toContain("$0.0156"), { timeout: 12000 })
+    await waitFor(() => expect(screen.getByTestId("usage-total").textContent).toMatch(/Total: .*\$0\.03/), { timeout: 8000 })
+    // The model's title replaces the first words of the message.
+    await waitFor(() => expect(chatTitle()).toBe("Open ToDos"), { timeout: 8000 })
+    // The user's name stays.
+    fireEvent.click(screen.getByRole("button", { name: "Rename this conversation" }))
+    const field = screen.getByLabelText("Conversation name") as HTMLInputElement
+    fireEvent.change(field, { target: { value: "My todos" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }))
+    await waitFor(() => expect(chatTitle()).toBe("My todos"), { timeout: 5000 })
+    expect((await backend.listConversations())[0].title).toBe("My todos")
+  }, 30000)
+
+  it("saves a name even when it is unchanged, so confirming it locks it", async () => {
+    await backend.newConversation("acme-prod", "read", "anthropic", "claude-sonnet-5-5")
+    const rename = vi.spyOn(backend, "renameConversation")
+    show()
+    await send("What is TD-0001?")
+    await waitFor(() => expect(chatTitle()).toBe("Open ToDos"), { timeout: 12000 })
+    fireEvent.click(screen.getByRole("button", { name: "Rename this conversation" }))
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }))
+    await waitFor(() => expect(rename).toHaveBeenCalledWith(expect.any(String), "Open ToDos"))
+    rename.mockRestore()
+  }, 30000)
+
+  it("says cost unknown for a model that is not in the price table", async () => {
+    await backend.newConversation("acme-prod", "read", "anthropic", "mystery-model")
+    show()
+    await send("What is TD-0001?")
+    await waitFor(() => expect(document.querySelector('[data-cost-kind="unknown"]')?.textContent).toContain("cost unknown"), { timeout: 12000 })
   }, 20000)
 
   it("shows the error alert for a failing run", async () => {

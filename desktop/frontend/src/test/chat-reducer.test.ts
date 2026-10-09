@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import type { ChatApproval, ConversationDetail } from "@/lib/backend-types"
+import type { ChatApproval, ChatUsage, ConversationDetail } from "@/lib/backend-types"
 import { chatReducer, initialState, ownsRun, type ChatAction, type ChatState } from "@/screens/assistant/chat-reducer"
 
 function run(actions: ChatAction[], from: ChatState = initialState("c1")) {
@@ -29,6 +29,8 @@ function detail(over: Partial<ConversationDetail> = {}): ConversationDetail {
     messages: [],
     activeRunID: "",
     pausedRunID: "",
+    runUsage: [],
+    total: { input: 0, output: 0, cached: 0, cacheWrite: 0, costUSD: 0, hasCost: false, unknown: false },
     ...over,
   }
 }
@@ -174,6 +176,24 @@ describe("chat reducer", () => {
       phase: "paused",
       runID: "r3",
     })
+  })
+
+  it("adds up the usage of the run, and an unknown turn makes it unknown", () => {
+    const ev = (over: Partial<ChatUsage>): ChatAction => ({
+      type: "usage",
+      ev: { convID: "c1", runID: "r1", turn: 1, input: 100, output: 10, cached: 5, cacheWrite: 0, cost: 0.01, costSource: "table", ...over },
+    })
+    let s = run([ev({}), ev({ turn: 2, cost: 0.02 })], started())
+    expect(s.usage).toMatchObject({ input: 200, output: 20, cached: 10, hasCost: true, unknown: false })
+    expect(s.usage.costUSD).toBeCloseTo(0.03)
+    s = run([ev({ turn: 3, cost: null, costSource: "unknown" })], s)
+    expect(s.usage).toMatchObject({ hasCost: true, unknown: true })
+    // A local model has tokens only: no cost, and nothing unknown about it.
+    s = run([ev({ cost: null, costSource: "local" })], started())
+    expect(s.usage).toMatchObject({ input: 100, hasCost: false, unknown: false })
+    // Another run's usage, and a load, leave or clear it.
+    expect(run([ev({ runID: "r9" })], started()).usage.input).toBe(0)
+    expect(chatReducer(s, { type: "loaded", detail: detail() }).usage.input).toBe(0)
   })
 
   it("a failed send goes back to idle with the error", () => {

@@ -30,6 +30,7 @@ func init() {
 	application.RegisterEvent[ChatUsage](EventChatUsage)
 	application.RegisterEvent[ChatDone](EventChatDone)
 	application.RegisterEvent[ChatError](EventChatError)
+	application.RegisterEvent[ChatTitle](EventChatTitle)
 }
 
 // Conversation modes: what the assistant may do to the site.
@@ -99,6 +100,12 @@ type Conversation struct {
 	ProfileID  string    `json:"profileID"`
 	Created    time.Time `json:"created"`
 	Updated    time.Time `json:"updated"`
+	// Pinned and Archived are the user's marks; Ephemeral is set by a
+	// profile that keeps no history (the conversation is deleted when the
+	// app closes). Only ListConversations fills them.
+	Pinned    bool `json:"pinned,omitempty"`
+	Archived  bool `json:"archived,omitempty"`
+	Ephemeral bool `json:"ephemeral,omitempty"`
 }
 
 // ChatToolCall is a tool call of an assistant message, as the chat shows it.
@@ -134,6 +141,10 @@ type ConversationDetail struct {
 	ActiveRunID string `json:"activeRunID"`
 	// PausedRunID is the run waiting for Continue, if any.
 	PausedRunID string `json:"pausedRunID"`
+	// RunUsage is the tokens and cost of each run, shown under the run's
+	// last message. Total adds up every call of the conversation.
+	RunUsage []RunUsage  `json:"runUsage"`
+	Total    UsageTotals `json:"total"`
 }
 
 // providerMaker builds the client of a provider row. A seam for tests.
@@ -149,6 +160,8 @@ type AssistantService struct {
 	keys       *Keys
 	mk         providerMaker
 	detect     func(context.Context) []openaicompat.Preset
+	// noTitles turns off the automatic titles (tests that count requests).
+	noTitles bool
 
 	life     sync.RWMutex // held for reading by every call from the web view
 	plocks   sync.Map     // provider id -> *sync.Mutex
@@ -159,6 +172,8 @@ type AssistantService struct {
 	engine   *Engine
 	run      *runner
 	startErr error
+	or       orAuth // the OpenRouter browser sign-in (openrouter_auth.go)
+	hist     historyState
 }
 
 // NewAssistantService returns the service over the ffc config file at
@@ -201,11 +216,13 @@ func (a *AssistantService) open() error {
 	eng := NewEngine(a.configPath)
 	r := newRunner(st, eng, a.providerFor, a.host.Emit)
 	r.check = a.checkRun
+	r.titles = !a.noTitles
 	ctx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
 	a.st, a.engine, a.run = st, eng, r
 	a.ctx, a.cancel = ctx, cancel
 	a.mu.Unlock()
+	a.startHistory(ctx)
 	// A changed config (a site added, removed or re-signed-in) makes new runs
 	// build their servers again.
 	if s, ok := a.host.(interface {
@@ -227,6 +244,7 @@ func (a *AssistantService) ServiceShutdown() error {
 	if cancel != nil {
 		cancel()
 	}
+	a.hist.stop()
 	if r != nil {
 		r.shutdown()
 	}
@@ -236,6 +254,7 @@ func (a *AssistantService) ServiceShutdown() error {
 	a.life.Lock()
 	defer a.life.Unlock()
 	if st != nil {
+		endHistory(st)
 		return st.Close()
 	}
 	return nil
@@ -288,7 +307,7 @@ func (a *AssistantService) Send(convID, text string) (string, error) {
 		return "", err
 	}
 	if conv.Title == "" {
-		_ = st.RenameConversation(convID, clip(firstLine(text), titleChars))
+		_ = st.SetFallbackTitle(convID, clip(firstLine(text), titleChars))
 	}
 	return runID, nil
 }
@@ -398,9 +417,15 @@ func (a *AssistantService) ListConversations() ([]Conversation, error) {
 	if err != nil {
 		return nil, wrapStoreErr(err)
 	}
+	states, err := st.ConvStates()
+	if err != nil {
+		return nil, wrapStoreErr(err)
+	}
 	out := make([]Conversation, len(rows))
 	for i, c := range rows {
 		out[i] = toConversation(c)
+		s := states[c.ID]
+		out[i].Pinned, out[i].Archived, out[i].Ephemeral = s.Pinned, s.Archived, s.Ephemeral
 	}
 	return out, nil
 }
@@ -470,6 +495,9 @@ func (a *AssistantService) GetConversation(id string) (ConversationDetail, error
 		}
 		d.Messages = append(d.Messages, cm)
 	}
+	if d.RunUsage, d.Total, err = conversationUsage(st, runs, d.Messages, id); err != nil {
+		return ConversationDetail{}, wrapStoreErr(err)
+	}
 	return d, nil
 }
 
@@ -496,6 +524,8 @@ func (a *AssistantService) DeleteConversation(id string) error {
 	}
 	defer done()
 	return r.whileIdle(id, func() error {
+		// A title call still out for it ends with the conversation.
+		r.cancelTitleLocked(id)
 		if err := st.DeleteConversation(id); err != nil {
 			return wrapStoreErr(err)
 		}
@@ -828,6 +858,16 @@ func (a *AssistantService) SetKey(providerID, key string) error {
 	if err != nil {
 		return err
 	}
+	ctx, cancel := a.callCtx()
+	defer cancel()
+	return a.verifyAndSaveKey(ctx, p, key)
+}
+
+// verifyAndSaveKey is SetKey's check and save, for a key typed in or one
+// from a browser sign-in: the provider must accept the key (a Models call
+// within ctx) before it goes to the keychain. The caller holds
+// lockProvider(p.ID).
+func (a *AssistantService) verifyAndSaveKey(ctx context.Context, p store.Provider, key string) error {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return invalid("key", "Paste the API key.")
@@ -839,8 +879,6 @@ func (a *AssistantService) SetKey(providerID, key string) error {
 	if err != nil {
 		return scrubKey(toServiceError(err), key)
 	}
-	ctx, cancel := a.callCtx()
-	defer cancel()
 	if _, err := prov.Models(ctx); err != nil {
 		var se *Error
 		switch {
@@ -853,7 +891,7 @@ func (a *AssistantService) SetKey(providerID, key string) error {
 		}
 		return scrubKey(se, key)
 	}
-	return a.keys.Set(providerID, key)
+	return a.keys.Set(p.ID, key)
 }
 
 // scrubKey removes the key from an error's text, whatever it holds.

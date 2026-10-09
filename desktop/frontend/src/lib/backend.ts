@@ -14,6 +14,7 @@ import type {
   ChatApproval,
   ChatMessage,
   ConversationDetail,
+  OpenRouterAuth,
   Profile,
   PromptPreview,
   Toolset,
@@ -59,7 +60,7 @@ function detail(d: wire.ConversationDetail): ConversationDetail {
     role: m.role === "assistant" ? "assistant" : "user",
     tools: m.tools ?? [],
   }))
-  return { ...d, messages }
+  return { ...d, messages, runUsage: d.runUsage ?? [] }
 }
 
 function profile(p: wire.Profile): Profile {
@@ -119,12 +120,15 @@ export const backend: Backend = {
   getConversation: async (id) => detail(await AssistantService.GetConversation(id)),
   deleteConversation: (id) => AssistantService.DeleteConversation(id),
   setConversationMode: (id, mode) => AssistantService.SetConversationMode(id, mode),
+  renameConversation: (id, title) => AssistantService.Rename(id, title),
 
   listProviders: async () => (await AssistantService.ListProviders()) ?? [],
   saveProvider: (p) => AssistantService.SaveProvider(p),
   deleteProvider: (id) => AssistantService.DeleteProvider(id),
   setKey: (providerID, key) => AssistantService.SetKey(providerID, key),
   keyStatus: (providerID) => AssistantService.KeyStatus(providerID),
+  signInOpenRouter: (providerID, attempt) => AssistantService.SignInOpenRouter(providerID, attempt),
+  cancelOpenRouterSignIn: () => AssistantService.CancelSignIn(),
   detectLocal: async () => (await AssistantService.DetectLocal()) ?? [],
   listModels: async (providerID) => (await AssistantService.ListModels(providerID)) ?? [],
 
@@ -137,13 +141,26 @@ export const backend: Backend = {
   saveSiteSettings: (s) => AssistantService.SaveSiteSettings(s),
   promptPreview: async (convID) => preview(await AssistantService.PromptPreview(convID)),
 
+  search: async (query, filter, limit) => (await AssistantService.Search(query, filter, limit)) ?? [],
+  pinConversation: (convID, pinned) => AssistantService.Pin(convID, pinned),
+  archiveConversation: (convID, archived) => AssistantService.Archive(convID, archived),
+  getRetention: async () => {
+    const days = await AssistantService.GetRetention()
+    return days === 30 || days === 90 ? days : 0
+  },
+  setRetention: (days) => AssistantService.SetRetention(days),
+  exportConversation: (convID, format) => AssistantService.ExportConversation(convID, format),
+  importConversation: () => AssistantService.ImportConversation(),
+
   onChatDelta: (cb) => Events.On("chat:delta", (ev) => cb(ev.data)),
   onChatTool: (cb) => Events.On("chat:tool", (ev) => cb(ev.data)),
   onChatApproval: (cb) => Events.On("chat:approval", (ev) => cb(approval(ev.data))),
   onChatApprovalClosed: (cb) => Events.On("chat:approval-closed", (ev) => cb(ev.data)),
   onChatUsage: (cb) => Events.On("chat:usage", (ev) => cb(ev.data)),
+  onChatTitle: (cb) => Events.On("chat:title", (ev) => cb(ev.data)),
   onChatDone: (cb) => Events.On("chat:done", (ev) => cb(ev.data)),
   onChatError: (cb) => Events.On("chat:error", (ev) => cb(ev.data)),
+  onOpenRouterAuth: (cb) => Events.On("auth:openrouter", (ev) => cb(ev.data as OpenRouterAuth)),
 
   onConfigChanged: (cb) => Events.On("config:changed", (ev) => cb(ev.data)),
   onSignInProgress: (cb) => Events.On("signin:progress", (ev) => cb(ev.data)),
