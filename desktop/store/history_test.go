@@ -358,7 +358,7 @@ func TestImportConversationMakesNewIDsAndRefusesBadRefs(t *testing.T) {
 		},
 		Runs:      []Run{{ID: "r1", Status: "done", Steps: 1, Started: time.UnixMilli(5), Ended: time.UnixMilli(7)}},
 		ToolCalls: []ToolCall{{ID: "t1", RunID: "r1", MsgID: "m2", Tool: "x", Site: "acme", ArgsJSON: "{}", Status: "ok", Started: time.UnixMilli(6)}},
-		Usage:     []UsageRow{{RunID: "r1", Turn: 1, Input: 3, Output: 4}},
+		Usage:     []Usage{{RunID: "r1", Turn: 1, Input: 3, Output: 4}},
 	}
 	c, err := s.ImportConversation(in)
 	if err != nil {
@@ -401,7 +401,7 @@ func TestImportConversationMakesNewIDsAndRefusesBadRefs(t *testing.T) {
 		d.Messages = append([]Message(nil), in.Messages...)
 		d.Runs = append([]Run(nil), in.Runs...)
 		d.ToolCalls = append([]ToolCall(nil), in.ToolCalls...)
-		d.Usage = append([]UsageRow(nil), in.Usage...)
+		d.Usage = append([]Usage(nil), in.Usage...)
 		mut(&d)
 		if _, err := s.ImportConversation(d); err == nil {
 			t.Errorf("%s: accepted", name)

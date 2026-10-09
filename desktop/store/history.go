@@ -216,47 +216,6 @@ func (s *Store) SearchConversations(query string, f SearchFilter) ([]SearchHit, 
 	return out, nil
 }
 
-// UsageRow is one usage row with every column (Usage has the token counts
-// only).
-type UsageRow struct {
-	RunID      string
-	Turn       int
-	Kind       string
-	Input      int
-	Output     int
-	Cached     int
-	CacheWrite int
-	CostUSD    *float64
-	CostSource string
-	PriceDate  string
-}
-
-// ListUsageRows returns a run's usage rows, every kind, by turn.
-func (s *Store) ListUsageRows(runID string) ([]UsageRow, error) {
-	rows, err := s.db.Query(`SELECT run_id,turn,kind,input,output,cached,cache_write,cost_usd,cost_source,price_date FROM usage WHERE run_id=? ORDER BY turn, kind`, runID)
-	if err != nil {
-		return nil, fmt.Errorf("list usage rows: %w", err)
-	}
-	defer rows.Close()
-	var out []UsageRow
-	for rows.Next() {
-		var u UsageRow
-		var cost sql.NullFloat64
-		if err := rows.Scan(&u.RunID, &u.Turn, &u.Kind, &u.Input, &u.Output, &u.Cached, &u.CacheWrite, &cost, &u.CostSource, &u.PriceDate); err != nil {
-			return nil, fmt.Errorf("list usage rows: %w", err)
-		}
-		if cost.Valid {
-			c := cost.Float64
-			u.CostUSD = &c
-		}
-		out = append(out, u)
-	}
-	if err := rowsErr(rows, "list usage rows"); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // ExportData is a conversation with everything that belongs to it, or the
 // parts of a file to import: Import uses the ids only to tell which message
 // or run a row points to.
@@ -265,7 +224,10 @@ type ExportData struct {
 	Messages     []Message
 	Runs         []Run
 	ToolCalls    []ToolCall
-	Usage        []UsageRow
+	Usage        []Usage
+	// TitleSource says where the title came from (TitleFallback, TitleAuto,
+	// TitleUser). It is read on export; an import is always TitleUser.
+	TitleSource string
 }
 
 // ReadConversation returns a conversation with its messages, runs, tool
@@ -276,6 +238,11 @@ func (s *Store) ReadConversation(id string) (ExportData, error) {
 	if d.Conversation, err = s.GetConversation(id); err != nil {
 		return ExportData{}, err
 	}
+	ts, err := s.GetTitleState(id)
+	if err != nil {
+		return ExportData{}, err
+	}
+	d.TitleSource = ts.Source
 	if d.Messages, err = s.ListMessages(id); err != nil {
 		return ExportData{}, err
 	}
@@ -288,7 +255,7 @@ func (s *Store) ReadConversation(id string) (ExportData, error) {
 			return ExportData{}, err
 		}
 		d.ToolCalls = append(d.ToolCalls, calls...)
-		u, err := s.ListUsageRows(r.ID)
+		u, err := s.ListUsage(r.ID)
 		if err != nil {
 			return ExportData{}, err
 		}
@@ -308,15 +275,19 @@ func endMS(t time.Time) int64 {
 	return t.UTC().UnixMilli()
 }
 
-// ImportedPrefix starts the id of every message ImportConversation stores. A
-// message with it came from a file, so it is shown but never replayed to a
-// model as a turn of its own (see IsImportedID).
+// ImportedPrefix starts the id of every message and run ImportConversation
+// stores. A message with it came from a file, so it is shown but never
+// replayed to a model as a turn of its own. A run with it, and the usage rows
+// under it, is history, not spend of this installation: a budget that counts
+// cost leaves the runs matching `id LIKE 'imp\_%' ESCAPE '\'` out, while the
+// conversation's totals still show them.
 const ImportedPrefix = "imp_"
 
-// IsImportedID reports whether a message id belongs to an imported message.
+// IsImportedID reports whether a message or run id is that of an imported one.
 func IsImportedID(id string) bool { return strings.HasPrefix(id, ImportedPrefix) }
 
-// ImportConversation stores d as a new conversation. Every id is made anew:
+// ImportConversation stores d as a new conversation. The title is the user's
+// (TitleUser), so no automatic title replaces it. Every id is made anew:
 // the ids in d only link its rows to each other, and a row that points to an
 // id d does not hold is ErrBadImport. The conversation's own times are now;
 // its messages, runs and tool calls keep theirs. Everything is stored or
@@ -330,8 +301,8 @@ func (s *Store) ImportConversation(d ExportData) (Conversation, error) {
 		return Conversation{}, fmt.Errorf("import conversation: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`INSERT INTO conversations(id,title,site,mode,provider_id,model,profile_id,site_url,site_context,site_context_key,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		c.ID, c.Title, c.Site, c.Mode, c.ProviderID, c.Model, c.ProfileID, c.SiteURL, c.SiteContext, c.SiteContextKey, now, now); err != nil {
+	if _, err := tx.Exec(`INSERT INTO conversations(id,title,title_source,site,mode,provider_id,model,profile_id,site_url,site_context,site_context_key,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		c.ID, c.Title, TitleUser, c.Site, c.Mode, c.ProviderID, c.Model, c.ProfileID, c.SiteURL, c.SiteContext, c.SiteContextKey, now, now); err != nil {
 		return Conversation{}, fmt.Errorf("import conversation: %w", err)
 	}
 	msgs := make(map[string]string, len(d.Messages))
@@ -351,7 +322,7 @@ func (s *Store) ImportConversation(d ExportData) (Conversation, error) {
 		if _, dup := runs[r.ID]; dup || r.ID == "" {
 			return Conversation{}, fmt.Errorf("import conversation: run id %q: %w", r.ID, ErrBadImport)
 		}
-		id := newID()
+		id := ImportedPrefix + newID()
 		runs[r.ID] = id
 		if _, err := tx.Exec(`INSERT INTO runs(id,conv_id,status,steps,error,started,ended) VALUES(?,?,?,?,?,?,?)`,
 			id, c.ID, r.Status, r.Steps, r.Error, endMS(r.Started), endMS(r.Ended)); err != nil {
@@ -376,6 +347,12 @@ func (s *Store) ImportConversation(d ExportData) (Conversation, error) {
 			return Conversation{}, fmt.Errorf("import conversation: %w", err)
 		}
 	}
+	type usageKey struct {
+		run  string
+		turn int
+		kind string
+	}
+	seenUsage := map[usageKey]bool{}
 	for _, u := range d.Usage {
 		runID, ok := runs[u.RunID]
 		if !ok {
@@ -387,7 +364,15 @@ func (s *Store) ImportConversation(d ExportData) (Conversation, error) {
 		}
 		kind := u.Kind
 		if kind == "" {
-			kind = "turn"
+			kind = UsageTurn
+		}
+		if kind != UsageTurn && kind != UsageTitle {
+			return Conversation{}, fmt.Errorf("import conversation: usage kind %q: %w", kind, ErrBadImport)
+		}
+		if k := (usageKey{runID, u.Turn, kind}); seenUsage[k] {
+			return Conversation{}, fmt.Errorf("import conversation: usage of turn %d twice: %w", u.Turn, ErrBadImport)
+		} else {
+			seenUsage[k] = true
 		}
 		if _, err := tx.Exec(`INSERT INTO usage(run_id,turn,kind,input,output,cached,cache_write,cost_usd,cost_source,price_date) VALUES(?,?,?,?,?,?,?,?,?,?)`,
 			runID, u.Turn, kind, u.Input, u.Output, u.Cached, u.CacheWrite, cost, u.CostSource, u.PriceDate); err != nil {

@@ -107,6 +107,8 @@ func normalize(t *testing.T, raw []byte) map[string]any {
 	delete(conv, "updated")
 	// An import never takes the site context: the first run collects its own.
 	conv["site_context"], conv["site_context_key"] = "", ""
+	// An import always makes the title the user's.
+	conv["title_source"] = ""
 	msgIdx, runIdx := map[string]string{}, map[string]string{}
 	for i, m := range f["messages"].([]any) {
 		mm := m.(map[string]any)
@@ -162,6 +164,9 @@ func TestExportImportExportRoundTrip(t *testing.T) {
 	if shape.Format != "foxmayn-desktop-conversation" || shape.Version != 1 || len(shape.Messages) != 4 || len(shape.Runs) != 1 || len(shape.ToolCalls) != 1 || len(shape.Usage) == 0 {
 		t.Fatalf("export shape: %s", raw1)
 	}
+	if !strings.Contains(string(raw1), `"title_source": ""`) {
+		t.Errorf("the export should carry the title's origin: %s", raw1)
+	}
 	if len(dh.asked) == 0 || dh.asked[0] != "save:what-is-td-1.json:*.json" {
 		t.Errorf("dialog: %v", dh.asked)
 	}
@@ -187,6 +192,9 @@ func TestExportImportExportRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw2, _ := os.ReadFile(second)
+	if !strings.Contains(string(raw2), `"title_source": "user"`) {
+		t.Errorf("an imported title should be the user's: %s", raw2)
+	}
 	n1, n2 := normalize(t, raw1), normalize(t, raw2)
 	b1, _ := json.Marshal(n1)
 	b2, _ := json.Marshal(n2)

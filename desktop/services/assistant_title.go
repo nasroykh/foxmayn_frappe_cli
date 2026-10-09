@@ -251,6 +251,9 @@ func firstExchange(st *store.Store, convID string) (user, reply string) {
 		return "", ""
 	}
 	for _, m := range rows {
+		if store.IsImportedID(m.ID) {
+			continue // a file's messages are not the exchange being titled
+		}
 		parts, err := llm.UnmarshalParts(m.PartsJSON)
 		if err != nil {
 			continue

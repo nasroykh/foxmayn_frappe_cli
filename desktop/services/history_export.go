@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/prices"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/store"
 )
 
@@ -29,6 +31,9 @@ const (
 	maxImportRuns      = 100_000
 	maxImportToolCalls = 200_000
 	maxImportUsage     = 200_000
+	// The largest cost (US dollars) and token count one usage row may hold.
+	maxImportCostUSD = 10_000
+	maxImportTokens  = 1_000_000_000_000
 
 	// Longest values in a file: ids, names and statuses; titles; the site's
 	// address; the collected site context; text blobs (message parts, tool
@@ -56,6 +61,7 @@ type exportFile struct {
 type exportConv struct {
 	ID             string `json:"id"`
 	Title          string `json:"title"`
+	TitleSource    string `json:"title_source"`
 	Site           string `json:"site"`
 	SiteURL        string `json:"site_url"`
 	Mode           string `json:"mode"`
@@ -137,7 +143,7 @@ func buildExport(d store.ExportData, profile *Profile) (exportFile, error) {
 	f := exportFile{
 		Format: exportFormat, Version: exportVersion,
 		Conversation: exportConv{
-			ID: c.ID, Title: c.Title, Site: c.Site, SiteURL: stripUserinfo(c.SiteURL), Mode: c.Mode, ProviderID: c.ProviderID, Model: c.Model,
+			ID: c.ID, Title: c.Title, TitleSource: d.TitleSource, Site: c.Site, SiteURL: stripUserinfo(c.SiteURL), Mode: c.Mode, ProviderID: c.ProviderID, Model: c.Model,
 			ProfileID: c.ProfileID, SiteContext: c.SiteContext, SiteContextKey: c.SiteContextKey,
 			Created: fmtTime(c.Created), Updated: fmtTime(c.Updated),
 		},
@@ -244,6 +250,11 @@ func parseImport(data []byte) (store.ExportData, error) {
 	}
 	if utf8.RuneCountInString(c.Title) > maxTitleField || len(c.SiteURL) > maxURLField {
 		return store.ExportData{}, badFile("The file has a title or address that is too long.")
+	}
+	switch c.TitleSource {
+	case store.TitleFallback, store.TitleAuto, store.TitleUser:
+	default:
+		return store.ExportData{}, badFile("The file has a title of an unknown origin.")
 	}
 	for what, s := range map[string]string{"provider": c.ProviderID, "model": c.Model, "profile": c.ProfileID} {
 		if err := checkShort(what, s); err != nil {
@@ -357,10 +368,28 @@ func parseImport(data []byte) (store.ExportData, error) {
 				return store.ExportData{}, err
 			}
 		}
-		if u.Turn < 0 || u.Input < 0 || u.Output < 0 || u.Cached < 0 || u.CacheWrite < 0 || (u.CostUSD != nil && *u.CostUSD < 0) {
+		// Only the kinds and cost sources the app writes; a cost within
+		// reason (not NaN, not infinite); token counts that cannot overflow a
+		// total. An imported row is history: it keeps its source, and the
+		// run under it is marked as imported (store.ImportedPrefix).
+		switch u.Kind {
+		case "", store.UsageTurn, store.UsageTitle:
+		default:
+			return store.ExportData{}, badFile("A usage row in the file has a kind this app does not know.")
+		}
+		switch u.CostSource {
+		case "", prices.SourceProvider, prices.SourceTable, prices.SourceLocal, prices.SourceUnknown:
+		default:
+			return store.ExportData{}, badFile("A usage row in the file has a cost source this app does not know.")
+		}
+		if u.CostUSD != nil && (math.IsNaN(*u.CostUSD) || math.IsInf(*u.CostUSD, 0) || *u.CostUSD < 0 || *u.CostUSD > maxImportCostUSD) {
+			return store.ExportData{}, badFile("A usage row in the file has a cost that cannot be right.")
+		}
+		if u.Turn < 0 || u.Input < 0 || u.Output < 0 || u.Cached < 0 || u.CacheWrite < 0 ||
+			u.Turn > maxImportTokens || u.Input > maxImportTokens || u.Output > maxImportTokens || u.Cached > maxImportTokens || u.CacheWrite > maxImportTokens {
 			return store.ExportData{}, badFile("A usage row in the file cannot be read.")
 		}
-		out.Usage = append(out.Usage, store.UsageRow{RunID: u.RunID, Turn: u.Turn, Kind: u.Kind, Input: u.Input, Output: u.Output, Cached: u.Cached,
+		out.Usage = append(out.Usage, store.Usage{RunID: u.RunID, Turn: u.Turn, Kind: u.Kind, Input: u.Input, Output: u.Output, Cached: u.Cached,
 			CacheWrite: u.CacheWrite, CostUSD: u.CostUSD, CostSource: u.CostSource, PriceDate: u.PriceDate})
 	}
 	return out, nil

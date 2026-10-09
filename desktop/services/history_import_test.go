@@ -322,3 +322,104 @@ func TestExportStripsUserinfoFromTheSiteAddress(t *testing.T) {
 		t.Errorf("export: %s", b)
 	}
 }
+
+func TestImportedTitleIsTheUsersAndNeverRetitled(t *testing.T) {
+	g, _ := historyRig(t, textTurn("ok"))
+	g.provider(t)
+	g.a.run.titles = true
+	c := importFrom(t, g, importFile(exportConv{Title: "Mine", TitleSource: store.TitleAuto, ProviderID: "p1"}, []exportMessage{
+		{ID: "m1", Role: "user", Parts: partsJSON(t, llm.Text{Text: "old question"})},
+		{ID: "m2", Role: "assistant", Parts: partsJSON(t, llm.Text{Text: "old answer"})},
+	}))
+	_, st, done, _ := g.a.enter()
+	ts, err := st.GetTitleState(c.ID)
+	done()
+	if err != nil || ts.Source != store.TitleUser {
+		t.Fatalf("title state: %+v %v", ts, err)
+	}
+	// Nothing in the imported rows is the exchange to title.
+	if u, r := firstExchange(g.a.st, c.ID); u != "" || r != "" {
+		t.Errorf("firstExchange read imported rows: %q %q", u, r)
+	}
+	if _, err := g.a.Send(c.ID, "new question"); err != nil {
+		t.Fatal(err)
+	}
+	g.done(t, 1)
+	g.a.run.wg.Wait()
+	if n := len(g.prov.Requests()); n != 1 {
+		t.Errorf("%d model calls; a title call was made", n)
+	}
+	d, err := g.a.GetConversation(c.ID)
+	if err != nil || d.Conversation.Title != "Mine" {
+		t.Errorf("title: %+v %v", d.Conversation, err)
+	}
+}
+
+func TestImportedUsageIsMarkedAndChecked(t *testing.T) {
+	g, _ := historyRig(t)
+	g.provider(t)
+	one := 0.25
+	f := importFile(exportConv{Title: "T", ProviderID: "p1"}, []exportMessage{{ID: "m1", Role: "user", Parts: partsJSON(t, llm.Text{Text: "hi"})}})
+	f.Runs = []exportRun{{ID: "r1", Status: "done"}}
+	f.Usage = []exportUsage{
+		{RunID: "r1", Turn: 1, Kind: "turn", Input: 10, Output: 5, CostUSD: &one, CostSource: "table", PriceDate: "2026-09-01"},
+		{RunID: "r1", Turn: 0, Kind: "title", Input: 3, Output: 2, CostSource: "unknown"},
+	}
+	c := importFrom(t, g, f)
+	_, st, done, _ := g.a.enter()
+	defer done()
+	runs, _ := st.ListRuns(c.ID)
+	if len(runs) != 1 || !store.IsImportedID(runs[0].ID) {
+		t.Fatalf("runs: %+v", runs)
+	}
+	rows, _ := st.ListConversationUsage(c.ID)
+	if len(rows) != 2 {
+		t.Fatalf("usage: %+v", rows)
+	}
+	// The totals of the chat still show it.
+	d, err := g.a.GetConversation(c.ID)
+	if err != nil || d.Total.Input != 13 || !d.Total.HasCost || !approx(d.Total.CostUSD, 0.25) {
+		t.Errorf("total: %+v %v", d.Total, err)
+	}
+
+	bad := map[string]func(u *exportUsage){
+		"kind":         func(u *exportUsage) { u.Kind = "refund" },
+		"source":       func(u *exportUsage) { u.CostSource = "invented" },
+		"negative":     func(u *exportUsage) { v := -1.0; u.CostUSD = &v },
+		"huge":         func(u *exportUsage) { v := 1e9; u.CostUSD = &v },
+		"many tokens":  func(u *exportUsage) { u.Input = maxImportTokens + 1 },
+		"title origin": nil,
+	}
+	for name, mut := range bad {
+		g2 := f
+		g2.Usage = append([]exportUsage(nil), f.Usage...)
+		var err error
+		if mut == nil {
+			g2.Conversation.TitleSource = "robot"
+			_, err = parseImportValue(g2)
+		} else {
+			mut(&g2.Usage[0])
+			_, err = parseImportValue(g2)
+		}
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// A turn twice is refused by the store.
+	dup := f
+	dup.Usage = append(append([]exportUsage(nil), f.Usage...), f.Usage[0])
+	raw, _ := json.Marshal(dup)
+	if _, err := g.a.importBytes(raw); err == nil {
+		t.Error("a usage row twice was accepted")
+	}
+}
+
+// parseImportValue is parseImport over a value. NaN and Infinity cannot be
+// written in JSON, so the decoder refuses them before the cost check does.
+func parseImportValue(f exportFile) (store.ExportData, error) {
+	raw, err := json.Marshal(f)
+	if err != nil {
+		return store.ExportData{}, err
+	}
+	return parseImport(raw)
+}
