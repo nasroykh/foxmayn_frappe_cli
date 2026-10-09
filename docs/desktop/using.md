@@ -196,7 +196,14 @@ A file of another format or version, or one that does not hold together, is refu
 
 ### Attachments
 
-TODO(batch C)
+Drop files on the message box, click the paperclip, or paste an image, and they go with your next message. You can remove one before you send.
+
+- Text, Markdown, log, CSV, TSV and JSON files are sent as text. An XLSX workbook is sent as CSV, one block per sheet.
+- PNG, JPEG, WebP and GIF images are sent only to a model that reads images: Claude, OpenAI GPT-4o and later (not audio, search or Codex models), and Gemini 1.5 and later. OpenRouter and models on your computer get no images yet. If you switch a conversation to a model without images, earlier images reach it as a short note.
+- At most 10 MB a file, 5 files a message, 200 000 characters of text a file and 400 000 a message. A pasted image may be up to 5 MB.
+- PDF files cannot be attached yet (planned for a later release). A file whose content does not match its name, such as a renamed executable, is refused.
+
+The model gets an attached file's text marked as untrusted data, like what it reads from the site, so instructions inside a file are not followed as yours. Attached text is not part of the history search. An export keeps the text of attached files but not the images; importing it turns each image into a note.
 
 ## The ffc helper
 
