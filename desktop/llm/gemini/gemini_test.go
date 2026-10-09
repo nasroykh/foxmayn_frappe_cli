@@ -43,7 +43,7 @@ func (c *captured) get() (http.Header, []byte, string, string) {
 	return c.header, c.body, c.path, c.query
 }
 
-// setEnv fills the variables genai reads; the adapter must ignore them all.
+// setEnv fills the variables Google's SDKs read; the adapter must ignore them all.
 func setEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("GOOGLE_API_KEY", "env-key-must-not-be-sent")
@@ -567,5 +567,105 @@ func TestModelsFiltered(t *testing.T) {
 func TestPinnedHost(t *testing.T) {
 	if BaseURL != "https://generativelanguage.googleapis.com/" {
 		t.Fatalf("BaseURL %q", BaseURL)
+	}
+}
+
+func TestOversizedLineAndEvent(t *testing.T) {
+	for name, body := range map[string]string{
+		"line":  "data: " + strings.Repeat("x", maxLine+1) + "\n\n",
+		"event": strings.Repeat("data: "+strings.Repeat("x", 1<<20)+"\n", 9) + "\n",
+	} {
+		p, _ := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, body)
+		}))
+		_, err := p.Stream(context.Background(), hi())
+		var ae *llm.APIError
+		if !errors.As(err, &ae) || ae.Status != 502 {
+			t.Fatalf("%s: err %v", name, err)
+		}
+	}
+}
+
+// A redirect is never followed: Go would copy x-goog-api-key to the new host.
+func TestRedirectNotFollowed(t *testing.T) {
+	var hits sync.Map
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Store("other", r.Header.Get("x-goog-api-key"))
+	}))
+	t.Cleanup(other.Close)
+	p, _ := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	_, err := p.Stream(context.Background(), hi())
+	var ae *llm.APIError
+	if !errors.As(err, &ae) || ae.Status != 502 {
+		t.Fatalf("err %v", err)
+	}
+	if _, ok := hits.Load("other"); ok {
+		t.Fatal("redirect followed")
+	}
+}
+
+func TestModelsPaged(t *testing.T) {
+	var mu sync.Mutex
+	var tokens []string
+	p, _ := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		tokens = append(tokens, r.URL.Query().Get("pageToken"))
+		mu.Unlock()
+		if r.URL.Query().Get("key") != "" {
+			t.Error("key in the URL")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("pageToken") == "" {
+			_, _ = io.WriteString(w, `{"models":[{"name":"models/gemini-1-a","supportedGenerationMethods":["generateContent"]}],"nextPageToken":"p2"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"models":[{"name":"models/gemini-2-b","displayName":"B","supportedGenerationMethods":["generateContent"]}]}`)
+	}))
+	list, err := p.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []llm.Model{{ID: "gemini-2-b", Label: "B"}, {ID: "gemini-1-a", Label: "gemini-1-a"}}
+	if !reflect.DeepEqual(list, want) || !reflect.DeepEqual(tokens, []string{"", "p2"}) {
+		t.Fatalf("models %#v tokens %q", list, tokens)
+	}
+}
+
+func TestRetryBeforeStream(t *testing.T) {
+	setEnv(t)
+	var mu sync.Mutex
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		n++
+		first := n == 1
+		mu.Unlock()
+		if first {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(503)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		data, _ := os.ReadFile(filepath.Join("testdata", "text.sse"))
+		_, _ = w.Write(data)
+	}))
+	t.Cleanup(srv.Close)
+	p, err := New(testKey, WithBaseURL(srv.URL+"/"), WithMaxRetries(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.backoff = time.Millisecond
+	s, err := p.Stream(context.Background(), hi())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := collect(t, s)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 4 || n != 2 {
+		t.Fatalf("attempts %d events %#v", n, got)
 	}
 }
