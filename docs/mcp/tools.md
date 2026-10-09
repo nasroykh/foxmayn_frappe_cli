@@ -1,6 +1,6 @@
 # MCP tools
 
-The 44 tools the ffc MCP server offers, how tool sets select them, their limits, and the resources, prompts and completion that come with them.
+The 49 tools the ffc MCP server offers, how tool sets select them, their limits, and the resources, prompts and completion that come with them.
 
 ## Tool sets
 
@@ -9,9 +9,10 @@ ffc mcp --toolsets core                    # documents, schema, reports, search,
 ffc mcp --toolsets core,lifecycle,collab   # + comments, assignments, tags
 ffc mcp --toolsets core,admin              # + sharing, site health, jobs, errors, scheduler
 ffc mcp --toolsets core,lifecycle,files    # + attachments and print HTML
+ffc mcp --toolsets core,erp                # + ERPNext drafts and lookups (reads only)
 ```
 
-The default is `core,lifecycle`. The `collab`, `admin` and `files` sets are exposed only when named. `list_sites` is always there. Like `--allow-tools`, `--toolsets` only narrows what the policy allows; an unknown set name is a usage error.
+The default is `core,lifecycle`. The `collab`, `admin`, `files` and `erp` sets are exposed only when named. `list_sites` is always there. Like `--allow-tools`, `--toolsets` only narrows what the policy allows; an unknown set name is a usage error.
 
 ## Tools
 
@@ -93,6 +94,28 @@ A job's arguments and traceback (`list_jobs` with `name`) can hold data of any D
 
 No tool returns file contents or PDFs.
 
+### `erp`
+
+ERPNext 15 and 16 only (any other major, or a site without ERPNext, is a tool error; use `call_method`). All five are reads and stay available on a `read_only` server: ERPNext builds a draft or answers a lookup through methods that write nothing (the same ones as [`ffc erp`](../cli/erpnext.md)). A draft is returned as data and is **not saved**; saving and submitting are `create_doc` and `submit_doc`, so confirmation, policy and the audit log stay in one place.
+
+| Tool | Kind | What it does | CLI equivalent |
+| --- | --- | --- | --- |
+| `erp_map` | R | Map a document into the next one in its chain (`from_doctype*`, `from_name*`, `to_doctype*`). Answers `{draft}`; save it with `create_doc` (`doctype` = `to_doctype`, `data` = the draft). A Quotation made out to a Lead or Prospect with no customer is refused. | `ffc erp map` |
+| `erp_payment` | R | A Payment Entry against a Sales Invoice, Sales Order, Purchase Invoice, Purchase Order or Dunning (`against_doctype*`, `against_name*`, `amount`, `bank_account`, `reference_date`). Answers `{draft, warnings?}`: `warnings` says when the draft has no bank or cash account (it cannot be saved until one is set or `bank_account` is passed) or when the document's Mode of Payment overrode `bank_account`. | `ffc erp payment` |
+| `erp_item` | R | What ERPNext fills into a document row for an item (`item_code*`, `company*`, `doctype`, `customer`, `supplier`, `price_list`, `qty`, `warehouse`, `date`): rate, UOM, warehouse, accounts, taxes, stock levels. | `ffc erp item` |
+| `erp_stock` | R | An item's stock: with `warehouse` the balance there (`date`, `valuation`), without it `{item_code, rows, truncated}` with one row per warehouse (at most 504). | `ffc erp stock` |
+| `erp_party` | R | What ERPNext fills into a document for a customer or supplier (`customer` or `supplier`, `company`, `date`, `doctype`). | `ffc erp party` |
+
+The draft is cleaned for `create_doc` (no `__islocal`-style keys, no empty `name`). Arguments are checked like the CLI's flags, with the same messages and the argument names in them; a blank optional argument counts as not given. The site's DocType rules apply to what each tool reads:
+
+- `erp_map`: the source and target DocTypes (and Customer, for a Quotation: the lead check reads it);
+- `erp_payment`: the DocType paid against and Payment Entry;
+- `erp_item`: Item, plus Customer, Supplier, Price List and Warehouse when given. `doctype` only picks the row's defaults and is not part of the scope;
+- `erp_stock`: Item, Warehouse and Bin;
+- `erp_party`: Customer or Supplier.
+
+ERPNext checks the user's own permissions for everything the call touches; `ignore_permissions` is never sent. The DocTypes ERPNext reads inside a mapper (items, taxes, accounts) are not listed in the scope.
+
 ## Limits and result shapes
 
 - **512 KiB per result.** A larger result is refused with a hint to narrow it (`limit`, `fields`, `filters`, `keys`), except rows:
@@ -109,7 +132,7 @@ No tool returns file contents or PDFs.
 
 ## `jq` on read tools
 
-Read tools whose results can be large (`get_doc`, `list_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_doc_context`, `aggregate`, `list_attachments`, `get_print_html`) take a `jq` argument: a filter the server runs on the result before returning it, for example `"[.[] | {name, status}]"` or `".data | length"`.
+Read tools whose results can be large (`get_doc`, `list_docs`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `get_doc_context`, `aggregate`, `list_attachments`, `get_print_html`, and the five `erp_*` tools) take a `jq` argument: a filter the server runs on the result before returning it, for example `"[.[] | {name, status}]"` or `".data | length"`.
 
 The output is JSON (one output as is, none or several as an array) under the same 512 KiB cap. The filter runs in a separate process that sees only the result (no environment, no input, no modules) and is stopped after 5 seconds or 256 MiB.
 

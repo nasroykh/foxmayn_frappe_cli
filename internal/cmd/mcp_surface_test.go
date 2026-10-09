@@ -253,7 +253,7 @@ func TestMCPInstructions(t *testing.T) {
 	s, _ := newMCPFake(t, false)
 	text := mcpTInstructions(t, s)
 	n := strings.Count(text, "\n")
-	if n < 15 || n > 26 {
+	if n < 15 || n > 27 {
 		t.Errorf("instructions have %d lines:\n%s", n, text)
 	}
 	for _, want := range []string{`one site, "test"`, `{"status":"Open","docstatus":1}`, `[["grand_total",">",1000]`, "like (with %)",

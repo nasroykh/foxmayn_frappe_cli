@@ -31,7 +31,7 @@ Configure a client that supports HTTP servers with the URL and an `Authorization
 | --- | --- |
 | `--site` (global) | The site to serve (default: `default_site`). |
 | `--read-only` | Expose only read tools: no create, update, delete, bulk, lifecycle, workflow or `call_method`. |
-| `--toolsets` | Expose only these tool sets: `core`, `lifecycle`, `collab`, `admin`, `files`. Default `core,lifecycle`. See [Tools](tools.md#tool-sets). |
+| `--toolsets` | Expose only these tool sets: `core`, `lifecycle`, `collab`, `admin`, `files`, `erp`. Default `core,lifecycle`. See [Tools](tools.md#tool-sets). |
 | `--allow-tools` | Expose only these tools (narrows the site's `allow_tools`). |
 | `--allow-doctypes` | Allow only these DocTypes (narrows the config; never unlocks a sensitive DocType). |
 | `--deny-doctypes` | Refuse these DocTypes, in addition to the config. |

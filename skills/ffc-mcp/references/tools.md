@@ -1,6 +1,6 @@
 # MCP tools, resources and prompts
 
-44 tools. `*` = required argument. Tools in `collab`, `admin` and `files` appear only when `--toolsets` names their set. With several sites served, every tool except `list_sites` also takes a required `site`. "Doc tools" take `doctype*` and `name*`.
+49 tools. `*` = required argument. Tools in `collab`, `admin`, `files` and `erp` appear only when `--toolsets` names their set. With several sites served, every tool except `list_sites` also takes a required `site`. "Doc tools" take `doctype*` and `name*`.
 
 ## core (default)
 
@@ -42,7 +42,7 @@
 | `apply_workflow` | write, confirmed | `action*` |
 | `get_transitions` | read | none |
 
-## collab, admin, files (opt-in)
+## collab, admin, files, erp (opt-in)
 
 | Tool | Set | Kind | Extra arguments (plus `doctype*`, `name*`) |
 | --- | --- | --- | --- |
@@ -60,12 +60,17 @@
 | `list_attachments` | files | read | `limit` (default 100) |
 | `attach_file` | files | write | `filename*`, `data*` (base64, or text with `encoding: text`; max 5 MiB), `encoding`, `is_private` (default true), `folder`, `field` |
 | `get_print_html` | files | read | `print_format`, `letterhead`, `no_letterhead`, `language`, `text_only` |
+| `erp_map` | erp | read | `from_doctype*`, `from_name*`, `to_doctype*` (no `doctype`/`name`); answers `{draft}` |
+| `erp_payment` | erp | read | `against_doctype*`, `against_name*`, `amount`, `bank_account`, `reference_date`; answers `{draft, warnings?}` |
+| `erp_item` | erp | read | `item_code*`, `company*`, `doctype`, `customer`, `supplier`, `price_list`, `qty`, `warehouse`, `date` |
+| `erp_stock` | erp | read | `item_code*`, `warehouse`, `date`, `valuation`; without `warehouse` answers `{item_code, rows, truncated}` |
+| `erp_party` | erp | read | `customer` or `supplier`, `company`, `date`, `doctype` |
 
-The four admin read tools need the System Manager role; start with `site_health`, whose `attention` says what is wrong. `list_errors` answers `{errors, hidden_by_policy}` and leaves out entries about DocTypes the policy hides. `share_doc`/`unshare_doc` need `DocShare` in the site's `allow_doctypes`, and `attach_file` needs `File` there (both are sensitive DocTypes). No tool returns file bytes or PDFs: use `ffc download` / `ffc pdf`. `get_print_html` runs the DocType's `before_print` code even on a read-only server.
+The four admin read tools need the System Manager role; start with `site_health`, whose `attention` says what is wrong. `list_errors` answers `{errors, hidden_by_policy}` and leaves out entries about DocTypes the policy hides. `share_doc`/`unshare_doc` need `DocShare` in the site's `allow_doctypes`, and `attach_file` needs `File` there (both are sensitive DocTypes). No tool returns file bytes or PDFs: use `ffc download` / `ffc pdf`. The erp tools need ERPNext 15 or 16 and only read: `erp_map` and `erp_payment` return an unsaved draft (ready for `create_doc` `data`), which is saved with `create_doc` and then `submit_doc`; they stay available with `--read-only`. Their DocType scope: erp_map source and target, erp_payment the document and Payment Entry, erp_item Item (+ Customer/Supplier/Price List/Warehouse when given), erp_stock Item/Warehouse/Bin, erp_party Customer or Supplier. `get_print_html` runs the DocType's `before_print` code even on a read-only server.
 
 ## Result shapes worth knowing
 
-- `jq` is accepted by the large read tools only: `list_docs`, `get_doc`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `aggregate`, `get_doc_context`, `list_attachments`, `get_print_html`. Not by `call_method` or any write. One output as is, several as an array; the filter is stopped after 5 s or 256 MiB.
+- `jq` is accepted by the large read tools only: `list_docs`, `get_doc`, `get_schema`, `list_doctypes`, `list_reports`, `run_report`, `search`, `aggregate`, `get_doc_context`, `list_attachments`, `get_print_html`, the `erp_*` tools. Not by `call_method` or any write. One output as is, several as an array; the filter is stopped after 5 s or 256 MiB.
 - `list_docs` too large: `{data, truncated: true, next_start, hint}`; otherwise a plain array. `response_format: detailed` without `fields` returns every field.
 - `run_report` returns `columns`, `result`, `report_summary` (if any), plus `total_rows`, `truncated`, `hint` when cut. `detailed` returns the raw result.
 - `run_report` `prepared: true` runs a heavy report as a Frappe prepared report (site's `long` queue worker): your finished result for the same filters (`prepared_report: {name, finished}`), else your queued job or a new one, waited for at most a minute with progress notifications. Still running: `{status: "queued", prepared_report: {name}, hint}`; call again with `prepared_report: NAME` and the same filters. `fresh` starts a new one. Read-only servers only reuse a finished or queued one, never start one, refuse `fresh`.

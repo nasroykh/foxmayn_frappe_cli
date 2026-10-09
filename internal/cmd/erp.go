@@ -27,9 +27,9 @@ They need ERPNext 15 or 16. Anything else goes through 'ffc api' or
 }
 
 // erpNextMajor returns the ERPNext major of a site, or the error that ends an
-// 'ffc erp' command: exit 4 when ERPNext is not installed, exit 1 when its
-// major is one ffc has not checked.
-func erpNextMajor(info *client.ServerInfo, cfg *config.SiteConfig) (int, error) {
+// 'ffc erp' command (or fails an MCP erp tool): exit 4 when ERPNext is not
+// installed, exit 1 when its major is one ffc has not checked.
+func erpNextMajor(info *client.ServerInfo, cfg *config.SiteConfig, in erpInput) (int, error) {
 	version := info.Version(client.ERPNextApp)
 	if version == "" {
 		site := cfg.Name
@@ -40,7 +40,7 @@ func erpNextMajor(info *client.ServerInfo, cfg *config.SiteConfig) (int, error) 
 	}
 	major := info.Major(client.ERPNextApp)
 	if !client.SupportedERPNext(major) {
-		return 0, fmt.Errorf("ffc erp supports ERPNext 15 and 16, this site runs %s: call its methods with 'ffc api' or 'ffc call-method'", version)
+		return 0, fmt.Errorf("ffc erp supports ERPNext 15 and 16, this site runs %s: %s", version, in.apiHint())
 	}
 	return major, nil
 }

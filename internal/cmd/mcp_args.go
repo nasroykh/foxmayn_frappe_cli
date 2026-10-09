@@ -316,6 +316,26 @@ func nameArg(req mcp.CallToolRequest, key string, required bool) (string, error)
 	return name, nil
 }
 
+// strictBoolArg reads an optional boolean argument: true or false, or the text
+// "true" or "false". Anything else is an error and never false, for a flag
+// whose absence would change what the call does.
+func strictBoolArg(req mcp.CallToolRequest, key string) (bool, error) {
+	switch v := req.GetArguments()[key].(type) {
+	case nil:
+		return false, nil
+	case bool:
+		return v, nil
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true":
+			return true, nil
+		case "false":
+			return false, nil
+		}
+	}
+	return false, usageErrorf("%s: expected true or false", key)
+}
+
 // keysArg reads a key list given as an array of strings (native or
 // JSON-encoded) or as a comma-separated string.
 func keysArg(req mcp.CallToolRequest, key string) ([]string, error) {

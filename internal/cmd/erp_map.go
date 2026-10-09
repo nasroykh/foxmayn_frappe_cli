@@ -77,6 +77,7 @@ Examples:
 type mapRequest struct {
 	from, name, to string
 	create, submit bool
+	in             erpInput
 }
 
 // runERPMap maps the source into an unsaved draft and, when asked, saves and
@@ -87,7 +88,7 @@ func runERPMap(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConf
 	if err != nil {
 		return nil, err
 	}
-	major, err := erpNextMajor(info, cfg)
+	major, err := erpNextMajor(info, cfg, req.in)
 	if err != nil {
 		return nil, err
 	}

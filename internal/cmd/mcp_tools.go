@@ -128,6 +128,7 @@ func registerAllTools(s *server.MCPServer, env *mcpEnv) {
 	registerCollabTools(s, env)
 	registerAdminTools(s, env)
 	registerFileTools(s, env)
+	registerERPTools(s, env)
 }
 
 // jsonParam declares a parameter that takes a JSON value. It has no fixed
@@ -800,20 +801,7 @@ var atomicLimit = min(maxMCPBulkItems, client.MaxInsertMany)
 // not a boolean is an error and never read as false: the caller asked for all
 // or none, and must not get one-by-one creation instead.
 func atomicArg(req mcp.CallToolRequest) (bool, error) {
-	switch v := req.GetArguments()["atomic"].(type) {
-	case nil:
-		return false, nil
-	case bool:
-		return v, nil
-	case string:
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "true":
-			return true, nil
-		case "false":
-			return false, nil
-		}
-	}
-	return false, usageErrorf("atomic: expected true or false")
+	return strictBoolArg(req, "atomic")
 }
 
 // atomicCreate is bulk_create with atomic: one insert_many request. Everything
