@@ -9,12 +9,12 @@ package anthropic
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -57,44 +57,39 @@ func WithMaxRetries(n int) Option { return func(c *config) { c.maxRetries = n } 
 
 // Provider is the Anthropic llm.Provider.
 type Provider struct {
-	client sdk.Client
-	key    string
+	messages sdk.MessageService
+	models   sdk.ModelService
+	key      string
 }
 
 var _ llm.Provider = (*Provider)(nil)
 
 // New returns a Provider that authenticates with apiKey. The key goes only in
-// the x-api-key header; ANTHROPIC_* environment credentials, base URL and
-// custom headers are overridden or removed.
+// the x-api-key header, and redirects are not followed.
+//
+// The services are built directly, not through sdk.NewClient: NewClient
+// applies the SDK's environment defaults (ANTHROPIC_BASE_URL,
+// ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_PROFILE and the profile
+// files, env federation, ANTHROPIC_WEBHOOK_SIGNING_KEY,
+// ANTHROPIC_CUSTOM_HEADERS). So no ANTHROPIC_* variable or profile file is
+// read at all.
 func New(apiKey string, opts ...Option) *Provider {
 	cfg := config{baseURL: defaultBaseURL, maxRetries: 2}
 	for _, o := range opts {
 		o(&cfg)
 	}
 	ro := []option.RequestOption{
+		option.WithHTTPClient(llm.NoRedirectClient(cfg.httpClient)),
 		option.WithBaseURL(cfg.baseURL),
 		option.WithAPIKey(apiKey),
-		option.WithHeaderDel("authorization"),
 		option.WithMaxRetries(cfg.maxRetries),
 	}
-	// The SDK reads ANTHROPIC_CUSTOM_HEADERS (name: value per line) into its
-	// defaults when no env credential is set; take those headers back off.
-	for _, line := range strings.Split(os.Getenv("ANTHROPIC_CUSTOM_HEADERS"), "\n") {
-		if i := strings.Index(line, ":"); i >= 0 {
-			if name := strings.TrimSpace(line[:i]); name != "" {
-				ro = append(ro, option.WithHeaderDel(name))
-			}
-		}
-	}
-	if cfg.httpClient != nil {
-		ro = append(ro, option.WithHTTPClient(cfg.httpClient))
-	}
-	return &Provider{client: sdk.NewClient(ro...), key: apiKey}
+	return &Provider{messages: sdk.NewMessageService(ro...), models: sdk.NewModelService(ro...), key: apiKey}
 }
 
 // Models lists the chat models the account can use (ids starting "claude-").
 func (p *Provider) Models(ctx context.Context) ([]llm.Model, error) {
-	pager := p.client.Models.ListAutoPaging(ctx, sdk.ModelListParams{})
+	pager := p.models.ListAutoPaging(ctx, sdk.ModelListParams{})
 	var out []llm.Model
 	for pager.Next() {
 		m := pager.Current()
@@ -115,11 +110,11 @@ func (p *Provider) Models(ctx context.Context) ([]llm.Model, error) {
 
 // Stream starts one streaming Messages request.
 func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, error) {
-	params, err := buildParams(req)
+	params, err := buildParams(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	s := p.client.Messages.NewStreaming(ctx, params)
+	s := p.messages.NewStreaming(ctx, params)
 	if err := s.Err(); err != nil {
 		_ = s.Close()
 		return nil, p.mapErr(ctx, err)
@@ -130,8 +125,8 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, err
 // buildParams maps a request. Cache breakpoints (three of the four allowed):
 // the last tool, the system block, and the conversation tail through the
 // top-level automatic cache_control, which the API places on the last
-// cacheable block.
-func buildParams(req llm.Request) (sdk.MessageNewParams, error) {
+// cacheable block. Image parts are read through req.Images here.
+func buildParams(ctx context.Context, req llm.Request) (sdk.MessageNewParams, error) {
 	max := req.MaxTokens
 	if max <= 0 {
 		max = defaultMaxTokens
@@ -162,7 +157,11 @@ func buildParams(req llm.Request) (sdk.MessageNewParams, error) {
 		params.Tools = append(params.Tools, sdk.ToolUnionParam{OfTool: &tp})
 	}
 	for _, m := range mergeSameRole(req.Messages) {
-		if mp, ok := messageParam(m); ok {
+		mp, ok, err := messageParam(ctx, req.Images, m)
+		if err != nil {
+			return params, err
+		}
+		if ok {
 			params.Messages = append(params.Messages, mp)
 		}
 	}
@@ -221,8 +220,10 @@ func toolParam(t llm.Tool) (sdk.ToolParam, error) {
 
 // messageParam maps a history message. Parts keep their order, except that
 // tool results come first in a user message, as the API requires. Thinking
-// parts are replayed verbatim. Empty text is dropped (the API rejects it).
-func messageParam(m llm.Message) (sdk.MessageParam, bool) {
+// parts are replayed verbatim, except another provider's, which mean nothing
+// here and are skipped. Empty text is dropped (the API rejects it). An image
+// becomes a base64 image block.
+func messageParam(ctx context.Context, images llm.ImageResolver, m llm.Message) (sdk.MessageParam, bool, error) {
 	var results, rest []sdk.ContentBlockParamUnion
 	for _, part := range m.Parts {
 		switch p := part.(type) {
@@ -230,7 +231,16 @@ func messageParam(m llm.Message) (sdk.MessageParam, bool) {
 			if p.Text != "" {
 				rest = append(rest, sdk.NewTextBlock(p.Text))
 			}
+		case llm.Image:
+			b, err := llm.ImageBytes(ctx, images, p)
+			if err != nil {
+				return sdk.MessageParam{}, false, err
+			}
+			rest = append(rest, sdk.NewImageBlockBase64(p.MediaType, base64.StdEncoding.EncodeToString(b)))
 		case llm.Thinking:
+			if llm.ForeignThinking(p, llm.ProviderAnthropic) {
+				continue
+			}
 			if p.Redacted {
 				rest = append(rest, sdk.NewRedactedThinkingBlock(p.Data))
 			} else {
@@ -248,12 +258,12 @@ func messageParam(m llm.Message) (sdk.MessageParam, bool) {
 	}
 	blocks := append(results, rest...)
 	if len(blocks) == 0 {
-		return sdk.MessageParam{}, false
+		return sdk.MessageParam{}, false, nil
 	}
 	if m.Role == llm.RoleAssistant {
-		return sdk.NewAssistantMessage(blocks...), true
+		return sdk.NewAssistantMessage(blocks...), true, nil
 	}
-	return sdk.NewUserMessage(blocks...), true
+	return sdk.NewUserMessage(blocks...), true, nil
 }
 
 // block accumulates one streamed content block (text, thinking, redacted
@@ -317,8 +327,11 @@ func (s *stream) open(index int64, b *block) *block {
 func (s *stream) handle(ev sdk.MessageStreamEventUnion) {
 	switch ev.Type {
 	case "message_start":
+		// In keeps the cache writes (input_tokens excludes them); CacheWrite
+		// says how many of In they are, since they are priced apart.
 		u := ev.Message.Usage
 		s.usage.In = int(u.InputTokens + u.CacheCreationInputTokens)
+		s.usage.CacheWrite = int(u.CacheCreationInputTokens)
 		s.usage.Cached = int(u.CacheReadInputTokens)
 		s.usage.Out = int(u.OutputTokens)
 	case "content_block_start":
@@ -339,7 +352,7 @@ func (s *stream) handle(ev sdk.MessageStreamEventUnion) {
 		case "redacted_thinking":
 			// Complete in the start event; nothing follows but the stop.
 			s.open(ev.Index, &block{kind: "redacted", data: cb.Data, done: true})
-			s.queue = append(s.queue, llm.Thinking{Redacted: true, Data: cb.Data})
+			s.queue = append(s.queue, llm.Thinking{Provider: llm.ProviderAnthropic, Redacted: true, Data: cb.Data})
 		}
 	case "content_block_delta":
 		b := s.blocks[ev.Index]
@@ -373,7 +386,7 @@ func (s *stream) handle(ev sdk.MessageStreamEventUnion) {
 		delete(s.blocks, ev.Index)
 		b.done = true
 		if b.kind == "thinking" {
-			s.queue = append(s.queue, llm.Thinking{Text: b.buf.String(), Signature: b.sig.String()})
+			s.queue = append(s.queue, llm.Thinking{Provider: llm.ProviderAnthropic, Text: b.buf.String(), Signature: b.sig.String()})
 		}
 	case "message_delta":
 		if r := string(ev.Delta.StopReason); r != "" {
@@ -385,6 +398,7 @@ func (s *stream) handle(ev sdk.MessageStreamEventUnion) {
 		u := ev.Usage
 		if u.InputTokens > 0 || u.CacheCreationInputTokens > 0 {
 			s.usage.In = int(u.InputTokens + u.CacheCreationInputTokens)
+			s.usage.CacheWrite = int(u.CacheCreationInputTokens)
 		}
 		if u.CacheReadInputTokens > 0 {
 			s.usage.Cached = int(u.CacheReadInputTokens)
@@ -414,10 +428,10 @@ func (s *stream) stop() {
 			}
 		case "thinking":
 			if b.done {
-				parts = append(parts, llm.Thinking{Text: b.buf.String(), Signature: b.sig.String()})
+				parts = append(parts, llm.Thinking{Provider: llm.ProviderAnthropic, Text: b.buf.String(), Signature: b.sig.String()})
 			}
 		case "redacted":
-			parts = append(parts, llm.Thinking{Redacted: true, Data: b.data})
+			parts = append(parts, llm.Thinking{Provider: llm.ProviderAnthropic, Redacted: true, Data: b.data})
 		case "tool_use":
 			call, ok := toolCall(b)
 			if cut && (!ok || !b.done) {

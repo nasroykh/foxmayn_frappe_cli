@@ -25,7 +25,7 @@ const card = (over: Partial<ChatApproval> = {}): ChatApproval => ({
 
 function detail(over: Partial<ConversationDetail> = {}): ConversationDetail {
   return {
-    conversation: { id: "c1", title: "t", site: "acme", mode: "read", providerID: "p", model: "m", created: "", updated: "" },
+    conversation: { id: "c1", title: "t", site: "acme", mode: "read", providerID: "p", model: "m", profileID: "", created: "", updated: "" },
     messages: [],
     activeRunID: "",
     pausedRunID: "",

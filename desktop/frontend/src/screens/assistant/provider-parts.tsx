@@ -15,9 +15,9 @@ import { backend } from "@/lib/backend"
 import type { KeyStatus, Model, ProviderInfo, ProviderKind } from "@/lib/backend-types"
 import { appError, type AppError } from "@/lib/errors"
 
-/** Anthropic and OpenRouter cannot be used without a key; the others may run without one. */
+/** Anthropic, OpenAI, Gemini and OpenRouter cannot be used without a key; the others may run without one. */
 export function needsKey(kind: string): boolean {
-  return kind === "anthropic" || kind === "openrouter"
+  return kind === "anthropic" || kind === "openrouter" || kind === "openai" || kind === "gemini"
 }
 
 /** A provider a conversation can start with. */

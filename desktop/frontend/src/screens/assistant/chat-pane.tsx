@@ -17,6 +17,7 @@ import { backend } from "@/lib/backend"
 import type { ChatMessage, Conversation, ConversationMode, ProviderInfo, ToolApproval, ToolStatus } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 import { chatReducer, initialState } from "@/screens/assistant/chat-reducer"
+import { ProfilePicker } from "@/screens/assistant/profile-picker"
 
 function notify(err: unknown) {
   const e = appError(err)
@@ -233,6 +234,7 @@ export function ChatPane({
             {conv.model ? ` · ${conv.model}` : ""}
           </p>
         </div>
+        <ProfilePicker conv={conv} disabled={active} onChanged={() => onChanged()} />
         <Tooltip>
           <TooltipTrigger render={<span tabIndex={active ? 0 : -1} className="inline-flex" />}>
             <ToggleGroup

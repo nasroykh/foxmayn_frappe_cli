@@ -282,13 +282,16 @@ func (a *activeRun) prepareUpdate(ctx context.Context, e *callEntry) ([]DiffFiel
 			read[k] = v
 		}
 	}
+	// The failure text can come from the site, so it is marked as the site's
+	// answer: modelResult cuts it and wraps it as data once, after the cut,
+	// so the closing tag always survives.
 	res, err := a.session.Call(ctx, a.runID, "get_doc", read)
 	if err != nil {
-		return nil, "Could not read the document before the change: " + toServiceError(err).Error()
+		return nil, a.prereadFailed(e, toServiceError(err).Error())
 	}
 	text := callResultText(res)
 	if res.IsError {
-		return nil, "Could not read the document before the change: " + text
+		return nil, a.prereadFailed(e, text)
 	}
 	var doc map[string]any
 	if err := json.Unmarshal([]byte(text), &doc); err != nil || doc == nil {
@@ -378,4 +381,12 @@ func (a *activeRun) violationText() string {
 	a.errMu.Lock()
 	defer a.errMu.Unlock()
 	return a.violation
+}
+
+// prereadFailed is the error result of an update_doc whose document could not
+// be read first. text may come from the site, so it is recorded as the site's
+// answer (see modelResult).
+func (a *activeRun) prereadFailed(e *callEntry, text string) string {
+	e.site, e.siteText, e.siteTool = true, text, "get_doc"
+	return "Could not read the document before the change:\n" + text
 }

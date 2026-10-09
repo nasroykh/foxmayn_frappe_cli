@@ -1,0 +1,4 @@
+data: {"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}]}
+
+data: {"candidates":[{"content":{"parts":[{"text":", world"}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2}}
+

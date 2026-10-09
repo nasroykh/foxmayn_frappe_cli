@@ -14,6 +14,8 @@ import (
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/anthropic"
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/gemini"
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/openai"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/openaicompat"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/store"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -40,6 +42,8 @@ const (
 const (
 	KindAnthropic  = "anthropic"
 	KindOpenRouter = "openrouter"
+	KindOpenAI     = "openai"
+	KindGemini     = "gemini"
 	KindOllama     = "ollama"
 	KindLMStudio   = "lmstudio"
 	KindCustom     = "custom"
@@ -83,7 +87,8 @@ type Model struct {
 }
 
 // Conversation is a chat thread bound to a site, a write mode, a provider and
-// a model.
+// a model. ProfileID is "" (no profile), a preset id or one of the user's
+// profiles.
 type Conversation struct {
 	ID         string    `json:"id"`
 	Title      string    `json:"title"`
@@ -91,6 +96,7 @@ type Conversation struct {
 	Mode       string    `json:"mode"`
 	ProviderID string    `json:"providerID"`
 	Model      string    `json:"model"`
+	ProfileID  string    `json:"profileID"`
 	Created    time.Time `json:"created"`
 	Updated    time.Time `json:"updated"`
 }
@@ -194,6 +200,7 @@ func (a *AssistantService) open() error {
 	}
 	eng := NewEngine(a.configPath)
 	r := newRunner(st, eng, a.providerFor, a.host.Emit)
+	r.check = a.checkRun
 	ctx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
 	a.st, a.engine, a.run = st, eng, r
@@ -330,7 +337,7 @@ func (a *AssistantService) PendingApprovals(convID string) []ChatApproval {
 }
 
 func toConversation(c store.Conversation) Conversation {
-	return Conversation{ID: c.ID, Title: c.Title, Site: c.Site, Mode: c.Mode, ProviderID: c.ProviderID, Model: c.Model, Created: c.Created, Updated: c.Updated}
+	return Conversation{ID: c.ID, Title: c.Title, Site: c.Site, Mode: c.Mode, ProviderID: c.ProviderID, Model: c.Model, ProfileID: c.ProfileID, Created: c.Created, Updated: c.Updated}
 }
 
 // NewConversation starts a conversation on a site. mode is "read" (the
@@ -355,7 +362,8 @@ func (a *AssistantService) NewConversation(site, mode, providerID, model string)
 	if err != nil {
 		return Conversation{}, &Error{Code: CodeNotFound, Message: "That site is not in your list.", Field: "site"}
 	}
-	if _, ok := cfg.Sites[site]; !ok {
+	sc, ok := cfg.Sites[site]
+	if !ok {
 		return Conversation{}, &Error{Code: CodeNotFound, Message: "That site is not in your list.", Field: "site"}
 	}
 	p, err := a.provider(st, providerID)
@@ -369,7 +377,10 @@ func (a *AssistantService) NewConversation(site, mode, providerID, model string)
 	if model == "" {
 		model = defaultModelOf(p)
 	}
-	c, err := st.CreateConversation("", site, mode, p.ID, model)
+	if err := a.checkLocalOnly(st, site, sc.URL, p, model); err != nil {
+		return Conversation{}, err
+	}
+	c, err := st.InsertConversation(store.Conversation{Site: site, Mode: mode, ProviderID: p.ID, Model: model, SiteURL: sc.URL})
 	if err != nil {
 		return Conversation{}, wrapStoreErr(err)
 	}
@@ -555,6 +566,10 @@ func officialBase(kind string) string {
 		return "https://api.anthropic.com"
 	case KindOpenRouter:
 		return openaicompat.OpenRouter.BaseURL
+	case KindOpenAI:
+		return openai.BaseURL
+	case KindGemini:
+		return strings.TrimRight(gemini.BaseURL, "/")
 	}
 	return ""
 }
@@ -569,6 +584,10 @@ func kindLabel(kind string) string {
 		return openaicompat.Ollama.Label
 	case KindLMStudio:
 		return openaicompat.LMStudio.Label
+	case KindOpenAI:
+		return "OpenAI"
+	case KindGemini:
+		return "Google Gemini"
 	}
 	return "Custom"
 }
@@ -587,7 +606,7 @@ func kindBaseURL(kind string) string {
 
 func validKind(kind string) bool {
 	switch kind {
-	case KindAnthropic, KindOpenRouter, KindOllama, KindLMStudio, KindCustom:
+	case KindAnthropic, KindOpenRouter, KindOllama, KindLMStudio, KindCustom, KindOpenAI, KindGemini:
 		return true
 	}
 	return false
@@ -595,7 +614,9 @@ func validKind(kind string) bool {
 
 // keyRequired reports whether a provider of this kind cannot work without a
 // key.
-func keyRequired(kind string) bool { return kind == KindAnthropic || kind == KindOpenRouter }
+func keyRequired(kind string) bool {
+	return kind == KindAnthropic || kind == KindOpenRouter || kind == KindOpenAI || kind == KindGemini
+}
 
 func defaultModelOf(p store.Provider) string {
 	if p.DefaultModel != "" {
@@ -673,7 +694,8 @@ func (a *AssistantService) ListProviders() ([]ProviderInfo, error) {
 
 // SaveProvider adds or changes a provider. An empty ID takes the kind's name
 // (a custom provider gets a numbered one). The key is set apart, with SetKey.
-// Anthropic and OpenRouter are pinned to their own hosts. When a provider's
+// Anthropic, OpenRouter, OpenAI and Gemini are pinned to their own hosts
+// (stored as an empty address, except OpenRouter's). When a provider's
 // address changes the stored key is deleted in the same step (KeyCleared), so
 // a key can never be sent to a host the user did not give it to.
 func (a *AssistantService) SaveProvider(p ProviderInfo) (ProviderInfo, error) {
@@ -925,6 +947,11 @@ func (a *AssistantService) providerFor(conv store.Conversation) (llm.Provider, s
 	if err != nil {
 		return nil, "", &Error{Code: CodeNotFound, Message: "The provider of this conversation was removed. Set it up again or start a new conversation.", Field: "provider"}
 	}
+	// The run checked the site and the local-only rule (checkRun) just
+	// before; checked here too, so no caller gets a client that skips it.
+	if err := a.checkLocalOnly(st, conv.Site, conv.SiteURL, p, conv.Model); err != nil {
+		return nil, "", err
+	}
 	key, err := a.keyFor(p)
 	if err != nil {
 		return nil, "", err
@@ -949,6 +976,16 @@ func makeProvider(p store.Provider, key string) (llm.Provider, error) {
 	case KindAnthropic:
 		// Pinned to the official host: a stored address is never used.
 		return anthropic.New(key), nil
+	case KindOpenAI:
+		// Pinned too: the Responses API at api.openai.com only.
+		return openai.New(key), nil
+	case KindGemini:
+		// Pinned too: the Gemini API (never Vertex AI).
+		g, err := gemini.New(key)
+		if err != nil {
+			return nil, newError(CodeAuth, "Add the API key for Google Gemini first.", nil)
+		}
+		return g, nil
 	case KindOpenRouter, KindOllama, KindLMStudio, KindCustom:
 		preset := openaicompat.Custom(p.BaseURL)
 		switch p.Kind {

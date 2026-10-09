@@ -16,8 +16,19 @@ type Conversation struct {
 	Mode       string
 	ProviderID string
 	Model      string
-	Created    time.Time
-	Updated    time.Time
+	// ProfileID is "" (no profile), a preset id or a profiles row.
+	ProfileID string
+	// SiteURL is the site's address when the conversation was created.
+	SiteURL string
+	// SiteContext is the short site description collected at the first
+	// run; "" means not collected yet.
+	SiteContext string
+	// SiteContextKey identifies what SiteContext was collected under (the
+	// profile's narrowing and the site's policy); another key collects it
+	// again.
+	SiteContextKey string
+	Created        time.Time
+	Updated        time.Time
 }
 
 // Message is one turn. PartsJSON is opaque to the store except that parts
@@ -77,24 +88,30 @@ type Provider struct {
 
 // CreateConversation inserts a conversation and returns it.
 func (s *Store) CreateConversation(title, site, mode, providerID, model string) (Conversation, error) {
+	return s.InsertConversation(Conversation{Title: title, Site: site, Mode: mode, ProviderID: providerID, Model: model})
+}
+
+// InsertConversation inserts c with a new ID and the current time (c's own
+// ID, times and SiteContext are ignored) and returns it.
+func (s *Store) InsertConversation(c Conversation) (Conversation, error) {
 	now := nowMS()
-	c := Conversation{ID: newID(), Title: title, Site: site, Mode: mode, ProviderID: providerID, Model: model, Created: ms(now), Updated: ms(now)}
-	_, err := s.db.Exec(`INSERT INTO conversations(id,title,site,mode,provider_id,model,created,updated) VALUES(?,?,?,?,?,?,?,?)`,
-		c.ID, title, site, mode, providerID, model, now, now)
+	c.ID, c.SiteContext, c.SiteContextKey, c.Created, c.Updated = newID(), "", "", ms(now), ms(now)
+	_, err := s.db.Exec(`INSERT INTO conversations(id,title,site,mode,provider_id,model,profile_id,site_url,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		c.ID, c.Title, c.Site, c.Mode, c.ProviderID, c.Model, c.ProfileID, c.SiteURL, now, now)
 	if err != nil {
 		return Conversation{}, fmt.Errorf("create conversation: %w", err)
 	}
 	return c, nil
 }
 
-const convCols = `id,title,site,mode,provider_id,model,created,updated`
+const convCols = `id,title,site,mode,provider_id,model,profile_id,site_url,site_context,site_context_key,created,updated`
 
 type scanner interface{ Scan(...any) error }
 
 func scanConv(r scanner) (Conversation, error) {
 	var c Conversation
 	var cr, up int64
-	if err := r.Scan(&c.ID, &c.Title, &c.Site, &c.Mode, &c.ProviderID, &c.Model, &cr, &up); err != nil {
+	if err := r.Scan(&c.ID, &c.Title, &c.Site, &c.Mode, &c.ProviderID, &c.Model, &c.ProfileID, &c.SiteURL, &c.SiteContext, &c.SiteContextKey, &cr, &up); err != nil {
 		return Conversation{}, err
 	}
 	c.Created, c.Updated = ms(cr), ms(up)
@@ -307,7 +324,7 @@ func (s *Store) ListToolCalls(runID string) ([]ToolCall, error) {
 // AddUsage records (or replaces) the token usage of one turn of a run.
 func (s *Store) AddUsage(u Usage) error {
 	_, err := s.db.Exec(`INSERT INTO usage(run_id,turn,input,output,cached) VALUES(?,?,?,?,?)
-		ON CONFLICT(run_id,turn) DO UPDATE SET input=excluded.input,output=excluded.output,cached=excluded.cached`,
+		ON CONFLICT(run_id,turn,kind) DO UPDATE SET input=excluded.input,output=excluded.output,cached=excluded.cached`,
 		u.RunID, u.Turn, u.Input, u.Output, u.Cached)
 	if err != nil {
 		return fmt.Errorf("add usage: %w", err)

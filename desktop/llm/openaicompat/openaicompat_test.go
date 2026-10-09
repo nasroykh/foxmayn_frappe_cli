@@ -51,7 +51,9 @@ func setEnv(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:1/v1")
 	t.Setenv("OPENAI_ORG_ID", "env-org")
 	t.Setenv("OPENAI_PROJECT_ID", "env-project")
-	t.Setenv("OPENAI_CUSTOM_HEADERS", "X-Env-Leak: secret\nX-Other: 1")
+	// An Authorization line once made the adapter delete its own key header.
+	t.Setenv("OPENAI_CUSTOM_HEADERS", "X-Env-Leak: secret\nX-Other: 1\nAuthorization: Bearer env-leak")
+	t.Setenv("OPENAI_WEBHOOK_SECRET", "env-webhook")
 }
 
 func newServer(t *testing.T, h http.Handler) (*httptest.Server, *captured) {
@@ -698,5 +700,36 @@ func TestDetectLocal(t *testing.T) {
 	// The real presets are the ones DetectLocal probes.
 	if probeTimeout > 1500*time.Millisecond {
 		t.Fatalf("probe timeout %v", probeTimeout)
+	}
+}
+
+// A redirect is never followed: the key header would go to the new host.
+func TestRedirectNotFollowed(t *testing.T) {
+	var mu sync.Mutex
+	hit := false
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hit = true
+		mu.Unlock()
+	}))
+	t.Cleanup(other.Close)
+	p, _ := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	if s, err := p.Stream(context.Background(), hi()); err == nil {
+		for {
+			if _, err = s.Next(); err != nil {
+				break
+			}
+		}
+		s.Close()
+	}
+	if _, err := p.Models(context.Background()); err == nil {
+		t.Fatal("redirected model list accepted")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hit {
+		t.Fatal("redirect followed")
 	}
 }

@@ -47,11 +47,13 @@ import type {
   FFCInfo,
   KeyStatus,
   Preview,
+  Profile,
   ProviderInfo,
   RunStatus,
   SignInProgress,
   Site,
   SiteList,
+  SiteSettings,
   ToolStatus,
 } from "@/lib/backend-types"
 import type { AppError } from "@/lib/errors"
@@ -489,6 +491,101 @@ async function script(run: MockRun, c: MockConv, text: string) {
   if (run.cancelled) return finish(run, c, "cancelled")
   await say("TD-0001 is a ToDo, \"Call the supplier\", status Open, assigned to you and due on 2026-10-12.")
   return finish(run, c, run.cancelled ? "cancelled" : "done")
+}
+
+// ---- profiles and site settings ----
+// The presets mirror services/profiles.go; a profile only narrows the site.
+
+function preset(p: Partial<Profile> & Pick<Profile, "id" | "name" | "mode">): Profile {
+  return {
+    preset: true,
+    basedOn: "",
+    toolsets: [],
+    allowTools: [],
+    allowDoctypes: [],
+    denyDoctypes: [],
+    allowMethods: [],
+    denyMethods: [],
+    denyTools: [],
+    callMethod: false,
+    stepLimit: 25,
+    providerID: "",
+    model: "",
+    instructions: "",
+    keepHistory: true,
+    ...p,
+  }
+}
+
+const presets: Profile[] = [
+  preset({
+    id: "explore",
+    name: "Explore",
+    mode: "read",
+    instructions: "Explore the site: look things up, explain what you find and point to the documents you used.",
+  }),
+  preset({
+    id: "accounts",
+    name: "Accounts helper",
+    mode: "ask",
+    toolsets: ["core", "lifecycle", "erp"],
+    instructions: "Help with invoices, payments and journal entries.",
+  }),
+  preset({ id: "site-admin", name: "Site admin", mode: "read", toolsets: ["core", "admin"], instructions: "Check the site's health." }),
+  preset({
+    id: "data-entry",
+    name: "Data entry",
+    mode: "ask",
+    toolsets: ["core"],
+    denyTools: ["delete_doc", "bulk_delete"],
+    instructions: "Create and update documents the user describes.",
+  }),
+  preset({
+    id: "local-model",
+    name: "Local model",
+    mode: "read",
+    toolsets: ["core"],
+    stepLimit: 15,
+    instructions: "Use one tool at a time and keep answers short.",
+  }),
+]
+let userProfiles: Profile[] = []
+const siteSettings = new Map<string, SiteSettings>()
+
+function findProfile(id: string): Profile | undefined {
+  if (id === "") return undefined
+  const p = presets.find((x) => x.id === id) ?? userProfiles.find((x) => x.id === id)
+  if (!p) fail("not_found", "That profile no longer exists.", { field: "profile" })
+  return p
+}
+
+function isLocal(p: ProviderInfo) {
+  if (p.kind !== "ollama" && p.kind !== "lmstudio" && p.kind !== "custom") return false
+  const fallback = p.kind === "ollama" ? "http://localhost:11434/v1" : p.kind === "lmstudio" ? "http://localhost:1234/v1" : ""
+  try {
+    const host = new URL(p.baseURL || fallback).hostname.toLowerCase()
+    return host === "localhost" || host === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(host)
+  } catch {
+    return false
+  }
+}
+
+// Ollama's cloud models ("gpt-oss:120b-cloud") run on ollama.com.
+function isCloudModel(model: string) {
+  const m = model.trim().toLowerCase()
+  const i = Math.max(m.lastIndexOf(":"), m.lastIndexOf("-"))
+  return i >= 0 && m.slice(i + 1) === "cloud"
+}
+
+function checkLocalOnly(site: string, providerID: string, model = "") {
+  const p = findProvider(providerID)
+  if (siteSettings.get(site)?.localOnly && (!isLocal(p) || isCloudModel(model || p.defaultModel))) {
+    fail(
+      "invalid",
+      "This site is set to use local models only. Choose a provider that runs on this computer (Ollama, LM Studio or a local server) and a model that is not an Ollama cloud model.",
+      { field: "provider" },
+    )
+  }
 }
 
 export const backend: Backend = {
@@ -949,6 +1046,7 @@ export const backend: Backend = {
     if (mode !== "read" && mode !== "ask") fail("invalid", 'Choose "Read only" or "Ask before changes".', { field: "mode" })
     if (!sites.some((s) => s.name === site)) fail("not_found", "That site is not in your list.", { field: "site" })
     const p = findProvider(providerID)
+    checkLocalOnly(site, p.id, model)
     const now = new Date().toISOString()
     const conv: Conversation = {
       id: newID("conv"),
@@ -957,6 +1055,7 @@ export const backend: Backend = {
       mode,
       providerID: p.id,
       model: model.trim() || p.defaultModel,
+      profileID: "",
       created: now,
       updated: now,
     }
@@ -995,14 +1094,14 @@ export const backend: Backend = {
   },
   async saveProvider(p) {
     await wait(200)
-    const kinds = ["anthropic", "openrouter", "ollama", "lmstudio", "custom"]
+    const kinds = ["anthropic", "openai", "gemini", "openrouter", "ollama", "lmstudio", "custom"]
     if (!kinds.includes(p.kind)) fail("invalid", "Choose a provider type.", { field: "kind" })
     const base = p.baseURL.trim()
     if (p.kind === "custom" && !base) fail("invalid", "Enter the server's address.", { field: "baseURL" })
     if (base && !/^https:\/\//.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(base)) {
       fail("invalid", "Use https, unless the server runs on this computer.", { field: "baseURL" })
     }
-    const labels: Record<string, string> = { anthropic: "Anthropic", openrouter: "OpenRouter", ollama: "Ollama", lmstudio: "LM Studio", custom: "Custom" }
+    const labels: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI", gemini: "Google Gemini", openrouter: "OpenRouter", ollama: "Ollama", lmstudio: "LM Studio", custom: "Custom" }
     const bases: Record<string, string> = { openrouter: "https://openrouter.ai/api/v1", ollama: "http://localhost:11434/v1", lmstudio: "http://localhost:1234/v1" }
     let id = p.id.trim() || p.kind
     for (let n = 2; !p.id.trim() && p.kind === "custom" && providers.some((x) => x.id === id); n++) id = `custom-${n}`
@@ -1063,10 +1162,110 @@ export const backend: Backend = {
         { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", default: false },
       ]
     }
+    if (p.kind === "openai" || p.kind === "gemini") {
+      if (!p.keySet) fail("auth", `Add the API key for ${p.label} first.`, { field: "key" })
+      const ids = p.kind === "openai" ? ["gpt-5.5", "gpt-5.5-mini", "gpt-5"] : ["gemini-3-pro", "gemini-3-flash", "gemini-2.5-pro"]
+      return ids.map((id) => ({ id, label: id, default: false }))
+    }
     return [
       { id: "llama3.1:8b", label: "llama3.1:8b", default: false },
       { id: "qwen2.5:14b", label: "qwen2.5:14b", default: false },
     ]
+  },
+
+  async listPresets() {
+    return presets.map((p) => ({ ...p }))
+  },
+  async listProfiles() {
+    await wait(100)
+    return userProfiles.map((p) => ({ ...p })).sort((a, b) => a.name.localeCompare(b.name))
+  },
+  async saveProfile(p) {
+    await wait(150)
+    if (p.preset || presets.some((x) => x.id === p.id))
+      fail("invalid", "Built-in profiles cannot be changed. Duplicate it to edit.", { field: "id" })
+    if (p.id && !userProfiles.some((x) => x.id === p.id)) fail("not_found", "That profile no longer exists.", { field: "profile" })
+    const name = p.name.trim()
+    if (!name) fail("invalid", "Give the profile a name.", { field: "name" })
+    const stepLimit = p.stepLimit || 25
+    if (stepLimit < 1 || stepLimit > 100) fail("invalid", "Choose a step limit from 1 to 100.", { field: "stepLimit" })
+    const clean = (l: string[]) => [...new Set(l.map((x) => x.trim()).filter(Boolean))].sort()
+    const saved: Profile = {
+      ...p,
+      id: p.id || newID("prof"),
+      name,
+      preset: false,
+      mode: p.mode === "ask" ? "ask" : "read",
+      stepLimit,
+      toolsets: clean(p.toolsets) as Profile["toolsets"],
+      allowTools: clean(p.allowTools),
+      allowDoctypes: clean(p.allowDoctypes),
+      denyDoctypes: clean(p.denyDoctypes),
+      allowMethods: clean(p.allowMethods),
+      denyMethods: clean(p.denyMethods),
+      denyTools: clean(p.denyTools),
+    }
+    userProfiles = [...userProfiles.filter((x) => x.id !== saved.id), saved]
+    return { ...saved }
+  },
+  async deleteProfile(id) {
+    if (presets.some((x) => x.id === id)) fail("invalid", "Built-in profiles cannot be deleted.", { field: "id" })
+    findProfile(id)
+    userProfiles = userProfiles.filter((x) => x.id !== id)
+    for (const c of convs.values()) if (c.conv.profileID === id) c.conv.profileID = "explore"
+  },
+  async setConversationProfile(convID, profileID) {
+    await wait(100)
+    const c = findConv(convID)
+    if (activeRun(convID)) fail("invalid", "The assistant is still answering in this conversation. Stop it first.")
+    const p = findProfile(profileID)
+    checkLocalOnly(c.conv.site, p?.providerID || c.conv.providerID, p?.providerID ? p.model : c.conv.model)
+    if (p?.providerID) {
+      c.conv.providerID = p.providerID
+      c.conv.model = p.model || findProvider(p.providerID).defaultModel
+    }
+    c.conv.profileID = profileID
+    return { ...c.conv }
+  },
+  async getSiteSettings(site) {
+    const s = sites.find((x) => x.name === site)
+    if (!s) fail("not_found", "That site is not in your list.", { field: "site" })
+    return { ...(siteSettings.get(site) ?? { site, url: s.url, instructions: "", localOnly: false }) }
+  },
+  async saveSiteSettings(ss) {
+    await wait(150)
+    const s = sites.find((x) => x.name === ss.site)
+    if (!s) fail("not_found", "That site is not in your list.", { field: "site" })
+    if (ss.instructions.length > 4000) fail("invalid", "Those instructions are too long.", { field: "instructions" })
+    const saved: SiteSettings = { site: ss.site, url: s.url, instructions: ss.instructions.trim(), localOnly: ss.localOnly }
+    siteSettings.set(ss.site, saved)
+    return { ...saved }
+  },
+  async promptPreview(convID) {
+    await wait(200)
+    const c = findConv(convID)
+    const p = findProfile(c.conv.profileID)
+    const mode = (p?.mode ?? "ask") === "ask" && c.conv.mode === "ask" ? "ask" : "read"
+    const reads = ["list_sites", "ping", "get_doc", "list_docs", "count_docs", "get_schema", "search", "whoami"]
+    const writes = ["create_doc", "update_doc", "delete_doc"]
+    const deny = p?.denyTools ?? []
+    const tools = [...reads, ...(mode === "ask" ? writes : [])].filter((t) => !deny.includes(t))
+    const ss = siteSettings.get(c.conv.site)
+    const parts = [
+      'You are the Foxmayn Frappe assistant, working on the Frappe site "' + c.conv.site + '" for the person using this app.',
+      "(ffc's instructions for the tools)",
+    ]
+    if (p?.instructions) parts.push("Instructions of the profile the user chose:\n" + p.instructions)
+    if (ss?.instructions) parts.push("The user's instructions for this site:\n" + ss.instructions)
+    return {
+      system: parts.join("\n\n"),
+      tools,
+      mode,
+      stepLimit: p?.stepLimit ?? 25,
+      profileName: p?.name ?? "",
+      localOnly: ss?.localOnly ?? false,
+      siteContextPending: true,
+    }
   },
 
   onChatDelta: (cb) => on(chat.delta, cb),

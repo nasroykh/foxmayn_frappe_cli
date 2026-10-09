@@ -46,6 +46,15 @@ export function DeleteConversation(id: string): $CancellablePromise<void> {
 }
 
 /**
+ * DeleteProfile removes one of the user's profiles. Its conversations move to
+ * the Explore preset (read only), so nothing gains rights. It is refused
+ * while one of them has a run in progress.
+ */
+export function DeleteProfile(id: string): $CancellablePromise<void> {
+    return $Call.ByID(174510683, id);
+}
+
+/**
  * DeleteProvider removes a provider and its key.
  */
 export function DeleteProvider(id: string): $CancellablePromise<void> {
@@ -69,6 +78,14 @@ export function GetConversation(id: string): $CancellablePromise<$models.Convers
 }
 
 /**
+ * GetSiteSettings returns the settings that apply to a site of the ffc
+ * config.
+ */
+export function GetSiteSettings(site: string): $CancellablePromise<$models.SiteSettings> {
+    return $Call.ByID(403689253, site);
+}
+
+/**
  * KeyStatus says whether a provider has a key, and its last four characters.
  */
 export function KeyStatus(providerID: string): $CancellablePromise<$models.KeyStatus> {
@@ -87,6 +104,20 @@ export function ListConversations(): $CancellablePromise<$models.Conversation[] 
  */
 export function ListModels(providerID: string): $CancellablePromise<$models.Model[] | null> {
     return $Call.ByID(920098499, providerID);
+}
+
+/**
+ * ListPresets returns the built-in profiles.
+ */
+export function ListPresets(): $CancellablePromise<$models.Profile[] | null> {
+    return $Call.ByID(558624303);
+}
+
+/**
+ * ListProfiles returns the user's own profiles, by name.
+ */
+export function ListProfiles(): $CancellablePromise<$models.Profile[] | null> {
+    return $Call.ByID(2795292991);
 }
 
 /**
@@ -113,14 +144,44 @@ export function PendingApprovals(convID: string): $CancellablePromise<$models.Ch
 }
 
 /**
+ * PromptPreview builds the next run's prompt of a conversation the way the
+ * run does. It opens an engine session (which may sign in to the site) but
+ * calls no tool: the site context shown is the one stored.
+ */
+export function PromptPreview(convID: string): $CancellablePromise<$models.PromptPreview> {
+    return $Call.ByID(1803562521, convID);
+}
+
+/**
+ * SaveProfile adds (empty ID) or changes one of the user's profiles. Presets
+ * cannot be changed: save a copy with BasedOn set to the preset.
+ */
+export function SaveProfile(p: $models.Profile): $CancellablePromise<$models.Profile> {
+    return $Call.ByID(2901857345, p);
+}
+
+/**
  * SaveProvider adds or changes a provider. An empty ID takes the kind's name
  * (a custom provider gets a numbered one). The key is set apart, with SetKey.
- * Anthropic and OpenRouter are pinned to their own hosts. When a provider's
+ * Anthropic, OpenRouter, OpenAI and Gemini are pinned to their own hosts
+ * (stored as an empty address, except OpenRouter's). When a provider's
  * address changes the stored key is deleted in the same step (KeyCleared), so
  * a key can never be sent to a host the user did not give it to.
  */
 export function SaveProvider(p: $models.ProviderInfo): $CancellablePromise<$models.ProviderInfo> {
     return $Call.ByID(1471689505, p);
+}
+
+/**
+ * SaveSiteSettings saves a site's instructions and its local-only switch. The
+ * address is taken from the ffc config, never from the caller. Turning
+ * local-only off also turns it off in settings saved under an earlier name
+ * of the site (same address, no longer in the ffc config), which would
+ * otherwise keep it on. Another configured site with the same address keeps
+ * its own setting.
+ */
+export function SaveSiteSettings(s: $models.SiteSettings): $CancellablePromise<$models.SiteSettings> {
+    return $Call.ByID(1529594082, s);
 }
 
 /**
@@ -137,6 +198,16 @@ export function Send(convID: string, text: string): $CancellablePromise<string> 
  */
 export function SetConversationMode(id: string, mode: string): $CancellablePromise<void> {
     return $Call.ByID(2760257883, id, mode);
+}
+
+/**
+ * SetConversationProfile gives a conversation a profile ("" for none). When
+ * the profile names a provider the conversation switches to it, and a site
+ * set to local models only refuses a provider that is not local. It is
+ * refused while a run is active.
+ */
+export function SetConversationProfile(convID: string, profileID: string): $CancellablePromise<$models.Conversation> {
+    return $Call.ByID(4043675533, convID, profileID);
 }
 
 /**

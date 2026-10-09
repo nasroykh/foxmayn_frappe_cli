@@ -312,7 +312,8 @@ export interface ConnectRequest {
 
 /**
  * Conversation is a chat thread bound to a site, a write mode, a provider and
- * a model.
+ * a model. ProfileID is "" (no profile), a preset id or one of the user's
+ * profiles.
  */
 export interface Conversation {
     "id": string;
@@ -321,6 +322,7 @@ export interface Conversation {
     "mode": string;
     "providerID": string;
     "model": string;
+    "profileID": string;
     "created": string;
     "updated": string;
 }
@@ -544,6 +546,95 @@ export interface Preview {
 }
 
 /**
+ * Profile is a set of limits for a conversation: a built-in preset (Preset
+ * true, never changed; duplicate it to edit) or the user's own. Lists that
+ * are empty mean "no limit of this profile"; the site's policy still applies.
+ */
+export interface Profile {
+    "id": string;
+    "name": string;
+
+    /**
+     * Preset marks a built-in profile.
+     */
+    "preset": boolean;
+
+    /**
+     * BasedOn is the preset a user profile was duplicated from, or "".
+     */
+    "basedOn": string;
+
+    /**
+     * Mode is "read" (the default) or "ask". The conversation's switch can
+     * only make it stricter.
+     */
+    "mode": string;
+
+    /**
+     * Toolsets are ffc's tool sets to serve; empty means core and
+     * lifecycle.
+     */
+    "toolsets": string[] | null;
+    "allowTools": string[] | null;
+    "allowDoctypes": string[] | null;
+    "denyDoctypes": string[] | null;
+    "allowMethods": string[] | null;
+    "denyMethods": string[] | null;
+
+    /**
+     * DenyTools are never offered to the model.
+     */
+    "denyTools": string[] | null;
+
+    /**
+     * CallMethod offers call_method when the site's policy serves it.
+     */
+    "callMethod": boolean;
+
+    /**
+     * StepLimit is how many tool calls a run makes before it pauses (1-100).
+     */
+    "stepLimit": number;
+
+    /**
+     * ProviderID and Model, when set, are what a conversation switches to
+     * when it takes this profile.
+     */
+    "providerID": string;
+    "model": string;
+    "instructions": string;
+
+    /**
+     * KeepHistory false makes conversations ephemeral.
+     */
+    "keepHistory": boolean;
+}
+
+/**
+ * PromptPreview is what the model gets at a conversation's next run: the
+ * system text in its order, the tools offered and the limits in force.
+ */
+export interface PromptPreview {
+    "system": string;
+    "tools": string[] | null;
+
+    /**
+     * Mode is the write mode in force: the stricter of the profile's and
+     * the conversation's ("read" or "ask").
+     */
+    "mode": string;
+    "stepLimit": number;
+    "profileName": string;
+    "localOnly": boolean;
+
+    /**
+     * SiteContextPending is set when the site context is collected at the
+     * next run, so the text does not hold it yet.
+     */
+    "siteContextPending": boolean;
+}
+
+/**
  * ProviderInfo is a provider as the UI sees it. It never carries the key.
  */
 export interface ProviderInfo {
@@ -655,6 +746,38 @@ export interface SiteList {
     "configExists": boolean;
     "defaultSite": string;
     "sites": Site[] | null;
+}
+
+/**
+ * SiteSettings are the app's own settings for a site. They are keyed by the
+ * site's name and keep its address, so they still apply after the site is
+ * renamed with ffc (same address, new name).
+ */
+export interface SiteSettings {
+    "site": string;
+
+    /**
+     * URL is the site's address (from the ffc config; read only).
+     */
+    "url": string;
+
+    /**
+     * Instructions go to the model in every conversation on the site.
+     */
+    "instructions": string;
+
+    /**
+     * LocalOnly lets conversations on the site use only a model server on
+     * this computer.
+     */
+    "localOnly": boolean;
+
+    /**
+     * LocalOnlyFrom names the saved settings of another site name with the
+     * same address that make this site local only (the site was renamed).
+     * Such a site stays local only until those settings are changed.
+     */
+    "localOnlyFrom"?: string;
 }
 
 /**
