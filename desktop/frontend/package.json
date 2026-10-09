@@ -16,7 +16,7 @@
     "@shadcn/react": "^0.3.1",
     "@tabler/icons-react": "^3.49.0",
     "@tailwindcss/vite": "^4.3.3",
-    "@wailsio/runtime": "latest",
+    "@wailsio/runtime": "3.0.0-beta.28",
     "class-variance-authority": "^0.7.1",
     "cmdk": "^1.1.1",
     "cn": "^0.4.0",
