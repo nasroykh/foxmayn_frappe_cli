@@ -94,6 +94,45 @@ func TestOpenAICachedAndGeminiCached(t *testing.T) {
 	near(t, r2.USD, r.USD)
 }
 
+// Where the page lists a cache-write price (gpt-6 and gpt-5.6 families) the
+// written tokens bill at it, in the short and the long tier; where it lists
+// none (gpt-5.5, gpt-5.4, Gemini) they bill as input.
+func TestOpenAICacheWritePriceAndItsAbsence(t *testing.T) {
+	// gpt-6-sol: in 2, write 2.5, cached 0.2, out 10. 600 fresh + 400 written.
+	r := Cost("openai", "gpt-6-sol", llm.Usage{In: 1000, CacheWrite: 400, Cached: 5000, Out: 200})
+	near(t, r.USD, (600*2.0+400*2.5+5000*0.2+200*10.0)/1e6)
+	// Long tier (prompt over 272000): in 4, write 5, cached 0.4, out 15.
+	r = Cost("openai", "gpt-6-sol", llm.Usage{In: 300000, CacheWrite: 1000, Cached: 0, Out: 100})
+	near(t, r.USD, (299000*4.0+1000*5.0+100*15.0)/1e6)
+	// gpt-6-luna has a fractional write price.
+	r = Cost("openai", "gpt-6-luna", llm.Usage{In: 1000, CacheWrite: 1000, Out: 0})
+	near(t, r.USD, 1000*0.125/1e6)
+	// gpt-5.5 lists "-": written tokens bill as input, in both tiers.
+	r = Cost("openai", "gpt-5.5", llm.Usage{In: 1000, CacheWrite: 400, Out: 10})
+	near(t, r.USD, (1000*5.0+10*30.0)/1e6)
+	r = Cost("openai", "gpt-5.5", llm.Usage{In: 300000, CacheWrite: 400, Out: 10})
+	near(t, r.USD, (300000*10.0+10*45.0)/1e6)
+	// Gemini has none either.
+	r = Cost("gemini", "gemini-2.5-flash", llm.Usage{In: 1000, CacheWrite: 400, Out: 10})
+	near(t, r.USD, (1000*0.3+10*2.5)/1e6)
+}
+
+func TestEveryGPT6AndGPT56EntryHasShortAndLongCacheWrite(t *testing.T) {
+	tb, _ := Load()
+	n := 0
+	for _, e := range tb.Models {
+		if e.Kind == "openai" && (strings.HasPrefix(e.Model, "gpt-6") || strings.HasPrefix(e.Model, "gpt-5.6")) {
+			n++
+			if e.CacheWrite == nil || e.Long == nil || e.Long.CacheWrite == nil {
+				t.Errorf("%s: cache_write missing (short or long)", e.Model)
+			}
+		}
+	}
+	if n != 7 {
+		t.Errorf("found %d gpt-6/gpt-5.6 entries, want 7", n)
+	}
+}
+
 func TestLongContextTier(t *testing.T) {
 	// Haiku 5.5: over 100000 prompt tokens (cache reads count) the long price applies.
 	short := Cost("anthropic", "claude-haiku-5-5", llm.Usage{In: 50000, Cached: 50000, Out: 1000})
