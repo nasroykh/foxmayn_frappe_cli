@@ -33,7 +33,7 @@ function markUpdateChecked() {
   }
 }
 
-export type Screen = "sites" | "assistants" | "settings"
+export type Screen = "sites" | "assistant" | "assistants" | "settings"
 
 /** A value loaded from the backend: null until the first answer. */
 export interface Loaded<T> {

@@ -1,8 +1,115 @@
 {
   "nav": {
-    "connectApps": "Connect apps"
+    "connectApps": "Connect apps",
+    "assistant": "Assistant"
   },
   "connectApps": {
     "title": "Connect apps"
+  },
+  "common": {
+    "cancel": "Cancel",
+    "retry": "Try again"
+  },
+  "chat": {
+    "title": "Assistant",
+    "loadFailed": "The assistant could not be loaded",
+    "noSitesTitle": "Add a site first",
+    "noSites": "The assistant works on one of your sites. Add a site to start.",
+    "addSite": "Add a site",
+    "noConversation": "No conversation yet",
+    "noConversationHint": "Start one to ask about a site or change its data.",
+    "emptyConversation": "Ask a question about your site. Nothing changes unless you allow it.",
+    "thinking": "Working on it…",
+    "header": {
+      "site": "Site: {{site}}"
+    },
+    "list": {
+      "label": "Conversations",
+      "title": "Conversations",
+      "new": "New",
+      "empty": "No conversations yet.",
+      "untitled": "New conversation",
+      "delete": "Delete",
+      "deleteLabel": "Delete conversation {{title}}",
+      "deleteTitle": "Delete this conversation?",
+      "deleteBody": "“{{title}}” and its messages are removed from this computer. This cannot be undone."
+    },
+    "new": {
+      "title": "New conversation",
+      "body": "Choose the site and the model. You can allow changes later.",
+      "site": "Site",
+      "provider": "Provider",
+      "model": "Model",
+      "start": "Start"
+    },
+    "mode": {
+      "label": "What the assistant may do",
+      "read": "Read only",
+      "ask": "Ask before changes",
+      "readHelp": "Read only: the assistant can look at your data but cannot change anything.",
+      "askHelp": "Ask before changes: the assistant shows you each change and waits for your answer.",
+      "locked": "The mode cannot change while the assistant is answering."
+    },
+    "composer": {
+      "label": "Message",
+      "placeholder": "Ask about your site…",
+      "send": "Send",
+      "sendLabel": "Send message",
+      "stop": "Stop",
+      "stopLabel": "Stop the assistant",
+      "hint": "Enter sends, Shift+Enter adds a line. Esc stops the assistant."
+    },
+    "approval": {
+      "label": "Approval needed",
+      "appTitle": "The assistant wants to make a change",
+      "ffcFallback": "Allow this change?",
+      "tool": "Tool",
+      "site": "Site",
+      "doctypes": "Document types",
+      "names": "Documents",
+      "noChanges": "No field changes",
+      "diffLabel": "Field changes",
+      "args": "Exact request",
+      "approve": "Approve",
+      "decline": "Decline"
+    },
+    "tool": {
+      "running": "Running",
+      "ok": "Done",
+      "error": "Failed",
+      "stopped": "Stopped",
+      "approved": "Approved",
+      "declined": "Declined",
+      "cancelled": "Not answered"
+    },
+    "error": {
+      "title": "The assistant stopped"
+    },
+    "paused": {
+      "title": "Paused after many steps",
+      "body": "The assistant paused so it does not run on forever. Continue to let it go on.",
+      "continue": "Continue"
+    },
+    "noProvider": "Add a provider in Settings first."
+  },
+  "provider": {
+    "key": {
+      "label": "{{name}} API key",
+      "hint": "Paste the key here. It is not shown again.",
+      "optionalHint": "Optional. Only if the server asks for one.",
+      "save": "Save key",
+      "checking": "Checking…",
+      "rejected": "The key was not accepted",
+      "empty": "Paste the API key.",
+      "saved": "Saved",
+      "savedEnds": "Saved, ends in ••••{{last4}}",
+      "notSet": "No key saved"
+    },
+    "models": {
+      "loading": "Loading models…",
+      "failed": "The models could not be listed",
+      "none": "This provider lists no models.",
+      "defaultFlag": "{{name}} (default)"
+    }
   }
 }

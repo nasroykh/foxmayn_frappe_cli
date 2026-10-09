@@ -1,12 +1,12 @@
 import { cn } from "cn"
 
 /** A unified diff with added and removed lines marked. */
-export function DiffView({ diff }: { diff: string }) {
+export function DiffView({ diff, label = "Changes to the settings file" }: { diff: string; label?: string }) {
   if (!diff) return <p className="text-muted-foreground pt-2 text-xs">No changes.</p>
   return (
     <pre
       className="bg-muted mt-2 max-h-56 overflow-auto rounded-lg py-2 font-mono text-xs leading-relaxed"
-      aria-label="Changes to the settings file"
+      aria-label={label}
     >
       {diff.split("\n").map((line, i) => {
         const added = line.startsWith("+") && !line.startsWith("+++")

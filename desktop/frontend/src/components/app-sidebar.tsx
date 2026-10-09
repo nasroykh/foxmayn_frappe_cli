@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next"
-import { IconAlertTriangle, IconArrowUpCircle, IconCircleCheck, IconPlus, IconRobot, IconSettings, IconWorld } from "@tabler/icons-react"
+import { IconAlertTriangle, IconArrowUpCircle, IconCircleCheck, IconPlus, IconMessageChatbot, IconRobot, IconSettings, IconWorld } from "@tabler/icons-react"
 
 import { useApp, type Screen } from "@/app/app-context"
 import { BrandLogo } from "@/components/brand-logo"
@@ -20,7 +20,8 @@ import {
 
 const nav: { id: Screen; label?: string; labelKey?: string; icon: typeof IconWorld }[] = [
   { id: "sites", label: "Sites", icon: IconWorld },
-  // The screen id stays "assistants"; the label is "Connect apps" (a chat "Assistant" entry comes later).
+  { id: "assistant", labelKey: "nav.assistant", icon: IconMessageChatbot },
+  // The screen id stays "assistants"; the label is "Connect apps". The chat is "assistant".
   { id: "assistants", labelKey: "nav.connectApps", icon: IconRobot },
   { id: "settings", label: "Settings", icon: IconSettings },
 ]
