@@ -41,7 +41,7 @@ func TestClassifyConfirm(t *testing.T) {
 		if want == "" {
 			want = config.ConfirmIfSupported
 		}
-		if cls.Action != "write" || !cls.Confirm || !cls.WillAsk || cls.Mode != want || cls.Site != "t" || cls.Denied != "" ||
+		if cls.Action != "write" || !cls.Confirm || cls.WillAsk != (want == config.ConfirmAlways) || cls.Mode != want || cls.Site != "t" || cls.Denied != "" ||
 			len(cls.Doctypes) != 1 || cls.Doctypes[0] != "ToDo" || len(cls.Names) != 1 || cls.Names[0] != "TD-1" {
 			t.Errorf("delete_doc with confirm %q: %+v", mode, cls)
 		}
@@ -74,7 +74,7 @@ func TestClassifyConfirm(t *testing.T) {
 		{"call_method", map[string]any{"method": "frappe.client.get_list", "args": map[string]any{"doctype": "ToDo"}}, "method", false},
 	} {
 		cls := mcpTClassify(t, s, c.tool, c.args)
-		if cls.Action != c.action || cls.Confirm != c.confirm || cls.WillAsk != c.confirm || cls.Denied != "" {
+		if cls.Action != c.action || cls.Confirm != c.confirm || cls.WillAsk || cls.Denied != "" {
 			t.Errorf("%s %v: %+v", c.tool, c.args, cls)
 		}
 		if c.tool == "call_method" && cls.Method != c.args["method"] {
@@ -129,7 +129,7 @@ func TestClassifyMultiSite(t *testing.T) {
 		t.Error("unknown site: no error")
 	}
 	args["site"] = "dev"
-	if cls := mcpTClassify(t, s, "delete_doc", args); cls.Site != "dev" || !cls.WillAsk || cls.Denied != "" {
+	if cls := mcpTClassify(t, s, "delete_doc", args); cls.Site != "dev" || cls.WillAsk || cls.Denied != "" {
 		t.Errorf("dev: %+v", cls)
 	}
 	args["site"] = "prod" // case-folded, as a call is

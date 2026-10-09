@@ -64,6 +64,11 @@ type mcpEnv struct {
 func toolHandler(env *mcpEnv, parse func(req mcp.CallToolRequest) (toolCall, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		rec := auditRecord{Time: time.Now().UTC(), Tool: req.Params.Name, Client: mcpClientName(ctx), RunID: runIDFrom(ctx), Via: viaFrom(ctx)}
+		if out := classifyFrom(ctx); out != nil {
+			// MCPServer.Classify: validate like a call, run and log nothing.
+			out.p, out.status, out.err = env.prepare(ctx, req, parse, &rec)
+			return nil, nil
+		}
 		res := env.run(ctx, req, parse, &rec)
 		rec.DurationMS = time.Since(rec.Time).Milliseconds()
 		env.audit.write(rec, req.GetArguments())
@@ -83,16 +88,31 @@ func appendNew(list []string, s string) []string {
 	return append(append([]string(nil), list...), s)
 }
 
-func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(req mcp.CallToolRequest) (toolCall, error), rec *auditRecord) *mcp.CallToolResult {
-	fail := func(status string, err error) *mcp.CallToolResult {
-		rec.Status, rec.Error, rec.cause = status, err.Error(), err
-		return mcp.NewToolResultError(err.Error())
-	}
+// preparedCall is a call of a site tool whose arguments are valid, before
+// the policy has judged it.
+type preparedCall struct {
+	call   toolCall
+	jq     string
+	scope  toolScope
+	site   *config.SiteConfig // nil for a siteless tool
+	policy mcpPolicy
+}
+
+// prepare is the first half of run: the checks that need no policy, in
+// order. It returns the audit status to record with the error that ends the
+// call. Classify runs it too, so both refuse the same arguments.
+func (env *mcpEnv) prepare(ctx context.Context, req mcp.CallToolRequest, parse func(req mcp.CallToolRequest) (toolCall, error), rec *auditRecord) (p preparedCall, status string, err error) {
 	if siteless[req.Params.Name] {
 		if _, err := jqArg(req); err != nil {
-			return fail(auditInvalid, err)
+			return p, auditInvalid, err
 		}
-		return env.runSiteless(ctx, req, parse, rec)
+		if p.call, err = parse(req); err != nil {
+			return p, auditInvalid, err
+		}
+		if p.scope, err = scopeOf(req); err != nil {
+			return p, auditDenied, err
+		}
+		return p, "", nil
 	}
 	// The site is read first only so every audit line names it; a bad
 	// argument is still reported before a config error.
@@ -113,17 +133,35 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 		jq, err = jqArg(req)
 	}
 	if err != nil {
-		return fail(auditInvalid, err)
+		return p, auditInvalid, err
 	}
 	scope, err := scopeOf(req)
 	if err != nil {
-		return fail(auditDenied, err)
+		return p, auditDenied, err
 	}
 	rec.Doctypes, rec.Names, rec.Method = scope.Doctypes, scope.Names, scope.Method
 	if siteErr != nil {
-		return fail(auditError, siteErr)
+		return p, auditError, siteErr
 	}
-	policy := newMCPPolicy(site, env.flags)
+	return preparedCall{call: call, jq: jq, scope: scope, site: site, policy: newMCPPolicy(site, env.flags)}, "", nil
+}
+
+func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(req mcp.CallToolRequest) (toolCall, error), rec *auditRecord) *mcp.CallToolResult {
+	fail := func(status string, err error) *mcp.CallToolResult {
+		rec.Status, rec.Error, rec.cause = status, err.Error(), err
+		return mcp.NewToolResultError(err.Error())
+	}
+	if siteless[req.Params.Name] {
+		if _, err := jqArg(req); err != nil {
+			return fail(auditInvalid, err)
+		}
+		return env.runSiteless(ctx, req, parse, rec)
+	}
+	p, status, err := env.prepare(ctx, req, parse, rec)
+	if err != nil {
+		return fail(status, err)
+	}
+	call, jq, scope, site, policy := p.call, p.jq, p.scope, p.site, p.policy
 	if err := policy.check(req.Params.Name, scope); err != nil {
 		return fail(auditDenied, err)
 	}

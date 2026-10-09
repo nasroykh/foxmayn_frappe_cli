@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -121,10 +123,18 @@ func runIDFrom(ctx context.Context) string {
 
 // ToolClass is what the server's rules say about a call before it is made.
 type ToolClass struct {
-	Action   string   `json:"action"`             // "read", "write" or "method" (call_method)
-	Confirm  bool     `json:"confirm"`            // the call destroys, cancels or merges documents, or widens access
-	Mode     string   `json:"mode"`               // the site's confirm mode: never, if-supported or always
-	WillAsk  bool     `json:"will_ask"`           // Confirm, and Mode would ask a client that can elicit
+	Action  string `json:"action"`  // "read", "write" or "method" (call_method)
+	Confirm bool   `json:"confirm"` // the call destroys, cancels or merges documents, or widens access
+	Mode    string `json:"mode"`    // the site's confirm mode: never, if-supported or always
+	// WillAsk is true when ffc itself is certain to put the question to the
+	// user: the call needs confirmation, the policy allows it and the mode is
+	// always, where a client that cannot ask is refused, never run. Under
+	// if-supported (the default) a client that cannot ask runs the call with
+	// no question, so WillAsk is false and a caller that wants a card must
+	// show its own. An embedding app that wants ffc's question to be the card
+	// sets MCPOptions.Policy.Confirm to "always", which can only tighten the
+	// site's own mode, "never" included.
+	WillAsk  bool     `json:"will_ask"`
 	Site     string   `json:"site,omitempty"`     // the site the call is for
 	Doctypes []string `json:"doctypes,omitempty"` // the DocTypes the call names
 	Names    []string `json:"names,omitempty"`    // the document names the call names
@@ -133,49 +143,83 @@ type ToolClass struct {
 }
 
 // Classify says how the server would treat a call of tool with args, by the
-// rules a tool call applies: the policy of the site the call is for, and
-// whether the call needs the user's confirmation and in which mode. The tool
-// must be registered on this server and the arguments valid, else it is an
-// error. Classify sends no request to the site, so it covers only the rules
-// checked before any request: checkReport, checkRestore and
-// checkCommentAuthor run later and can still refuse a call it allows.
+// rules a tool call applies: its argument checks, the policy of the site the
+// call is for, and whether it needs the user's confirmation and in which
+// mode. The arguments are read as the server reads a real call (through
+// JSON). The tool must be registered on this server and the arguments valid
+// for it, else it is an error, exactly when the call would be refused as
+// invalid. The answer is for the site config as read now (a call reads it
+// again). Classify sends no request to the site and writes no audit line, so
+// it covers only the rules checked before any request: checkReport,
+// checkRestore and checkCommentAuthor run later and can still refuse a call
+// it allows.
 func (s *MCPServer) Classify(tool string, args map[string]any) (ToolClass, error) {
+	if s == nil || s.env == nil || s.MCPServer == nil {
+		return ToolClass{}, errors.New("no MCP server")
+	}
 	action, known := toolActions[tool]
 	if !known {
 		return ToolClass{}, fmt.Errorf("unknown tool %q", tool)
 	}
-	if _, ok := s.ListTools()[tool]; !ok {
+	registered, ok := s.ListTools()[tool]
+	if !ok {
 		return ToolClass{}, fmt.Errorf("tool %q is not served by this MCP server", tool)
 	}
+	// A real call arrives as JSON: 0 is a float64, a typed nil is null.
+	var wire map[string]any
+	if args != nil {
+		raw, err := json.Marshal(args)
+		if err != nil {
+			return ToolClass{}, fmt.Errorf("arguments: %w", err)
+		}
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			return ToolClass{}, fmt.Errorf("arguments: %w", err)
+		}
+	}
 	req := mcp.CallToolRequest{}
-	req.Params.Name, req.Params.Arguments = tool, args
-	scope, err := scopeOf(req)
-	if err != nil {
+	req.Params.Name, req.Params.Arguments = tool, wire
+	// The tool's own handler holds its argument parse; with this context it
+	// runs the checks of a call up to the policy and stops.
+	out := &classifyOut{}
+	if _, err := registered.Handler(withClassify(context.Background(), out), req); err != nil {
 		return ToolClass{}, err
 	}
+	if out.err != nil {
+		return ToolClass{}, out.err
+	}
+	p := out.p
 	cls := ToolClass{
 		Action:   map[toolAction]string{actRead: "read", actWrite: "write", actMethod: "method"}[action],
-		Confirm:  scope.Confirm,
-		Doctypes: scope.Doctypes, Names: scope.Names, Method: scope.Method,
+		Confirm:  p.scope.Confirm,
+		Doctypes: p.scope.Doctypes, Names: p.scope.Names, Method: p.scope.Method,
 	}
-	if siteless[tool] {
+	if p.site == nil { // a siteless tool
 		return cls, nil
 	}
-	name, err := s.env.siteFor(req)
-	if err != nil {
-		return ToolClass{}, err
-	}
-	site, err := s.env.site(context.Background(), name)
-	if err != nil {
-		return ToolClass{}, err
-	}
-	policy := newMCPPolicy(site, s.env.flags)
-	cls.Site, cls.Mode = site.Name, policy.confirmMode()
-	cls.WillAsk = cls.Confirm && cls.Mode != config.ConfirmNever
-	if err := policy.check(tool, scope); err != nil {
+	cls.Site, cls.Mode = p.site.Name, p.policy.confirmMode()
+	if err := p.policy.check(tool, p.scope); err != nil {
 		cls.Denied = err.Error()
 	}
+	cls.WillAsk = cls.Confirm && cls.Denied == "" && cls.Mode == config.ConfirmAlways
 	return cls, nil
+}
+
+type classifyCtxKey struct{}
+
+// classifyOut receives what a handler found out when it ran for Classify.
+type classifyOut struct {
+	p      preparedCall
+	status string
+	err    error
+}
+
+func withClassify(ctx context.Context, out *classifyOut) context.Context {
+	return context.WithValue(ctx, classifyCtxKey{}, out)
+}
+
+func classifyFrom(ctx context.Context) *classifyOut {
+	out, _ := ctx.Value(classifyCtxKey{}).(*classifyOut)
+	return out
 }
 
 // cleanMCPOptions validates o the way the flags of `ffc mcp` are: it trims
