@@ -394,3 +394,34 @@ func TestMCPPolicyConfirm(t *testing.T) {
 		t.Errorf("policy = %+v", cfg.MCP)
 	}
 }
+
+func TestLoadSiteLeavesDisplayFormats(t *testing.T) {
+	t.Setenv("FFC_URL", "")
+	t.Setenv("FFC_API_KEY", "")
+	t.Setenv("FFC_API_SECRET", "")
+	origN, origD := ActiveFormat, ActiveDateFormat
+	defer func() { ActiveFormat, ActiveDateFormat = origN, origD }()
+	ActiveFormat, ActiveDateFormat = FormatPlain, FormatEuroDate
+	p := writeTemp(t, `default_site: a
+number_format: us
+date_format: mm/dd/yyyy
+sites:
+  a:
+    url: https://a.example
+    api_key: k
+    api_secret: s
+`)
+	s, err := LoadSite("", p)
+	if err != nil || s.Name != "a" || s.URL != "https://a.example" {
+		t.Fatalf("LoadSite = %+v, %v", s, err)
+	}
+	if ActiveFormat != FormatPlain || ActiveDateFormat != FormatEuroDate {
+		t.Fatalf("LoadSite changed formats: %q, %q", ActiveFormat, ActiveDateFormat)
+	}
+	if _, err := Load("", p); err != nil {
+		t.Fatal(err)
+	}
+	if ActiveFormat != FormatUS || ActiveDateFormat != FormatUSDate {
+		t.Fatalf("Load must still set formats: %q, %q", ActiveFormat, ActiveDateFormat)
+	}
+}

@@ -29,7 +29,7 @@ var siteless = map[string]bool{"list_sites": true}
 // Without --sites or --all-sites it is the selected site alone, as before.
 func mcpSites() ([]string, error) {
 	if !mcpAllSites && len(mcpSiteList) == 0 {
-		site, err := config.Load(siteName, configPath)
+		site, err := config.LoadSite(siteName, configPath)
 		if err != nil {
 			return nil, fmt.Errorf("config: %w", err)
 		}
@@ -62,7 +62,7 @@ func mcpSites() ([]string, error) {
 	var sites []string
 	seen := map[string]bool{}
 	for _, w := range want {
-		site, err := config.Load(w, path) // exact, then a unique case-insensitive match
+		site, err := config.LoadSite(w, path) // exact, then a unique case-insensitive match
 		if err != nil {
 			return nil, fmt.Errorf("--sites: %w", err)
 		}
@@ -77,7 +77,7 @@ func mcpSites() ([]string, error) {
 	// The default site goes first: --site, else default_site when served.
 	first := cfg.DefaultSite
 	if siteName != "" {
-		site, err := config.Load(siteName, path)
+		site, err := config.LoadSite(siteName, path)
 		if err != nil {
 			return nil, fmt.Errorf("config: %w", err)
 		}

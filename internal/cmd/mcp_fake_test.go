@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -907,5 +910,65 @@ func TestMCPFakeToolSets(t *testing.T) {
 	s, _ = newMCPFake(t, false)
 	if got := mcpTToolNames(t, s); !reflect.DeepEqual(got, all) || len(got) != 49 {
 		t.Errorf("full tools = %v, want %v", got, all)
+	}
+}
+
+// TestMCPParallelCallsReadConfig runs tool calls concurrently with a site
+// resolver that reads the config file on every call, as ffc mcp does. Under
+// -race it fails if that read writes the package-level display formats.
+func TestMCPParallelCallsReadConfig(t *testing.T) {
+	t.Setenv("FFC_URL", "")
+	t.Setenv("FFC_API_KEY", "")
+	t.Setenv("FFC_API_SECRET", "")
+	fake := frappetest.New(t)
+	mcpTSeedTodos(fake)
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	yml := fmt.Sprintf("default_site: test\nnumber_format: us\ndate_format: mm/dd/yyyy\nsites:\n  test:\n    url: %s\n    api_key: %s\n    api_secret: %s\n",
+		fake.URL, frappetest.APIKey, frappetest.APISecret)
+	if err := os.WriteFile(cfgPath, []byte(yml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	origN, origD := config.ActiveFormat, config.ActiveDateFormat
+	defer func() { config.ActiveFormat, config.ActiveDateFormat = origN, origD }()
+
+	c, err := client.New(context.Background(), &config.SiteConfig{
+		URL: fake.URL, APIKey: frappetest.APIKey, APISecret: frappetest.APISecret,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := &mcpEnv{
+		sites: []string{"test"},
+		site: func(_ context.Context, name string) (*config.SiteConfig, error) {
+			return config.LoadSite(name, cfgPath)
+		},
+		client:   func(context.Context, *config.SiteConfig) (*client.FrappeClient, error) { return c, nil },
+		toolsets: knownToolsets,
+	}
+	site, err := env.site(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := server.NewMCPServer("test", "0")
+	registerTools(s, env, []mcpPolicy{newMCPPolicy(site, env.flags)})
+
+	const n = 12
+	results := make([]*mcp.CallToolResult, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = callTool(t, s, "list_docs", map[string]interface{}{"doctype": "ToDo"})
+		}(i)
+	}
+	wg.Wait()
+	for i, res := range results {
+		if res == nil || res.IsError {
+			t.Fatalf("call %d failed: %+v", i, res)
+		}
+	}
+	if config.ActiveFormat != origN || config.ActiveDateFormat != origD {
+		t.Fatalf("MCP calls changed display formats: %q, %q", config.ActiveFormat, config.ActiveDateFormat)
 	}
 }
