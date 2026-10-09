@@ -6,12 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
-	"github.com/nasroykh/foxmayn_frappe_cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -53,7 +51,7 @@ Examples:
 `,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		source, name, err := parseMapSource(emFrom)
+		source, name, err := parseDocRef("from", "Sales Order:SAL-ORD-2026-00001", emFrom)
 		if err != nil {
 			return err
 		}
@@ -61,43 +59,17 @@ Examples:
 			return usageErrorf("--to: provide the DocType to map into")
 		}
 		req := mapRequest{from: source, name: name, to: strings.TrimSpace(emTo), create: emCreate || emSubmit, submit: emSubmit}
-		// A submit that fails after the insert leaves a document behind: it is
-		// printed as a created one, so a script can pick up its name, and the
-		// error still ends the command.
-		var partial *mapResult
-		res, err := callSiteCfg(cmd, fmt.Sprintf("Mapping %s %s…", source, name), func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (*mapResult, error) {
-			r, err := runERPMap(ctx, c, cfg, req)
-			if err != nil {
-				partial = r
-			}
-			return r, err
-		})
-		if err != nil {
-			if partial != nil {
-				_ = printMapped(partial, req)
-			}
-			return err
+		lines := erpLines{
+			draft:   fmt.Sprintf("Unsaved draft of %s: nothing was written (--create saves it).", req.to),
+			created: func(n string) string { return fmt.Sprintf("Created %s %s from %s %s", req.to, n, req.from, req.name) },
+			submitted: func(n string) string {
+				return fmt.Sprintf("Created and submitted %s %s from %s %s", req.to, n, req.from, req.name)
+			},
 		}
-		return printMapped(res, req)
+		return runERP(cmd, fmt.Sprintf("Mapping %s %s…", source, name), emKeys, lines, func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (*erpResult, error) {
+			return runERPMap(ctx, c, cfg, req)
+		})
 	},
-}
-
-// printMapped prints the outcome of an 'erp map': the document as data, or
-// a line saying what happened and the document table.
-func printMapped(res *mapResult, req mapRequest) error {
-	if machineOutput() {
-		return printResult(selectKeys(res.doc, emKeys))
-	}
-	switch {
-	case res.submitted:
-		output.PrintSuccess(fmt.Sprintf("Created and submitted %s %s from %s %s", req.to, res.name(), req.from, req.name))
-	case res.created:
-		output.PrintSuccess(fmt.Sprintf("Created %s %s from %s %s", req.to, res.name(), req.from, req.name))
-	default:
-		fmt.Fprintf(os.Stderr, "Unsaved draft of %s: nothing was written (--create saves it).\n", req.to)
-	}
-	output.PrintDocTable(res.doc, nil)
-	return nil
 }
 
 // mapRequest is one 'erp map' run: the source document, the target DocType
@@ -107,31 +79,10 @@ type mapRequest struct {
 	create, submit bool
 }
 
-type mapResult struct {
-	doc                map[string]interface{}
-	created, submitted bool
-}
-
-func (r *mapResult) name() string {
-	n, _ := docName(r.doc["name"])
-	return n
-}
-
-// parseMapSource splits --from "DocType:name" at the first colon (a DocType
-// name has none).
-func parseMapSource(raw string) (doctype, name string, err error) {
-	doctype, name, ok := strings.Cut(raw, ":")
-	doctype, name = strings.TrimSpace(doctype), strings.TrimSpace(name)
-	if !ok || doctype == "" || name == "" {
-		return "", "", usageErrorf(`--from: expected "DocType:name", e.g. "Sales Order:SAL-ORD-2026-00001"`)
-	}
-	return doctype, name, nil
-}
-
 // runERPMap maps the source into an unsaved draft and, when asked, saves and
 // submits it. Order matters: every check and read comes before the first
 // write, so a refusal leaves the site untouched.
-func runERPMap(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, req mapRequest) (*mapResult, error) {
+func runERPMap(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, req mapRequest) (*erpResult, error) {
 	info, _, err := serverInfo(ctx, c, cfg, false)
 	if err != nil {
 		return nil, err
@@ -154,37 +105,9 @@ func runERPMap(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConf
 		return nil, err
 	}
 	if !req.create {
-		return &mapResult{doc: draft}, nil
+		return &erpResult{doc: draft}, nil
 	}
-	if req.submit {
-		if err := refuseWorkflow(ctx, c, req.to, ""); err != nil {
-			return nil, err
-		}
-	}
-	data := client.InsertableCopy(draft)
-	doc, err := c.CreateDoc(ctx, req.to, data)
-	var plan *client.DryRunError
-	if errors.As(err, &plan) && req.submit {
-		return nil, planSubmit(ctx, c, plan, data)
-	}
-	if err != nil {
-		return nil, err
-	}
-	res := &mapResult{doc: doc, created: true}
-	if !req.submit {
-		return res, nil
-	}
-	name, ok := docName(doc["name"])
-	if !ok {
-		return res, fmt.Errorf("created %s, but the site returned no name for it: not submitted", req.to)
-	}
-	submitted, err := c.SubmitDoc(ctx, req.to, name)
-	if err != nil {
-		return res, fmt.Errorf("created %s %s, but the submit failed: %w", req.to, name, err)
-	}
-	res.doc = submitted
-	res.submitted = true
-	return res, nil
+	return createFromDraft(ctx, c, req.to, draft, req.submit)
 }
 
 // refuseLeadQuotation stops the mapping of a Quotation made out to a Lead or
@@ -217,19 +140,6 @@ func refuseLeadQuotation(ctx context.Context, c *client.FrappeClient, name strin
 		return nil
 	}
 	return &client.StateError{Message: fmt.Sprintf("Quotation %s is made out to a %s with no customer: convert the %s to a customer first", name, to, strings.ToLower(to))}
-}
-
-// planSubmit completes the plan of a dry-run insert with the submit that
-// would follow it (the insert holds the run back before there is a name to
-// submit), and returns the whole plan as the error.
-func planSubmit(ctx context.Context, c *client.FrappeClient, plan *client.DryRunError, doc map[string]interface{}) error {
-	_, err := c.CallMethod(ctx, "frappe.client.submit", map[string]interface{}{"doc": doc}, false)
-	var submit *client.DryRunError
-	if !errors.As(err, &submit) {
-		return fmt.Errorf("planning the submit: the dry run held nothing back (%v)", err)
-	}
-	plan.Requests = append(plan.Requests, submit.Requests...)
-	return plan
 }
 
 func init() {
