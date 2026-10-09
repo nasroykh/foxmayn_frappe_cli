@@ -12,6 +12,8 @@
       public/theme-init.js. Base UI's injected <style> tags are turned off with
       CSPProvider (src/main.tsx); their CSS is in src/index.css. Inline style=""
       set by React goes through the CSSOM, which style-src does not block.
+      Do not use the Wails WebviewWindowOptions.CSS option: it injects a <style>
+      element that this CSP blocks.
       frame-ancestors is ignored in a meta tag, so it is omitted.
       `npm run dev` relaxes this policy for Vite (see vite.config.ts).
     -->

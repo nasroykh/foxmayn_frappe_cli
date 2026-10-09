@@ -13,10 +13,23 @@ function devCSP(): Plugin {
     name: "ffd-dev-csp",
     apply: "serve",
     transformIndexHtml(html) {
-      return html.replace(
-        /(http-equiv="Content-Security-Policy"\s+content=")[^"]*"/,
-        `$1default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'none'"`,
-      );
+      // Start from the policy in index.html so the two cannot drift.
+      return html.replace(/(http-equiv="Content-Security-Policy"\s+content=")([^"]*)"/, (_m, head, policy: string) => {
+        const extra: Record<string, string> = {
+          "script-src": "'unsafe-inline'",
+          "style-src": "'unsafe-inline'",
+          "connect-src": "ws: wss:",
+        };
+        const out = policy
+          .split(";")
+          .map((d) => d.trim())
+          .filter(Boolean)
+          .map((d) => {
+            const name = d.split(/\s+/)[0];
+            return extra[name] ? `${d} ${extra[name]}` : d;
+          });
+        return `${head}${out.join("; ")}"`;
+      });
     },
   };
 }

@@ -24,6 +24,15 @@ describe("index.html CSP", () => {
     expect(d).toBeDefined()
     expect(d).not.toContain("unsafe-inline")
   })
+  it("style-src has no inline", () => {
+    const d = directive("style-src")
+    expect(d).toBeDefined()
+    expect(d).not.toContain("unsafe-inline")
+  })
+  it("loosens the policy only in the serve-only dev plugin", () => {
+    const cfg = readFileSync(path.resolve(import.meta.dirname, "../../vite.config.ts"), "utf8")
+    expect(cfg).toMatch(/name: "ffd-dev-csp",\s+apply: "serve"/)
+  })
   it("has no inline script in the page", () => {
     expect(html).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/i)
   })

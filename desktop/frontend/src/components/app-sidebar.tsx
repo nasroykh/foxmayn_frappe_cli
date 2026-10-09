@@ -18,10 +18,10 @@ import {
   SidebarMenuSkeleton,
 } from "@/components/ui/sidebar"
 
-const nav: { id: Screen; label: string; icon: typeof IconWorld }[] = [
+const nav: { id: Screen; label?: string; labelKey?: string; icon: typeof IconWorld }[] = [
   { id: "sites", label: "Sites", icon: IconWorld },
   // The screen id stays "assistants"; the label is "Connect apps" (a chat "Assistant" entry comes later).
-  { id: "assistants", label: "Connect apps", icon: IconRobot },
+  { id: "assistants", labelKey: "nav.connectApps", icon: IconRobot },
   { id: "settings", label: "Settings", icon: IconSettings },
 ]
 
@@ -65,7 +65,7 @@ export function AppSidebar() {
                     aria-current={screen === item.id ? "page" : undefined}
                   >
                     <item.icon />
-                    <span>{item.id === "assistants" ? t("nav.connectApps") : item.label}</span>
+                    <span>{item.labelKey ? t(item.labelKey) : item.label}</span>
                   </SidebarMenuButton>
                   {item.id === "sites" && siteCount > 0 && <SidebarMenuBadge>{siteCount}</SidebarMenuBadge>}
                   {item.id === "assistants" && connected > 0 && <SidebarMenuBadge>{connected}</SidebarMenuBadge>}

@@ -78,6 +78,7 @@ function ChartContainer({
   )
 }
 
+// Its <style> tag is blocked by the CSP (style-src has no unsafe-inline): use CSS variables before using charts.
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   const colorConfig = Object.entries(config).filter(
     ([, config]) => config.theme ?? config.color
