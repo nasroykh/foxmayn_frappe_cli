@@ -109,8 +109,13 @@ type Image struct {
 	MediaType    string
 }
 
-// Text is plain text.
-type Text struct{ Text string }
+// Text is plain text. AttachmentID is set on the text of a file the user
+// attached (user role): adapters send it as any other text, the store keeps
+// it out of the search index.
+type Text struct {
+	Text         string
+	AttachmentID string
+}
 
 // ToolUse is a tool call the assistant made; Args is a JSON object.
 type ToolUse struct {

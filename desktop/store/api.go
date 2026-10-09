@@ -235,6 +235,18 @@ func (s *Store) AppendMessage(convID, role, partsJSON string) (Message, error) {
 		return Message{}, fmt.Errorf("append message: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	m, err := appendMessageTx(tx, convID, role, partsJSON)
+	if err != nil {
+		return Message{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Message{}, fmt.Errorf("append message: %w", err)
+	}
+	return m, nil
+}
+
+// appendMessageTx is AppendMessage inside tx.
+func appendMessageTx(tx *sql.Tx, convID, role, partsJSON string) (Message, error) {
 	now := nowMS()
 	if err := execOne("append message", tx, `UPDATE conversations SET updated=? WHERE id=?`, now, convID); err != nil {
 		return Message{}, err
@@ -245,9 +257,6 @@ func (s *Store) AppendMessage(convID, role, partsJSON string) (Message, error) {
 	}
 	if _, err := tx.Exec(`INSERT INTO messages(id,conv_id,seq,role,parts_json,created) VALUES(?,?,?,?,?,?)`,
 		m.ID, convID, m.Seq, role, partsJSON, now); err != nil {
-		return Message{}, fmt.Errorf("append message: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
 		return Message{}, fmt.Errorf("append message: %w", err)
 	}
 	return m, nil

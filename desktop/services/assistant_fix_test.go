@@ -222,7 +222,7 @@ func TestAssistantShutdownWaitsForCallsAndThenRefuses(t *testing.T) {
 	if _, err := g.a.ListConversations(); errorCode(t, err) != CodeUnavailable {
 		t.Errorf("after shutdown: %v", err)
 	}
-	if _, err := g.a.Send("c", "hi"); errorCode(t, err) != CodeUnavailable {
+	if _, err := g.a.Send("c", "hi", nil); errorCode(t, err) != CodeUnavailable {
 		t.Errorf("send after shutdown: %v", err)
 	}
 	if err := g.a.SetKey("p1", goodKey); errorCode(t, err) != CodeUnavailable {

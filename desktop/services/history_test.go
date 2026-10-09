@@ -49,7 +49,7 @@ func historyRig(t *testing.T, turns ...llmtest.Turn) (*assistantRig, *dialogHost
 func (g *assistantRig) converse(t *testing.T, text string) Conversation {
 	t.Helper()
 	c := g.conv(t, "read")
-	if _, err := g.a.Send(c.ID, text); err != nil {
+	if _, err := g.a.Send(c.ID, text, nil); err != nil {
 		t.Fatal(err)
 	}
 	g.done(t, len(g.h.named(EventChatDone))+1)
@@ -240,7 +240,7 @@ func TestExportsCarryNoKey(t *testing.T) {
 	g.provider(t) // saves goodKey for p1
 	c := g.conv(t, "read")
 	// A person may paste a key into the chat.
-	if _, err := g.a.Send(c.ID, "my key is "+goodKey+" ok?"); err != nil {
+	if _, err := g.a.Send(c.ID, "my key is "+goodKey+" ok?", nil); err != nil {
 		t.Fatal(err)
 	}
 	g.done(t, 1)
@@ -619,7 +619,7 @@ func TestEphemeralConversationsAreNotKept(t *testing.T) {
 	if !convIDs(t, g.a)[c.ID].Ephemeral {
 		t.Fatal("a profile without history should make the conversation ephemeral")
 	}
-	if _, err := g.a.Send(c.ID, "tell me a secret"); err != nil {
+	if _, err := g.a.Send(c.ID, "tell me a secret", nil); err != nil {
 		t.Fatal(err)
 	}
 	g.done(t, 1)

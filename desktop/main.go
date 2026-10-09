@@ -28,6 +28,7 @@ func main() {
 
 	host := &services.WailsHost{}
 	ffc := services.NewFFCLocator()
+	assistant := services.NewAssistantService(host, configPath)
 
 	app := application.New(application.Options{
 		Name:        "Foxmayn Frappe Desktop",
@@ -36,7 +37,7 @@ func main() {
 			application.NewService(services.NewAppService(host, configPath, ffc)),
 			application.NewService(services.NewSitesService(host, configPath)),
 			application.NewService(services.NewAssistantsService(configPath, ffc)),
-			application.NewService(services.NewAssistantService(host, configPath)),
+			application.NewService(assistant),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -61,6 +62,18 @@ func main() {
 			BackgroundColour: services.WindowBackground(app.Env.IsDarkMode()),
 			Hidden:           true,
 			URL:              "/",
+			// Files dropped on an element marked data-file-drop-target (the
+			// chat composer) reach Go as paths; the composer names its
+			// conversation in data-conv-id.
+			EnableFileDrop: true,
+		})
+		w.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
+			ctx := e.Context()
+			convID := ""
+			if t := ctx.DropTargetDetails(); t != nil {
+				convID = t.Attributes["data-conv-id"]
+			}
+			go services.HandleDroppedFiles(assistant, convID, ctx.DroppedFiles())
 		})
 		time.AfterFunc(3*time.Second, func() {
 			if !w.IsVisible() {

@@ -26,6 +26,8 @@ import type {
   AddedSite,
   ApplyResult,
   Assistant,
+  ChatAttachments,
+  StagedAttachment,
   AssistantList,
   ApprovalOutcome,
   Backend,
@@ -338,6 +340,31 @@ const chat = {
   title: new Set<(v: ChatTitle) => void>(),
   done: new Set<(v: ChatDone) => void>(),
   error: new Set<(v: ChatError) => void>(),
+  attachments: new Set<(v: ChatAttachments) => void>(),
+}
+
+// Attachments: the files staged for each conversation's next message. The
+// mock "file dialog" picks the next of these sample files; the last one is
+// refused, like Go refuses a PDF.
+const staged = new Map<string, StagedAttachment[]>()
+const sampleFiles: (StagedAttachment | string)[] = [
+  { id: "", name: "stock.csv", mime: "text/csv", size: 1824, kind: "text" },
+  { id: "", name: "prices.xlsx", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: 9_216, kind: "text" },
+  "report.pdf is a PDF. PDF files cannot be attached yet (planned for V1.x).",
+]
+let sampleNext = 0
+const MAX_ATTACHMENTS = 5
+const MAX_PASTED_BYTES = 5 << 20
+
+function stagedOf(convID: string) {
+  let list = staged.get(convID)
+  if (!list) staged.set(convID, (list = []))
+  return list
+}
+
+/** The mock's models that take images: Anthropic's only. */
+function takesImages(c: MockConv) {
+  return providers.find((p) => p.id === c.conv.providerID)?.kind === "anthropic"
 }
 
 function emit<T>(set: Set<(v: T) => void>, v: T) {
@@ -1040,20 +1067,70 @@ export const backend: Backend = {
     return { changed: true, backup: "", hint: hint(c.id) }
   },
 
-  async sendMessage(convID, text) {
+  async sendMessage(convID, text, attachmentIDs = []) {
     const c = findConv(convID)
     await wait(100)
-    if (!text.trim()) fail("invalid", "Write a message first.", { field: "text" })
+    if (!text.trim() && attachmentIDs.length === 0) fail("invalid", "Write a message first.", { field: "text" })
     if (activeRun(convID)) fail("invalid", "The assistant is still answering in this conversation.")
+    const list = stagedOf(convID)
+    if (new Set(attachmentIDs).size !== attachmentIDs.length) fail("invalid", "The same attachment is listed twice.", { field: "attachments" })
+    const sent = attachmentIDs.map((id) => list.find((a) => a.id === id))
+    if (sent.some((a) => !a)) fail("invalid", "An attachment is no longer there. Attach the file again.", { field: "attachments" })
+    staged.set(convID, list.filter((a) => !attachmentIDs.includes(a.id)))
     c.pausedRunID = ""
     const now = new Date().toISOString()
-    c.messages.push({ id: newID("msg"), role: "user", text, tools: [], created: now })
-    if (!c.conv.title) c.conv.title = text.slice(0, 60)
+    c.messages.push({ id: newID("msg"), role: "user", text, tools: [], created: now, attachments: sent as StagedAttachment[] })
+    if (!c.conv.title) c.conv.title = (text.trim() ? text : (sent[0]?.name ?? "")).slice(0, 60)
     c.conv.updated = now
     const run: MockRun = { id: newID("run"), convID, cancelled: false }
     runs.set(run.id, run)
     void script(run, c, text)
     return run.id
+  },
+  async addAttachment(convID) {
+    findConv(convID)
+    await wait(150)
+    const pick = sampleFiles[sampleNext++ % sampleFiles.length]
+    if (typeof pick === "string") return { attachments: [], errors: [pick], cancelled: false }
+    const list = stagedOf(convID)
+    if (list.length >= MAX_ATTACHMENTS) {
+      return { attachments: [], errors: [`A message can carry at most ${MAX_ATTACHMENTS} attachments.`], cancelled: false }
+    }
+    const a = { ...pick, id: newID("att") }
+    list.push(a)
+    return { attachments: [{ ...a }], errors: [], cancelled: false }
+  },
+  async addPastedImage(convID, base64) {
+    const c = findConv(convID)
+    await wait(80)
+    const m = /^data:([^;,]+);base64,/.exec(base64)
+    const mime = m ? m[1] : "image/png"
+    const body = m ? base64.slice(m[0].length) : base64
+    const bytes = Math.floor((body.length * 3) / 4) - (body.endsWith("==") ? 2 : body.endsWith("=") ? 1 : 0)
+    if (bytes > MAX_PASTED_BYTES) fail("invalid", "The pasted image is larger than 5 MB.", { field: "attachment" })
+    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(mime)) {
+      fail("invalid", "Only PNG, JPEG, WebP and GIF images can be pasted.", { field: "attachment" })
+    }
+    const ext = mime === "image/jpeg" ? "jpg" : mime.slice("image/".length)
+    const name = `pasted-image.${ext}`
+    if (!takesImages(c)) {
+      fail("invalid", `${name}: the model of this conversation does not take images. Choose a model that reads images, or attach text.`, {
+        field: "attachment",
+      })
+    }
+    const list = stagedOf(convID)
+    if (list.length >= MAX_ATTACHMENTS) fail("invalid", `A message can carry at most ${MAX_ATTACHMENTS} attachments.`, { field: "attachment" })
+    const a: StagedAttachment = { id: newID("att"), name, mime, size: bytes, kind: "image" }
+    list.push(a)
+    return { ...a }
+  },
+  async removeAttachment(convID, id) {
+    const list = stagedOf(convID)
+    if (!list.some((a) => a.id === id)) fail("not_found", "That attachment is no longer there.", { field: "attachment" })
+    staged.set(convID, list.filter((a) => a.id !== id))
+  },
+  async listAttachments(convID) {
+    return stagedOf(convID).map((a) => ({ ...a }))
   },
   async cancelRun(runID) {
     const run = runs.get(runID)
@@ -1435,6 +1512,7 @@ export const backend: Backend = {
   onChatTitle: (cb) => on(chat.title, cb),
   onChatDone: (cb) => on(chat.done, cb),
   onChatError: (cb) => on(chat.error, cb),
+  onChatAttachments: (cb) => on(chat.attachments, cb),
   onOpenRouterAuth: (cb) => on(openRouterListeners, cb),
 
   onConfigChanged: (cb) => on(configListeners, cb),

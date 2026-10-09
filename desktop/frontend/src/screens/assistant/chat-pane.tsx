@@ -1,4 +1,15 @@
-import { IconAlertTriangle, IconCheck, IconPencil, IconPlayerPlay, IconPlayerStop, IconSend, IconX } from "@tabler/icons-react"
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconFileText,
+  IconPaperclip,
+  IconPencil,
+  IconPhoto,
+  IconPlayerPlay,
+  IconPlayerStop,
+  IconSend,
+  IconX,
+} from "@tabler/icons-react"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "cn"
@@ -22,6 +33,7 @@ import type {
   ConversationMode,
   ProviderInfo,
   RunUsage,
+  StagedAttachment,
   ToolApproval,
   ToolStatus,
   UsageTotals,
@@ -34,6 +46,18 @@ import { ProfilePicker } from "@/screens/assistant/profile-picker"
 function notify(err: unknown) {
   const e = appError(err)
   toast.add({ title: errorTitle(e), description: e.message, type: "error" })
+}
+
+const MAX_PASTED_BYTES = 5 << 20
+
+/** Reads a pasted file as a data URL. */
+function readDataURL(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.onerror = () => reject(r.error ?? new Error("read failed"))
+    r.readAsDataURL(file)
+  })
 }
 
 const OVERLAYS = '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]'
@@ -62,6 +86,8 @@ export function ChatPane({
   const [mode, setMode] = React.useState<ConversationMode>(conv.mode === "ask" ? "ask" : "read")
   const [answering, setAnswering] = React.useState<ReadonlySet<string>>(new Set())
   const [draft, setDraft] = React.useState("")
+  const [staged, setStaged] = React.useState<StagedAttachment[]>([])
+  const [attaching, setAttaching] = React.useState(false)
   const [runUsage, setRunUsage] = React.useState<RunUsage[]>([])
   const [total, setTotal] = React.useState<UsageTotals>(noUsage)
   const [renaming, setRenaming] = React.useState<string | null>(null)
@@ -109,8 +135,16 @@ export function ChatPane({
     setRenaming(null)
     setLoadError(null)
     setDraft("")
+    setStaged([])
     setMode(conv.mode === "ask" ? "ask" : "read")
     void load()
+    // Files staged before (they stay in the store until sent or removed).
+    backend
+      .listAttachments(convID)
+      .then((list) => {
+        if (convRef.current === convID) setStaged(list)
+      })
+      .catch(() => {})
     // conv.mode only seeds the first paint; load() sets the real one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [convID, load])
@@ -118,6 +152,12 @@ export function ChatPane({
   // The chat events. Cleaned up on unmount; the reducer drops other runs' events.
   React.useEffect(() => {
     const offs = [
+      // Files dropped on this composer, read by Go.
+      backend.onChatAttachments((ev) => {
+        if (ev.convID !== convRef.current) return
+        setStaged((s) => [...s, ...ev.attachments])
+        for (const msg of ev.errors) attachErrorRef.current(msg)
+      }),
       backend.onChatDelta((ev) => dispatch({ type: "delta", convID: ev.convID, runID: ev.runID, text: ev.text })),
       backend.onChatTool((ev) => dispatch({ type: "tool", ev })),
       backend.onChatUsage((ev) => dispatch({ type: "usage", ev })),
@@ -191,14 +231,74 @@ export function ChatPane({
     }
   }
 
+  function attachError(message: string) {
+    toast.add({ title: t("chat.composer.attachFailed"), description: message, type: "error" })
+  }
+  const attachErrorRef = React.useRef(attachError)
+  attachErrorRef.current = attachError
+
+  async function pickFiles() {
+    const id = convID
+    setAttaching(true)
+    try {
+      const res = await backend.addAttachment(id)
+      if (convRef.current === id) setStaged((s) => [...s, ...res.attachments])
+      for (const msg of res.errors) attachError(msg)
+    } catch (err) {
+      notify(err)
+    } finally {
+      setAttaching(false)
+    }
+  }
+
+  async function pasteImage(file: File) {
+    const id = convID
+    if (file.size > MAX_PASTED_BYTES) {
+      attachError(t("chat.composer.pasteTooBig"))
+      return
+    }
+    try {
+      const a = await backend.addPastedImage(id, await readDataURL(file))
+      if (convRef.current === id) setStaged((s) => [...s, a])
+    } catch (err) {
+      attachError(appError(err).message)
+    }
+  }
+
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const images = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"))
+    if (images.length === 0) return
+    e.preventDefault()
+    for (const f of images) void pasteImage(f)
+  }
+
+  async function unstage(a: StagedAttachment) {
+    setStaged((s) => s.filter((x) => x.id !== a.id))
+    try {
+      await backend.removeAttachment(convID, a.id)
+    } catch (err) {
+      // Gone already (sent or removed elsewhere): nothing to put back.
+      if (appError(err).code !== "not_found") {
+        notify(err)
+        setStaged((s) => [...s, a])
+      }
+    }
+  }
+
   async function send() {
     const text = draft.trim()
-    if (!text || active) return
+    const files = staged
+    if ((!text && files.length === 0) || active) return
     setDraft("")
+    setStaged([])
     reloadAfterStart.current = false
-    dispatch({ type: "sending", text })
+    dispatch({ type: "sending", text: text || files.map((f) => f.name).join(", ") })
     try {
-      const runID = await backend.sendMessage(convID, text)
+      const runID = await backend.sendMessage(
+        convID,
+        text,
+        files.map((f) => f.id),
+      )
       dispatch({ type: "started", runID })
       // The run ended before its id came back: the store has the rest.
       if (reloadAfterStart.current) {
@@ -208,6 +308,7 @@ export function ChatPane({
     } catch (err) {
       const e = appError(err)
       setDraft(text)
+      setStaged(files)
       dispatch({ type: "sendFailed", error: { code: e.code, message: e.message, detail: e.detail } })
     }
   }
@@ -454,13 +555,31 @@ export function ChatPane({
       </div>
 
       <form
-        className="border-t p-3"
+        className="[&.file-drop-target-active]:bg-muted border-t p-3"
+        data-file-drop-target
+        data-conv-id={convID}
         onSubmit={(e) => {
           e.preventDefault()
           void send()
         }}
       >
+        {staged.length > 0 && (
+          <div className="mx-auto mb-2 max-w-3xl">
+            <AttachmentChips items={staged} label={t("chat.composer.staged")} onRemove={(a) => void unstage(a)} />
+          </div>
+        )}
         <div className="mx-auto flex max-w-3xl items-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            disabled={active || attaching}
+            onClick={() => void pickFiles()}
+            aria-label={t("chat.composer.attachLabel")}
+            title={t("chat.composer.attachLabel")}
+          >
+            <IconPaperclip />
+          </Button>
           <label htmlFor="chat-input" className="sr-only">
             {t("chat.composer.label")}
           </label>
@@ -472,6 +591,7 @@ export function ChatPane({
             disabled={active}
             placeholder={t("chat.composer.placeholder")}
             onChange={(e) => setDraft(e.target.value)}
+            onPaste={onPaste}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
@@ -492,30 +612,75 @@ export function ChatPane({
               {t("chat.composer.stop")}
             </Button>
           ) : (
-            <Button type="submit" disabled={!draft.trim()} aria-label={t("chat.composer.sendLabel")}>
+            <Button type="submit" disabled={!draft.trim() && staged.length === 0} aria-label={t("chat.composer.sendLabel")}>
               <IconSend data-icon="inline-start" />
               {t("chat.composer.send")}
             </Button>
           )}
         </div>
-        <p className="text-muted-foreground mx-auto mt-1 max-w-3xl text-xs">{t("chat.composer.hint")}</p>
+        <p className="text-muted-foreground mx-auto mt-1 max-w-3xl text-xs">
+          {t("chat.composer.hint")} {t("chat.composer.attachHint")}
+        </p>
       </form>
     </section>
   )
 }
 
-function UserBubble({ text }: { text: string }) {
+/** File chips: staged ones with a remove button, sent ones without. */
+function AttachmentChips({
+  items,
+  label,
+  onRemove,
+}: {
+  items: StagedAttachment[]
+  label: string
+  onRemove?: (a: StagedAttachment) => void
+}) {
+  const { t } = useTranslation()
   return (
-    <div className="flex justify-end">
-      <p className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl px-3 py-2 text-sm break-words whitespace-pre-wrap">
-        {text}
-      </p>
+    <ul aria-label={label} className="flex flex-wrap justify-end gap-1.5">
+      {items.map((a) => (
+        <li key={a.id} className="bg-muted text-foreground flex max-w-64 items-center gap-1 rounded-md border px-2 py-0.5 text-xs">
+          {a.kind === "image" ? (
+            <IconPhoto className="size-3.5 shrink-0" aria-hidden />
+          ) : (
+            <IconFileText className="size-3.5 shrink-0" aria-hidden />
+          )}
+          <span className="truncate" title={a.name}>
+            {a.name}
+          </span>
+          {onRemove && (
+            <button
+              type="button"
+              className="hover:text-destructive -mr-1 shrink-0 rounded p-0.5"
+              aria-label={t("chat.composer.remove", { name: a.name })}
+              onClick={() => onRemove(a)}
+            >
+              <IconX className="size-3" aria-hidden />
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function UserBubble({ text, attachments = [] }: { text: string; attachments?: StagedAttachment[] }) {
+  const { t } = useTranslation()
+  return (
+    <div className="flex flex-col items-end gap-1">
+      {attachments.length > 0 && <AttachmentChips items={attachments} label={t("chat.attachments.label")} />}
+      {text && (
+        <p className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl px-3 py-2 text-sm break-words whitespace-pre-wrap">
+          {text}
+        </p>
+      )}
     </div>
   )
 }
 
 function MessageView({ m }: { m: ChatMessage }) {
-  if (m.role === "user") return <UserBubble text={m.text} />
+  if (m.role === "user") return <UserBubble text={m.text} attachments={m.attachments} />
   return (
     <div className={cn("flex flex-col gap-2")}>
       {m.tools.length > 0 && (

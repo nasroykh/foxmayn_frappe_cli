@@ -125,7 +125,17 @@
       "sendLabel": "Send message",
       "stop": "Stop",
       "stopLabel": "Stop the assistant",
-      "hint": "Enter sends, Shift+Enter adds a line. Esc stops the assistant."
+      "hint": "Enter sends, Shift+Enter adds a line. Esc stops the assistant.",
+      "attach": "Attach",
+      "attachLabel": "Attach files (text, CSV, JSON, XLSX or images)",
+      "attachHint": "You can also drop files here or paste an image.",
+      "attachFailed": "Not attached",
+      "pasteTooBig": "The pasted image is larger than 5 MB.",
+      "staged": "Files for the next message",
+      "remove": "Remove {{name}}"
+    },
+    "attachments": {
+      "label": "Attached files"
     },
     "approval": {
       "label": "Approval needed",

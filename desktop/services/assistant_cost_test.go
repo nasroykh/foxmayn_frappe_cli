@@ -47,7 +47,7 @@ func approx(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 // change runner fields afterwards without racing them.
 func (g *assistantRig) send(t *testing.T, convID, text string, doneN int) string {
 	t.Helper()
-	runID, err := g.a.Send(convID, text)
+	runID, err := g.a.Send(convID, text, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

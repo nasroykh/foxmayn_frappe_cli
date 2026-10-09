@@ -9,7 +9,8 @@ import (
 // partJSON is the stored shape of one Part. Text parts carry their words in
 // "text", which the store's search indexes; the other kinds use other keys
 // (tool results in "content", reasoning in "thinking", images only their
-// attachment id) so they stay out of the index. Keys added after 0.2.0
+// attachment id, the text of an attached file in "content" under type
+// "attachment") so they stay out of the index. Keys added after 0.2.0
 // ("provider", "attachment_id", "media_type") are omitted when empty, so a
 // 0.2.0 row decodes unchanged and re-encodes byte for byte.
 type partJSON struct {
@@ -31,13 +32,17 @@ type partJSON struct {
 }
 
 // MarshalParts encodes parts as a JSON array of objects with a "type" key
-// (text, tool_use, tool_result, thinking or image). The strings of a Thinking part
+// (text, attachment, tool_use, tool_result, thinking or image). The strings of a Thinking part
 // round-trip exactly, as providers require.
 func MarshalParts(parts []Part) (string, error) {
 	out := make([]partJSON, 0, len(parts))
 	for _, p := range parts {
 		switch v := p.(type) {
 		case Text:
+			if v.AttachmentID != "" {
+				out = append(out, partJSON{Type: "attachment", AttachmentID: v.AttachmentID, Content: &v.Text})
+				continue
+			}
 			out = append(out, partJSON{Type: "text", Text: &v.Text})
 		case ToolUse:
 			args := v.Args
@@ -78,6 +83,11 @@ func UnmarshalParts(s string) ([]Part, error) {
 		switch p.Type {
 		case "text":
 			out = append(out, Text{Text: deref(p.Text)})
+		case "attachment":
+			if p.AttachmentID == "" {
+				return nil, fmt.Errorf("llm: attachment part without an attachment id")
+			}
+			out = append(out, Text{Text: deref(p.Content), AttachmentID: p.AttachmentID})
 		case "tool_use":
 			out = append(out, ToolUse{ID: p.ID, Name: p.Name, Args: p.Args})
 		case "tool_result":
