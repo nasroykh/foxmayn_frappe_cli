@@ -74,6 +74,15 @@ func toolHandler(env *mcpEnv, parse func(req mcp.CallToolRequest) (toolCall, err
 	}
 }
 
+// appendNew returns list with s added when it is not empty or already there.
+// It copies, as list may share its array with the scope.
+func appendNew(list []string, s string) []string {
+	if s == "" || contains(list, s, false) {
+		return list
+	}
+	return append(append([]string(nil), list...), s)
+}
+
 func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(req mcp.CallToolRequest) (toolCall, error), rec *auditRecord) *mcp.CallToolResult {
 	fail := func(status string, err error) *mcp.CallToolResult {
 		rec.Status, rec.Error, rec.cause = status, err.Error(), err
@@ -127,6 +136,18 @@ func (env *mcpEnv) run(ctx context.Context, req mcp.CallToolRequest, parse func(
 	}
 	if err := policy.checkReport(ctx, c, scope); err != nil {
 		return fail(auditDenied, err)
+	}
+	if scope.Restore != nil {
+		id, dt, name, err := policy.checkRestore(ctx, c, scope)
+		rec.Doctypes = appendNew(rec.Doctypes, dt)
+		rec.Names = appendNew(appendNew(rec.Names, id), name)
+		if err != nil {
+			if strings.HasPrefix(err.Error(), "policy:") {
+				return fail(auditDenied, err)
+			}
+			return fail(auditError, err)
+		}
+		ctx = withRestoreID(ctx, id)
 	}
 	if err := checkCommentAuthor(ctx, c, policy, req, scope); err != nil {
 		return fail(auditDenied, err)

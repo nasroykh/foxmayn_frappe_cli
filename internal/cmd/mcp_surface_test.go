@@ -130,7 +130,7 @@ func TestMCPToolSurface(t *testing.T) {
 		}
 	}
 	sort.Strings(lifecycle)
-	if want := []string{"amend_doc", "apply_workflow", "bulk_cancel", "bulk_submit", "cancel_doc", "copy_doc", "get_transitions", "rename_doc", "submit_doc"}; !reflect.DeepEqual(lifecycle, want) {
+	if want := []string{"amend_doc", "apply_workflow", "bulk_cancel", "bulk_submit", "cancel_doc", "copy_doc", "get_transitions", "rename_doc", "restore_doc", "submit_doc"}; !reflect.DeepEqual(lifecycle, want) {
 		t.Errorf("lifecycle = %v, want %v", lifecycle, want)
 	}
 
@@ -170,7 +170,7 @@ func TestMCPToolSurface(t *testing.T) {
 func TestMCPToolsets(t *testing.T) {
 	core := []string{"aggregate", "bulk_create", "bulk_delete", "bulk_update", "call_method", "check_permission", "count_docs", "create_doc", "delete_doc",
 		"get_doc", "get_doc_context", "get_schema", "list_docs", "list_doctypes", "list_reports", "list_sites", "ping", "run_report", "search", "update_doc", "whoami"}
-	lifecycle := []string{"amend_doc", "apply_workflow", "bulk_cancel", "bulk_submit", "cancel_doc", "copy_doc", "get_transitions", "list_sites", "rename_doc", "submit_doc"}
+	lifecycle := []string{"amend_doc", "apply_workflow", "bulk_cancel", "bulk_submit", "cancel_doc", "copy_doc", "get_transitions", "list_sites", "rename_doc", "restore_doc", "submit_doc"}
 	if got := mcpTToolNames(t, mcpTToolsets(t, []string{"core"})); !reflect.DeepEqual(got, core) {
 		t.Errorf("core = %v", got)
 	}
