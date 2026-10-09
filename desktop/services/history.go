@@ -236,11 +236,15 @@ func (a *AssistantService) SetRetention(days int) error {
 	return nil
 }
 
-// activeConvIDs lists the conversations with a run in progress.
+// activeConvIDs lists the conversations with a run in progress or a title
+// call in flight (r.mu held).
 func (r *runner) activeConvIDs() []string {
 	var ids []string
 	for _, a := range r.active {
 		ids = append(ids, a.conv.ID)
+	}
+	for id := range r.titleCancels {
+		ids = append(ids, id)
 	}
 	return ids
 }

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"math"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -401,6 +402,123 @@ func TestStripThinkAndMarkup(t *testing.T) {
 	g.send(t, cid, "sales?", 1)
 	if ev := waitTitle(t, g, 1); ev.Title != "Weekly sales" {
 		t.Fatalf("title = %q", ev.Title)
+	}
+}
+
+// The tag search works on the bytes of the text: lowercasing that changes a
+// rune's length used to move the offsets (slice bounds panic, or a tag left
+// behind).
+func TestStripThinkWithRunesThatChangeLengthWhenLowercased(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{"<think>ȺȺȺ</think>a", "a"},
+		{"ȺȺ</think>a", "a"},
+		{"<think>İstanbul</think>Izmir", "Izmir"},
+		{"<think>x</think>İzmir", "İzmir"},
+		{"K<think>k</think>m", "Km"},
+		{"<THINK>K</THINK>ok", "ok"},
+		{"<think>Ⱥ never closed", ""},
+		{"<thKnk>x</think>y", "y"}, // not a tag: only the lone closing tag counts
+	} {
+		got := stripThink(tc.raw)
+		if got != tc.want {
+			t.Errorf("stripThink(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("stripThink(%q) = invalid UTF-8 %q", tc.raw, got)
+		}
+		_ = cleanModelTitle(tc.raw) // must not panic
+	}
+}
+
+// A bug in the title path falls back to the first words, never a crash: the
+// run is already over when it runs.
+func TestAutoTitleRecoversFromAPanic(t *testing.T) {
+	g, cid := costRig(t, KindAnthropic, "claude-sonnet-5-5", textTurn("answer"))
+	g.a.run.titles = false
+	runID := g.send(t, cid, "hello", 1)
+	conv, _ := g.a.st.GetConversation(cid)
+	g.a.run.titles = true
+	good := g.a.run.provider
+	g.a.run.provider = func(store.Conversation) (llm.Provider, string, error) { panic("boom") }
+	ar := &activeRun{r: g.a.run, runID: runID, conv: conv}
+	ar.autoTitle() // does not panic
+	if c, _ := g.a.st.GetConversation(cid); c.Title != "hello" {
+		t.Fatalf("title = %q", c.Title)
+	}
+	// The claim was released: a later call works.
+	g.a.run.provider = good
+	if _, release, ok := g.a.run.startTitle(cid); !ok {
+		t.Fatal("the title claim was not released after the panic")
+	} else {
+		release()
+	}
+}
+
+// At most one title call per conversation is in flight: two runs finishing
+// together pay once, and the claim stays with the call that made it.
+func TestOnlyOneTitleCallInFlight(t *testing.T) {
+	g, cid := costRig(t, KindAnthropic, "claude-sonnet-5-5", textTurn("answer"),
+		llmtest.Turn{Events: []llm.Event{llm.TextDelta{Text: "Slow name"}, llm.Usage{In: 1, Out: 1}, llm.Stop{Reason: llm.StopEndTurn}}, Delay: 300 * time.Millisecond},
+		textTurn("must not be asked"))
+	g.a.run.titles = false
+	runID := g.send(t, cid, "hello", 1)
+	conv, _ := g.a.st.GetConversation(cid)
+	g.a.run.titles = true
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			(&activeRun{r: g.a.run, runID: runID, conv: conv}).autoTitle()
+		}()
+	}
+	wg.Wait()
+	if n := len(g.prov.Requests()); n != 2 {
+		t.Fatalf("requests = %d, want 2 (one run, one title call)", n)
+	}
+	rows, _ := g.a.st.ListConversationUsage(cid)
+	titles := 0
+	for _, u := range rows {
+		if u.Kind == store.UsageTitle {
+			titles++
+		}
+	}
+	if titles != 1 || len(g.h.named(EventChatTitle)) != 1 {
+		t.Fatalf("title usage rows = %d, events = %d", titles, len(g.h.named(EventChatTitle)))
+	}
+}
+
+// A conversation with a title call in flight is not swept, and the claim
+// belongs to its call: a skipped second call does not free or replace it.
+func TestTitleClaimIsPerCallAndBlocksTheSweep(t *testing.T) {
+	g, cid := costRig(t, KindAnthropic, "claude-sonnet-5-5")
+	r := g.a.run
+	ctx, release, ok := r.startTitle(cid)
+	if !ok {
+		t.Fatal("first claim refused")
+	}
+	if _, _, ok := r.startTitle(cid); ok {
+		t.Fatal("a second claim was granted")
+	}
+	r.mu.Lock()
+	ids := r.activeConvIDs()
+	r.mu.Unlock()
+	if len(ids) != 1 || ids[0] != cid {
+		t.Fatalf("activeConvIDs = %v", ids)
+	}
+	// Delete's cancel still reaches the first call.
+	r.mu.Lock()
+	r.cancelTitleLocked(cid)
+	r.mu.Unlock()
+	if ctx.Err() == nil {
+		t.Fatal("cancelTitleLocked did not cancel the call")
+	}
+	release()
+	r.mu.Lock()
+	ids = r.activeConvIDs()
+	r.mu.Unlock()
+	if len(ids) != 0 {
+		t.Fatalf("claim left behind: %v", ids)
 	}
 }
 

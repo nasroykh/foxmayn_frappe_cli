@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -80,7 +81,7 @@ func cleanTitle(s string) string {
 func stripThink(s string) string {
 	const open, close = "<think>", "</think>"
 	for {
-		lower := strings.ToLower(s)
+		lower := asciiLower(s)
 		i := strings.Index(lower, open)
 		if i < 0 {
 			break
@@ -92,10 +93,23 @@ func stripThink(s string) string {
 		}
 		s = s[:i] + s[i+j+len(close):]
 	}
-	if i := strings.LastIndex(strings.ToLower(s), close); i >= 0 {
+	if i := strings.LastIndex(asciiLower(s), close); i >= 0 {
 		s = s[i+len(close):]
 	}
 	return s
+}
+
+// asciiLower lowercases A-Z only, so the result has the same bytes at the same
+// offsets as s. strings.ToLower changes the length of some runes (U+023A,
+// U+0130, U+212A), and offsets found in its result do not fit s.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
 }
 
 // cleanModelTitle is cleanTitle for the model's text: reasoning is dropped and
@@ -120,6 +134,19 @@ func (a *activeRun) autoTitle() {
 	if !a.r.titles {
 		return
 	}
+	// The run is over when this runs: a bug here must not take the app down.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("assistant: the title of a conversation could not be made: %v", r)
+		}
+	}()
+	// At most one title call per conversation is in flight: a second run
+	// finishing meanwhile skips, so the call is paid once.
+	ctx, release, ok := a.r.startTitle(a.conv.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	st := a.r.store
 	ts, err := st.GetTitleState(a.conv.ID)
 	if err != nil || ts.Ephemeral || ts.Source != store.TitleFallback {
@@ -132,8 +159,6 @@ func (a *activeRun) autoTitle() {
 	if userText == "" || reply == "" {
 		return
 	}
-	ctx, cancel := a.r.titleContext(a.conv.ID)
-	defer cancel()
 	raw, usage, model, conv, err := a.titleCall(ctx, userText, reply)
 	if usage != nil {
 		row := usageRow(a.runID, 0, store.UsageTitle, *usage, costOf(st, conv, model, *usage))
@@ -160,23 +185,28 @@ func hasTitleCall(rows []store.Usage) bool {
 	return false
 }
 
-// titleContext returns the context of a conversation's title call: it ends at
-// titleTimeout, at shutdown, and when cancelTitle is called for the
-// conversation (it is deleted). The returned func releases it.
-func (r *runner) titleContext(convID string) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithTimeout(r.ctx, titleTimeout)
+// startTitle claims the title call of a conversation, atomically: ok is false
+// when one is already in flight. The context ends at titleTimeout, at
+// shutdown, and when cancelTitleLocked is called (the conversation is
+// deleted). release ends it and frees the claim; the entry belongs to this
+// call only. A conversation with a call in flight is not swept (activeConvIDs).
+func (r *runner) startTitle(convID string) (ctx context.Context, release func(), ok bool) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, busy := r.titleCancels[convID]; busy || r.closed {
+		return nil, nil, false
+	}
+	ctx, cancel := context.WithTimeout(r.ctx, titleTimeout)
 	if r.titleCancels == nil {
 		r.titleCancels = map[string]context.CancelFunc{}
 	}
 	r.titleCancels[convID] = cancel
-	r.mu.Unlock()
 	return ctx, func() {
 		cancel()
 		r.mu.Lock()
 		delete(r.titleCancels, convID)
 		r.mu.Unlock()
-	}
+	}, true
 }
 
 // cancelTitleLocked stops a conversation's title call. r.mu must be held
