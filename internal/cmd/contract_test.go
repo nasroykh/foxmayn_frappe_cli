@@ -89,6 +89,7 @@ func TestContract(t *testing.T) {
 	t.Run("lifecycle submit cancel amend", func(t *testing.T) { contractLifecycle(t, c) })
 	t.Run("lifecycle commands", func(t *testing.T) { contractLifecycleCLI(t, c, sc) })
 	t.Run("bulk submit and cancel", func(t *testing.T) { contractBulkLifecycle(t, c, sc) })
+	t.Run("bulk-create --atomic", func(t *testing.T) { contractBulkCreateAtomic(t, c, sc) })
 	t.Run("schema merges custom field and property setter", func(t *testing.T) { contractSchema(t, c) })
 	t.Run("cache and completion", func(t *testing.T) { contractCache(t, sc) })
 	t.Run("api passthrough", func(t *testing.T) { contractAPI(t, c, sc) })

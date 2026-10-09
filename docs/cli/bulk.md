@@ -4,6 +4,7 @@ Create, update, delete, submit or cancel many documents in one run, with a per-i
 
 ```bash
 ffc bulk-create -d ToDo --data '[{"description":"Task 1"},{"description":"Task 2"}]'
+ffc bulk-create -d ToDo --file todos.json --atomic --timeout 2m   # all or none, one request
 ffc bulk-update -d ToDo --file updates.json --concurrency 4        # each item needs "name"
 ffc bulk-delete -d ToDo --names "TD-0001,TD-0002" --yes
 ffc bulk-submit -d "Sales Invoice" --names "ACC-SINV-2026-00001,ACC-SINV-2026-00002" --yes
@@ -24,6 +25,24 @@ ffc bulk-cancel -d "Sales Invoice" --filters '{"customer":"CUST-001"}' --dry-run
 ```bash
 cat customers.json | ffc bulk-create -d Customer --file - --json
 ```
+
+## Create all or nothing (`--atomic`)
+
+`bulk-create --atomic` sends the whole array in one request, `frappe.client.insert_many`, instead of one insert per item. Frappe runs a request in one database transaction, so if any item fails none is created.
+
+```bash
+ffc bulk-create -d ToDo --file todos.json --atomic --timeout 2m
+```
+
+- **Success** prints the usual report: one `created` result per item, in input order, with the name Frappe returned.
+- **Failure** is one error with the exit code of its class (permission 5, validation 6, ...) and **no per-item report**. The message says nothing was created, and carries the site's error for the item that failed. Re-run after fixing it.
+- **At most 200 items.** More is a usage error (exit 2) before anything is sent; Frappe refuses them too ("Only 200 inserts allowed in one request"). Split the file, accepting that each chunk is its own transaction.
+- **`--concurrency` and `--fail-fast` do not apply** and are a usage error with `--atomic`.
+- **Every item is created as the `-d` DocType.** ffc sets `doctype` on each item; an item whose own `doctype` names another DocType is refused (exit 2), never rewritten. An item with both `parent` and `parenttype` is refused too: for a child-table DocType Frappe would append it to that existing parent and save the parent, which is not a create (ffc refuses the pair for any DocType, since it reads no meta here).
+- **A timeout leaves the outcome unknown.** The default `--timeout` of 30s is tight for 200 inserts. If the request times out or the connection drops after it was sent, or a proxy or CDN answers instead of Frappe (502-504, 520-524, 408, 499), the server may have created the batch or rolled it back: the error says so and exits 7. An error answer from Frappe itself means nothing was created; a success answer ffc cannot read means the batch was probably created. Check the site before re-running, and raise `--timeout` (for example `--timeout 2m`).
+- **`--dry-run`** shows the one planned `POST /api/method/frappe.client.insert_many`, not one request per item.
+
+The all-or-nothing guarantee holds only while the transaction does. A controller hook that calls `frappe.db.commit()`, and DDL (inserting a Custom Field or a DocType: MariaDB commits implicitly), end the transaction early; items before that point stay created when a later one fails. Do not use `--atomic` for DocTypes whose hooks commit, or for schema documents.
 
 ## Select documents by filter
 
@@ -61,8 +80,9 @@ ffc bulk-cancel -d "Sales Invoice" --names "ACC-SINV-2026-00002,ACC-SINV-2026-00
 | `--names` | delete, submit, cancel | | Comma-separated names. |
 | `--filters` | update, delete, submit, cancel | | Select by filters (`@FILE`, `@-` accepted). |
 | `--set` | update | | Fields to set on every matching document (with `--filters`). |
-| `--concurrency` | all | `1` | Requests in flight, 1 to 10. Keep `1` for submit and cancel. |
-| `--fail-fast` | all | off | Stop starting new items after the first failure. |
+| `--concurrency` | all | `1` | Requests in flight, 1 to 10. Keep `1` for submit and cancel. Not with `--atomic`. |
+| `--fail-fast` | all | off | Stop starting new items after the first failure. Not with `--atomic`. |
+| `--atomic` | create | off | Create all items in one `insert_many` request: all or none, at most 200. Not with `--concurrency` or `--fail-fast`. |
 | `-y, --yes` | update, delete, submit, cancel | off | Skip the confirmation (`bulk-delete`, `bulk-submit` and `bulk-cancel` always ask; `bulk-update` asks only with `--filters`). |
 | `--dry-run` | all | off | Show the requests instead of sending them. |
 
@@ -71,6 +91,8 @@ ffc bulk-cancel -d "Sales Invoice" --names "ACC-SINV-2026-00002,ACC-SINV-2026-00
 Each item is reported as created, updated, deleted, submitted or cancelled, `error`, `skipped` (not started after `--fail-fast`), or `interrupted` (cut off by Ctrl+C: the server may or may not have applied it, so check before re-running). Processing continues after a failed item unless `--fail-fast` is set.
 
 The command exits 0 only when every item succeeded. When any item failed or was skipped, it exits 8, and the summary says how many. See [Exit codes](exit-codes.md).
+
+With `--atomic` there is no per-item failure: the batch succeeds (exit 0) or the command fails with one error (see above).
 
 With `--dry-run --json` the output is `{"dry_run": true, "requests": [{method, url, body}, ...]}`.
 

@@ -146,6 +146,7 @@ func New(t testing.TB) *Site {
 	s.registerAggregate()
 	s.registerCollab()
 	s.registerFiles()
+	s.registerInsertMany()
 	// Every Frappe site has these; ffc reads them before some actions.
 	s.AddDocType("Workflow", "workflow_name", "document_type", "is_active", "workflow_state_field")
 	s.AddDocType("Deleted Document", "deleted_doctype", "deleted_name", "restored", "data")
@@ -688,6 +689,17 @@ func (s *Site) create(w http.ResponseWriter, doctype string, body []byte, user s
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	doc, e := s.insertLocked(doctype, d, user)
+	if e != nil {
+		writeError(w, e)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"data": copyDoc(doc)})
+}
+
+// insertLocked stores a new document of a known DocType, as REST create and
+// insert_many do; the caller holds s.mu.
+func (s *Site) insertLocked(doctype string, d map[string]interface{}, user string) (map[string]interface{}, *Error) {
 	name, _ := d["name"].(string)
 	if from, _ := d["amended_from"].(string); from != "" && name == "" {
 		name = s.amendmentName(doctype, from)
@@ -697,21 +709,19 @@ func (s *Site) create(w http.ResponseWriter, doctype string, body []byte, user s
 		name = fmt.Sprintf("%s-%04d", strings.ReplaceAll(doctype, " ", "-"), s.seq)
 	}
 	if _, exists := s.doctypes[doctype][name]; exists {
-		writeError(w, Duplicate(fmt.Sprintf("%s %s already exists", doctype, name)))
-		return
+		return nil, Duplicate(fmt.Sprintf("%s %s already exists", doctype, name))
 	}
 	d["name"] = name
 	d["owner"] = user
 	if hook := s.saveHooks[doctype]; hook != nil {
 		if e := hook(nil, d); e != nil {
-			writeError(w, e)
-			return
+			return nil, e
 		}
 	}
 	s.stampRows(doctype, d)
 	doc := s.stamp(doctype, d, true)
 	s.doctypes[doctype][name] = doc
-	writeJSON(w, http.StatusOK, map[string]interface{}{"data": copyDoc(doc)})
+	return doc, nil
 }
 
 func (s *Site) update(w http.ResponseWriter, doctype, name string, body []byte, user string) {

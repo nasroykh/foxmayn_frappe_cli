@@ -12,6 +12,7 @@ These commands write. Follow ffc-core's rules: machine output (`--json`), `--dry
 ```bash
 ffc bulk-create -d ToDo --data '[{"description":"a"},{"description":"b"}]' --json
 ffc bulk-create -d Customer --file customers.json --concurrency 4 --json   # --file - reads stdin
+ffc bulk-create -d ToDo --file todos.json --atomic --timeout 2m --json     # all or none, one request
 ffc bulk-update -d ToDo --file updates.json --json                         # each object needs "name"
 ffc bulk-update -d ToDo --filters '{"status":"Open"}' --set '{"status":"Closed"}' --dry-run --json
 ffc bulk-delete -d ToDo --names "TD-0001,TD-0002" --dry-run --json
@@ -30,7 +31,8 @@ ffc bulk-cancel -d "Sales Invoice" --filters '{"customer":"CUST-001"}' --dry-run
 | `--filters` | update (with `--set`), delete, submit, cancel | names are listed first (one request), up to 10 shown, then confirmed; submit adds `docstatus` 0, cancel 1 |
 | `--set` | update | JSON object applied to every matching document |
 | `--concurrency` | all | 1-10, default 1 |
-| `--fail-fast` | all | stop starting items after the first failure |
+| `--fail-fast` | all | stop starting items after the first failure (not with `--atomic`) |
+| `--atomic` | create | one `insert_many` request: all or none, at most 200 items |
 | `-y, --yes` | update `--filters`, delete, submit, cancel | skip the confirmation |
 | `--dry-run` | all | show every request; nothing written |
 
@@ -39,7 +41,8 @@ ffc bulk-cancel -d "Sales Invoice" --filters '{"customer":"CUST-001"}' --dry-run
 - JSON result: `{"created"|"updated"|"deleted"|"submitted"|"cancelled": N, "failed": N, "skipped": N, "results": [{"index","name","status","error"}]}`. Status is the verb, `error`, `interrupted` or `skipped`.
 - `bulk-submit` / `bulk-cancel`: one document at a time in the order given (keep `--concurrency 1`; cancel linking documents first, see `cancel-doc --check`); a DocType with an active Workflow is refused once (exit 6, use `workflow bulk-apply`); a document already submitted/cancelled (or a draft, for cancel) is an `error` item, not a skip. Status is `submitted` / `cancelled`.
 - Exit 8 unless every item succeeded. An `interrupted` item (Ctrl+C) may or may not have been applied: check it before re-running.
-- Each item is a separate request with Frappe's validations, so one bad row does not stop the others unless `--fail-fast`.
+- `bulk-create --atomic`: one request, one transaction. Success is the usual report; any failure is a single error (exit by class, e.g. 6) with no per-item report, and nothing was created. Over 200 items, a foreign `doctype` in an item, or `--concurrency`/`--fail-fast` is a usage error (exit 2) before anything is sent. A timeout or a proxy's answer (exit 7) means the batch may or may not exist: check the site, raise `--timeout` (default 30s is tight for 200). Hooks that `db.commit()` and DDL (Custom Field, DocType) break all-or-nothing, so not for those.
+- Without `--atomic`, each item is a separate request with Frappe's validations, so one bad row does not stop the others unless `--fail-fast`.
 
 ## Lifecycle (docstatus 0 draft, 1 submitted, 2 cancelled)
 
