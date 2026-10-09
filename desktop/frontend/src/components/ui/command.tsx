@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+// Never use cmdk's Command.Dialog: react-style-singleton injects a <style> tag, which the CSP blocks.
 import { Command as CommandPrimitive } from "cmdk"
 import { cn } from "cn"
 

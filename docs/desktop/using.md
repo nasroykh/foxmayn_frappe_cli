@@ -4,7 +4,7 @@ Add your sites, connect AI assistants, install the ffc helper and adjust setting
 
 Not an official Frappe product; not affiliated with Frappe Technologies.
 
-The app has three screens in the sidebar: **Sites**, **Assistants** and **Settings**. Press Ctrl+K (Cmd+K on macOS) for the command palette: go to a screen, add a site, check a connection or switch the theme.
+The app has three screens in the sidebar: **Sites**, **Connect apps** and **Settings**. Press Ctrl+K (Cmd+K on macOS) for the command palette: go to a screen, add a site, check a connection or switch the theme.
 
 ## First run
 
@@ -46,9 +46,9 @@ Each site's menu has:
 | **Change address…** | Moves the site to a new address after checking the saved credentials against it. Not available for browser sign-in sites: remove and add them again. |
 | **Remove…** | Removes the site. For a browser sign-in site, the app first revokes its token on the site (best effort, 10 seconds). |
 
-## Assistants
+## Connect apps
 
-The Assistants screen shows Claude Desktop, Claude Code, Cursor, VS Code and Codex, whether each was found on this computer, and its status:
+The Connect apps screen shows Claude Desktop, Claude Code, Cursor, VS Code and Codex, whether each was found on this computer, and its status:
 
 | Status | Meaning |
 | --- | --- |

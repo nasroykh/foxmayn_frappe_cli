@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next"
 import { IconDeviceDesktop, IconMoon, IconSearch, IconSun } from "@tabler/icons-react"
 
 import { useApp } from "@/app/app-context"
@@ -25,7 +26,6 @@ import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
-const titles = { sites: "Sites", assistants: "Assistants", settings: "Settings" }
 
 export function useModKey() {
   const { env } = useApp()
@@ -34,7 +34,9 @@ export function useModKey() {
 }
 
 export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
+  const { t } = useTranslation()
   const { screen, setScreen } = useApp()
+  const titles = { sites: "Sites", assistants: t("connectApps.title"), settings: "Settings" }
   const { theme, setTheme } = useTheme()
   const mod = useModKey()
   const ThemeIcon = theme === "light" ? IconSun : theme === "dark" ? IconMoon : IconDeviceDesktop
