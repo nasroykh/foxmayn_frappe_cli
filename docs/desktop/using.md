@@ -4,7 +4,7 @@ Add your sites, connect AI assistants, install the ffc helper and adjust setting
 
 Not an official Frappe product; not affiliated with Frappe Technologies.
 
-The app has three screens in the sidebar: **Sites**, **Connect apps** and **Settings**. Press Ctrl+K (Cmd+K on macOS) for the command palette: go to a screen, add a site, check a connection or switch the theme.
+The app has four screens in the sidebar: **Sites**, **Assistant**, **Connect apps** and **Settings**. Press Ctrl+K (Cmd+K on macOS) for the command palette: go to a screen, add a site, check a connection or switch the theme.
 
 ## First run
 
@@ -62,6 +62,74 @@ The Connect apps screen shows Claude Desktop, Claude Code, Cursor, VS Code and C
 **Disconnect** removes the entry again; your sites stay saved.
 
 The entry is named `frappe` and runs the installed ffc by its full path: the same as `ffc mcp install`. Which files are changed for each assistant: [MCP setup](../mcp/setup.md#where-each-clients-entry-goes). To use tool sets, policies or several sites in one server, use the [CLI](../mcp/running.md) or the [per-site policy](../mcp/safety.md#per-site-policy) in the config file; the app writes only the basic entry.
+
+## Assistant
+
+The Assistant screen is a chat inside the app. You ask a question about one of your sites, and the assistant answers from what it reads there through ffc's tools. It does not need a separate ffc install: the app runs the same ffc code itself. (**Connect apps**, which sets up other programs, still uses the installed ffc; see [The ffc helper](#the-ffc-helper).)
+
+### Choose a model provider
+
+The first time, the Assistant screen asks you to pick one. Options:
+
+- **Anthropic**: paste an API key.
+- **OpenRouter**: paste an API key.
+- **Ollama** or **LM Studio**: models that run on this computer. The app looks for them at `http://localhost:11434/v1` and `http://localhost:1234/v1`. No key is needed.
+- **Another server**: any server that speaks the OpenAI API, at an address you give. Use https, unless the server runs on this computer.
+
+A pasted key is checked against the provider before it is saved. You can change providers, keys and the default model in Settings. Anthropic and OpenRouter always talk to their own hosts; changing the address of one of them removes its saved key.
+
+**Where keys live.** In the operating system's keychain (Windows Credential Manager, macOS Keychain), under "Foxmayn Frappe Desktop". The app window never gets a key back: it only shows the last four characters. Keys are not in the chat history or in any file the app writes.
+
+### Ask a question
+
+Click **New conversation** and pick the site, the provider and the model. Enter sends your message, Shift+Enter adds a line. Answers stream in, and each tool the assistant uses shows as a row (what it looked at, and whether it worked). The model sees your messages and the data its tools return, and that data goes to the provider you chose. With a local model it stays on this computer.
+
+### Read only, or ask before changes
+
+Each conversation has a mode:
+
+| Mode | What the assistant can do |
+| --- | --- |
+| **Read only** (default) | Look at data. The tools that create, change or delete are not given to it at all. |
+| **Ask before changes** | It may propose changes. Each one waits for your answer. |
+
+You can switch the mode of a conversation while you chat.
+
+### Approval cards
+
+In **Ask before changes**, a change stops at a card that says **Approval needed**:
+
+- **App card.** For creating or changing a document (and other writes ffc does not ask about itself). It shows the exact request: tool, site, DocTypes, document names and the arguments. For an update it also shows the field changes, computed from the document as it is now. If the document changed on the site before you approved, the update is refused instead of overwriting it.
+- **ffc's own confirmation.** For deleting and cancelling, ffc asks itself, and its question is the card. There is exactly one card, not two.
+
+**Approve** runs the change. **Decline** is safe: nothing is changed and the assistant is told you declined. Closing a card by stopping the run also declines it.
+
+### Stop and Continue
+
+**Stop** (or Esc) ends the run within about a second, closes open cards as declined and keeps what was already written in the chat. A change that was already running when you stopped may still have gone through on the site: check the document. After 25 tool calls in one run the assistant pauses so it does not go on forever; **Continue** lets it carry on.
+
+### Limits that still apply
+
+The assistant goes through the same checks as any connected app, from the site's [policy](../mcp/safety.md#per-site-policy): sensitive DocTypes stay read-only unless the site allows them, denied DocTypes and methods are refused, and a read-only site is read-only here too. The assistant cannot call arbitrary server methods (`call_method` is not offered). A long tool result is cut to 40 000 characters before the model sees it (the full text is kept in the history).
+
+### Audit log
+
+Every tool call is written to ffc's [audit log](../mcp/safety.md#audit-log) (`mcp-audit.jsonl` next to the config file) with the client name `foxmayn-desktop` and a `run_id`, which is the same for all the calls of one question. A change you approved through ffc's own confirmation shows `confirm_pending` followed by the result. A change you decline on an app card never reaches ffc, so it has no line.
+
+### Chat history
+
+Conversations are stored on this computer only, in `assistant.db` (a SQLite file, readable only by you) in the app's data folder:
+
+| System | Path |
+| --- | --- |
+| Windows | `%AppData%\Foxmayn Frappe Desktop\assistant.db` |
+| macOS | `~/Library/Application Support/Foxmayn Frappe Desktop/assistant.db` |
+
+Delete a conversation from the list to remove it. Provider names and addresses are stored there too, never keys.
+
+### Not in 0.2.0
+
+Profiles and presets, searching the history, cost figures, attachments and signing in to OpenRouter in the browser (paste a key for now) are planned for later.
 
 ## The ffc helper
 
