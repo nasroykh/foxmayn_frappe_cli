@@ -3,12 +3,12 @@ package services
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/cmd"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 )
@@ -19,16 +19,26 @@ type EngineMode int
 const (
 	// EngineRead serves read tools only (Policy.ReadOnly).
 	EngineRead EngineMode = iota
-	// EngineAsk also serves write tools; ffc asks, through the session's
-	// Elicitor, before every call that needs confirmation.
+	// EngineAsk also serves write tools. ffc asks the session's Elicitor
+	// only before the calls it counts as needing confirmation (deletes,
+	// cancels, sharing and the like); a plain create_doc or update_doc runs
+	// unasked. The engine alone is not a write gate: the caller must show
+	// its own card for every call whose Classify has Action other than
+	// "read" and WillAsk false.
 	EngineAsk
 )
 
 // engineClientName is the client name in the MCP audit log.
 const engineClientName = "foxmayn-desktop"
 
+// engineBuildTimeout bounds building a server, which signs in to the site
+// (password and OAuth sites) and so could otherwise wait on a dead host.
+const engineBuildTimeout = 60 * time.Second
+
 // Elicitor answers an ffc confirmation question. A nil Elicitor declines
-// every question.
+// every question. So does an error, a nil result, and a session that is
+// closed or cancelled before the Elicitor answers: it is run on its own
+// goroutine and its late answer is dropped.
 type Elicitor func(ctx context.Context, req mcp.ElicitationRequest) (*mcp.ElicitationResult, error)
 
 // Engine hosts the ffc MCP server in this process: one server per (site,
@@ -36,11 +46,15 @@ type Elicitor func(ctx context.Context, req mcp.ElicitationRequest) (*mcp.Elicit
 // safe for concurrent use.
 type Engine struct {
 	configPath string
+	ctx        context.Context // ends with Close; builds follow it
+	cancel     context.CancelFunc
+	closeSrv   func(*cmd.MCPServer) // a seam for tests
 
-	startMu sync.Mutex // see startClient
-	mu      sync.Mutex
-	closed  bool
-	servers map[engineKey]*engineServer
+	startMu  sync.Mutex // see startClient
+	mu       sync.Mutex
+	closed   bool
+	servers  map[engineKey]*engineServer
+	sessions map[*EngineSession]struct{}
 }
 
 type engineKey struct {
@@ -49,18 +63,28 @@ type engineKey struct {
 }
 
 // engineServer is a cached server. It is built once (ready closes when srv
-// or err is set) and closed when it is retired and its last session closed.
+// or err is set) and closed once, when it is retired and its last
+// reference is gone.
 type engineServer struct {
-	ready   chan struct{}
-	srv     *cmd.MCPServer
-	err     error
-	refs    int
-	retired bool
+	ready     chan struct{}
+	srv       *cmd.MCPServer
+	err       error
+	refs      int
+	retired   bool
+	srvClosed bool
 }
 
 // NewEngine returns an engine over the ffc config file at configPath.
 func NewEngine(configPath string) *Engine {
-	return &Engine{configPath: configPath, servers: map[engineKey]*engineServer{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Engine{
+		configPath: configPath,
+		ctx:        ctx,
+		cancel:     cancel,
+		closeSrv:   (*cmd.MCPServer).Close,
+		servers:    map[engineKey]*engineServer{},
+		sessions:   map[*EngineSession]struct{}{},
+	}
 }
 
 // Open starts a session on site. The session's own in-process MCP client
@@ -68,6 +92,9 @@ func NewEngine(configPath string) *Engine {
 func (e *Engine) Open(ctx context.Context, site string, mode EngineMode, elicit Elicitor) (*EngineSession, error) {
 	if site == "" {
 		return nil, invalid("site", "Choose a site.")
+	}
+	if mode != EngineRead && mode != EngineAsk {
+		return nil, invalid("mode", "Unknown mode.")
 	}
 	es, err := e.acquire(ctx, engineKey{site, mode})
 	if err != nil {
@@ -103,25 +130,30 @@ func (e *Engine) acquire(ctx context.Context, key engineKey) (*engineServer, err
 
 	if build {
 		// The build may log in to the site, so it runs outside the lock. It
-		// does not follow this caller's ctx: others wait for the same build.
-		srv, err := cmd.NewMCPServer(context.WithoutCancel(ctx), cmd.MCPOptions{
+		// follows the engine, not this caller: others wait for the same build.
+		bctx, cancel := context.WithTimeout(e.ctx, engineBuildTimeout)
+		srv, err := cmd.NewMCPServer(bctx, cmd.MCPOptions{
 			ConfigPath: e.configPath,
 			Site:       key.site,
 			Sites:      []string{key.site},
-			Policy:     config.MCPPolicy{Confirm: "always", ReadOnly: key.mode == EngineRead},
+			Policy:     config.MCPPolicy{Confirm: "always", ReadOnly: key.mode != EngineAsk},
 		})
+		cancel()
 		e.mu.Lock()
 		switch {
-		case err != nil:
-			es.err = err
-			if e.servers[key] == es {
-				delete(e.servers, key)
-			}
 		case e.closed:
 			es.err = errEngineClosed()
-			srv.Close()
+			if err == nil {
+				es.srv, es.srvClosed = srv, true
+				defer e.closeSrv(srv)
+			}
+		case err != nil:
+			es.err = siteError("Starting the assistant engine", err)
 		default:
 			es.srv = srv
+		}
+		if es.err != nil && e.servers[key] == es {
+			delete(e.servers, key)
 		}
 		close(es.ready)
 		e.mu.Unlock()
@@ -135,75 +167,75 @@ func (e *Engine) acquire(ctx context.Context, key engineKey) (*engineServer, err
 	}
 	if es.err != nil {
 		e.release(es)
-		var se *Error
-		if errors.As(es.err, &se) {
-			return nil, se
-		}
-		return nil, newError(CodeFailed, "Could not start the assistant engine for this site.", es.err)
+		return nil, es.err
 	}
 	return es, nil
+}
+
+// takeClose returns es's server if it must be closed now, once. e.mu is held.
+func (e *Engine) takeClose(es *engineServer) *cmd.MCPServer {
+	if es.srv == nil || es.srvClosed || !es.retired || es.refs > 0 {
+		return nil
+	}
+	es.srvClosed = true
+	return es.srv
 }
 
 // release drops one reference and closes a retired server nobody uses.
 func (e *Engine) release(es *engineServer) {
 	e.mu.Lock()
 	es.refs--
-	var srv *cmd.MCPServer
-	if es.retired && es.refs <= 0 {
-		srv = es.srv
-	}
+	srv := e.takeClose(es)
 	e.mu.Unlock()
-	srv.Close()
+	if srv != nil {
+		e.closeSrv(srv)
+	}
+}
+
+// retireAll removes the cached servers and returns those nobody uses.
+func (e *Engine) retireAll() []*cmd.MCPServer {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var idle []*cmd.MCPServer
+	for k, es := range e.servers {
+		delete(e.servers, k)
+		es.retired = true
+		if srv := e.takeClose(es); srv != nil {
+			idle = append(idle, srv)
+		}
+	}
+	return idle
 }
 
 // Invalidate retires every cached server: the config changed. Sessions that
 // are open keep their server until they close; new Opens build a new one.
 func (e *Engine) Invalidate() {
-	e.mu.Lock()
-	var idle []*cmd.MCPServer
-	for k, es := range e.servers {
-		delete(e.servers, k)
-		es.retired = true
-		if es.refs <= 0 && es.srv != nil {
-			idle = append(idle, es.srv)
-		}
-	}
-	e.mu.Unlock()
-	for _, s := range idle {
-		s.Close()
+	for _, s := range e.retireAll() {
+		e.closeSrv(s)
 	}
 }
 
-// Close closes every server, open sessions included. Later Opens fail.
+// Close ends every session (cancelling and waiting for its calls), closes
+// every server and refuses later Opens.
 func (e *Engine) Close() {
 	e.mu.Lock()
 	e.closed = true
-	var all []*cmd.MCPServer
-	for k, es := range e.servers {
-		delete(e.servers, k)
-		es.retired = true
-		if es.srv != nil {
-			all = append(all, es.srv)
-		}
+	sessions := make([]*EngineSession, 0, len(e.sessions))
+	for s := range e.sessions {
+		sessions = append(sessions, s)
 	}
 	e.mu.Unlock()
-	for _, s := range all {
+	e.cancel() // builds under way end; their result is closed on arrival
+	for _, s := range e.retireAll() {
+		e.closeSrv(s)
+	}
+	for _, s := range sessions {
 		s.Close()
 	}
 }
 
 func errEngineClosed() *Error {
 	return &Error{Code: CodeUnavailable, Message: "The assistant engine is shut down."}
-}
-
-// engineElicit adapts an Elicitor to the MCP client's handler.
-type engineElicit struct{ f Elicitor }
-
-func (h engineElicit) Elicit(ctx context.Context, req mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
-	if h.f == nil {
-		return &mcp.ElicitationResult{ElicitationResponse: mcp.ElicitationResponse{Action: mcp.ElicitationResponseActionDecline}}, nil
-	}
-	return h.f(ctx, req)
 }
 
 // EngineSession is one in-process MCP client on an engine server. It is safe
@@ -215,15 +247,25 @@ type EngineSession struct {
 	client *mcpclient.Client
 	instr  string
 
+	ctx    context.Context // ends when the session closes
+	cancel context.CancelFunc
+	calls  sync.WaitGroup // in-flight Tools and Call
+
 	mu     sync.Mutex
 	closed bool
 }
 
 func (e *Engine) newSession(ctx context.Context, es *engineServer, elicit Elicitor) (*EngineSession, error) {
+	s := &EngineSession{engine: e, es: es, srv: es.srv}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	fail := func(err error) (*EngineSession, error) {
+		s.cancel()
+		if _, ok := err.(*Error); ok {
+			return nil, err
+		}
 		return nil, newError(CodeFailed, "Could not start the assistant engine.", err)
 	}
-	c, err := e.startClient(ctx, es.srv, elicit)
+	c, err := e.startClient(ctx, es.srv, engineElicit{s, elicit})
 	if err != nil {
 		return fail(err)
 	}
@@ -234,20 +276,29 @@ func (e *Engine) newSession(ctx context.Context, es *engineServer, elicit Elicit
 		c.Close()
 		return fail(err)
 	}
-	return &EngineSession{engine: e, es: es, srv: es.srv, client: c, instr: res.Instructions}, nil
+	s.client, s.instr = c, res.Instructions
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		c.Close()
+		return fail(errEngineClosed())
+	}
+	e.sessions[s] = struct{}{}
+	e.mu.Unlock()
+	return s, nil
 }
 
 // startClient connects a new in-process client. mcp-go names the client's
 // session after the clock's nanoseconds, so two clients started within one
 // clock tick (coarse on Windows) collide: starts are serialised and a
 // collision is retried on a fresh id.
-func (e *Engine) startClient(ctx context.Context, srv *cmd.MCPServer, elicit Elicitor) (*mcpclient.Client, error) {
+func (e *Engine) startClient(ctx context.Context, srv *cmd.MCPServer, h mcpclient.ElicitationHandler) (*mcpclient.Client, error) {
 	e.startMu.Lock()
 	defer e.startMu.Unlock()
 	var err error
 	for range 50 {
 		var c *mcpclient.Client
-		c, err = mcpclient.NewInProcessClientWithOptions(srv.MCPServer, mcpclient.WithElicitationHandler(engineElicit{elicit}))
+		c, err = mcpclient.NewInProcessClientWithOptions(srv.MCPServer, mcpclient.WithElicitationHandler(h))
 		if err != nil {
 			return nil, err
 		}
@@ -255,12 +306,68 @@ func (e *Engine) startClient(ctx context.Context, srv *cmd.MCPServer, elicit Eli
 			return c, nil
 		}
 		c.Close()
-		if !strings.Contains(err.Error(), "session already exists") {
+		if !errors.Is(err, mcpserver.ErrSessionExists) {
 			return nil, err
 		}
 		time.Sleep(time.Millisecond)
 	}
 	return nil, err
+}
+
+// engineElicit is the session's elicitation handler: it passes the question
+// to the session's Elicitor and declines in every case but a clear answer
+// given while the session and the call are alive.
+type engineElicit struct {
+	s *EngineSession
+	f Elicitor
+}
+
+func (h engineElicit) Elicit(ctx context.Context, req mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+	decline := &mcp.ElicitationResult{ElicitationResponse: mcp.ElicitationResponse{Action: mcp.ElicitationResponseActionDecline}}
+	if h.f == nil {
+		return decline, nil
+	}
+	ctx, stop := h.s.merge(ctx)
+	defer stop()
+	type answer struct {
+		res *mcp.ElicitationResult
+		err error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		res, err := h.f(ctx, req)
+		done <- answer{res, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return decline, nil
+	case a := <-done:
+		if a.err != nil || a.res == nil || ctx.Err() != nil {
+			return decline, nil
+		}
+		return a.res, nil
+	}
+}
+
+// merge returns a context that ends with ctx or with the session.
+func (s *EngineSession) merge(ctx context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(s.ctx, cancel)
+	return ctx, func() { stop(); cancel() }
+}
+
+// enter registers a call. The returned context ends with ctx or when the
+// session closes; done must be called when the call ends.
+func (s *EngineSession) enter(ctx context.Context) (context.Context, func(), error) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, nil, &Error{Code: CodeUnavailable, Message: "The session is closed."}
+	}
+	s.calls.Add(1)
+	s.mu.Unlock()
+	ctx, stop := s.merge(ctx)
+	return ctx, func() { stop(); s.calls.Done() }, nil
 }
 
 // Instructions is the server's usage text from initialize.
@@ -271,9 +378,11 @@ func (s *EngineSession) Warnings() []string { return append([]string(nil), s.srv
 
 // Tools lists the tools the session's policy serves.
 func (s *EngineSession) Tools(ctx context.Context) ([]mcp.Tool, error) {
-	if err := s.live(); err != nil {
+	ctx, done, err := s.enter(ctx)
+	if err != nil {
 		return nil, err
 	}
+	defer done()
 	var out []mcp.Tool
 	req := mcp.ListToolsRequest{}
 	for {
@@ -290,11 +399,14 @@ func (s *EngineSession) Tools(ctx context.Context) ([]mcp.Tool, error) {
 }
 
 // Call runs a tool; its audit line carries runID. A tool's own failure is
-// the result's IsError, not an error.
+// the result's IsError, not an error. Closing the session cancels the call,
+// and a question ffc asks meanwhile is declined.
 func (s *EngineSession) Call(ctx context.Context, runID, name string, args map[string]any) (*mcp.CallToolResult, error) {
-	if err := s.live(); err != nil {
+	ctx, done, err := s.enter(ctx)
+	if err != nil {
 		return nil, err
 	}
+	defer done()
 	req := mcp.CallToolRequest{}
 	req.Params.Name, req.Params.Arguments = name, args
 	res, err := s.client.CallTool(cmd.WithRunID(ctx, runID), req)
@@ -316,7 +428,8 @@ func (s *EngineSession) Classify(name string, args map[string]any) (cmd.ToolClas
 	return cls, nil
 }
 
-// Close ends the session. It is safe to call more than once.
+// Close ends the session: it cancels its calls, waits for them to end, and
+// releases the server. It is safe to call more than once.
 func (s *EngineSession) Close() {
 	s.mu.Lock()
 	if s.closed {
@@ -325,7 +438,12 @@ func (s *EngineSession) Close() {
 	}
 	s.closed = true
 	s.mu.Unlock()
+	s.cancel()
+	s.calls.Wait()
 	s.client.Close()
+	s.engine.mu.Lock()
+	delete(s.engine.sessions, s)
+	s.engine.mu.Unlock()
 	s.engine.release(s.es)
 }
 
@@ -341,9 +459,6 @@ func (s *EngineSession) live() error {
 func (s *EngineSession) wrap(ctx context.Context, msg string, err error) *Error {
 	if ctx.Err() != nil {
 		return newError(CodeCancelled, "Cancelled.", ctx.Err())
-	}
-	if e := s.live(); e != nil {
-		return e.(*Error)
 	}
 	return newError(CodeFailed, msg, err)
 }

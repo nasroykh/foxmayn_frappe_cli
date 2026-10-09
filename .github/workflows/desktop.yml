@@ -69,7 +69,16 @@ jobs:
         run: go vet ./...
 
       - name: Test
+        if: runner.os != 'macOS'
         run: go test ./...
+
+      # The race detector needs cgo; the macOS runner has clang, the Windows
+      # one has no C toolchain.
+      - name: Test (race)
+        if: runner.os == 'macOS'
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race ./...
 
       # The Wails CLI at the version desktop/go.mod requires.
       - name: Install wails3

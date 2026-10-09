@@ -4,14 +4,17 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/cmd"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
 )
 
@@ -139,15 +142,173 @@ func TestEngineAskElicits(t *testing.T) {
 }
 
 func TestEngineNilElicitorDeclines(t *testing.T) {
-	e, fake, _ := engineSite(t)
+	e, fake, path := engineSite(t)
 	s, err := e.Open(t.Context(), "prod", EngineAsk, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	s.Call(t.Context(), "r1", "delete_doc", map[string]any{"doctype": "ToDo", "name": "TD-2"})
+	res, err := s.Call(t.Context(), "r1", "delete_doc", map[string]any{"doctype": "ToDo", "name": "TD-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := resultText(res); !res.IsError || !strings.Contains(text, "nothing was changed") {
+		t.Errorf("result = %v %q", res.IsError, text)
+	}
 	if _, ok := fake.Doc("ToDo", "TD-2"); !ok {
 		t.Error("TD-2 was deleted without an answer")
+	}
+	if got := auditStatuses(t, path); got != "confirm_pending,declined" {
+		t.Errorf("audit statuses = %s", got)
+	}
+}
+
+func auditStatuses(t *testing.T, path string) string {
+	t.Helper()
+	var out []string
+	for _, l := range engineAudit(t, path) {
+		out = append(out, l["status"].(string))
+	}
+	return strings.Join(out, ",")
+}
+
+// Every way an Elicitor can fail to say yes keeps the document.
+func TestEngineElicitorFailuresDecline(t *testing.T) {
+	accept := &mcp.ElicitationResult{ElicitationResponse: mcp.ElicitationResponse{
+		Action: mcp.ElicitationResponseActionAccept, Content: map[string]any{"confirm": true},
+	}}
+	for name, tc := range map[string]struct {
+		elicit Elicitor
+		cancel bool // cancel the call's context while it is asked
+	}{
+		"error": {elicit: func(context.Context, mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+			return nil, errors.New("boom")
+		}},
+		"nil result": {elicit: func(context.Context, mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+			return nil, nil
+		}},
+		"cancelled": {cancel: true, elicit: func(ctx context.Context, _ mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+			<-ctx.Done()
+			return accept, nil // a late yes
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, fake, _ := engineSite(t)
+			asked := make(chan struct{}, 1)
+			el := tc.elicit
+			s, err := e.Open(t.Context(), "prod", EngineAsk, func(ctx context.Context, r mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+				asked <- struct{}{}
+				return el(ctx, r)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tc.cancel {
+				go func() { <-asked; cancel() }()
+			}
+			s.Call(ctx, "r1", "delete_doc", map[string]any{"doctype": "ToDo", "name": "TD-1"})
+			if _, ok := fake.Doc("ToDo", "TD-1"); !ok {
+				t.Error("TD-1 was deleted")
+			}
+		})
+	}
+}
+
+// Sessions on one server each ask only their own Elicitor.
+func TestEngineSessionsAskTheirOwnElicitor(t *testing.T) {
+	e, fake, _ := engineSite(t)
+	answer := func(n *atomic.Int32, yes bool) Elicitor {
+		return func(context.Context, mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+			n.Add(1)
+			act := mcp.ElicitationResponseActionDecline
+			if yes {
+				act = mcp.ElicitationResponseActionAccept
+			}
+			return &mcp.ElicitationResult{ElicitationResponse: mcp.ElicitationResponse{Action: act, Content: map[string]any{"confirm": yes}}}, nil
+		}
+	}
+	var na, nb atomic.Int32
+	a, err := e.Open(t.Context(), "prod", EngineAsk, answer(&na, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, err := e.Open(t.Context(), "prod", EngineAsk, answer(&nb, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if a.srv != b.srv {
+		t.Fatal("the sessions have two servers")
+	}
+	a.Call(t.Context(), "ra", "delete_doc", map[string]any{"doctype": "ToDo", "name": "TD-1"})
+	b.Call(t.Context(), "rb", "delete_doc", map[string]any{"doctype": "ToDo", "name": "TD-2"})
+	if na.Load() != 1 || nb.Load() != 1 {
+		t.Errorf("asked a=%d b=%d", na.Load(), nb.Load())
+	}
+	if _, ok := fake.Doc("ToDo", "TD-1"); !ok {
+		t.Error("a declined, TD-1 gone")
+	}
+	if _, ok := fake.Doc("ToDo", "TD-2"); ok {
+		t.Error("b accepted, TD-2 still there")
+	}
+}
+
+// Closing a session or the engine while a question is open ends the call
+// before Close returns, and a yes given afterwards deletes nothing.
+func TestEngineCloseDuringElicitation(t *testing.T) {
+	for _, viaEngine := range []bool{false, true} {
+		name := map[bool]string{false: "session", true: "engine"}[viaEngine]
+		t.Run(name, func(t *testing.T) {
+			e, fake, path := engineSite(t)
+			asked, release := make(chan struct{}), make(chan struct{})
+			s, err := e.Open(t.Context(), "prod", EngineAsk, func(context.Context, mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+				close(asked)
+				<-release // ignores its context, then says yes
+				return &mcp.ElicitationResult{ElicitationResponse: mcp.ElicitationResponse{
+					Action: mcp.ElicitationResponseActionAccept, Content: map[string]any{"confirm": true},
+				}}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			callDone := make(chan struct{})
+			go func() {
+				defer close(callDone)
+				s.Call(t.Context(), "r1", "delete_doc", map[string]any{"doctype": "ToDo", "name": "TD-1"})
+			}()
+			<-asked
+			closeDone := make(chan struct{})
+			go func() {
+				defer close(closeDone)
+				if viaEngine {
+					e.Close()
+				} else {
+					s.Close()
+				}
+			}()
+			select {
+			case <-closeDone:
+			case <-time.After(10 * time.Second):
+				t.Fatal("Close did not return while the Elicitor was blocked")
+			}
+			select {
+			case <-callDone:
+			default:
+				t.Error("Close returned before the call ended")
+			}
+			close(release)
+			time.Sleep(50 * time.Millisecond)
+			if _, ok := fake.Doc("ToDo", "TD-1"); !ok {
+				t.Error("TD-1 was deleted after Close")
+			}
+			if got := auditStatuses(t, path); strings.Contains(got, "ok") {
+				t.Errorf("audit statuses = %s", got)
+			}
+		})
 	}
 }
 
@@ -229,8 +390,8 @@ func TestEngineEngineCloseEndsOpenSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.Close()
-	if res, err := s.Call(t.Context(), "r", "get_doc", map[string]any{"doctype": "ToDo", "name": "TD-1"}); err == nil && !res.IsError {
-		t.Error("call worked after Engine.Close")
+	if _, err := s.Call(t.Context(), "r", "get_doc", map[string]any{"doctype": "ToDo", "name": "TD-1"}); code(err) != CodeUnavailable {
+		t.Errorf("call after Engine.Close: %v", err)
 	}
 	s.Close()
 }
@@ -239,6 +400,9 @@ func TestEngineOpenErrors(t *testing.T) {
 	e, _, _ := engineSite(t)
 	if _, err := e.Open(t.Context(), "", EngineRead, nil); code(err) != CodeInvalid {
 		t.Errorf("empty site: %v", err)
+	}
+	if _, err := e.Open(t.Context(), "prod", EngineMode(7), nil); code(err) != CodeInvalid {
+		t.Errorf("unknown mode: %v", err)
 	}
 	if _, err := e.Open(t.Context(), "nope", EngineRead, nil); err == nil {
 		t.Error("unknown site opened")
@@ -291,27 +455,81 @@ func TestEngineInvalidate(t *testing.T) {
 	}
 }
 
+// Opens, Invalidates, cancels and Engine.Close race; every server built is
+// closed exactly once.
 func TestEngineConcurrent(t *testing.T) {
 	e, _, _ := engineSite(t)
+	var mu sync.Mutex
+	closes := map[*cmd.MCPServer]int{}
+	e.closeSrv = func(s *cmd.MCPServer) {
+		mu.Lock()
+		closes[s]++
+		mu.Unlock()
+		s.Close()
+	}
+	seen := map[*cmd.MCPServer]bool{}
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 24; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if i%4 == 3 {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			switch i % 6 {
+			case 3:
 				e.Invalidate()
+			case 4:
+				cancel() // ends the wait for a build
+			case 5:
+				if i > 18 {
+					e.Close()
+				}
 			}
-			s, err := e.Open(t.Context(), "prod", EngineMode(i%2), nil)
+			s, err := e.Open(ctx, "prod", EngineMode(i%2), nil)
 			if err != nil {
-				t.Error(err)
 				return
 			}
-			defer s.Close()
-			if _, err := s.Tools(t.Context()); err != nil {
-				t.Error(err)
-			}
+			mu.Lock()
+			seen[s.srv] = true
+			mu.Unlock()
+			s.Tools(ctx)
 			s.Close()
 		}()
 	}
 	wg.Wait()
+	e.Close()
+	e.Invalidate()
+	mu.Lock()
+	defer mu.Unlock()
+	for srv := range seen {
+		if closes[srv] != 1 {
+			t.Errorf("a server was closed %d times", closes[srv])
+		}
+	}
+	for srv, n := range closes {
+		if n != 1 {
+			t.Errorf("server %p closed %d times", srv, n)
+		}
+	}
+}
+
+// A retired server is closed exactly once, on its last session's close.
+func TestEngineRetiredServerClosedOnce(t *testing.T) {
+	e, _, _ := engineSite(t)
+	var n atomic.Int32
+	e.closeSrv = func(s *cmd.MCPServer) { n.Add(1); s.Close() }
+	a, _ := e.Open(t.Context(), "prod", EngineRead, nil)
+	b, _ := e.Open(t.Context(), "prod", EngineRead, nil)
+	e.Invalidate()
+	e.Invalidate()
+	a.Close()
+	if n.Load() != 0 {
+		t.Fatalf("closed with a session open: %d", n.Load())
+	}
+	b.Close()
+	b.Close()
+	e.Close()
+	if n.Load() != 1 {
+		t.Errorf("closed %d times", n.Load())
+	}
 }
