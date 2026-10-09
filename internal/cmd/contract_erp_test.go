@@ -412,3 +412,165 @@ func contractERPPayment(t *testing.T, c *client.FrappeClient, sc *config.SiteCon
 		t.Errorf("unsupported DocType: exit %d, %v", r.Code, r.Err)
 	}
 }
+
+// contractERPLookups pins T3.4's lookups against a real ERPNext: item
+// (get_item_details with `args` on v15 and `ctx` on v16), stock with and
+// without a warehouse (get_stock_balance, the item dashboard) and party
+// (get_party_details). It makes a stock Item with a price on the Standard
+// Selling list and receives 5 of it into the Company's Stores warehouse with
+// a Material Receipt. Cleanup is best effort: the receipt is cancelled and
+// deleted, then the Item price and the Item. A cancelled receipt leaves Stock
+// Ledger Entries (is_cancelled) that still link the Item, so deleting the
+// Item can fail; the Item is then disabled and the leftover logged. Every
+// name is unique, so a leftover never meets a later run.
+func contractERPLookups(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
+	docs := contractERPOrder(t, c, sc)
+	company, customer := docs.company, docs.customer
+	cfg := contractConfig(t, sc)
+	today := time.Now().Format("2006-01-02")
+	number := func(v interface{}) float64 {
+		// Frappe sends a Float as 2.0, and ffc keeps the literal: compare the value.
+		f, _ := strconv.ParseFloat(fmt.Sprint(v), 64)
+		return f
+	}
+	run := func(args ...string) []byte {
+		t.Helper()
+		r := runFFC(t, cfg, "", append([]string{"--json", "--timeout", "2m", "erp"}, args...)...)
+		if r.Err != nil {
+			t.Fatalf("erp %s: %v\n%s", strings.Join(args, " "), r.Err, r.Stderr)
+		}
+		return []byte(r.Stdout)
+	}
+
+	id := fmt.Sprintf("%d", time.Now().UnixNano())
+	// Registered first, so it runs last (LIFO): after the Item Price and the receipt.
+	stockDoc, err := c.CreateDoc(contractCtx(t), "Item", map[string]interface{}{
+		"item_code": "FFC-ERP-STK-" + id, "item_name": "FFC ERP stock " + id, "item_group": contractERPFirst(t, c, "Item Group"),
+		"stock_uom": "Nos", "is_stock_item": 1,
+	})
+	if err != nil {
+		t.Fatalf("create Item: %v", err)
+	}
+	stock := fmt.Sprint(stockDoc["name"])
+	t.Cleanup(func() {
+		ctx := contractCtx(t)
+		if err := c.DeleteDoc(ctx, "Item", stock); err != nil {
+			if _, derr := c.UpdateDoc(ctx, "Item", stock, map[string]interface{}{"disabled": 1}); derr != nil {
+				t.Logf("Item %s left behind: delete: %v; disable: %v", stock, err, derr)
+				return
+			}
+			t.Logf("Item %s disabled, not deleted: %v", stock, err)
+		}
+	})
+	docs.create("Item Price", map[string]interface{}{"item_code": stock, "price_list": "Standard Selling", "price_list_rate": 100, "selling": 1})
+
+	// The Company's Stores warehouse (the wizard makes "Stores - <abbr>"), else any leaf one.
+	rows, err := c.GetList(contractCtx(t), "Warehouse", client.ListOptions{Fields: []string{"name"}, Filters: fmt.Sprintf(`{"company":%q,"is_group":0}`, company), Limit: -1})
+	if err != nil || len(rows) == 0 {
+		t.Fatalf("no Warehouse of %s: %v", company, err)
+	}
+	warehouse := fmt.Sprint(rows[0]["name"])
+	for _, r := range rows {
+		if n := fmt.Sprint(r["name"]); strings.HasPrefix(n, "Stores") {
+			warehouse = n
+			break
+		}
+	}
+
+	t.Run("item", func(t *testing.T) {
+		var got map[string]interface{}
+		out := run("item", stock, "--company", company, "--customer", customer, "--price-list", "Standard Selling", "--qty", "3", "--date", today)
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatalf("item = %s (%v)", out, err)
+		}
+		// The price list rate comes from the Item Price; `rate` is there too.
+		if got["item_code"] != stock || got["uom"] != "Nos" || number(got["qty"]) != 3 || number(got["price_list_rate"]) != 100 {
+			t.Errorf("item = %s", out)
+		}
+		if _, ok := got["rate"]; !ok {
+			t.Errorf("no rate in %s", out)
+		}
+		// Without options ffc still works: the plain call of the docs.
+		plain := run("item", stock, "--company", company)
+		got = nil
+		if err := json.Unmarshal(plain, &got); err != nil || got["item_code"] != stock {
+			t.Errorf("plain item = %s (%v)", plain, err)
+		}
+	})
+
+	t.Run("stock", func(t *testing.T) {
+		// A Material Receipt of 5 into the warehouse. Perpetual inventory
+		// wants a difference account: the Company's stock adjustment account.
+		co, err := c.GetDoc(contractCtx(t), "Company", company)
+		if err != nil {
+			t.Fatal(err)
+		}
+		item := map[string]interface{}{"item_code": stock, "qty": 5, "basic_rate": 10, "t_warehouse": warehouse, "uom": "Nos", "stock_uom": "Nos", "conversion_factor": 1}
+		if adj, _ := docName(co["stock_adjustment_account"]); adj != "" {
+			item["expense_account"] = adj
+		}
+		if cc, _ := docName(co["cost_center"]); cc != "" {
+			item["cost_center"] = cc
+		}
+		entryDoc, err := c.CreateDoc(contractCtx(t), "Stock Entry", map[string]interface{}{
+			"stock_entry_type": "Material Receipt", "purpose": "Material Receipt", "company": company,
+			"posting_date": today, "to_warehouse": warehouse, "items": []interface{}{item},
+		})
+		if err != nil {
+			t.Fatalf("create Stock Entry: %v", err)
+		}
+		entry := fmt.Sprint(entryDoc["name"])
+		t.Cleanup(func() {
+			ctx := contractCtx(t)
+			_, _ = c.CancelDoc(ctx, "Stock Entry", entry)
+			if err := c.DeleteDoc(ctx, "Stock Entry", entry); err != nil {
+				t.Logf("Stock Entry %s left behind (cancelled if the cancel worked): %v", entry, err)
+			}
+		})
+		if _, err := c.SubmitDoc(contractCtx(t), "Stock Entry", entry); err != nil {
+			t.Fatalf("submit %s: %v", entry, err)
+		}
+
+		var one map[string]interface{}
+		out := run("stock", stock, "--warehouse", warehouse, "--valuation", "--date", today)
+		if err := json.Unmarshal(out, &one); err != nil || one["warehouse"] != warehouse || number(one["actual_qty"]) != 5 || number(one["valuation_rate"]) != 10 {
+			t.Errorf("stock with warehouse = %s (%v)", out, err)
+		}
+		var all []map[string]interface{}
+		out = run("stock", stock)
+		if err := json.Unmarshal(out, &all); err != nil {
+			t.Fatalf("stock = %s (%v)", out, err)
+		}
+		found := false
+		for _, r := range all {
+			if r["warehouse"] == warehouse {
+				found = number(r["actual_qty"]) == 5 && r["item_code"] == stock
+			}
+		}
+		if !found {
+			t.Errorf("no row with 5 in %s: %s", warehouse, out)
+		}
+	})
+
+	t.Run("party", func(t *testing.T) {
+		doc, err := c.GetDoc(contractCtx(t), "Customer", customer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]interface{}
+		out := run("party", "--customer", customer, "--company", company, "--doctype", "Sales Invoice", "--date", today)
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatalf("party = %s (%v)", out, err)
+		}
+		// An invoice DocType adds the receivable account and the due date.
+		if got["customer"] != customer || got["customer_name"] != doc["customer_name"] || got["currency"] == nil || got["debit_to"] == nil || got["due_date"] == nil {
+			t.Errorf("party = %s", out)
+		}
+	})
+
+	// A DocType ffc does not look an item up for is refused before any request.
+	r := runFFC(t, cfg, "", "erp", "item", stock, "--company", company, "--doctype", "Payment Entry")
+	if r.Err == nil || r.Code != exitUsage || !strings.Contains(r.Err.Error(), "supported:") {
+		t.Errorf("unsupported DocType: exit %d, %v", r.Code, r.Err)
+	}
+}
