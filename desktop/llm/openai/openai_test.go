@@ -51,7 +51,9 @@ func setEnv(t *testing.T) {
 	t.Setenv("OPENAI_BASE_URL", "http://127.0.0.1:1/v1")
 	t.Setenv("OPENAI_ORG_ID", "env-org")
 	t.Setenv("OPENAI_PROJECT_ID", "env-project")
-	t.Setenv("OPENAI_CUSTOM_HEADERS", "X-Env-Leak: secret\nX-Other: 1")
+	// An Authorization line once made the adapter delete its own key header.
+	t.Setenv("OPENAI_CUSTOM_HEADERS", "X-Env-Leak: secret\nX-Other: 1\nAuthorization: Bearer env-leak")
+	t.Setenv("OPENAI_WEBHOOK_SECRET", "env-webhook")
 }
 
 func newProvider(t *testing.T, h http.Handler) (*Provider, *captured) {
@@ -494,7 +496,10 @@ func TestModelsFilteredNewestFirst(t *testing.T) {
 			{"id":"gpt-image-2","object":"model","created":500,"owned_by":"openai"},
 			{"id":"whisper-1","object":"model","created":50,"owned_by":"openai"},
 			{"id":"omni-moderation-latest","object":"model","created":60,"owned_by":"openai"},
-			{"id":"gpt-3.5-turbo-instruct","object":"model","created":70,"owned_by":"openai"}
+			{"id":"gpt-3.5-turbo-instruct","object":"model","created":70,"owned_by":"openai"},
+			{"id":"chatgpt-4o-latest","object":"model","created":800,"owned_by":"openai"},
+			{"id":"o1-mini","object":"model","created":810,"owned_by":"openai"},
+			{"id":"o1-preview-2024-09-12","object":"model","created":820,"owned_by":"openai"}
 		]}`)
 	}))
 	list, err := p.Models(context.Background())
@@ -517,5 +522,59 @@ func TestModelsFilteredNewestFirst(t *testing.T) {
 func TestPinnedHost(t *testing.T) {
 	if BaseURL != "https://api.openai.com/v1" {
 		t.Fatalf("BaseURL %q", BaseURL)
+	}
+}
+
+// A redirect is never followed: the key header would go to the new host.
+func TestRedirectNotFollowed(t *testing.T) {
+	var mu sync.Mutex
+	hit := false
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hit = true
+		mu.Unlock()
+	}))
+	t.Cleanup(other.Close)
+	p, _ := newProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	if s, err := p.Stream(context.Background(), hi()); err == nil {
+		for {
+			if _, err = s.Next(); err != nil {
+				break
+			}
+		}
+		s.Close()
+	}
+	if _, err := p.Models(context.Background()); err == nil {
+		t.Fatal("redirected model list accepted")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hit {
+		t.Fatal("redirect followed")
+	}
+}
+
+// Calls stored without an id get "call_<position>", and the results without
+// an id answer them in order.
+func TestIDlessCallsAndResults(t *testing.T) {
+	req := hi()
+	req.Messages = append(req.Messages,
+		asst(llm.ToolUse{Name: "a"}, llm.ToolUse{Name: "b"}),
+		llm.Message{Role: llm.RoleUser, Parts: []llm.Part{llm.ToolResult{Text: "ra"}, llm.ToolResult{Text: "rb", IsError: true}}})
+	in := sentInput(t, req)
+	var calls, outs [][2]any
+	for _, it := range in {
+		switch it["type"] {
+		case "function_call":
+			calls = append(calls, [2]any{it["call_id"], it["name"]})
+		case "function_call_output":
+			outs = append(outs, [2]any{it["call_id"], it["output"]})
+		}
+	}
+	want := [][2]any{{"call_0", "ra"}, {"call_1", "Error: rb"}}
+	if len(calls) != 2 || calls[0][0] != "call_0" || calls[1][0] != "call_1" || !reflect.DeepEqual(outs, want) {
+		t.Fatalf("calls %v outputs %v", calls, outs)
 	}
 }

@@ -31,7 +31,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -73,52 +72,44 @@ func WithMaxRetries(n int) Option { return func(c *config) { c.maxRetries = n } 
 
 // Provider is the OpenAI llm.Provider.
 type Provider struct {
-	client sdk.Client
-	key    string
+	models    sdk.ModelService
+	responses responses.ResponseService
+	key       string
 }
 
 var _ llm.Provider = (*Provider)(nil)
 
 // New returns a Provider that authenticates with apiKey. The key goes only in
-// the Authorization header. OPENAI_* environment credentials, base URL,
-// organization, project and custom headers are overridden or removed.
+// the Authorization header, and redirects are not followed.
+//
+// The services are built directly, not through sdk.NewClient: NewClient
+// always applies the SDK's environment defaults (OPENAI_BASE_URL,
+// OPENAI_API_KEY, OPENAI_ADMIN_KEY, OPENAI_ORG_ID, OPENAI_PROJECT_ID,
+// OPENAI_WEBHOOK_SECRET, OPENAI_CUSTOM_HEADERS), and the switch that turns
+// them off is internal to the SDK. So no OPENAI_* variable is read at all.
 func New(apiKey string, opts ...Option) *Provider {
 	cfg := config{baseURL: BaseURL, maxRetries: 2}
 	for _, o := range opts {
 		o(&cfg)
 	}
 	ro := []option.RequestOption{
+		option.WithHTTPClient(llm.NoRedirectClient(cfg.httpClient)),
 		option.WithBaseURL(cfg.baseURL),
 		option.WithAPIKey(apiKey),
-		option.WithAdminAPIKey(""),
-		option.WithOrganization(""),
-		option.WithProject(""),
-		option.WithHeaderDel("OpenAI-Organization"),
-		option.WithHeaderDel("OpenAI-Project"),
 		option.WithMaxRetries(cfg.maxRetries),
 	}
-	// The SDK reads OPENAI_CUSTOM_HEADERS (name: value per line) into its
-	// defaults; take those headers back off.
-	for _, line := range strings.Split(os.Getenv("OPENAI_CUSTOM_HEADERS"), "\n") {
-		if i := strings.Index(line, ":"); i >= 0 {
-			if name := strings.TrimSpace(line[:i]); name != "" {
-				ro = append(ro, option.WithHeaderDel(name))
-			}
-		}
-	}
-	if cfg.httpClient != nil {
-		ro = append(ro, option.WithHTTPClient(cfg.httpClient))
-	}
-	return &Provider{client: sdk.NewClient(ro...), key: apiKey}
+	return &Provider{models: sdk.NewModelService(ro...), responses: responses.NewResponseService(ro...), key: apiKey}
 }
 
 // Models lists the models that can chat with tools through Responses, newest
 // first (by the list's created time). The Models API has no capability
-// field, so the list is narrowed by id: gpt-*, chatgpt-* and the o-series,
-// minus audio, realtime, speech, image, search, embedding, moderation,
-// instruct and deep-research models.
+// field, so the list is narrowed by id: gpt-* and the o-series, minus audio,
+// realtime, speech, image, search, embedding, moderation, instruct and
+// deep-research models, and minus o1-mini and o1-preview (no tools, no
+// system prompt). chatgpt-* models are left out: they are ChatGPT's chat
+// snapshots, without function calling.
 func (p *Provider) Models(ctx context.Context) ([]llm.Model, error) {
-	pager := p.client.Models.ListAutoPaging(ctx)
+	pager := p.models.ListAutoPaging(ctx)
 	type entry struct {
 		id      string
 		created int64
@@ -148,9 +139,9 @@ func (p *Provider) Models(ctx context.Context) ([]llm.Model, error) {
 
 func chatModel(id string) bool {
 	id = strings.ToLower(id)
-	family := strings.HasPrefix(id, "gpt-") || strings.HasPrefix(id, "chatgpt-") ||
+	family := strings.HasPrefix(id, "gpt-") ||
 		(len(id) > 1 && id[0] == 'o' && id[1] >= '0' && id[1] <= '9')
-	if !family {
+	if !family || strings.HasPrefix(id, "o1-mini") || strings.HasPrefix(id, "o1-preview") {
 		return false
 	}
 	for _, s := range []string{"audio", "realtime", "transcribe", "tts", "image", "search", "embedding", "moderation", "instruct", "deep-research"} {
@@ -167,7 +158,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, err
 	if err != nil {
 		return nil, err
 	}
-	s := p.client.Responses.NewStreaming(ctx, params)
+	s := p.responses.NewStreaming(ctx, params)
 	if err := s.Err(); err != nil {
 		_ = s.Close()
 		return nil, p.mapErr(ctx, err)
@@ -252,15 +243,17 @@ func mergeSameRole(in []llm.Message) []llm.Message {
 //   - The function_call_output items for those calls come next, one per call
 //     in call order: the API refuses a call without an output and an output
 //     without a call. A call with no result gets "Error: no result"; a result
-//     that matches no call is dropped; IsError results are prefixed "Error: ".
+//     that matches no call is dropped; a result with an empty id answers the
+//     next call that had none. IsError results are prefixed "Error: ".
 //   - A user message's text and images follow as one user message.
 func inputItems(ctx context.Context, images llm.ImageResolver, in []llm.Message) (responses.ResponseInputParam, error) {
 	msgs := mergeSameRole(in)
 	var out responses.ResponseInputParam
 	var pending []string // call ids of the last assistant message
+	var idless []bool    // per pending call: it was stored without an id
 	for _, m := range msgs {
 		if m.Role == llm.RoleAssistant {
-			pending = nil
+			pending, idless = nil, nil
 			var text strings.Builder
 			flush := func() {
 				if text.Len() > 0 {
@@ -288,7 +281,7 @@ func inputItems(ctx context.Context, images llm.ImageResolver, in []llm.Message)
 					if len(p.Args) == 0 || !json.Valid(p.Args) {
 						args = "{}"
 					}
-					pending = append(pending, id)
+					pending, idless = append(pending, id), append(idless, p.ID == "")
 					out = append(out, responses.ResponseInputItemParamOfFunctionCall(args, id, p.Name))
 				}
 			}
@@ -296,21 +289,28 @@ func inputItems(ctx context.Context, images llm.ImageResolver, in []llm.Message)
 			continue
 		}
 		results := map[string]string{}
+		var anon []string // results with an empty id, in order
 		for _, part := range m.Parts {
 			if r, ok := part.(llm.ToolResult); ok {
-				if _, dup := results[r.ID]; !dup {
+				if r.ID == "" {
+					anon = append(anon, resultText(r))
+				} else if _, dup := results[r.ID]; !dup {
 					results[r.ID] = resultText(r)
 				}
 			}
 		}
-		for _, id := range pending {
+		for n, id := range pending {
 			c, ok := results[id]
+			if !ok && idless[n] && len(anon) > 0 {
+				// A call stored without an id takes the next result without one.
+				c, ok, anon = anon[0], true, anon[1:]
+			}
 			if !ok {
 				c = "Error: no result"
 			}
 			out = append(out, functionOutput(id, c))
 		}
-		pending = nil
+		pending, idless = nil, nil
 		um, ok, err := userMessage(ctx, images, m)
 		if err != nil {
 			return nil, err

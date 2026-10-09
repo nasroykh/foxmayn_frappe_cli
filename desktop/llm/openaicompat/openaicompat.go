@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,7 +85,8 @@ func WithMaxRetries(n int) Option { return func(c *config) { c.maxRetries = n } 
 
 // Provider is an OpenAI-compatible llm.Provider.
 type Provider struct {
-	client sdk.Client
+	models sdk.ModelService
+	chat   sdk.ChatService
 	key    string
 	preset Preset
 }
@@ -95,46 +95,34 @@ var _ llm.Provider = (*Provider)(nil)
 
 // New returns a Provider for preset. A non-empty apiKey goes only in the
 // Authorization header; with no key no credential header is sent at all.
-// OPENAI_* environment credentials, base URL, organization, project and custom
-// headers are overridden or removed.
+// Redirects are not followed.
+//
+// The services are built directly, not through sdk.NewClient, which always
+// applies the SDK's OPENAI_* environment defaults (base URL, keys,
+// organization, project, custom headers) through a switch the SDK keeps
+// internal. So no OPENAI_* variable is read at all.
 func New(preset Preset, apiKey string, opts ...Option) *Provider {
 	cfg := config{maxRetries: 2}
 	for _, o := range opts {
 		o(&cfg)
 	}
 	ro := []option.RequestOption{
+		option.WithHTTPClient(llm.NoRedirectClient(cfg.httpClient)),
 		option.WithBaseURL(preset.BaseURL),
 		option.WithAPIKey(apiKey),
-		option.WithAdminAPIKey(""),
-		option.WithOrganization(""),
-		option.WithProject(""),
-		option.WithHeaderDel("OpenAI-Organization"),
-		option.WithHeaderDel("OpenAI-Project"),
 		option.WithMaxRetries(cfg.maxRetries),
-	}
-	// The SDK reads OPENAI_CUSTOM_HEADERS (name: value per line) into its
-	// defaults; take those headers back off.
-	for _, line := range strings.Split(os.Getenv("OPENAI_CUSTOM_HEADERS"), "\n") {
-		if i := strings.Index(line, ":"); i >= 0 {
-			if name := strings.TrimSpace(line[:i]); name != "" {
-				ro = append(ro, option.WithHeaderDel(name))
-			}
-		}
 	}
 	if preset.ID == OpenRouter.ID {
 		ro = append(ro, option.WithHeader("HTTP-Referer", appURL), option.WithHeader("X-Title", appName))
 	}
-	if cfg.httpClient != nil {
-		ro = append(ro, option.WithHTTPClient(cfg.httpClient))
-	}
-	return &Provider{client: sdk.NewClient(ro...), key: apiKey, preset: preset}
+	return &Provider{models: sdk.NewModelService(ro...), chat: sdk.NewChatService(ro...), key: apiKey, preset: preset}
 }
 
 // Models lists the models the server offers. OpenRouter lists hundreds, many
 // without tool support, so there only models whose supported_parameters
 // include "tools" are kept (all of them when a model has no such field).
 func (p *Provider) Models(ctx context.Context) ([]llm.Model, error) {
-	pager := p.client.Models.ListAutoPaging(ctx)
+	pager := p.models.ListAutoPaging(ctx)
 	var out []llm.Model
 	for pager.Next() {
 		m := pager.Current()
@@ -173,7 +161,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) (llm.Stream, err
 	if err != nil {
 		return nil, err
 	}
-	s := p.client.Chat.Completions.NewStreaming(ctx, params)
+	s := p.chat.Completions.NewStreaming(ctx, params)
 	if err := s.Err(); err != nil {
 		_ = s.Close()
 		return nil, p.mapErr(ctx, err)

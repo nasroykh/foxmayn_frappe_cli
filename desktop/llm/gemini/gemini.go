@@ -142,12 +142,7 @@ func New(apiKey string, opts ...Option) (*Provider, error) {
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return nil, errors.New("gemini: the base URL is not valid")
 	}
-	hc := &http.Client{}
-	if cfg.httpClient != nil {
-		c := *cfg.httpClient
-		hc = &c
-	}
-	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	hc := llm.NoRedirectClient(cfg.httpClient)
 	if cfg.maxRetries < 0 {
 		cfg.maxRetries = 0
 	}
