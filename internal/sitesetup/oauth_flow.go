@@ -2,199 +2,76 @@ package sitesetup
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"html"
 	"net"
-	"net/http"
 	"net/url"
 	"sync"
 	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/loopback"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 )
 
 // ─── PKCE ────────────────────────────────────────────────────────────────────
 
-func generateCodeVerifier() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
+func generateCodeVerifier() (string, error) { return loopback.NewVerifier() }
 
-func generateCodeChallenge(verifier string) string {
-	h := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(h[:])
-}
+func generateCodeChallenge(verifier string) string { return loopback.Challenge(verifier) }
 
 // ─── Local callback server ───────────────────────────────────────────────────
 
 // callbackHost is a loopback IP literal, not "localhost": a browser that
 // resolves localhost to ::1 first could hand the code to another process
 // listening on [::1] (RFC 8252 §8.3).
-const callbackHost = "127.0.0.1"
+const callbackHost = loopback.HostIP
 
 // defaultCallbackTimeout is OAuthFlow.Timeout unless the caller changes it.
 const defaultCallbackTimeout = 5 * time.Minute
 
-type callbackResult struct {
-	code string
-	err  error
-}
+// callbackPorts are tried first so the redirect URI stays stable across
+// re-auths — Frappe validates redirect_uri against a registered allow-list,
+// so a fresh random port each time forces re-registration (L17). An
+// ephemeral port is the fallback when all are taken.
+var callbackPorts = []int{53682, 53683, 53684}
 
-// callbackServer holds a running local HTTP server waiting for the OAuth callback.
+// callbackServer is the loopback.Server waiting for the OAuth callback: it
+// accepts one result, answers duplicates with 409 and ignores a wrong state.
 type callbackServer struct {
-	port   int
-	state  string // expected OAuth state parameter (CSRF protection, M6)
-	result chan callbackResult
-	srv    *http.Server
-	addr   net.Addr
+	port  int
+	state string // expected OAuth state parameter (CSRF protection, M6)
+	addr  net.Addr
+	srv   *loopback.Server
 
-	once      sync.Once
 	closeOnce sync.Once
 }
 
-// deliver records the first callback outcome. Later callbacks (page reloads,
-// duplicate redirects) are dropped instead of blocking their handler forever,
-// which used to make Shutdown hang.
-func (cs *callbackServer) deliver(r callbackResult) bool {
-	first := false
-	cs.once.Do(func() {
-		first = true
-		cs.result <- r
-	})
-	return first
-}
-
 // redirectURI is the URI to register on the Frappe OAuth client.
-func (cs *callbackServer) redirectURI() string {
-	return fmt.Sprintf("http://%s:%d/callback", callbackHost, cs.port)
-}
+func (cs *callbackServer) redirectURI() string { return cs.srv.RedirectURI() }
 
 // startCallbackServer binds to a free port and starts the HTTP server immediately.
 // Call this before showing the redirect URI to the user so the port is guaranteed
 // to be held when Frappe redirects back. The caller must call close.
 func startCallbackServer() (*callbackServer, error) {
-	// Prefer a small set of fixed ports so the redirect URI stays stable across
-	// re-auths — Frappe validates redirect_uri against a registered allow-list,
-	// so a fresh random port each time forces re-registration (L17). Fall back
-	// to an ephemeral port if all preferred ports are taken.
-	var ln net.Listener
-	var err error
-	for _, p := range []int{53682, 53683, 53684, 0} {
-		ln, err = net.Listen("tcp", net.JoinHostPort(callbackHost, fmt.Sprint(p)))
-		if err == nil {
-			break
-		}
-	}
+	srv, err := loopback.Start(loopback.Config{Host: callbackHost, Ports: callbackPorts, App: "ffc"})
 	if err != nil {
-		return nil, fmt.Errorf("binding callback port: %w", err)
+		return nil, err
 	}
-
-	// Random state tying the auth request to this callback. A forged or
-	// cross-origin request carrying the wrong (or no) state is rejected without
-	// consuming the result, so it can't hijack or DoS the login (M6).
-	state, err := generateCodeVerifier()
-	if err != nil {
-		ln.Close()
-		return nil, fmt.Errorf("generating state: %w", err)
-	}
-
-	mux := http.NewServeMux()
-	cs := &callbackServer{
-		port:   ln.Addr().(*net.TCPAddr).Port,
-		state:  state,
-		result: make(chan callbackResult, 1),
-		srv:    &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second},
-		addr:   ln.Addr(),
-	}
-
-	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		// Verify state first — a mismatch keeps the server listening for the
-		// legitimate redirect.
-		if q.Get("state") != state {
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Invalid request</h2><p>State mismatch; ignoring.</p></body></html>")
-			return
-		}
-		var res callbackResult
-		var msg string
-		switch {
-		case q.Get("error") != "":
-			msg = q.Get("error")
-			if desc := q.Get("error_description"); desc != "" {
-				msg += ": " + desc
-			}
-			res.err = fmt.Errorf("authorization denied: %s", msg)
-		case q.Get("code") == "":
-			msg = "No code received."
-			res.err = errors.New("no authorization code in callback URL")
-		default:
-			res.code = q.Get("code")
-		}
-		if !cs.deliver(res) {
-			w.WriteHeader(http.StatusConflict)
-			fmt.Fprint(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Already handled</h2><p>This login was already processed. You can close this tab.</p></body></html>")
-			return
-		}
-		if res.err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			// html.EscapeString: never reflect raw query params into HTML (L1).
-			fmt.Fprintf(w, "<html><body style='font-family:sans-serif;padding:2rem'><h2>Authorization failed</h2><p>%s</p><p>You can close this tab.</p></body></html>", html.EscapeString(msg))
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `<html><body style="font-family:sans-serif;padding:2rem;text-align:center">
-<h2>&#10003; Authorization successful</h2>
-<p>You can close this tab and return to ffc.</p>
-</body></html>`)
-	})
-
-	go func() {
-		if err := cs.srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			cs.deliver(callbackResult{err: fmt.Errorf("callback server: %w", err)})
-		}
-	}()
-	return cs, nil
+	return &callbackServer{port: srv.Port(), state: srv.State(), addr: srv.Addr(), srv: srv}, nil
 }
 
-// close stops the server, giving in-flight responses a moment to finish.
-// Safe to call more than once.
+// close stops the server. Safe to call more than once.
 func (cs *callbackServer) close() {
-	cs.closeOnce.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if err := cs.srv.Shutdown(ctx); err != nil {
-			cs.srv.Close()
-		}
-	})
+	cs.closeOnce.Do(cs.srv.Close)
 }
 
 // wait blocks until the OAuth callback delivers a code, the context is cancelled
 // (Ctrl+C / SIGTERM), or timeout elapses. The server is closed on return.
 func (cs *callbackServer) wait(ctx context.Context, timeout time.Duration) (string, error) {
 	defer cs.close()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case r := <-cs.result:
-		return r.code, r.err
-	case <-ctx.Done():
-		// The CLI installs a SIGINT/SIGTERM-cancelled context, which disables
-		// Go's default terminate-on-signal — so this wait must honour it or the
-		// user can't abort the browser flow (regression guard).
-		return "", ctx.Err()
-	case <-timer.C:
-		return "", fmt.Errorf("timed out waiting for browser authorization (%s)", timeout)
-	}
+	return cs.srv.Wait(ctx, timeout)
 }
 
 // ─── Login ───────────────────────────────────────────────────────────────────
