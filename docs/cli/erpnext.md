@@ -157,6 +157,10 @@ The parameters are the same on ERPNext 15 and 16. Version 16 also accepts an `ig
 
 An unknown party, and an unknown item for `erp item`, are a 404 from ERPNext (exit 4). `get_stock_balance` and the stock dashboard do not fail for a name that does not exist: they answer 0 and an empty list. So `erp stock` first reads the Item, and the Warehouse when `--warehouse` is given, and a typo is a 404 (exit 4) instead of a quiet zero; a user who may not read Warehouses (403) skips that second check. Missing `--company` for `erp item`, `--customer` together with `--supplier`, a `--doctype` that does not fit, a bad `--date` or `--qty`, and `--date` or `--valuation` without `--warehouse` are usage errors (exit 2) answered before any request.
 
+## MCP tools
+
+The MCP server has an opt-in `erp` tool set (`ffc mcp --toolsets core,erp`, [Tools](../mcp/tools.md#erp)) with the same logic and checks: `erp_map`, `erp_payment`, `erp_item`, `erp_stock` and `erp_party`. They are reads. `erp_map` and `erp_payment` return the unsaved draft (ready to be the `data` of `create_doc`) and never save it: to save, call `create_doc`, then `submit_doc` to submit, so confirmation, the site's policy and the audit log apply as for any other write. `erp_payment` answers `{draft, warnings}` where `warnings` carries what the CLI prints on stderr (no bank or cash account, a Mode of Payment that overrode the bank account). They stay available on a read-only server, and the DocType rules (`allow_doctypes`, `deny_doctypes`) apply to the DocTypes each tool reads, including the ones ERPNext reads without its own permission check: Bin and Price List for `erp_item`, Address and Contact for `erp_party` (see [Tools](../mcp/tools.md#erp)). Arguments are the CLI's flags with underscores (`bank_account`, `price_list`) and the DocType and name of `--from`/`--against` split in two (`from_doctype`, `from_name`).
+
 ## See also
 
 - [Lifecycle and workflow](lifecycle-and-workflow.md)

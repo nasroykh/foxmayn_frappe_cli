@@ -7,9 +7,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -33,13 +31,13 @@ var (
 
 // erpLookupMethods returns the lookup methods of the site's ERPNext, or the
 // error that ends an 'ffc erp' command (exit 4 without ERPNext, exit 1 on a
-// major ffc has not checked).
-func erpLookupMethods(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (client.LookupMethods, error) {
+// major ffc has not checked) or fails an MCP erp tool.
+func erpLookupMethods(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, in erpInput) (client.LookupMethods, error) {
 	info, _, err := serverInfo(ctx, c, cfg, false)
 	if err != nil {
 		return client.LookupMethods{}, err
 	}
-	major, err := erpNextMajor(info, cfg)
+	major, err := erpNextMajor(info, cfg, in)
 	if err != nil {
 		return client.LookupMethods{}, err
 	}
@@ -50,37 +48,59 @@ func erpLookupMethods(ctx context.Context, c *client.FrappeClient, cfg *config.S
 	return m, nil
 }
 
-// lookupDate checks an optional YYYY-MM-DD flag.
-func lookupDate(cmd *cobra.Command, flag, value string) (string, error) {
-	if !cmd.Flags().Changed(flag) {
-		return "", nil
-	}
-	d := strings.TrimSpace(value)
-	if _, err := time.Parse("2006-01-02", d); err != nil {
-		return "", usageErrorf("--%s: expected YYYY-MM-DD, got %q", flag, value)
-	}
-	return d, nil
-}
-
-// lookupText checks an optional text flag: given means not blank.
-func lookupText(cmd *cobra.Command, flag, value string) (string, error) {
-	if !cmd.Flags().Changed(flag) {
-		return "", nil
-	}
-	v := strings.TrimSpace(value)
-	if v == "" {
-		return "", usageErrorf("--%s: provide a value", flag)
-	}
-	return v, nil
-}
-
 // lookupItemArg checks the ITEM argument.
 func lookupItemArg(args []string) (string, error) {
-	item := strings.TrimSpace(args[0])
-	if item == "" {
-		return "", usageErrorf("provide the Item code")
+	return checkItemCode(args[0])
+}
+
+// runERPItem looks an item up the way the desk fills a document row.
+func runERPItem(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, in erpInput, o client.ItemOptions) (map[string]interface{}, error) {
+	m, err := erpLookupMethods(ctx, c, cfg, in)
+	if err != nil {
+		return nil, err
 	}
-	return item, nil
+	return c.ItemDetails(ctx, m, o)
+}
+
+// stockResult is the outcome of a stock lookup: doc, the balance in one
+// warehouse, or rows, one per warehouse (truncated: more could be read).
+type stockResult struct {
+	doc       map[string]interface{}
+	rows      []map[string]interface{}
+	truncated bool
+}
+
+// runERPStock reads an item's stock in one warehouse or in every warehouse.
+// The Item, and the Warehouse when given, are read first so a typo is a
+// not-found error, not a zero.
+func runERPStock(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, in erpInput, q stockQuery) (*stockResult, error) {
+	m, err := erpLookupMethods(ctx, c, cfg, in)
+	if err != nil {
+		return nil, err
+	}
+	if err := stockTargetsExist(ctx, c, q.item, q.warehouse); err != nil {
+		return nil, err
+	}
+	if q.warehouse != "" {
+		doc, err := c.StockBalance(ctx, m, q.item, q.warehouse, q.date, q.valuation)
+		return &stockResult{doc: doc}, err
+	}
+	rows, truncated, err := c.StockByWarehouse(ctx, m, q.item)
+	return &stockResult{rows: rows, truncated: truncated}, err
+}
+
+// stockTruncatedNote says that the per-warehouse rows stop short.
+func stockTruncatedNote(in erpInput) string {
+	return fmt.Sprintf("stopped after %d warehouses; there may be more: ask for one with %s", client.StockPageSize*client.StockMaxPages, in.name("warehouse"))
+}
+
+// runERPParty looks up the defaults a customer or supplier gives a document.
+func runERPParty(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, in erpInput, o client.PartyOptions) (map[string]interface{}, error) {
+	m, err := erpLookupMethods(ctx, c, cfg, in)
+	if err != nil {
+		return nil, err
+	}
+	return c.PartyDetails(ctx, m, o)
 }
 
 // printLookup prints one document as data, or as a field table.
@@ -126,11 +146,7 @@ Examples:
 			return err
 		}
 		doc, err := callSiteCfg(cmd, fmt.Sprintf("Looking up %s…", item), func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (map[string]interface{}, error) {
-			m, err := erpLookupMethods(ctx, c, cfg)
-			if err != nil {
-				return nil, err
-			}
-			return c.ItemDetails(ctx, m, o)
+			return runERPItem(ctx, c, cfg, erpInput{}, o)
 		})
 		if err != nil {
 			return err
@@ -141,55 +157,11 @@ Examples:
 
 // itemOptions reads and checks the flags of 'erp item'.
 func itemOptions(cmd *cobra.Command, item string) (client.ItemOptions, error) {
-	o := client.ItemOptions{ItemCode: item}
-	var err error
-	if o.Company = strings.TrimSpace(eiCompany); o.Company == "" {
-		return o, usageErrorf("--company: provide the Company")
-	}
-	if o.Customer, err = lookupText(cmd, "customer", eiCustomer); err != nil {
-		return o, err
-	}
-	if o.Supplier, err = lookupText(cmd, "supplier", eiSupplier); err != nil {
-		return o, err
-	}
-	if o.Customer != "" && o.Supplier != "" {
-		return o, usageErrorf("--customer and --supplier cannot be used together")
-	}
-	if o.Doctype, err = lookupText(cmd, "doctype", eiDoctype); err != nil {
-		return o, err
-	}
-	sales, purchase := slices.Contains(client.ItemSalesDoctypes, o.Doctype), slices.Contains(client.ItemPurchaseDoctypes, o.Doctype)
-	switch {
-	case o.Doctype == "":
-		o.Doctype = "Sales Invoice"
-		if o.Supplier != "" {
-			o.Doctype = "Purchase Invoice"
-		}
-	case !sales && !purchase:
-		return o, usageErrorf("--doctype: cannot look up an item for %s; supported: %s, %s", o.Doctype,
-			strings.Join(client.ItemSalesDoctypes, ", "), strings.Join(client.ItemPurchaseDoctypes, ", "))
-	case o.Customer != "" && !sales:
-		return o, usageErrorf("--customer: %s is a purchase DocType, use --supplier", o.Doctype)
-	case o.Supplier != "" && !purchase:
-		return o, usageErrorf("--supplier: %s is a sales DocType, use --customer", o.Doctype)
-	}
-	if o.PriceList, err = lookupText(cmd, "price-list", eiPriceList); err != nil {
-		return o, err
-	}
-	if o.Warehouse, err = lookupText(cmd, "warehouse", eiWarehouse); err != nil {
-		return o, err
-	}
-	if o.Date, err = lookupDate(cmd, "date", eiDate); err != nil {
-		return o, err
-	}
-	if cmd.Flags().Changed("qty") {
-		q := strings.TrimSpace(eiQty)
-		if v, err := strconv.ParseFloat(q, 64); !plainAmount.MatchString(q) || err != nil || v <= 0 {
-			return o, usageErrorf("--qty: expected a positive number such as 5 or 2.5, got %q", eiQty)
-		}
-		o.Qty = q
-	}
-	return o, nil
+	return buildItemOptions(erpInput{}, item, itemInput{
+		company: eiCompany, doctype: flagOpt(cmd, "doctype", eiDoctype), customer: flagOpt(cmd, "customer", eiCustomer),
+		supplier: flagOpt(cmd, "supplier", eiSupplier), priceList: flagOpt(cmd, "price-list", eiPriceList),
+		qty: flagOpt(cmd, "qty", eiQty), warehouse: flagOpt(cmd, "warehouse", eiWarehouse), date: flagOpt(cmd, "date", eiDate),
+	})
 }
 
 var erpStockCmd = &cobra.Command{
@@ -228,53 +200,21 @@ Examples:
 		if err != nil {
 			return err
 		}
-		warehouse, err := lookupText(cmd, "warehouse", esWarehouse)
+		q, err := buildStockQuery(erpInput{}, item, flagOpt(cmd, "warehouse", esWarehouse), flagOpt(cmd, "date", esDate), esValuation)
 		if err != nil {
 			return err
 		}
-		date, err := lookupDate(cmd, "date", esDate)
-		if err != nil {
-			return err
-		}
-		if warehouse == "" && (date != "" || esValuation) {
-			return usageErrorf("--date and --valuation need --warehouse: without one the rows show the current stock and their valuation rate")
-		}
-		if warehouse != "" {
-			doc, err := callSiteCfg(cmd, fmt.Sprintf("Reading the stock of %s…", item), func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (map[string]interface{}, error) {
-				m, err := erpLookupMethods(ctx, c, cfg)
-				if err != nil {
-					return nil, err
-				}
-				if err := stockTargetsExist(ctx, c, item, warehouse); err != nil {
-					return nil, err
-				}
-				return c.StockBalance(ctx, m, item, warehouse, date, esValuation)
-			})
-			if err != nil {
-				return err
-			}
-			return printLookup(doc, esKeys)
-		}
-		type result struct {
-			rows      []map[string]interface{}
-			truncated bool
-		}
-		res, err := callSiteCfg(cmd, fmt.Sprintf("Reading the stock of %s…", item), func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (result, error) {
-			m, err := erpLookupMethods(ctx, c, cfg)
-			if err != nil {
-				return result{}, err
-			}
-			if err := stockTargetsExist(ctx, c, item, ""); err != nil {
-				return result{}, err
-			}
-			rows, truncated, err := c.StockByWarehouse(ctx, m, item)
-			return result{rows, truncated}, err
+		res, err := callSiteCfg(cmd, fmt.Sprintf("Reading the stock of %s…", item), func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (*stockResult, error) {
+			return runERPStock(ctx, c, cfg, erpInput{}, q)
 		})
 		if err != nil {
 			return err
 		}
+		if res.doc != nil {
+			return printLookup(res.doc, esKeys)
+		}
 		if res.truncated {
-			fmt.Fprintf(os.Stderr, "warning: stopped after %d warehouses; there may be more: ask for one with --warehouse\n", client.StockPageSize*client.StockMaxPages)
+			fmt.Fprintln(os.Stderr, "warning: "+stockTruncatedNote(erpInput{}))
 		}
 		return printStockRows(res.rows, esKeys)
 	},
@@ -364,11 +304,7 @@ Examples:
 			return err
 		}
 		doc, err := callSiteCfg(cmd, fmt.Sprintf("Looking up %s…", o.Party), func(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig) (map[string]interface{}, error) {
-			m, err := erpLookupMethods(ctx, c, cfg)
-			if err != nil {
-				return nil, err
-			}
-			return c.PartyDetails(ctx, m, o)
+			return runERPParty(ctx, c, cfg, erpInput{}, o)
 		})
 		if err != nil {
 			return err
@@ -379,35 +315,8 @@ Examples:
 
 // partyOptions reads and checks the flags of 'erp party'.
 func partyOptions(cmd *cobra.Command) (client.PartyOptions, error) {
-	var o client.PartyOptions
-	customer, err := lookupText(cmd, "customer", eyCustomer)
-	if err != nil {
-		return o, err
-	}
-	supplier, err := lookupText(cmd, "supplier", eySupplier)
-	if err != nil {
-		return o, err
-	}
-	switch {
-	case customer != "" && supplier != "":
-		return o, usageErrorf("--customer and --supplier cannot be used together")
-	case customer != "":
-		o.PartyType, o.Party = "Customer", customer
-	case supplier != "":
-		o.PartyType, o.Party = "Supplier", supplier
-	default:
-		return o, usageErrorf("provide --customer or --supplier")
-	}
-	if o.Company, err = lookupText(cmd, "company", eyCompany); err != nil {
-		return o, err
-	}
-	if o.Doctype, err = lookupText(cmd, "doctype", eyDoctype); err != nil {
-		return o, err
-	}
-	if o.Date, err = lookupDate(cmd, "date", eyDate); err != nil {
-		return o, err
-	}
-	return o, nil
+	return buildPartyOptions(erpInput{}, flagOpt(cmd, "customer", eyCustomer), flagOpt(cmd, "supplier", eySupplier),
+		flagOpt(cmd, "company", eyCompany), flagOpt(cmd, "doctype", eyDoctype), flagOpt(cmd, "date", eyDate))
 }
 
 func init() {

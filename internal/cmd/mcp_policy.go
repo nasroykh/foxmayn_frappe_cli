@@ -46,6 +46,8 @@ var toolActions = map[string]toolAction{
 	"list_attachments": actRead, "get_print_html": actRead, "attach_file": actWrite,
 
 	"site_health": actRead, "list_jobs": actRead, "list_errors": actRead, "scheduler_status": actRead,
+
+	"erp_map": actRead, "erp_payment": actRead, "erp_item": actRead, "erp_stock": actRead, "erp_party": actRead,
 }
 
 // Tool sets (`ffc mcp --toolsets`). Without the flag only defaultToolsets
@@ -56,10 +58,11 @@ const (
 	toolsetCollab    = "collab" // comments, assignments, tags
 	toolsetAdmin     = "admin"  // sharing; site health, jobs, errors, scheduler
 	toolsetFiles     = "files"  // attachments, print HTML
+	toolsetERP       = "erp"    // ERPNext drafts and lookups (reads only)
 )
 
 var (
-	knownToolsets   = []string{toolsetCore, toolsetLifecycle, toolsetCollab, toolsetAdmin, toolsetFiles}
+	knownToolsets   = []string{toolsetCore, toolsetLifecycle, toolsetCollab, toolsetAdmin, toolsetFiles, toolsetERP}
 	defaultToolsets = []string{toolsetCore, toolsetLifecycle}
 )
 
@@ -119,6 +122,12 @@ var toolSurface = map[string]struct {
 	"list_attachments": {toolsetFiles, "List attachments", true},
 	"attach_file":      {toolsetFiles, "Attach file", false},
 	"get_print_html":   {toolsetFiles, "Get print HTML", true},
+
+	"erp_map":     {toolsetERP, "Map document into the next one", true},
+	"erp_payment": {toolsetERP, "Draft payment entry", true},
+	"erp_item":    {toolsetERP, "Look up item details", true},
+	"erp_stock":   {toolsetERP, "Look up item stock", true},
+	"erp_party":   {toolsetERP, "Look up party defaults", true},
 }
 
 // sensitiveDoctypes control users, permissions, credentials or server-side
@@ -168,7 +177,7 @@ type toolScope struct {
 
 // optionalDoctype are the tools for which an empty doctype means no DocType
 // (search is then global, list_errors unfiltered).
-var optionalDoctype = map[string]bool{"search": true, "list_errors": true}
+var optionalDoctype = map[string]bool{"search": true, "list_errors": true, "erp_item": true, "erp_party": true}
 
 // scopeOf reads what a tool call touches from its arguments. The tool's own
 // parse step has already validated them.
@@ -181,7 +190,7 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 	sc := toolScope{Action: action}
 	args := req.GetArguments()
 	str := func(k string) string { s, _ := args[k].(string); return s }
-	if dt := str("doctype"); dt != "" {
+	if dt := str("doctype"); dt != "" && !erpDoctypeArgs[tool] {
 		sc.Doctypes = append(sc.Doctypes, dt)
 	}
 	// An empty DocType would add nothing to the scope and so skip the
@@ -235,6 +244,8 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 	// The collab tools also write a Comment, ToDo, Tag Link or DocShare.
 	sc.Doctypes = append(sc.Doctypes, collabDoctypes[tool]...)
 	sc.Doctypes = append(sc.Doctypes, adminDoctypes[tool]...)
+	erpDoctypes, erpNames := erpScope(tool, args)
+	sc.Doctypes, sc.Names = append(sc.Doctypes, erpDoctypes...), append(sc.Names, erpNames...)
 	if len(sc.Doctypes) > 0 && commentSavesFiles(req, sc.Method) {
 		sc.Doctypes = append(sc.Doctypes, "File")
 	}

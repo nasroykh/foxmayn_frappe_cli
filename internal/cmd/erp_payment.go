@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
@@ -60,8 +58,8 @@ Examples:
 		if err != nil {
 			return err
 		}
-		if !client.CanPayAgainst(dt) {
-			return usageErrorf("--against: cannot make a payment against %s; supported: %s", dt, strings.Join(client.PaymentDocTypes, ", "))
+		if err := checkPayDoctype("--against", dt); err != nil {
+			return err
 		}
 		opts, err := paymentOptions(cmd)
 		if err != nil {
@@ -87,6 +85,7 @@ type paymentRequest struct {
 	doctype, name  string
 	opts           client.PaymentOptions
 	create, submit bool
+	in             erpInput
 }
 
 // plainAmount is a plain decimal: no sign, exponent, separator, "Inf" or
@@ -96,58 +95,41 @@ var plainAmount = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]+)?$`)
 // paymentOptions reads the optional flags. A flag that was given and is
 // empty or invalid is a usage error; one that was not given is not sent.
 func paymentOptions(cmd *cobra.Command) (client.PaymentOptions, error) {
-	var o client.PaymentOptions
-	f := cmd.Flags()
-	if f.Changed("amount") {
-		a := strings.TrimSpace(epAmount)
-		if v, err := strconv.ParseFloat(a, 64); !plainAmount.MatchString(a) || err != nil || v <= 0 {
-			return o, usageErrorf("--amount: expected a positive number such as 50 or 12.5, got %q", epAmount)
-		}
-		o.Amount = a
+	return buildPaymentOptions(erpInput{}, flagOpt(cmd, "amount", epAmount), flagOpt(cmd, "bank-account", epBankAccount), flagOpt(cmd, "reference-date", epReferenceDate))
+}
+
+// paymentDraft builds the unsaved Payment Entry (a GET) and the notes about
+// it; gap, one of them, is what is missing when it has no bank or cash
+// account. 'erp payment' and the MCP erp_payment tool share it.
+func paymentDraft(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, req paymentRequest) (draft map[string]interface{}, warnings []string, gap string, err error) {
+	info, _, err := serverInfo(ctx, c, cfg, false)
+	if err != nil {
+		return nil, nil, "", err
 	}
-	if f.Changed("bank-account") {
-		if o.BankAccount = strings.TrimSpace(epBankAccount); o.BankAccount == "" {
-			return o, usageErrorf("--bank-account: provide the name of an Account")
-		}
+	major, err := erpNextMajor(info, cfg, req.in)
+	if err != nil {
+		return nil, nil, "", err
 	}
-	if f.Changed("reference-date") {
-		d := strings.TrimSpace(epReferenceDate)
-		if _, err := time.Parse("2006-01-02", d); err != nil {
-			return o, usageErrorf("--reference-date: expected YYYY-MM-DD, got %q", epReferenceDate)
-		}
-		o.ReferenceDate = d
+	method, ok := client.PaymentMethod(major)
+	if !ok {
+		return nil, nil, "", fmt.Errorf("ffc erp payment has no method for ERPNext %d", major)
 	}
-	return o, nil
+	if draft, err = c.PaymentDraft(ctx, method, req.doctype, req.name, req.opts); err != nil {
+		return nil, nil, "", err
+	}
+	warnings, gap = paymentWarnings(req.in, draft, req.opts.BankAccount)
+	return draft, warnings, gap, nil
 }
 
 // runERPPayment builds the Payment Entry draft (a GET) and, when asked,
 // saves and submits it. Order matters: every check and read comes before the
 // first write, so a refusal leaves the site untouched.
 func runERPPayment(ctx context.Context, c *client.FrappeClient, cfg *config.SiteConfig, req paymentRequest) (*erpResult, error) {
-	info, _, err := serverInfo(ctx, c, cfg, false)
+	draft, warnings, gap, err := paymentDraft(ctx, c, cfg, req)
 	if err != nil {
 		return nil, err
 	}
-	major, err := erpNextMajor(info, cfg)
-	if err != nil {
-		return nil, err
-	}
-	method, ok := client.PaymentMethod(major)
-	if !ok {
-		return nil, fmt.Errorf("ffc erp payment has no method for ERPNext %d", major)
-	}
-	draft, err := c.PaymentDraft(ctx, method, req.doctype, req.name, req.opts)
-	if err != nil {
-		return nil, err
-	}
-	gap := paymentAccountGap(draft)
-	warning := gap
-	if w := bankAccountOverride(draft, req.opts.BankAccount); w != "" {
-		if warning != "" {
-			warning += "\nwarning: "
-		}
-		warning += w
-	}
+	warning := strings.Join(warnings, "\nwarning: ")
 	if !req.create {
 		return &erpResult{doc: draft, warning: warning}, nil
 	}
@@ -159,46 +141,6 @@ func runERPPayment(ctx context.Context, c *client.FrappeClient, cfg *config.Site
 		res.warning = warning
 	}
 	return res, err
-}
-
-// bankAccountOverride says so when the draft does not use the --bank-account
-// given. get_payment_entry lets the Mode of Payment of the document override
-// the account (get_default_bank_cash_account: the account of the mode wins),
-// so a document with a mode_of_payment pays from or into that mode's account.
-func bankAccountOverride(draft map[string]interface{}, want string) string {
-	if want == "" {
-		return ""
-	}
-	field := map[string]string{"Receive": "paid_to", "Pay": "paid_from"}[fmt.Sprint(draft["payment_type"])]
-	if field == "" {
-		return ""
-	}
-	got, _ := draft[field].(string)
-	if got == want {
-		return ""
-	}
-	return fmt.Sprintf("--bank-account %q was not used: the draft has %s %q (the Mode of Payment of the document takes precedence over --bank-account)", want, field, got)
-}
-
-// paymentAccountGap says what is missing when the draft has no bank or cash
-// account. get_payment_entry does not throw then: it answers a draft whose
-// paid_from or paid_to is empty (both are required), which the insert would
-// refuse as a missing value.
-func paymentAccountGap(draft map[string]interface{}) string {
-	var missing []string
-	for _, f := range []string{"paid_from", "paid_to"} {
-		if v, _ := draft[f].(string); strings.TrimSpace(v) == "" {
-			missing = append(missing, f)
-		}
-	}
-	if len(missing) == 0 {
-		return ""
-	}
-	company, _ := draft["company"].(string)
-	if company == "" {
-		company = "the document's company"
-	}
-	return fmt.Sprintf("the Payment Entry draft has no bank or cash account (%s is empty): set the default bank or cash account of %s, or pass --bank-account", strings.Join(missing, ", "), company)
 }
 
 func init() {

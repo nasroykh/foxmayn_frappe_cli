@@ -14,7 +14,7 @@ Short map of the parts around the tools. CLAUDE.md has the reasoning and the Fra
 ## Registration and surface (mcp_tools.go, mcp_surface.go, mcp_completion.go)
 
 - `registerTools` → `registerAllTools`, then drops tools the policies (`read_only`, `allow_tools`, `anyAllows` across sites) or `--toolsets` (default `core,lifecycle`; `list_sites` always kept) exclude, then `describeTools` (titles, `_meta` `anthropic/maxResultSizeChars` on `big` tools, the `jq` parameter on big read tools), `addSiteParam`, `registerSurface` (resources, prompts, instructions).
-- Instructions are set after registration (`server.WithInstructions(text)(s)`) and mention only registered tools; keep them 15-25 lines (`TestMCPInstructions`).
+- Instructions are set after registration (`server.WithInstructions(text)(s)`) and mention only registered tools; keep them 15-27 lines (`TestMCPInstructions`).
 - Prompts make no site calls, are offered only when their `needs` tools exist, drop optional steps with `when(has(t), ...)`, put argument values in via `promptJSON`, and refuse (never cut) values over `maxLen`.
 - `completion/complete` reads config and cache only (`loadSiteConfig`, never `loadSite`/`newClient`), offers only what the policy allows, at most 100 values.
 - The stdio server uses `server.NewStdioServer(s).Listen(cmd.Context(), …)`; do not go back to `ServeStdio` with a context func (it loses the session: client name, capabilities, elicitation).
