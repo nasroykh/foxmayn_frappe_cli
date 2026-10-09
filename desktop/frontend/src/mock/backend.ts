@@ -1147,16 +1147,16 @@ export const backend: Backend = {
   },
   // ?openrouter=denied ends the browser step with a refusal; the key the
   // mock "creates" never leaves this file (only its end, as the real one).
-  async signInOpenRouter(providerID) {
+  async signInOpenRouter(providerID, attempt) {
     const p = findProvider(providerID)
     if (p.kind !== "openrouter") fail("invalid", "Browser sign-in works with OpenRouter only.", { field: "provider" })
     openRouterSignIn?.abort()
     const ctl = new AbortController()
     openRouterSignIn = ctl
-    const send = (ev: Omit<OpenRouterAuth, "providerID">) => {
-      for (const cb of openRouterListeners) cb({ ...ev, providerID })
+    const send = (ev: Omit<OpenRouterAuth, "providerID" | "attempt">) => {
+      for (const cb of openRouterListeners) cb({ ...ev, providerID, attempt })
     }
-    const step = async (ev: Omit<OpenRouterAuth, "providerID">, ms: number) => {
+    const step = async (ev: Omit<OpenRouterAuth, "providerID" | "attempt">, ms: number) => {
       send(ev)
       await wait(ms)
       if (ctl.signal.aborted) {
@@ -1176,7 +1176,9 @@ export const backend: Backend = {
       fail("auth", "OpenRouter did not give the app a key.", { detail: "authorization denied: access_denied" })
     }
     await step({ status: "exchanging" }, 500)
-    await step({ status: "verifying" }, 500)
+    // The key exists now: a cancel no longer stops the save (as in Go).
+    send({ status: "verifying" })
+    await wait(500)
     const key = "sk-or-v1-mock0000000000c0de"
     keys.set(p.id, key)
     p.keySet = true

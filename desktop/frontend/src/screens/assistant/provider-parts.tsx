@@ -148,13 +148,15 @@ export function OpenRouterSignIn({
   const [status, setStatus] = React.useState<OpenRouterAuthStatus | null>(null)
   const [page, setPage] = React.useState({ url: "", browserError: "" })
   const [error, setError] = React.useState<AppError | null>(null)
-  const busyRef = React.useRef(false)
+  // The id of the sign-in this component waits for ("" for none): events
+  // of an attempt it gave up on are dropped.
+  const attempt = React.useRef("")
   const live = React.useRef(true)
 
   React.useEffect(
     () =>
       backend.onOpenRouterAuth((ev) => {
-        if (ev.providerID !== providerID || !busyRef.current) return
+        if (ev.providerID !== providerID || !ev.attempt || ev.attempt !== attempt.current) return
         setStatus(ev.status)
         if (ev.status === "browser") setPage({ url: ev.authURL ?? "", browserError: ev.browserError ?? "" })
       }),
@@ -164,24 +166,25 @@ export function OpenRouterSignIn({
     live.current = true
     return () => {
       live.current = false
-      if (busyRef.current) void backend.cancelOpenRouterSignIn()
+      if (attempt.current) void backend.cancelOpenRouterSignIn()
     }
   }, [])
 
   async function start() {
-    busyRef.current = true
+    const mine = `or-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    attempt.current = mine
     setBusy(true)
     setStatus(null)
     setPage({ url: "", browserError: "" })
     setError(null)
     try {
-      const p = await backend.signInOpenRouter(providerID)
+      const p = await backend.signInOpenRouter(providerID, mine)
       if (live.current) onSignedIn?.(p)
     } catch (err) {
       const e = appError(err)
       if (live.current && e.code !== "cancelled") setError(e)
     } finally {
-      busyRef.current = false
+      if (attempt.current === mine) attempt.current = ""
       if (live.current) {
         setBusy(false)
         setStatus(null)

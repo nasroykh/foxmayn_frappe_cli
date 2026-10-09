@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/store"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/loopback"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -40,7 +41,9 @@ const (
 // OpenRouterAuth is the payload of EventOpenRouterAuth.
 type OpenRouterAuth struct {
 	ProviderID string `json:"providerID"`
-	Status     string `json:"status"`
+	// Attempt is SignInOpenRouter's attempt of the sign-in it belongs to.
+	Attempt string `json:"attempt,omitempty"`
+	Status  string `json:"status"`
 	// AuthURL is OpenRouter's sign-in page (status "browser"), so the UI can
 	// offer to copy it when the browser did not open. It carries no secret:
 	// the PKCE verifier stays in Go.
@@ -60,6 +63,11 @@ const (
 	openRouterAuthTimeout = 5 * time.Minute
 	// maxExchangeBytes bounds the exchange answer.
 	maxExchangeBytes = 64 << 10
+	// saveAfterExchange bounds the check and the save of a key the exchange
+	// gave, which no cancel stops.
+	saveAfterExchange = 20 * time.Second
+	// maxAttemptChars bounds the caller's attempt id.
+	maxAttemptChars = 64
 )
 
 // orAuth is the OpenRouter sign-in in progress (at most one) and the
@@ -98,10 +106,19 @@ func (o *orAuth) urls() (auth, keys string, timeout time.Duration) {
 // it opens OpenRouter's sign-in page, waits for the redirect to a local
 // callback (at most 5 minutes), trades the code for a key, checks the key
 // like SetKey and saves it in the OS keychain. The key goes nowhere else:
-// the result and the "auth:openrouter" events carry the status only.
-// CancelSignIn, or cancelling the call, stops it; a new call replaces a
-// sign-in in progress. The provider must exist and be of kind openrouter.
-func (a *AssistantService) SignInOpenRouter(ctx context.Context, providerID string) (ProviderInfo, error) {
+// the result and the "auth:openrouter" events carry the status only, tagged
+// with attempt (the caller's id for this try, so it can drop the events of
+// one it gave up on). A new call replaces a sign-in in progress. The
+// provider must exist and be of kind openrouter.
+//
+// Cancel and save: CancelSignIn, cancelling the call, a newer sign-in or
+// the service shutting down stop the attempt up to the code exchange.
+// Once the exchange has answered with a key, the key exists on the user's
+// OpenRouter account either way, so the attempt no longer stops: the check
+// and the save finish (bounded by saveAfterExchange) and it ends "done", or
+// "failed" when the key is refused. Shutdown waits for that through the
+// in-flight call (enter).
+func (a *AssistantService) SignInOpenRouter(ctx context.Context, providerID, attempt string) (ProviderInfo, error) {
 	_, st, done, err := a.enter()
 	if err != nil {
 		return ProviderInfo{}, err
@@ -117,6 +134,7 @@ func (a *AssistantService) SignInOpenRouter(ctx context.Context, providerID stri
 	if p.Kind != KindOpenRouter {
 		return ProviderInfo{}, invalid("provider", "Browser sign-in works with OpenRouter only.")
 	}
+	attempt = clip(text.Sanitize(attempt), maxAttemptChars)
 
 	// The attempt ends with the call, with CancelSignIn, or when the
 	// service shuts down.
@@ -145,20 +163,12 @@ func (a *AssistantService) SignInOpenRouter(ctx context.Context, providerID stri
 		a.or.mu.Unlock()
 		close(at.done)
 	}()
-	if old != nil {
-		// Let the old attempt send its last event first.
-		select {
-		case <-old.done:
-		case <-time.After(replaceWait):
-		case <-ctx.Done():
-		}
-	}
 
 	emit := func(ev OpenRouterAuth) {
-		ev.ProviderID = providerID
+		ev.ProviderID, ev.Attempt = providerID, attempt
 		a.host.Emit(EventOpenRouterAuth, ev)
 	}
-	info, err := a.signInOpenRouter(ctx, providerID, emit)
+	info, err := a.signInOpenRouter(ctx, st, providerID, old, emit)
 	if err != nil {
 		status := AuthFailed
 		var se *Error
@@ -172,8 +182,18 @@ func (a *AssistantService) SignInOpenRouter(ctx context.Context, providerID stri
 	return info, nil
 }
 
-func (a *AssistantService) signInOpenRouter(ctx context.Context, providerID string, emit func(OpenRouterAuth)) (ProviderInfo, error) {
+func (a *AssistantService) signInOpenRouter(ctx context.Context, st *store.Store, providerID string, old *orAttempt, emit func(OpenRouterAuth)) (ProviderInfo, error) {
 	cancelled := func() error { return newError(CodeCancelled, "The sign-in was cancelled.", nil) }
+	if old != nil {
+		// Let the old attempt send its last event first. Cancelled while
+		// waiting: nothing is bound or opened.
+		select {
+		case <-old.done:
+		case <-time.After(replaceWait):
+		case <-ctx.Done():
+			return ProviderInfo{}, cancelled()
+		}
+	}
 	authBase, keysURL, timeout := a.or.urls()
 
 	verifier, err := loopback.NewVerifier()
@@ -181,8 +201,9 @@ func (a *AssistantService) signInOpenRouter(ctx context.Context, providerID stri
 		return ProviderInfo{}, newError(CodeFailed, "The sign-in could not start on this computer.", err)
 	}
 	// OpenRouter documents localhost callbacks on any port, not 127.0.0.1:
-	// the server holds the port on both loopback addresses.
-	srv, err := loopback.Start(loopback.Config{Host: loopback.HostLocalhost, App: openRouterKeyLabel})
+	// the server holds the port on both loopback addresses. It drops the
+	// state when the user refuses, so a stateless refusal ends the wait.
+	srv, err := loopback.Start(loopback.Config{Host: loopback.HostLocalhost, App: openRouterKeyLabel, AcceptStatelessError: true})
 	if err != nil {
 		return ProviderInfo{}, newError(CodeFailed, "The sign-in could not start on this computer.", err)
 	}
@@ -196,7 +217,10 @@ func (a *AssistantService) signInOpenRouter(ctx context.Context, providerID stri
 		"key_label":             {openRouterKeyLabel},
 	}
 	authURL := authBase + "?" + q.Encode()
-	ev := OpenRouterAuth{Status: AuthBrowser, AuthURL: authURL}
+	if ctx.Err() != nil {
+		return ProviderInfo{}, cancelled()
+	}
+	ev :=OpenRouterAuth{Status: AuthBrowser, AuthURL: authURL}
 	if err := a.host.OpenURL(authURL); err != nil {
 		ev.BrowserError = text.Sanitize(err.Error())
 	}
@@ -206,9 +230,9 @@ func (a *AssistantService) signInOpenRouter(ctx context.Context, providerID stri
 	switch {
 	case ctx.Err() != nil:
 		return ProviderInfo{}, cancelled()
-	case err != nil && strings.Contains(err.Error(), "timed out"):
+	case errors.Is(err, loopback.ErrTimeout):
 		return ProviderInfo{}, newError(CodeFailed, fmt.Sprintf("The sign-in took too long. Try again, and finish it in your browser within %d minutes.", int(timeout.Minutes())), err)
-	case err != nil && strings.Contains(err.Error(), "authorization denied"):
+	case errors.Is(err, loopback.ErrDenied):
 		return ProviderInfo{}, newError(CodeAuth, "OpenRouter did not give the app a key.", err)
 	case err != nil:
 		return ProviderInfo{}, newError(CodeFailed, "The sign-in did not finish.", err)
@@ -223,14 +247,15 @@ func (a *AssistantService) signInOpenRouter(ctx context.Context, providerID stri
 		return ProviderInfo{}, err
 	}
 
+	// The point of no return (see SignInOpenRouter): cancelling no longer
+	// stops the check and the save.
+	sctx, scancel := context.WithTimeout(context.WithoutCancel(ctx), saveAfterExchange)
+	defer scancel()
 	emit(OpenRouterAuth{Status: AuthVerifying})
 	defer a.lockProvider(providerID)()
-	_, st, err := a.ready()
-	if err != nil {
-		return ProviderInfo{}, err
-	}
 	// Read again: the provider may have been changed or removed while the
-	// browser was open.
+	// browser was open. st is this call's store (enter), still open during
+	// a shutdown.
 	p, err := a.provider(st, providerID)
 	if err != nil {
 		return ProviderInfo{}, err
@@ -238,12 +263,7 @@ func (a *AssistantService) signInOpenRouter(ctx context.Context, providerID stri
 	if p.Kind != KindOpenRouter {
 		return ProviderInfo{}, invalid("provider", "Browser sign-in works with OpenRouter only.")
 	}
-	vctx, vcancel := context.WithTimeout(ctx, providerCallTimeout)
-	defer vcancel()
-	if err := a.verifyAndSaveKey(vctx, p, key); err != nil {
-		if ctx.Err() != nil {
-			return ProviderInfo{}, cancelled()
-		}
+	if err := a.verifyAndSaveKey(sctx, p, key); err != nil {
 		return ProviderInfo{}, err
 	}
 	return a.info(p), nil

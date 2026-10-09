@@ -496,6 +496,11 @@ export interface Model {
  */
 export interface OpenRouterAuth {
     "providerID": string;
+
+    /**
+     * Attempt is SignInOpenRouter's attempt of the sign-in it belongs to.
+     */
+    "attempt"?: string;
     "status": string;
 
     /**

@@ -232,10 +232,19 @@ export function SetKey(providerID: string, key: string): $CancellablePromise<voi
  * it opens OpenRouter's sign-in page, waits for the redirect to a local
  * callback (at most 5 minutes), trades the code for a key, checks the key
  * like SetKey and saves it in the OS keychain. The key goes nowhere else:
- * the result and the "auth:openrouter" events carry the status only.
- * CancelSignIn, or cancelling the call, stops it; a new call replaces a
- * sign-in in progress. The provider must exist and be of kind openrouter.
+ * the result and the "auth:openrouter" events carry the status only, tagged
+ * with attempt (the caller's id for this try, so it can drop the events of
+ * one it gave up on). A new call replaces a sign-in in progress. The
+ * provider must exist and be of kind openrouter.
+ * 
+ * Cancel and save: CancelSignIn, cancelling the call, a newer sign-in or
+ * the service shutting down stop the attempt up to the code exchange.
+ * Once the exchange has answered with a key, the key exists on the user's
+ * OpenRouter account either way, so the attempt no longer stops: the check
+ * and the save finish (bounded by saveAfterExchange) and it ends "done", or
+ * "failed" when the key is refused. Shutdown waits for that through the
+ * in-flight call (enter).
  */
-export function SignInOpenRouter(providerID: string): $CancellablePromise<$models.ProviderInfo> {
-    return $Call.ByID(4028737366, providerID);
+export function SignInOpenRouter(providerID: string, attempt: string): $CancellablePromise<$models.ProviderInfo> {
+    return $Call.ByID(4028737366, providerID, attempt);
 }

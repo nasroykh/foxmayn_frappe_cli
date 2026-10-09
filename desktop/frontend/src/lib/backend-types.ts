@@ -221,10 +221,11 @@ export interface Backend {
   keyStatus(providerID: string): Promise<KeyStatus>
   /**
    * Gets an OpenRouter key through the browser (PKCE), checks it like setKey
-   * and saves it in the keychain; progress comes as onOpenRouterAuth.
+   * and saves it in the keychain; progress comes as onOpenRouterAuth, tagged
+   * with attempt. A cancel after the key exchange no longer stops the save.
    * Cancelled (code "cancelled") by cancelOpenRouterSignIn.
    */
-  signInOpenRouter(providerID: string): Promise<ProviderInfo>
+  signInOpenRouter(providerID: string, attempt: string): Promise<ProviderInfo>
   cancelOpenRouterSignIn(): Promise<void>
   /** Looks for Ollama and LM Studio on this computer; saves nothing. */
   detectLocal(): Promise<ProviderInfo[]>

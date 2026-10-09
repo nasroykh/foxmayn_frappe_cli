@@ -38,9 +38,14 @@ const signedIn: ProviderInfo = { ...openrouter, keySet: true, keyLast4: "c0de" }
 const statusText = () => screen.getAllByRole("status").map((el) => el.textContent ?? "").join(" ")
 
 let listeners: ((ev: OpenRouterAuth) => void)[] = []
-function send(ev: Omit<OpenRouterAuth, "providerID">, providerID = "openrouter") {
+// The attempt id the component passed to its last signInOpenRouter call.
+const lastAttempt = () => {
+  const calls = b.signInOpenRouter.mock.calls
+  return (calls[calls.length - 1]?.[1] as string | undefined) ?? ""
+}
+function send(ev: Omit<OpenRouterAuth, "providerID" | "attempt">, providerID = "openrouter", attempt = lastAttempt()) {
   act(() => {
-    for (const cb of listeners) cb({ ...ev, providerID })
+    for (const cb of listeners) cb({ ...ev, providerID, attempt })
   })
 }
 
@@ -82,7 +87,7 @@ describe("Sign in with OpenRouter", () => {
     const done = vi.fn()
     render(<OpenRouterSignIn providerID="openrouter" onSignedIn={done} />)
     fireEvent.click(screen.getByRole("button", { name: "Sign in with OpenRouter" }))
-    expect(b.signInOpenRouter).toHaveBeenCalledWith("openrouter")
+    expect(b.signInOpenRouter).toHaveBeenCalledWith("openrouter", expect.stringMatching(/^or-/))
     expect(screen.queryByRole("button", { name: "Sign in with OpenRouter" })).toBeNull()
     expect(statusText()).toContain("Continue in your browser…")
 
@@ -91,13 +96,30 @@ describe("Sign in with OpenRouter", () => {
     expect(statusText()).toContain("Getting the key…")
     send({ status: "verifying" })
     expect(statusText()).toContain("Checking the key…")
-    // Another provider's events are not ours.
+    // Another provider's events, and another attempt's, are not ours.
     send({ status: "exchanging" }, "other")
+    send({ status: "exchanging" }, "openrouter", "or-stale")
+    send({ status: "exchanging" }, "openrouter", "")
     expect(statusText()).toContain("Checking the key…")
 
     call.resolve(signedIn)
     await waitFor(() => expect(done).toHaveBeenCalledWith(signedIn))
     expect(screen.getByRole("button", { name: "Sign in with OpenRouter" })).toBeTruthy()
+  })
+
+  it("uses a new attempt id per try and ignores the old one's events", async () => {
+    const one = pending()
+    render(<OpenRouterSignIn providerID="openrouter" />)
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with OpenRouter" }))
+    const first = lastAttempt()
+    one.reject({ code: "cancelled", message: "The sign-in was cancelled." })
+    pending()
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in with OpenRouter" }))
+    expect(lastAttempt()).not.toBe(first)
+    send({ status: "verifying" }, "openrouter", first)
+    expect(statusText()).toContain("Continue in your browser…")
+    send({ status: "exchanging" })
+    expect(statusText()).toContain("Getting the key…")
   })
 
   it("cancels, and shows no error for a cancelled sign-in", async () => {

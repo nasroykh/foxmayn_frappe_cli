@@ -136,7 +136,7 @@ func assertNoKey(t *testing.T, g *assistantRig, secrets ...string) {
 
 func TestOpenRouterSignIn(t *testing.T) {
 	g, f := orRig(t, browser(t))
-	info, err := g.a.SignInOpenRouter(t.Context(), "openrouter")
+	info, err := g.a.SignInOpenRouter(t.Context(), "openrouter", "a1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestOpenRouterSignInIgnoresBadState(t *testing.T) {
 		}()
 		return nil
 	}
-	if _, err := g.a.SignInOpenRouter(t.Context(), "openrouter"); err != nil {
+	if _, err := g.a.SignInOpenRouter(t.Context(), "openrouter", "a1"); err != nil {
 		t.Fatal(err)
 	}
 	if storedKey(g) != goodKey || len(f.exchanges) != 1 || f.exchanges[0]["code"] != orCode {
@@ -246,7 +246,7 @@ func TestOpenRouterSignInIgnoresBadState(t *testing.T) {
 func TestOpenRouterSignInTimeout(t *testing.T) {
 	g, f := orRig(t, func(string) error { return nil }) // the user never finishes
 	g.a.or.timeout = 50 * time.Millisecond
-	_, err := g.a.SignInOpenRouter(t.Context(), "openrouter")
+	_, err := g.a.SignInOpenRouter(t.Context(), "openrouter", "a1")
 	if errorCode(t, err) != CodeFailed || !strings.Contains(err.Error(), "took too long") {
 		t.Errorf("err = %v", err)
 	}
@@ -264,7 +264,7 @@ func TestOpenRouterSignInCancel(t *testing.T) {
 		go g.a.CancelSignIn()
 		return nil
 	}
-	_, err := g.a.SignInOpenRouter(t.Context(), "openrouter")
+	_, err := g.a.SignInOpenRouter(t.Context(), "openrouter", "a1")
 	if errorCode(t, err) != CodeCancelled {
 		t.Errorf("err = %v", err)
 	}
@@ -278,7 +278,7 @@ func TestOpenRouterSignInCancel(t *testing.T) {
 	g.h.openURL = func(string) error { return nil }
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := g.a.SignInOpenRouter(ctx, "openrouter"); errorCode(t, err) != CodeCancelled {
+	if _, err := g.a.SignInOpenRouter(ctx, "openrouter", "a1"); errorCode(t, err) != CodeCancelled {
 		t.Errorf("ctx err = %v", err)
 	}
 	g.a.CancelSignIn() // nothing in progress: a no-op
@@ -289,7 +289,7 @@ func TestOpenRouterSignInCancel(t *testing.T) {
 func TestOpenRouterSignInRefusedKey(t *testing.T) {
 	g, f := orRig(t, browser(t))
 	f.key = orBadKey
-	_, err := g.a.SignInOpenRouter(t.Context(), "openrouter")
+	_, err := g.a.SignInOpenRouter(t.Context(), "openrouter", "a1")
 	if errorCode(t, err) != CodeAuth || strings.Contains(err.Error(), orBadKey) {
 		t.Errorf("err = %v", err)
 	}
@@ -299,12 +299,12 @@ func TestOpenRouterSignInRefusedKey(t *testing.T) {
 	assertNoKey(t, g, orBadKey)
 
 	f.status = http.StatusForbidden
-	_, err = g.a.SignInOpenRouter(t.Context(), "openrouter")
+	_, err = g.a.SignInOpenRouter(t.Context(), "openrouter", "a1")
 	if errorCode(t, err) != CodeAuth || strings.Contains(mustJSONString(t, err), orBadKey) {
 		t.Errorf("exchange 403 err = %v", err)
 	}
 	f.status = http.StatusInternalServerError
-	_, err = g.a.SignInOpenRouter(t.Context(), "openrouter")
+	_, err = g.a.SignInOpenRouter(t.Context(), "openrouter", "a1")
 	if errorCode(t, err) != CodeNetwork || strings.Contains(mustJSONString(t, err), orBadKey) {
 		t.Errorf("exchange 500 err = %v", err)
 	}
@@ -330,7 +330,7 @@ func TestOpenRouterSignInDenied(t *testing.T) {
 		}()
 		return nil
 	}
-	_, err := g.a.SignInOpenRouter(t.Context(), "openrouter")
+	_, err := g.a.SignInOpenRouter(t.Context(), "openrouter", "a1")
 	if errorCode(t, err) != CodeAuth {
 		t.Errorf("err = %v", err)
 	}
@@ -339,10 +339,10 @@ func TestOpenRouterSignInDenied(t *testing.T) {
 func TestOpenRouterSignInRefusesOtherProviders(t *testing.T) {
 	g, _ := orRig(t, browser(t))
 	g.provider(t) // "p1", a custom provider
-	if _, err := g.a.SignInOpenRouter(t.Context(), "p1"); errorCode(t, err) != CodeInvalid {
+	if _, err := g.a.SignInOpenRouter(t.Context(), "p1", "a1"); errorCode(t, err) != CodeInvalid {
 		t.Errorf("custom provider: %v", err)
 	}
-	if _, err := g.a.SignInOpenRouter(t.Context(), "nope"); errorCode(t, err) != CodeNotFound {
+	if _, err := g.a.SignInOpenRouter(t.Context(), "nope", "a1"); errorCode(t, err) != CodeNotFound {
 		t.Errorf("missing provider: %v", err)
 	}
 	if len(g.h.opened) != 0 {
@@ -356,7 +356,7 @@ func TestOpenRouterSignInBrowserError(t *testing.T) {
 	g, _ := orRig(t, nil)
 	g.a.or.timeout = 50 * time.Millisecond
 	g.h.openURL = func(string) error { return errBrowser }
-	_, _ = g.a.SignInOpenRouter(t.Context(), "openrouter")
+	_, _ = g.a.SignInOpenRouter(t.Context(), "openrouter", "a1")
 	ev := g.h.named(EventOpenRouterAuth)[0].(OpenRouterAuth)
 	if ev.Status != AuthBrowser || ev.BrowserError == "" || ev.AuthURL == "" {
 		t.Errorf("event = %+v", ev)
