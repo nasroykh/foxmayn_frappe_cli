@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/services"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/cmd"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -16,6 +17,10 @@ import (
 var assets embed.FS
 
 func main() {
+	// A jq filter of an MCP tool runs in this executable started again; the
+	// child must run the filter, not the app.
+	cmd.RunJQChildIfRequested()
+
 	configPath, err := services.ConfigPath()
 	if err != nil {
 		log.Fatalf("finding the ffc config path: %v", err)
