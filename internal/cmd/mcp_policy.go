@@ -490,10 +490,16 @@ func (p mcpPolicy) check(tool string, sc toolScope) error {
 		return err
 	}
 	for _, dt := range sc.Doctypes {
-		// restore_doc changes Deleted Document by Frappe's own rules; what it
-		// re-creates is checked as a write by checkRestore.
-		write := sc.Action != actRead && !(tool == "restore_doc" && dt == "Deleted Document")
-		if err := p.doctypeAllowed(dt, write); err != nil {
+		// restore_doc changes Deleted Document by Frappe's own rules: only the
+		// deny lists apply to it, never allow_doctypes or the sensitive rule.
+		// What it re-creates is checked as a write by checkRestore.
+		if tool == "restore_doc" && dt == "Deleted Document" {
+			if err := p.doctypeDenied(dt); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := p.doctypeAllowed(dt, sc.Action != actRead); err != nil {
 			return err
 		}
 	}
@@ -516,12 +522,22 @@ func (p mcpPolicy) check(tool string, sc toolScope) error {
 	return nil
 }
 
-func (p mcpPolicy) doctypeAllowed(dt string, write bool) error {
+// doctypeDenied applies the deny lists of the config and the flags.
+func (p mcpPolicy) doctypeDenied(dt string) error {
 	switch {
 	case contains(p.cfg.DenyDoctypes, dt, true):
 		return fmt.Errorf("policy: DocType %q is denied by %s", dt, p.key("deny_doctypes"))
 	case contains(p.flag.DenyDoctypes, dt, true):
 		return fmt.Errorf("policy: DocType %q is denied by %s", dt, p.flagKey("deny_doctypes"))
+	}
+	return nil
+}
+
+func (p mcpPolicy) doctypeAllowed(dt string, write bool) error {
+	if err := p.doctypeDenied(dt); err != nil {
+		return err
+	}
+	switch {
 	case len(p.cfg.AllowDoctypes) > 0 && !contains(p.cfg.AllowDoctypes, dt, true):
 		return fmt.Errorf("policy: DocType %q is not in %s", dt, p.key("allow_doctypes"))
 	case len(p.flag.AllowDoctypes) > 0 && !contains(p.flag.AllowDoctypes, dt, true):
@@ -605,15 +621,21 @@ func (p mcpPolicy) checkRestore(ctx context.Context, c *client.FrappeClient, sc 
 	}
 	// Frappe's restore re-creates the document from data, whose own doctype
 	// decides what is written; deleted_doctype is never read.
-	var data struct {
-		Doctype interface{} `json:"doctype"`
-	}
+	// Read the key exactly, as Python's json.loads does: unmarshalling into a
+	// struct would match "DOCTYPE" too. A key that differs only in case is
+	// refused, since a reader that folds case would see another DocType.
+	var data map[string]interface{}
 	raw, _ := d["data"].(string)
-	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+	if err := json.Unmarshal([]byte(raw), &data); err != nil || data == nil {
 		return id, dt, name, fmt.Errorf("policy: Deleted Document %q has no readable data, so the DocType it restores cannot be checked", id)
 	}
-	if got, _ := data.Doctype.(string); got != dt {
-		return id, dt, name, fmt.Errorf("policy: Deleted Document %q says it is a deleted %s but its data restores a %v", id, dt, data.Doctype)
+	for k := range data {
+		if k != "doctype" && strings.EqualFold(k, "doctype") {
+			return id, dt, name, fmt.Errorf("policy: Deleted Document %q has a data key %q that differs from \"doctype\" only in case, so the DocType it restores is ambiguous", id, k)
+		}
+	}
+	if got, _ := data["doctype"].(string); got != dt {
+		return id, dt, name, fmt.Errorf("policy: Deleted Document %q says it is a deleted %s but its data restores a %v", id, dt, data["doctype"])
 	}
 	if err := p.doctypeAllowed(dt, true); err != nil {
 		return id, dt, name, err

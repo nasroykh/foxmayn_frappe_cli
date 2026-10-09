@@ -32,7 +32,15 @@ func mcpTRestoreSite(t *testing.T, site *frappetest.Site) *[]string {
 	notJSON["data"] = "not json"
 	noDoctype := del("del-nodoctype", "ToDo", "TD-D")
 	noDoctype["data"] = `{"name": "TD-D"}`
-	site.Add("Deleted Document", forged, lower, notJSON, noDoctype)
+	caseKey := del("del-casekey", "ToDo", "TD-C")
+	caseKey["data"] = `{"doctype": "Server Script", "DOCTYPE": "ToDo", "name": "TD-C"}`
+	caseKeyOnly := del("del-caseonly", "ToDo", "TD-K")
+	caseKeyOnly["data"] = `{"DocType": "ToDo", "name": "TD-K"}`
+	dupKey := del("del-dupkey", "ToDo", "TD-U")
+	dupKey["data"] = `{"doctype": "Server Script", "doctype": "ToDo", "name": "TD-U"}`
+	dupKeyBad := del("del-dupbad", "ToDo", "TD-V")
+	dupKeyBad["data"] = `{"doctype": "ToDo", "doctype": "Server Script", "name": "TD-V"}`
+	site.Add("Deleted Document", forged, lower, notJSON, noDoctype, caseKey, caseKeyOnly, dupKey, dupKeyBad)
 	site.Add("Deleted Document", del("del-todo", "ToDo", "TD-9"), del("del-ss", "Server Script", "SS-1"),
 		del("del-user", "User", "x@example.com"), del("del-hook", "Webhook", "WH-1"), del("del-blank", "", "?"))
 	var restored []string
@@ -85,6 +93,10 @@ func TestMCPRestoreDocRefusals(t *testing.T) {
 		{"deny Deleted Document", &config.MCPPolicy{DenyDoctypes: []string{"Deleted Document"}}, config.MCPPolicy{}, map[string]interface{}{"deleted_document": "del-todo"}, `DocType "Deleted Document" is denied`},
 		{"data doctype differs", nil, config.MCPPolicy{}, map[string]interface{}{"deleted_document": "del-forged"}, `its data restores a Server Script`},
 		{"data doctype differs by case", nil, config.MCPPolicy{}, map[string]interface{}{"deleted_document": "del-lower"}, `its data restores a todo`},
+		{"data case-variant key", nil, config.MCPPolicy{}, map[string]interface{}{"deleted_document": "del-casekey"}, "differs from"},
+		{"data case-variant key only", nil, config.MCPPolicy{}, map[string]interface{}{"deleted_document": "del-caseonly"}, "differs from"},
+		{"data duplicate key, last wins", nil, config.MCPPolicy{}, map[string]interface{}{"deleted_document": "del-dupbad"}, `its data restores a Server Script`},
+		{"deny Deleted Document with allow list", &config.MCPPolicy{AllowDoctypes: []string{"ToDo"}, DenyDoctypes: []string{"Deleted Document"}}, config.MCPPolicy{}, map[string]interface{}{"deleted_document": "del-todo"}, `DocType "Deleted Document" is denied`},
 		{"data not JSON", nil, config.MCPPolicy{}, map[string]interface{}{"deleted_document": "del-notjson"}, "no readable data"},
 		{"data without doctype", nil, config.MCPPolicy{}, map[string]interface{}{"deleted_document": "del-nodoctype"}, "its data restores a <nil>"},
 		{"call_method restore", nil, config.MCPPolicy{}, map[string]interface{}{"method": restoreMethod, "args": map[string]interface{}{"name": "del-todo"}}, "runs code, changes apps"},
@@ -215,4 +227,20 @@ func TestMCPDeletedDocumentIsSensitive(t *testing.T) {
 	s, site, _, _ = mcpTPolicy(t, cfg, config.MCPPolicy{})
 	mcpTRestoreSite(t, site)
 	mcpTOK(t, s, "create_doc", map[string]interface{}{"doctype": "Deleted Document", "data": row})
+}
+
+// An allow list names the restored DocType only: Deleted Document needs no
+// entry, and without one it stays unwritable.
+func TestMCPRestoreDocAllowListNeedsNoDeletedDocument(t *testing.T) {
+	cfg := &config.MCPPolicy{AllowDoctypes: []string{"ToDo"}}
+	s, site, _, _ := mcpTPolicy(t, cfg, config.MCPPolicy{})
+	restored := mcpTRestoreSite(t, site)
+	mcpTOK(t, s, "restore_doc", map[string]interface{}{"deleted_document": "del-todo"})
+	mcpTOK(t, s, "restore_doc", map[string]interface{}{"doctype": "ToDo", "name": "TD-9"})
+	if len(*restored) != 2 {
+		t.Errorf("restored = %v", *restored)
+	}
+	mcpTErr(t, s, "restore_doc", map[string]interface{}{"deleted_document": "del-ss"}, "allow_doctypes")
+	mcpTErr(t, s, "create_doc", map[string]interface{}{"doctype": "Deleted Document", "data": map[string]interface{}{"data": "{}"}}, "allow_doctypes")
+	mcpTErr(t, s, "update_doc", map[string]interface{}{"doctype": "Deleted Document", "name": "del-todo", "data": map[string]interface{}{"data": "{}"}}, "allow_doctypes")
 }
