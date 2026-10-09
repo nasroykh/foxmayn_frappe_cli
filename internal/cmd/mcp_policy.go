@@ -150,6 +150,10 @@ var sensitiveDoctypes = []string{
 	"Auto Email Report", "Assignment Rule", "Energy Point Rule", "Scheduled Job Type", "System Console",
 	// Bulk paths into any DocType, and file visibility.
 	"Data Import", "File",
+	// Frappe's restore re-creates whatever DocType the record's data names, so
+	// a forged record is a way to write any DocType. restore_doc counts it as
+	// a read (check) and applies the write rules to the restored DocType.
+	"Deleted Document",
 }
 
 // deniedMethods run code on the server, change installed apps or rotate a
@@ -159,6 +163,9 @@ var deniedMethods = []string{
 	"frappe.desk.doctype.system_console.system_console.execute_code",
 	"frappe.core.doctype.user.user.generate_keys",
 	"frappe.integrations.frappe_providers.*", // Frappe Cloud app install/uninstall
+	// They re-create documents from a Deleted Document's data, of any DocType.
+	"frappe.core.doctype.deleted_document.deleted_document.restore",
+	"frappe.core.doctype.deleted_document.deleted_document.bulk_restore",
 }
 
 // toolScope is what one tool call touches.
@@ -483,7 +490,10 @@ func (p mcpPolicy) check(tool string, sc toolScope) error {
 		return err
 	}
 	for _, dt := range sc.Doctypes {
-		if err := p.doctypeAllowed(dt, sc.Action != actRead); err != nil {
+		// restore_doc changes Deleted Document by Frappe's own rules; what it
+		// re-creates is checked as a write by checkRestore.
+		write := sc.Action != actRead && !(tool == "restore_doc" && dt == "Deleted Document")
+		if err := p.doctypeAllowed(dt, write); err != nil {
 			return err
 		}
 	}
@@ -576,24 +586,37 @@ func (p mcpPolicy) checkRestore(ctx context.Context, c *client.FrappeClient, sc 
 	if rs == nil {
 		return "", "", "", nil
 	}
+	// Lookup failures carry no "policy:" prefix: env.run audits them as errors.
 	if id, err = resolveDeleted(ctx, c, rs.Deleted, rs.Doctype, rs.Name); err != nil {
-		return "", "", "", fmt.Errorf("policy: finding the Deleted Document to restore: %w", err)
+		return "", "", "", fmt.Errorf("finding the Deleted Document to restore: %w", err)
 	}
 	d, err := c.GetDoc(ctx, "Deleted Document", id)
 	if err != nil {
-		return "", "", "", fmt.Errorf("policy: reading the DocType of Deleted Document %q: %w", id, err)
+		return id, "", "", fmt.Errorf("reading Deleted Document %q: %w", id, err)
 	}
 	dt, _ = d["deleted_doctype"].(string)
 	dt = strings.TrimSpace(dt)
 	name, _ = docName(d["deleted_name"])
-	switch {
-	case dt == "":
-		return "", "", name, fmt.Errorf("policy: Deleted Document %q has no deleted_doctype, so the DocType rules cannot be checked", id)
-	case rs.Doctype != "" && !strings.EqualFold(rs.Doctype, dt):
-		return "", dt, name, fmt.Errorf("policy: Deleted Document %q is a deleted %s, not a %s", id, dt, rs.Doctype)
+	if dt == "" {
+		return id, "", name, fmt.Errorf("policy: Deleted Document %q has no deleted_doctype, so the DocType rules cannot be checked", id)
+	}
+	if rs.Doctype != "" && !strings.EqualFold(rs.Doctype, dt) {
+		return id, dt, name, fmt.Errorf("policy: Deleted Document %q is a deleted %s, not a %s", id, dt, rs.Doctype)
+	}
+	// Frappe's restore re-creates the document from data, whose own doctype
+	// decides what is written; deleted_doctype is never read.
+	var data struct {
+		Doctype interface{} `json:"doctype"`
+	}
+	raw, _ := d["data"].(string)
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		return id, dt, name, fmt.Errorf("policy: Deleted Document %q has no readable data, so the DocType it restores cannot be checked", id)
+	}
+	if got, _ := data.Doctype.(string); got != dt {
+		return id, dt, name, fmt.Errorf("policy: Deleted Document %q says it is a deleted %s but its data restores a %v", id, dt, data.Doctype)
 	}
 	if err := p.doctypeAllowed(dt, true); err != nil {
-		return "", dt, name, err
+		return id, dt, name, err
 	}
 	return id, dt, name, nil
 }

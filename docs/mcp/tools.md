@@ -52,7 +52,7 @@ R = read tool (kept by `--read-only`), W = writes, M = `call_method` (treated as
 | `amend_doc` | W | Amend a cancelled document. |
 | `copy_doc` | W | Duplicate a document. |
 | `rename_doc` | W | Rename, or merge into another document (a merge asks for confirmation). |
-| `restore_doc` | W | Restore a deleted document, the undo of `delete_doc`: name the Deleted Document (`deleted_document`) or the document (`doctype` and `name`: its latest unrestored deletion), not both. The DocType rules apply to the deleted document's own DocType (read from the Deleted Document), so a deleted Server Script, User or Webhook is refused unless `allow_doctypes` lists it. Does not ask for confirmation. |
+| `restore_doc` | W | Restore a deleted document, the undo of `delete_doc`: name the Deleted Document (`deleted_document`) or the document (`doctype` and `name`: its latest unrestored deletion), not both. Deleted Document counts as a read; the DocType rules (write) apply to the DocType being restored, taken from the record after checking that its `data` names the same DocType, so a deleted Server Script, User or Webhook is refused unless `allow_doctypes` lists it. Writing Deleted Document with `create_doc` and the like is refused (sensitive). Does not ask for confirmation. |
 | `apply_workflow` | W | Apply a workflow action (asks for confirmation: an action may submit or cancel). |
 | `get_transitions` | R | Workflow actions available now. |
 

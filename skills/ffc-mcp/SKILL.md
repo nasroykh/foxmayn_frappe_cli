@@ -62,7 +62,7 @@ sites:
       confirm: always
 ```
 
-Built-in rules: sensitive DocTypes (User, Role, DocType, System Settings, Server Script, File, DocShare...) are readable but not writable unless `allow_doctypes` lists them; code-running methods are refused unless `allow_methods` lists them. A refused call returns an error starting with `policy:` that names the setting, and sends nothing. Every call is appended to `~/.config/ffc/mcp-audit.jsonl` (secrets redacted). Full rules: [references/policy.md](references/policy.md).
+Built-in rules: sensitive DocTypes (User, Role, DocType, System Settings, Server Script, File, DocShare, Deleted Document...) are readable but not writable unless `allow_doctypes` lists them; code-running methods are refused unless `allow_methods` lists them. A refused call returns an error starting with `policy:` that names the setting, and sends nothing. Every call is appended to `~/.config/ffc/mcp-audit.jsonl` (secrets redacted). Full rules: [references/policy.md](references/policy.md).
 
 ## Using the tools (for the agent on the other side)
 
