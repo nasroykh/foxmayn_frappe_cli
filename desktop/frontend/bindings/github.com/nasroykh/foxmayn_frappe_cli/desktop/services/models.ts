@@ -346,6 +346,15 @@ export interface Conversation {
     "profileID": string;
     "created": string;
     "updated": string;
+
+    /**
+     * Pinned and Archived are the user's marks; Ephemeral is set by a
+     * profile that keeps no history (the conversation is deleted when the
+     * app closes). Only ListConversations fills them.
+     */
+    "pinned"?: boolean;
+    "archived"?: boolean;
+    "ephemeral"?: boolean;
 }
 
 /**
@@ -484,6 +493,17 @@ export interface FFCUpdate {
      * must not replace).
      */
     "latest": string;
+}
+
+/**
+ * ImportResult is the answer of ImportConversation.
+ */
+export interface ImportResult {
+    /**
+     * Cancelled is true when the person closed the file dialog.
+     */
+    "cancelled": boolean;
+    "conversation": Conversation;
 }
 
 /**
@@ -741,6 +761,43 @@ export interface RunUsage {
     "runID": string;
     "msgID": string;
     "usage": UsageTotals;
+}
+
+/**
+ * SearchFilter narrows Search. Empty fields mean no limit.
+ */
+export interface SearchFilter {
+    "site": string;
+    "profileID": string;
+
+    /**
+     * From and To are dates ("2026-10-09", local time); a conversation is
+     * found when it was last updated on or between them.
+     */
+    "from": string;
+    "to": string;
+
+    /**
+     * Archived searches the archive instead of the other conversations.
+     */
+    "archived": boolean;
+}
+
+/**
+ * SearchHit is one message that matches a search.
+ */
+export interface SearchHit {
+    "convID": string;
+    "title": string;
+    "site": string;
+    "msgID": string;
+
+    /**
+     * Snippet is the matching words with some text around them.
+     */
+    "snippet": string;
+    "updated": string;
+    "pinned": boolean;
 }
 
 /**

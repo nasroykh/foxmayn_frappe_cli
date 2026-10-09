@@ -24,6 +24,15 @@ export function Answer(convID: string, approvalID: string, approve: boolean): $C
 }
 
 /**
+ * Archive moves a conversation to the archive or back. Searching leaves the
+ * archive out unless asked for it. It does not change the conversation's
+ * updated time.
+ */
+export function Archive(convID: string, archived: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3227966633, convID, archived);
+}
+
+/**
  * Cancel stops a run. A card that is open counts as declined.
  */
 export function Cancel(runID: string): $CancellablePromise<void> {
@@ -77,6 +86,16 @@ export function DetectLocal(): $CancellablePromise<$models.ProviderInfo[] | null
 }
 
 /**
+ * ExportConversation saves a conversation to a file the person chooses.
+ * format is "json" (everything, to import again) or "md" (to read). It
+ * returns the path, or "" when the person cancelled. The file
+ * holds no provider key.
+ */
+export function ExportConversation(convID: string, format: string): $CancellablePromise<string> {
+    return $Call.ByID(4119506776, convID, format);
+}
+
+/**
  * GetConversation returns a conversation with its messages in the shape the
  * chat shows. The model's thinking and its signatures never leave Go.
  */
@@ -85,11 +104,30 @@ export function GetConversation(id: string): $CancellablePromise<$models.Convers
 }
 
 /**
+ * GetRetention returns how many days a conversation is kept after its last
+ * message: 0 (forever), 90 or 30. Pinned conversations and conversations
+ * with a run in progress are always kept.
+ */
+export function GetRetention(): $CancellablePromise<number> {
+    return $Call.ByID(1233478011);
+}
+
+/**
  * GetSiteSettings returns the settings that apply to a site of the ffc
  * config.
  */
 export function GetSiteSettings(site: string): $CancellablePromise<$models.SiteSettings> {
     return $Call.ByID(403689253, site);
+}
+
+/**
+ * ImportConversation reads a conversation file (made by ExportConversation)
+ * the person chooses and adds it as a new conversation, read only, with new
+ * ids. Images are not in the file and become notes. A file over 50 MB, of
+ * another format or version, or that does not hold together is refused.
+ */
+export function ImportConversation(): $CancellablePromise<$models.ImportResult> {
+    return $Call.ByID(1284281039);
 }
 
 /**
@@ -151,6 +189,14 @@ export function PendingApprovals(convID: string): $CancellablePromise<$models.Ch
 }
 
 /**
+ * Pin pins or unpins a conversation. It does not change the conversation's
+ * updated time.
+ */
+export function Pin(convID: string, pinned: boolean): $CancellablePromise<void> {
+    return $Call.ByID(4270282480, convID, pinned);
+}
+
+/**
  * PromptPreview builds the next run's prompt of a conversation the way the
  * run does. It opens an engine session (which may sign in to the site) but
  * calls no tool: the site context shown is the one stored.
@@ -200,6 +246,15 @@ export function SaveSiteSettings(s: $models.SiteSettings): $CancellablePromise<$
 }
 
 /**
+ * Search finds messages by their words, best match first, in the
+ * conversations that are not archived (or only in the archived ones). limit
+ * is the most hits returned: 0 means 50, at most 200.
+ */
+export function Search(query: string, filter: $models.SearchFilter, limit: number): $CancellablePromise<$models.SearchHit[] | null> {
+    return $Call.ByID(1284597821, query, filter, limit);
+}
+
+/**
  * Send adds the user's message to a conversation and starts a run. It returns
  * the run's id at once; the answer arrives as chat:* events.
  */
@@ -233,6 +288,15 @@ export function SetConversationProfile(convID: string, profileID: string): $Canc
  */
 export function SetKey(providerID: string, key: string): $CancellablePromise<void> {
     return $Call.ByID(313735678, providerID, key);
+}
+
+/**
+ * SetRetention sets the retention period: 0 (forever), 90 or 30 days. Older
+ * conversations are deleted when the app starts and then once a day, not at
+ * once.
+ */
+export function SetRetention(days: number): $CancellablePromise<void> {
+    return $Call.ByID(1350140959, days);
 }
 
 /**

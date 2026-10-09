@@ -1422,7 +1422,8 @@ export const backend: Backend = {
       created: now,
       updated: now,
     }
-    convs.set(conv.id, { conv, messages: [], pausedRunID: "" })
+    // An imported title is the user's: no automatic title replaces it.
+    convs.set(conv.id, { conv, messages: [], pausedRunID: "", runUsage: [], total: noUsage, named: true, titled: true })
     return { cancelled: false, conversation: { ...conv } }
   },
 
