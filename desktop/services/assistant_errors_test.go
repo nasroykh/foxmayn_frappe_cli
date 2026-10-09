@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/llmtest"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/frappetest"
 )
 
@@ -59,5 +60,22 @@ func TestUpdateDocPreReadFailureLongKeepsWrapper(t *testing.T) {
 	}
 	if len(g.writes(t)) != 0 {
 		t.Error("the update was sent")
+	}
+}
+
+// A turn the model ended with no usable answer is not sent again: the request
+// was complete and paid for.
+func TestNoAnswerTurnNotRetried(t *testing.T) {
+	noAnswer := &llm.APIError{Status: 502, Category: "malformed_function_call", Message: "the model produced a tool call that could not be read"}
+	g := newLoopRig(t, llmtest.Turn{Err: noAnswer}, textTurn("must not be asked"))
+	cid := g.conv(t, ModeRead)
+	if _, err := g.r.start(cid, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunError {
+		t.Fatalf("done = %+v", d)
+	}
+	if n := len(g.prov.Requests()); n != 1 {
+		t.Errorf("%d model requests, want 1", n)
 	}
 }

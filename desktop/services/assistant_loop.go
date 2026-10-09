@@ -680,7 +680,10 @@ func (a *activeRun) turn(ctx context.Context, prov llm.Provider, req llm.Request
 		if err == nil || ctx.Err() != nil {
 			return t, err
 		}
-		if got || !llm.IsRetryable(err) || attempt >= len(a.r.backoff) {
+		// A turn that ended with no usable answer (Category set) was a
+		// complete, paid request: it is not repeated.
+		var ae *llm.APIError
+		if got || !llm.IsRetryable(err) || attempt >= len(a.r.backoff) || (errors.As(err, &ae) && ae.Category != "") {
 			return t, err
 		}
 		select {
