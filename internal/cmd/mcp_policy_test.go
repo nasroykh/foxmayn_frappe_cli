@@ -72,6 +72,7 @@ func TestMCPPolicyCoversEveryTool(t *testing.T) {
 }
 
 func TestMCPPolicyRules(t *testing.T) {
+	const mkSI = "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice"
 	todo := map[string]interface{}{"doctype": "ToDo", "data": map[string]interface{}{"description": "x"}}
 	user := map[string]interface{}{"doctype": "User", "name": "u@example.com", "data": map[string]interface{}{"enabled": 0}}
 	method := func(m string, args map[string]interface{}) map[string]interface{} {
@@ -162,7 +163,7 @@ func TestMCPPolicyRules(t *testing.T) {
 		// Second review: Frappe cuts a method at "/" and runs undotted names
 		// as Server Script APIs first.
 		{"a method cut at a slash", nil, config.MCPPolicy{}, "call_method",
-			method("frappe.desk.doctype.system_console.system_console.execute_code/x", nil), "may only contain"},
+			method("frappe.desk.doctype.system_console.system_console.execute_code/x", nil), "may not be empty or contain slashes"},
 		{"an undotted name on a deny list", &config.MCPPolicy{DenyMethods: []string{"wipe_all"}}, config.MCPPolicy{}, "call_method",
 			method("wipe_all", nil), "denied by sites.prod.mcp.deny_methods"},
 		{"an undotted name on an allow list", &config.MCPPolicy{AllowMethods: []string{"my_api"}}, config.MCPPolicy{}, "call_method",
@@ -171,6 +172,45 @@ func TestMCPPolicyRules(t *testing.T) {
 			method("frappe.client.get_time_zone", nil), ""},
 		{"deny_methods", &config.MCPPolicy{DenyMethods: []string{"frappe.client.*"}}, config.MCPPolicy{}, "call_method",
 			method("frappe.client.get_count", map[string]interface{}{"doctype": "ToDo"}), "denied by sites.prod.mcp.deny_methods"},
+		// Permission-bypass arguments: presence is enough, whatever the value.
+		{"ignore_permissions true", nil, config.MCPPolicy{}, "call_method",
+			method(mkSI, map[string]interface{}{"source_name": "SO-1", "ignore_permissions": true}), "call_method may not pass ignore_permissions"},
+		{"ignore_permissions 1", nil, config.MCPPolicy{}, "call_method",
+			method(mkSI, map[string]interface{}{"source_name": "SO-1", "ignore_permissions": 1}), "may not pass ignore_permissions"},
+		{"ignore_permissions string 1", nil, config.MCPPolicy{}, "call_method",
+			method(mkSI, map[string]interface{}{"source_name": "SO-1", "ignore_permissions": "1"}), "may not pass ignore_permissions"},
+		{"ignore_permissions false", nil, config.MCPPolicy{}, "call_method",
+			method(mkSI, map[string]interface{}{"source_name": "SO-1", "ignore_permissions": false}), "may not pass ignore_permissions"},
+		{"ignore_user_permissions", nil, config.MCPPolicy{}, "call_method",
+			method("erpnext.controllers.queries.employee_query", map[string]interface{}{"ignore_user_permissions": 1}), "may not pass ignore_user_permissions"},
+		{"both keys are named", nil, config.MCPPolicy{}, "call_method",
+			method(mkSI, map[string]interface{}{"ignore_user_permissions": 1, "ignore_permissions": 1}), "ignore_permissions, ignore_user_permissions"},
+		{"a variant spelling", nil, config.MCPPolicy{}, "call_method",
+			method(mkSI, map[string]interface{}{"Ignore_Permissions": 1}), "may not pass Ignore_Permissions"},
+		{"bypass in args given as a JSON string", nil, config.MCPPolicy{}, "call_method",
+			map[string]interface{}{"method": mkSI, "args": `{"source_name":"SO-1","ignore_permissions":1}`}, "may not pass ignore_permissions"},
+		{"even when the method is allowed", &config.MCPPolicy{AllowMethods: []string{"*"}}, config.MCPPolicy{}, "call_method",
+			method(mkSI, map[string]interface{}{"ignore_permissions": 1}), "may not pass ignore_permissions"},
+		{"a normal erpnext call", nil, config.MCPPolicy{}, "call_method",
+			method(mkSI, map[string]interface{}{"source_name": "SO-1"}), ""},
+		// Only top-level keys are method parameters; Frappe drops a "flags"
+		// key from document data.
+		{"a nested key of an ordinary method is data", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.client.get_count", map[string]interface{}{"doctype": "ToDo", "filters": map[string]interface{}{"ignore_permissions": 1}}), ""},
+		// run_doc_method forwards its nested args to the document method
+		// without Frappe's get_newargs filter.
+		{"run_doc_method nested ignore_permissions", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.handler.run_doc_method", map[string]interface{}{"dt": "ToDo", "dn": "TD-1", "method": "x", "args": map[string]interface{}{"ignore_permissions": 1}}), "may not pass args.ignore_permissions"},
+		{"run_doc_method nested ignore_user_permissions", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.handler.run_doc_method", map[string]interface{}{"dt": "ToDo", "dn": "TD-1", "method": "x", "args": map[string]interface{}{"ignore_user_permissions": true}}), "may not pass args.ignore_user_permissions"},
+		{"run_doc_method undotted, nested args as a JSON string", nil, config.MCPPolicy{}, "call_method",
+			method("run_doc_method", map[string]interface{}{"dt": "ToDo", "dn": "TD-1", "method": "x", "args": `{"ignore_permissions":0}`}), "may not pass args.ignore_permissions"},
+		{"run_doc_method nested in arg", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.handler.run_doc_method", map[string]interface{}{"dt": "ToDo", "dn": "TD-1", "method": "x", "arg": `{"ignore_permissions":1}`}), "may not pass arg.ignore_permissions"},
+		{"run_doc_method with ordinary args", nil, config.MCPPolicy{}, "call_method",
+			method("frappe.handler.run_doc_method", map[string]interface{}{"dt": "ToDo", "dn": "TD-1", "method": "x", "args": map[string]interface{}{"status": "Open"}}), ""},
+		{"flags in a document", nil, config.MCPPolicy{}, "create_doc",
+			map[string]interface{}{"doctype": "ToDo", "data": map[string]interface{}{"description": "x", "flags": map[string]interface{}{"ignore_permissions": true}}}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -194,6 +234,44 @@ func TestMCPPolicyRules(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestMCPRefusesIgnorePermissions: a refused call sends nothing and leaves a
+// denied audit line that names the argument; the same method without it goes
+// through, and its arguments reach the site as given.
+func TestMCPRefusesIgnorePermissions(t *testing.T) {
+	const method = "erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice"
+	s, site, _, path := mcpTPolicy(t, nil, config.MCPPolicy{})
+	var got []map[string]interface{}
+	site.HandleMethod(method, func(_ *http.Request, args map[string]interface{}) (interface{}, error) {
+		got = append(got, args)
+		return map[string]interface{}{"doctype": "Sales Invoice"}, nil
+	})
+	mcpTErr(t, s, "call_method", map[string]interface{}{"method": method, "args": map[string]interface{}{"source_name": "SO-1", "ignore_permissions": 1}},
+		"policy: call_method may not pass ignore_permissions")
+	if len(got) != 0 {
+		t.Fatalf("the refused call reached the site: %v", got)
+	}
+	mcpTOK(t, s, "call_method", map[string]interface{}{"method": method, "args": map[string]interface{}{"source_name": "SO-1"}})
+	if len(got) != 1 || got[0]["source_name"] != "SO-1" || got[0]["ignore_permissions"] != nil {
+		t.Fatalf("the normal call sent %v", got)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recs []auditRecord
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var r auditRecord
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			t.Fatalf("bad line %q: %v", line, err)
+		}
+		recs = append(recs, r)
+	}
+	if len(recs) != 2 || recs[0].Status != auditDenied || recs[0].Tool != "call_method" || recs[0].Method != method ||
+		!strings.Contains(recs[0].Error, "ignore_permissions") || recs[1].Status != auditOK {
+		t.Errorf("audit lines = %+v", recs)
 	}
 }
 

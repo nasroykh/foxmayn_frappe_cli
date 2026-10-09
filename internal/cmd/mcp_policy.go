@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -156,8 +157,11 @@ type toolScope struct {
 	Doctypes []string
 	Names    []string
 	Method   string
-	Report   string // run_report: checked through the report's ref_doctype
-	Confirm  bool   // destroys or merges documents: ask the user first
+	// Bypass are the permission-bypass arguments (bypassArgs) a call_method
+	// call carries, as written. check refuses the call.
+	Bypass  []string
+	Report  string // run_report: checked through the report's ref_doctype
+	Confirm bool   // destroys or merges documents: ask the user first
 	// Field references of filters, fields and order_by (queryScope).
 	FilterFields, SelectFields []string
 }
@@ -215,6 +219,7 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 		sc.Report = str("report_name")
 	case "call_method":
 		sc.Method = str("method")
+		sc.Bypass = callBypass(sc.Method, args["args"])
 		sc.Doctypes = append(sc.Doctypes, methodDoctypes(args["args"])...)
 		// Only next to a named DocType: check refuses these methods
 		// without one, which an implicit DocType must not hide.
@@ -241,6 +246,67 @@ func scopeOf(req mcp.CallToolRequest) (toolScope, error) {
 	}
 	sc.Confirm = needsConfirm(req, sc.Method)
 	return sc, nil
+}
+
+// bypassKeys are the method arguments that switch off a permission check.
+// A client that is not the operator (an AI agent whose input can be
+// injected) must not set them, so call_method refuses them. What Frappe does
+// with them:
+//   - ignore_permissions: get_newargs (frappe/__init__.py, v15 ~:1808, v16
+//     :1190) pops it, and "flags", before a /api/method function is called, so
+//     make_sales_invoice, create_dunning, make_timesheet and get_party_details
+//     never receive it over HTTP. run_doc_method is the exception: it passes its
+//     nested args to doc.run_method(method, **args) unfiltered (handler.py, v15
+//     :321/:361, v16 :296/:336), see callBypass. Refusing the key everywhere is
+//     defence in depth (an API Server Script reads form_dict before frappe.call).
+//   - ignore_user_permissions: NOT popped. It reaches employee_query
+//     (erpnext controllers/queries.py) and frappe.desk.search.search_link and
+//     search_widget (search.py), which on v15 turns it into ignore_permissions.
+//
+// "flags" is not refused: get_newargs drops it too and document data drops it
+// (RESERVED_KEYWORDS, base_document.py). The CLI (ffc api, ffc call-method) is
+// the operator's own and sends them as given.
+var bypassKeys = []string{"ignore_permissions", "ignore_user_permissions"}
+
+// callBypass returns the bypass arguments of a call_method call: those at the
+// top level of args and, for run_doc_method (under any name methodNames
+// matches), those of its nested args and arg, which Frappe forwards to the
+// document method without filtering. Nested keys are prefixed with where they
+// were found.
+func callBypass(method string, args interface{}) []string {
+	out := bypassArgs(args)
+	if !anyMatch([]string{"frappe.handler.run_doc_method"}, methodNames(method)) {
+		return out
+	}
+	m, _ := args.(map[string]interface{})
+	if s, ok := args.(string); ok {
+		_ = json.Unmarshal([]byte(s), &m)
+	}
+	for _, nest := range []string{"args", "arg"} {
+		for _, k := range bypassArgs(m[nest]) {
+			out = append(out, nest+"."+k)
+		}
+	}
+	return out
+}
+
+// bypassArgs returns the keys of a call_method args object, at its top
+// level, that name a bypassKeys argument, as written. Case and surrounding
+// spaces do not hide one. args may be the object or its JSON string, as
+// objectArg takes it. Presence is enough, whatever the value.
+func bypassArgs(args interface{}) []string {
+	m, _ := args.(map[string]interface{})
+	if s, ok := args.(string); ok {
+		_ = json.Unmarshal([]byte(s), &m)
+	}
+	var out []string
+	for k := range m {
+		if contains(bypassKeys, strings.ToLower(strings.TrimSpace(k)), false) {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // doctypeKeys are the argument names Frappe methods use for a DocType.
@@ -330,7 +396,7 @@ func methodNames(method string) []string {
 // runs execute_code) and strips spaces.
 func checkMethodName(method string) error {
 	if method == "" || strings.ContainsAny(method, "/ \t\r\n") || text.Sanitize(method) != method {
-		return fmt.Errorf("policy: method name %q may only contain letters, digits, dots and underscores", method)
+		return fmt.Errorf("policy: method name %q may not be empty or contain slashes, spaces, or control or invisible characters", method)
 	}
 	return nil
 }
@@ -397,6 +463,9 @@ func (p mcpPolicy) check(tool string, sc toolScope) error {
 	if sc.Action == actMethod {
 		if err := checkMethodName(sc.Method); err != nil {
 			return err
+		}
+		if len(sc.Bypass) > 0 {
+			return fmt.Errorf("policy: call_method may not pass %s: it switches off the site's permission checks for the signed-in user, and no setting allows it", strings.Join(sc.Bypass, ", "))
 		}
 		names := methodNames(sc.Method)
 		if anyMatch(docMethods, names) && !anyMatch(docMethodsWithoutDoctype, names) && len(sc.Doctypes) == 0 {

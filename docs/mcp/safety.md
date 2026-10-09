@@ -68,6 +68,7 @@ These apply whatever the config says, unless the config explicitly lists the ite
 - **Denied methods** in `call_method` unless `allow_methods` lists them: the System Console's `execute_code`, `generate_keys` (rotates a user's API keys), and the Frappe Cloud app installer (`frappe.integrations.frappe_providers.*`).
 - `call_method` refuses method names containing `/` or spaces, and a `frappe.client` or form-save call that names no DocType.
 - A comment posted through `call_method` must be authored by the signed-in user.
+- `call_method` refuses a call that passes `ignore_permissions` or `ignore_user_permissions` in `args`, whatever the value (even `false` or `0`). For `run_doc_method` it also looks inside its nested `args` and `arg`. Frappe removes `ignore_permissions` from the arguments of a direct method call, so refusing it is defence in depth (and covers `run_doc_method`, which forwards nested `args` to the document method unfiltered). `ignore_user_permissions` is not removed: it reaches `employee_query`, `search_link` and `search_widget`, where it skips the signed-in user's user permissions. No setting allows either. The CLI (`ffc api`, `ffc call-method`) is you acting with your own credentials and is unchanged.
 
 ### Limits of these checks
 
