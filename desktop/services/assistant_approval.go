@@ -9,6 +9,7 @@ import (
 	"log"
 	"math"
 	"reflect"
+	"regexp"
 	"strconv"
 	"sort"
 	"strings"
@@ -20,6 +21,7 @@ import (
 const (
 	approvalDeclinedResult  = "The user declined this change. Nothing was changed."
 	approvalCancelledResult = "Stopped by the user before this change ran."
+	approvalUnaskedWarning  = "Warning: this change was applied without the confirmation the app expects."
 	approvalConflictHint    = "\nThe document changed after the user was shown this change, so nothing was saved. Read it again with get_doc and tell the user what changed before trying anything else; do not retry on your own."
 )
 
@@ -236,9 +238,17 @@ func (a *activeRun) runWrite(ctx context.Context, e *callEntry) {
 	}
 	// Defense in depth: a call that had to be asked about must not succeed
 	// unless ffc asked and the user said yes.
+	if a.r.afterCall != nil {
+		a.r.afterCall(e)
+	}
 	if e.cls.WillAsk && !e.isErr && a.approvalOf(e) != ApprovalFFCApproved {
+		// The change is done; say so, keep the real result, and end the run.
 		log.Printf("assistant: %s on %s ran without ffc asking for confirmation (run %s)", e.call.Name, a.conv.Site, a.runID)
-		e.result, e.isErr, e.status = "ffc did not ask for confirmation", true, ToolError
+		e.result = approvalUnaskedWarning + "\n" + e.result
+		e.isErr, e.status = true, ToolError
+		a.errMu.Lock()
+		a.violation = "A change to " + a.conv.Site + " (" + e.call.Name + ") was applied without the confirmation the app expects. The assistant was stopped. Check the document before going on."
+		a.errMu.Unlock()
 	}
 	if e.isErr && isConflict(e.result) {
 		e.result += approvalConflictHint
@@ -315,10 +325,26 @@ func sameValue(a, b any) bool {
 	if reflect.DeepEqual(a, b) {
 		return true
 	}
+	// Two strings are never compared as numbers ("0123" is not "123"): at
+	// least one side must be a bool or a JSON number.
+	if !isFlagOrNumber(a) && !isFlagOrNumber(b) {
+		return false
+	}
 	x, okx := asNumber(a)
 	y, oky := asNumber(b)
 	return okx && oky && math.Abs(x-y) < 1e-9
 }
+
+func isFlagOrNumber(v any) bool {
+	switch v.(type) {
+	case bool, float64, int, int64, json.Number:
+		return true
+	}
+	return false
+}
+
+// plainNumber is a string that is only a number: no spaces, no exponent.
+var plainNumber = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
 
 // asNumber reads a bool, number or numeric string as a number.
 func asNumber(v any) (float64, bool) {
@@ -338,9 +364,17 @@ func asNumber(v any) (float64, bool) {
 		f, err := t.Float64()
 		return f, err == nil
 	case string:
-		t = strings.TrimSpace(t)
+		if !plainNumber.MatchString(t) {
+			return 0, false
+		}
 		f, err := strconv.ParseFloat(t, 64)
-		return f, err == nil && t != ""
+		return f, err == nil
 	}
 	return 0, false
+}
+
+func (a *activeRun) violationText() string {
+	a.errMu.Lock()
+	defer a.errMu.Unlock()
+	return a.violation
 }

@@ -555,6 +555,12 @@ export interface ProviderInfo {
      * KeyLast4 is the last four characters of a long enough key.
      */
     "keyLast4"?: string;
+
+    /**
+     * KeyCleared is set by SaveProvider when the stored key was deleted
+     * because the provider's address changed: ask for the key again.
+     */
+    "keyCleared"?: boolean;
 }
 
 /**

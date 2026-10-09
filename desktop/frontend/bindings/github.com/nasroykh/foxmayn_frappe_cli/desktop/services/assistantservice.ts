@@ -115,6 +115,9 @@ export function PendingApprovals(convID: string): $CancellablePromise<$models.Ch
 /**
  * SaveProvider adds or changes a provider. An empty ID takes the kind's name
  * (a custom provider gets a numbered one). The key is set apart, with SetKey.
+ * Anthropic and OpenRouter are pinned to their own hosts. When a provider's
+ * address changes the stored key is deleted in the same step (KeyCleared), so
+ * a key can never be sent to a host the user did not give it to.
  */
 export function SaveProvider(p: $models.ProviderInfo): $CancellablePromise<$models.ProviderInfo> {
     return $Call.ByID(1471689505, p);
@@ -137,9 +140,10 @@ export function SetConversationMode(id: string, mode: string): $CancellablePromi
 }
 
 /**
- * SetKey saves a provider's key in the OS keychain and checks it by listing
- * the provider's models. A key the provider does not accept is not kept: the
- * earlier key, if any, stays.
+ * SetKey checks a key against the provider and saves it in the OS keychain
+ * only when the provider accepts it. A key the provider refuses is CodeAuth;
+ * any other failure to check (timeout, network, server error) is CodeNetwork.
+ * Either way nothing is saved and the earlier key stays.
  */
 export function SetKey(providerID: string, key: string): $CancellablePromise<void> {
     return $Call.ByID(313735678, providerID, key);

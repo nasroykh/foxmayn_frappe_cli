@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm/anthropic"
@@ -52,6 +54,8 @@ const (
 	providerCallTimeout = 20 * time.Second
 	// maxLabelChars bounds a provider's label.
 	maxLabelChars = 80
+	// maxModelChars bounds a model name.
+	maxModelChars = 200
 )
 
 // ProviderInfo is a provider as the UI sees it. It never carries the key.
@@ -65,6 +69,9 @@ type ProviderInfo struct {
 	KeySet       bool   `json:"keySet"`
 	// KeyLast4 is the last four characters of a long enough key.
 	KeyLast4 string `json:"keyLast4,omitempty"`
+	// KeyCleared is set by SaveProvider when the stored key was deleted
+	// because the provider's address changed: ask for the key again.
+	KeyCleared bool `json:"keyCleared,omitempty"`
 }
 
 // Model is one model a provider offers.
@@ -137,6 +144,10 @@ type AssistantService struct {
 	mk         providerMaker
 	detect     func(context.Context) []openaicompat.Preset
 
+	life     sync.RWMutex // held for reading by every call from the web view
+	plocks   sync.Map     // provider id -> *sync.Mutex
+	ctx      context.Context
+	cancel   context.CancelFunc
 	mu       sync.Mutex
 	st       *store.Store
 	engine   *Engine
@@ -183,8 +194,10 @@ func (a *AssistantService) open() error {
 	}
 	eng := NewEngine(a.configPath)
 	r := newRunner(st, eng, a.providerFor, a.host.Emit)
+	ctx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
 	a.st, a.engine, a.run = st, eng, r
+	a.ctx, a.cancel = ctx, cancel
 	a.mu.Unlock()
 	// A changed config (a site added, removed or re-signed-in) makes new runs
 	// build their servers again.
@@ -196,22 +209,42 @@ func (a *AssistantService) open() error {
 	return nil
 }
 
-// ServiceShutdown stops the runs, the engine and the store.
+// ServiceShutdown stops the runs, the engine and the store. Calls that are in
+// flight finish (provider checks are cancelled) before the store closes; later
+// calls fail with CodeUnavailable.
 func (a *AssistantService) ServiceShutdown() error {
 	a.mu.Lock()
-	r, eng, st := a.run, a.engine, a.st
+	r, eng, st, cancel := a.run, a.engine, a.st, a.cancel
 	a.run, a.engine, a.st = nil, nil, nil
 	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if r != nil {
 		r.shutdown()
 	}
 	if eng != nil {
 		eng.Close()
 	}
+	a.life.Lock()
+	defer a.life.Unlock()
 	if st != nil {
 		return st.Close()
 	}
 	return nil
+}
+
+// enter is ready for a call from the web view: it also registers the call as
+// in flight, so ServiceShutdown waits for it before it closes the store. The
+// caller defers the returned func.
+func (a *AssistantService) enter() (*runner, *store.Store, func(), error) {
+	a.life.RLock()
+	r, st, err := a.ready()
+	if err != nil {
+		a.life.RUnlock()
+		return nil, nil, nil, err
+	}
+	return r, st, a.life.RUnlock, nil
 }
 
 // ready returns the runner and the store, or why the assistant is not there.
@@ -231,10 +264,11 @@ func (a *AssistantService) ready() (*runner, *store.Store, error) {
 // Send adds the user's message to a conversation and starts a run. It returns
 // the run's id at once; the answer arrives as chat:* events.
 func (a *AssistantService) Send(convID, text string) (string, error) {
-	r, st, err := a.ready()
+	r, st, done, err := a.enter()
 	if err != nil {
 		return "", err
 	}
+	defer done()
 	if len([]rune(text)) > maxSendChars {
 		return "", invalid("text", "That message is too long.")
 	}
@@ -254,36 +288,40 @@ func (a *AssistantService) Send(convID, text string) (string, error) {
 
 // Cancel stops a run. A card that is open counts as declined.
 func (a *AssistantService) Cancel(runID string) {
-	if r, _, err := a.ready(); err == nil {
+	if r, _, done, err := a.enter(); err == nil {
+		defer done()
 		r.cancelRun(runID)
 	}
 }
 
 // Answer settles an approval card of a conversation.
 func (a *AssistantService) Answer(convID, approvalID string, approve bool) error {
-	r, _, err := a.ready()
+	r, _, done, err := a.enter()
 	if err != nil {
 		return err
 	}
+	defer done()
 	return r.answer(convID, approvalID, approve)
 }
 
 // Continue resumes a paused run with a fresh step budget.
 func (a *AssistantService) Continue(runID string) error {
-	r, _, err := a.ready()
+	r, _, done, err := a.enter()
 	if err != nil {
 		return err
 	}
+	defer done()
 	return r.continueRun(runID)
 }
 
 // PendingApprovals lists the open cards of a conversation, so the UI can show
 // them again after a reload.
 func (a *AssistantService) PendingApprovals(convID string) []ChatApproval {
-	r, _, err := a.ready()
+	r, _, done, err := a.enter()
 	if err != nil {
 		return []ChatApproval{}
 	}
+	defer done()
 	out := r.pendingApprovals(convID)
 	if out == nil {
 		out = []ChatApproval{}
@@ -298,10 +336,11 @@ func toConversation(c store.Conversation) Conversation {
 // NewConversation starts a conversation on a site. mode is "read" (the
 // default) or "ask"; an empty model means the provider's default.
 func (a *AssistantService) NewConversation(site, mode, providerID, model string) (Conversation, error) {
-	_, st, err := a.ready()
+	_, st, done, err := a.enter()
 	if err != nil {
 		return Conversation{}, err
 	}
+	defer done()
 	switch mode {
 	case "":
 		mode = ModeRead
@@ -323,7 +362,10 @@ func (a *AssistantService) NewConversation(site, mode, providerID, model string)
 	if err != nil {
 		return Conversation{}, err
 	}
-	model = strings.TrimSpace(model)
+	model, err = checkModel("model", model)
+	if err != nil {
+		return Conversation{}, err
+	}
 	if model == "" {
 		model = defaultModelOf(p)
 	}
@@ -336,10 +378,11 @@ func (a *AssistantService) NewConversation(site, mode, providerID, model string)
 
 // ListConversations returns every conversation, most recent first.
 func (a *AssistantService) ListConversations() ([]Conversation, error) {
-	_, st, err := a.ready()
+	_, st, done, err := a.enter()
 	if err != nil {
 		return nil, err
 	}
+	defer done()
 	rows, err := st.ListConversations()
 	if err != nil {
 		return nil, wrapStoreErr(err)
@@ -354,10 +397,11 @@ func (a *AssistantService) ListConversations() ([]Conversation, error) {
 // GetConversation returns a conversation with its messages in the shape the
 // chat shows. The model's thinking and its signatures never leave Go.
 func (a *AssistantService) GetConversation(id string) (ConversationDetail, error) {
-	r, st, err := a.ready()
+	r, st, done, err := a.enter()
 	if err != nil {
 		return ConversationDetail{}, err
 	}
+	defer done()
 	c, err := st.GetConversation(id)
 	if err != nil {
 		return ConversationDetail{}, wrapStoreErr(err)
@@ -435,10 +479,11 @@ func chatToolCall(tc store.ToolCall, activeRun string) ChatToolCall {
 // DeleteConversation removes a conversation and everything in it. A
 // conversation with a run in progress cannot be deleted.
 func (a *AssistantService) DeleteConversation(id string) error {
-	r, st, err := a.ready()
+	r, st, done, err := a.enter()
 	if err != nil {
 		return err
 	}
+	defer done()
 	return r.whileIdle(id, func() error {
 		if err := st.DeleteConversation(id); err != nil {
 			return wrapStoreErr(err)
@@ -450,10 +495,11 @@ func (a *AssistantService) DeleteConversation(id string) error {
 // SetConversationMode switches a conversation between "read" (read only) and
 // "ask" (ask before changes). It is refused while a run is active.
 func (a *AssistantService) SetConversationMode(id, mode string) error {
-	r, st, err := a.ready()
+	r, st, done, err := a.enter()
 	if err != nil {
 		return err
 	}
+	defer done()
 	if mode != ModeRead && mode != ModeAsk {
 		return invalid("mode", "Choose \"Read only\" or \"Ask before changes\".")
 	}
@@ -466,6 +512,52 @@ func (a *AssistantService) SetConversationMode(id, mode string) error {
 }
 
 // ---- providers ----
+
+// callCtx bounds a call to a provider; it also ends when the service shuts
+// down.
+func (a *AssistantService) callCtx() (context.Context, context.CancelFunc) {
+	a.mu.Lock()
+	parent := a.ctx
+	a.mu.Unlock()
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(parent, providerCallTimeout)
+}
+
+// lockProvider serialises the changes to one provider (its row and its key).
+func (a *AssistantService) lockProvider(id string) func() {
+	m, _ := a.plocks.LoadOrStore(id, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+// checkModel trims a model name and refuses an overlong one or one with
+// control characters. An empty name is fine.
+func checkModel(field, m string) (string, error) {
+	m = strings.TrimSpace(m)
+	if utf8.RuneCountInString(m) > maxModelChars {
+		return "", invalid(field, "That model name is too long.")
+	}
+	for _, r := range m {
+		if unicode.IsControl(r) {
+			return "", invalid(field, "That model name has characters that are not allowed.")
+		}
+	}
+	return m, nil
+}
+
+// officialBase is the one host a hosted provider talks to ("" for none).
+func officialBase(kind string) string {
+	switch kind {
+	case KindAnthropic:
+		return "https://api.anthropic.com"
+	case KindOpenRouter:
+		return openaicompat.OpenRouter.BaseURL
+	}
+	return ""
+}
 
 func kindLabel(kind string) string {
 	switch kind {
@@ -563,10 +655,11 @@ func (a *AssistantService) provider(st *store.Store, id string) (store.Provider,
 
 // ListProviders returns the saved providers, with whether each has a key.
 func (a *AssistantService) ListProviders() ([]ProviderInfo, error) {
-	_, st, err := a.ready()
+	_, st, done, err := a.enter()
 	if err != nil {
 		return nil, err
 	}
+	defer done()
 	list, err := st.ListProviders()
 	if err != nil {
 		return nil, wrapStoreErr(err)
@@ -580,36 +673,41 @@ func (a *AssistantService) ListProviders() ([]ProviderInfo, error) {
 
 // SaveProvider adds or changes a provider. An empty ID takes the kind's name
 // (a custom provider gets a numbered one). The key is set apart, with SetKey.
+// Anthropic and OpenRouter are pinned to their own hosts. When a provider's
+// address changes the stored key is deleted in the same step (KeyCleared), so
+// a key can never be sent to a host the user did not give it to.
 func (a *AssistantService) SaveProvider(p ProviderInfo) (ProviderInfo, error) {
-	_, st, err := a.ready()
+	_, st, done, err := a.enter()
 	if err != nil {
 		return ProviderInfo{}, err
 	}
+	defer done()
 	if !validKind(p.Kind) {
 		return ProviderInfo{}, invalid("kind", "Choose a provider type.")
-	}
-	existing, err := st.ListProviders()
-	if err != nil {
-		return ProviderInfo{}, wrapStoreErr(err)
-	}
-	byID := map[string]store.Provider{}
-	for _, e := range existing {
-		byID[e.ID] = e
 	}
 	id := strings.TrimSpace(p.ID)
 	if id == "" {
 		id = p.Kind
-		for n := 2; p.Kind == KindCustom; n++ {
-			if _, taken := byID[id]; !taken {
-				break
+		if p.Kind == KindCustom {
+			existing, err := st.ListProviders()
+			if err != nil {
+				return ProviderInfo{}, wrapStoreErr(err)
 			}
-			id = fmt.Sprintf("%s-%d", p.Kind, n)
+			taken := map[string]bool{}
+			for _, e := range existing {
+				taken[e.ID] = true
+			}
+			for n := 2; taken[id]; n++ {
+				id = fmt.Sprintf("%s-%d", p.Kind, n)
+			}
 		}
 	}
 	if err := validProviderID(id); err != nil {
 		return ProviderInfo{}, err
 	}
-	if old, ok := byID[id]; ok && old.Kind != p.Kind {
+	defer a.lockProvider(id)()
+	old, oldErr := a.provider(st, id)
+	if oldErr == nil && old.Kind != p.Kind {
 		return ProviderInfo{}, invalid("kind", "A provider with this name exists with another type.")
 	}
 	label := clip(strings.TrimSpace(p.Label), maxLabelChars)
@@ -617,33 +715,67 @@ func (a *AssistantService) SaveProvider(p ProviderInfo) (ProviderInfo, error) {
 		label = kindLabel(p.Kind)
 	}
 	base := strings.TrimSpace(p.BaseURL)
-	if base == "" {
-		base = kindBaseURL(p.Kind)
-	}
-	if base == "" && p.Kind == KindCustom {
-		return ProviderInfo{}, invalid("baseURL", "Enter the server's address.")
-	}
-	if base != "" {
+	if off := officialBase(p.Kind); off != "" {
+		// A hosted provider has one host; any other address is refused.
+		if base != "" && strings.TrimRight(base, "/") != off {
+			return ProviderInfo{}, invalid("baseURL", "This provider's address cannot be changed.")
+		}
+		base = ""
+		if p.Kind == KindOpenRouter {
+			base = off
+		}
+	} else {
+		if base == "" {
+			base = kindBaseURL(p.Kind)
+		}
+		if base == "" {
+			return ProviderInfo{}, invalid("baseURL", "Enter the server's address.")
+		}
 		if err := checkBaseURL(base); err != nil {
 			return ProviderInfo{}, err
 		}
 	}
-	row := store.Provider{ID: id, Kind: p.Kind, Label: label, BaseURL: base, DefaultModel: strings.TrimSpace(p.DefaultModel)}
-	if row.DefaultModel == "" && row.Kind == KindAnthropic {
-		row.DefaultModel = anthropic.DefaultModel
+	model, err := checkModel("defaultModel", p.DefaultModel)
+	if err != nil {
+		return ProviderInfo{}, err
+	}
+	if model == "" && p.Kind == KindAnthropic {
+		model = anthropic.DefaultModel
+	}
+	row := store.Provider{ID: id, Kind: p.Kind, Label: label, BaseURL: base, DefaultModel: model}
+	cleared := false
+	if oldErr == nil && old.BaseURL != base {
+		if st2, err := a.keys.Status(id); err == nil && st2.Set {
+			if err := a.keys.Delete(id); err != nil {
+				return ProviderInfo{}, err
+			}
+			cleared = true
+		} else if err != nil {
+			// Unknown state: remove whatever is there.
+			if err := a.keys.Delete(id); err != nil {
+				return ProviderInfo{}, err
+			}
+		}
 	}
 	if err := st.UpsertProvider(row); err != nil {
 		return ProviderInfo{}, wrapStoreErr(err)
 	}
-	return a.info(row), nil
+	pi := a.info(row)
+	pi.KeyCleared = cleared
+	return pi, nil
 }
 
 // DeleteProvider removes a provider and its key.
 func (a *AssistantService) DeleteProvider(id string) error {
-	_, st, err := a.ready()
+	_, st, done, err := a.enter()
 	if err != nil {
 		return err
 	}
+	defer done()
+	if err := validProviderID(id); err != nil {
+		return err
+	}
+	defer a.lockProvider(id)()
 	if _, err := a.provider(st, id); err != nil {
 		return err
 	}
@@ -656,14 +788,20 @@ func (a *AssistantService) DeleteProvider(id string) error {
 	return nil
 }
 
-// SetKey saves a provider's key in the OS keychain and checks it by listing
-// the provider's models. A key the provider does not accept is not kept: the
-// earlier key, if any, stays.
+// SetKey checks a key against the provider and saves it in the OS keychain
+// only when the provider accepts it. A key the provider refuses is CodeAuth;
+// any other failure to check (timeout, network, server error) is CodeNetwork.
+// Either way nothing is saved and the earlier key stays.
 func (a *AssistantService) SetKey(providerID, key string) error {
-	_, st, err := a.ready()
+	_, st, done, err := a.enter()
 	if err != nil {
 		return err
 	}
+	defer done()
+	if err := validProviderID(providerID); err != nil {
+		return err
+	}
+	defer a.lockProvider(providerID)()
 	p, err := a.provider(st, providerID)
 	if err != nil {
 		return err
@@ -672,29 +810,28 @@ func (a *AssistantService) SetKey(providerID, key string) error {
 	if key == "" {
 		return invalid("key", "Paste the API key.")
 	}
+	if len(key) > maxKeyBytes {
+		return invalid("key", "That key is too long.")
+	}
 	prov, err := a.mk(p, key)
 	if err != nil {
 		return scrubKey(toServiceError(err), key)
 	}
-	prev, prevErr := a.keys.Get(providerID)
-	if err := a.keys.Set(providerID, key); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), providerCallTimeout)
+	ctx, cancel := a.callCtx()
 	defer cancel()
 	if _, err := prov.Models(ctx); err != nil {
-		if prevErr == nil {
-			_ = a.keys.Set(providerID, prev)
-		} else {
-			_ = a.keys.Delete(providerID)
-		}
-		se := toServiceError(err)
-		if ctx.Err() != nil && !llm.IsAuth(err) {
-			se = newError(CodeNetwork, "The provider did not answer in time.", nil)
+		var se *Error
+		switch {
+		case llm.IsAuth(err):
+			se = newError(CodeAuth, "The provider did not accept the API key.", err)
+		case ctx.Err() != nil:
+			se = newError(CodeNetwork, "The provider did not answer in time. The key was not saved.", nil)
+		default:
+			se = newError(CodeNetwork, "The key could not be checked. It was not saved.", err)
 		}
 		return scrubKey(se, key)
 	}
-	return nil
+	return a.keys.Set(providerID, key)
 }
 
 // scrubKey removes the key from an error's text, whatever it holds.
@@ -707,16 +844,18 @@ func scrubKey(e *Error, key string) *Error {
 
 // KeyStatus says whether a provider has a key, and its last four characters.
 func (a *AssistantService) KeyStatus(providerID string) (KeyStatus, error) {
-	if _, _, err := a.ready(); err != nil {
+	_, _, done, err := a.enter()
+	if err != nil {
 		return KeyStatus{}, err
 	}
+	defer done()
 	return a.keys.Status(providerID)
 }
 
 // DetectLocal looks for Ollama and LM Studio on this computer. It saves
 // nothing: SaveProvider adds one.
 func (a *AssistantService) DetectLocal() []ProviderInfo {
-	ctx, cancel := context.WithTimeout(context.Background(), providerCallTimeout)
+	ctx, cancel := a.callCtx()
 	defer cancel()
 	out := []ProviderInfo{}
 	for _, p := range a.detect(ctx) {
@@ -727,10 +866,11 @@ func (a *AssistantService) DetectLocal() []ProviderInfo {
 
 // ListModels lists the models a provider offers.
 func (a *AssistantService) ListModels(providerID string) ([]Model, error) {
-	_, st, err := a.ready()
+	_, st, done, err := a.enter()
 	if err != nil {
 		return nil, err
 	}
+	defer done()
 	p, err := a.provider(st, providerID)
 	if err != nil {
 		return nil, err
@@ -743,7 +883,7 @@ func (a *AssistantService) ListModels(providerID string) ([]Model, error) {
 	if err != nil {
 		return nil, scrubKey(toServiceError(err), key)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), providerCallTimeout)
+	ctx, cancel := a.callCtx()
 	defer cancel()
 	list, err := prov.Models(ctx)
 	if err != nil {
@@ -807,11 +947,8 @@ func (a *AssistantService) providerFor(conv store.Conversation) (llm.Provider, s
 func makeProvider(p store.Provider, key string) (llm.Provider, error) {
 	switch p.Kind {
 	case KindAnthropic:
-		var opts []anthropic.Option
-		if p.BaseURL != "" {
-			opts = append(opts, anthropic.WithBaseURL(p.BaseURL))
-		}
-		return anthropic.New(key, opts...), nil
+		// Pinned to the official host: a stored address is never used.
+		return anthropic.New(key), nil
 	case KindOpenRouter, KindOllama, KindLMStudio, KindCustom:
 		preset := openaicompat.Custom(p.BaseURL)
 		switch p.Kind {
@@ -822,7 +959,8 @@ func makeProvider(p store.Provider, key string) (llm.Provider, error) {
 		case KindLMStudio:
 			preset = openaicompat.LMStudio
 		}
-		if p.BaseURL != "" {
+		// OpenRouter is pinned to its own host too.
+		if p.Kind != KindOpenRouter && p.BaseURL != "" {
 			preset.BaseURL = p.BaseURL
 		}
 		return openaicompat.New(preset, key), nil

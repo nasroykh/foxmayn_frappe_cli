@@ -62,6 +62,10 @@ type runner struct {
 	mu     sync.Mutex
 	closed bool
 	active map[string]*activeRun // by run id
+
+	// afterCall, when set, runs after a write call returns and before the
+	// confirmation check. Tests use it to stage a call ffc did not ask about.
+	afterCall func(e *callEntry)
 }
 
 // activeRun is one run in flight.
@@ -79,8 +83,9 @@ type activeRun struct {
 	askMu  sync.Mutex
 	asking *callEntry // the call ffc may ask about
 
-	errMu    sync.Mutex
-	storeErr error // the first store failure while running tools
+	errMu     sync.Mutex
+	storeErr  error // the first store failure while running tools
+	violation string // set when a change ran without the confirmation ffc owed
 }
 
 func newRunner(s *store.Store, e *Engine, p providerFunc, emit func(string, any)) *runner {
@@ -156,6 +161,9 @@ func (r *runner) activeRunOf(convID string) string {
 // continueRun resumes a paused run with a fresh step and turn budget. Of two
 // concurrent calls only one wins.
 func (r *runner) continueRun(runID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// Read under the lock, so a mode change made while paused is seen.
 	run, err := r.store.GetRun(runID)
 	if err != nil {
 		return wrapStoreErr(err)
@@ -164,8 +172,6 @@ func (r *runner) continueRun(runID string) error {
 	if err != nil {
 		return wrapStoreErr(err)
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if err := r.admit(run.ConvID); err != nil {
 		return err
 	}
@@ -397,6 +403,9 @@ func (a *activeRun) loop(ctx context.Context) outcome {
 			_, aerr := a.appendMessage(llm.RoleUser, results)
 			if xerr != nil {
 				return outcome{status: RunError, err: xerr}
+			}
+			if v := a.violationText(); v != "" {
+				return outcome{status: RunError, err: &Error{Code: CodeFailed, Message: v}}
 			}
 			if aerr != nil {
 				return outcome{status: RunError, err: aerr}
