@@ -128,3 +128,11 @@
     @apply font-sans;
     }
 }
+/* Base UI would inject this as a <style> tag; the CSP forbids inline styles, so
+   main.tsx turns that off (CSPProvider disableStyleElements) and it lives here. */
+.base-ui-disable-scrollbar {
+  scrollbar-width: none;
+}
+.base-ui-disable-scrollbar::-webkit-scrollbar {
+  display: none;
+}
