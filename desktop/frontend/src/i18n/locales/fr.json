@@ -342,6 +342,17 @@
         "p3": "Quel est le statut de la Sales Invoice … ?",
         "p4": "Liste les DocTypes du module Selling."
       }
+    },
+    "message": {
+      "copy": "Copier",
+      "copied": "Copié",
+      "edit": "Modifier",
+      "delete": "Supprimer",
+      "retry": "Réessayer",
+      "editTitle": "Modifier ce message ?",
+      "editBody": "Les réponses qui le suivent sont retirées de la conversation, et le message revient dans la zone ci-dessous pour que vous puissiez le changer et l’envoyer à nouveau.",
+      "deleteTitle": "Supprimer ce message et sa réponse ?",
+      "deleteBody": "Ils sont retirés de cette conversation. Ce qu’ils ont coûté reste compté dans le total de la conversation."
     }
   },
   "onboarding": {
@@ -572,7 +583,11 @@
       "modelStopped": "Le modèle s’est arrêté sans répondre : {{reason}}.",
       "providerError": "Le fournisseur d’IA a renvoyé une erreur.",
       "failed": "L’Assistant s’est arrêté à cause d’une erreur.",
-      "approvalGone": "Cette demande a déjà reçu une réponse ou est terminée."
+      "approvalGone": "Cette demande a déjà reçu une réponse ou est terminée.",
+      "messageGone": "Ce message ne fait plus partie de la conversation.",
+      "notAPrompt": "Seuls vos propres messages peuvent être modifiés ou supprimés.",
+      "importedPrompt": "Un message issu d’un fichier importé ne peut pas être modifié ni relancé.",
+      "nothingToRetry": "Il n’y a aucun message à relancer."
     },
     "apps": {
       "unknown": "App inconnue.",

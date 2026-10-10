@@ -60,6 +60,18 @@ export const states: State[] = [
       await expect(page.locator("[data-slot=approval-card]").first()).toBeVisible({ timeout: 10_000 })
     },
   },
+  {
+    name: "chat-message-actions",
+    reach: async (page) => {
+      await newConversation(page)
+      await dialog(page).locator("button[type=submit], [data-slot=button]").last().click()
+      await page.locator("#chat-input").fill("What is TD-0001?")
+      await page.locator("#chat-input").press("Enter")
+      // The stored conversation (with footers) is back once the run ends.
+      await expect(page.locator("[data-slot=message-footer]").last()).toBeAttached({ timeout: 10_000 })
+      await page.locator("[data-slot=message-footer]").first().locator("..").hover()
+    },
+  },
   { name: "connect-apps", reach: (page) => goTo(page, "apps") },
   {
     name: "connect-dialog",

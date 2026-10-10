@@ -340,6 +340,17 @@
         "p3": "What is the status of Sales Invoice …?",
         "p4": "List the DocTypes of the Selling module."
       }
+    },
+    "message": {
+      "copy": "Copy",
+      "copied": "Copied",
+      "edit": "Edit",
+      "delete": "Delete",
+      "retry": "Try again",
+      "editTitle": "Edit this message?",
+      "editBody": "The answers after it are removed from the conversation, and the message goes back to the box below so you can change it and send it again.",
+      "deleteTitle": "Delete this message and its answer?",
+      "deleteBody": "They are removed from this conversation. What they cost still counts in the conversation's total."
     }
   },
   "onboarding": {
@@ -567,7 +578,11 @@
       "modelStopped": "The model stopped without an answer: {{reason}}.",
       "providerError": "The AI provider returned an error.",
       "failed": "The assistant stopped because of an error.",
-      "approvalGone": "This request was already answered or has ended."
+      "approvalGone": "This request was already answered or has ended.",
+      "messageGone": "That message is no longer in the conversation.",
+      "notAPrompt": "Only your own messages can be edited or deleted.",
+      "importedPrompt": "A message from an imported file cannot be edited or run again.",
+      "nothingToRetry": "There is no message to run again."
     },
     "apps": {
       "unknown": "Unknown app.",

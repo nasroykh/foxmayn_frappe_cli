@@ -193,6 +193,15 @@ Conversations are stored on this computer only, in `assistant.db` (a SQLite file
 
 Delete a conversation from the list to remove it. Provider names and addresses are stored there too, never keys.
 
+Each message shows its time, and each answer its tokens and cost, when the pointer is over it or the focus is inside it (Tab reaches its buttons):
+
+- **Copy** puts the message's text on the clipboard.
+- **Edit** (your messages) takes the message and everything after it out of the conversation and puts its text and files back in the message box, to change and send again. It asks first when answers would be removed.
+- **Delete** (your messages) removes the message and its answer, after a question.
+- **Try again** (the last answer) removes that answer and runs your last message again. A change it makes is asked for again, like any change.
+
+None of them is available while the assistant is answering. What removed messages cost still counts in the conversation's total. A message from an imported file can be deleted but not edited or run again (it is not your own text).
+
 - **Search.** The box above the list (Ctrl+Shift+F, Cmd+Shift+F on macOS) searches the conversation titles and messages as you type ("invoi" finds "invoices"), one result per conversation with its best matching message highlighted. The filters (site, profile, date) narrow the list itself when nothing is typed; with text, a date filter applies to the matching message. It can search the archive instead of the other conversations.
 - **List width.** Drag the list's edge, or focus it and use the arrow keys, to make it wider or narrower; a double click gives the default width back.
 - **Pin and archive.** **Pin to the top** keeps a conversation first in the list. **Archive** moves it out of the list without deleting it; **Move out of the archive** brings it back.

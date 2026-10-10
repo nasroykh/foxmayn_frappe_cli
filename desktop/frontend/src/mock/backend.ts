@@ -400,6 +400,15 @@ function findConv(id: string) {
   return c
 }
 
+/** The prompt msgID's index and the next prompt's (as the service's exchange). */
+function exchangeOf(c: MockConv, msgID: string): [number, number] {
+  const start = c.messages.findIndex((m) => m.id === msgID)
+  if (start < 0) fail("not_found", "That message is no longer in the conversation.")
+  if (c.messages[start].role !== "user") fail("invalid", "Only your own messages can be edited or deleted.")
+  const next = c.messages.findIndex((m, i) => i > start && m.role === "user")
+  return [start, next < 0 ? c.messages.length : next]
+}
+
 function activeRun(convID: string) {
   for (const r of runs.values()) if (r.convID === convID) return r
   return undefined
@@ -1125,6 +1134,39 @@ export const backend: Backend = {
     runs.set(run.id, run)
     void script(run, c, text)
     return run.id
+  },
+  async deleteExchange(convID, msgID) {
+    const c = findConv(convID)
+    await wait(80)
+    if (activeRun(convID)) fail("invalid", "The assistant is still answering in this conversation. Stop it first.")
+    const [start, end] = exchangeOf(c, msgID)
+    c.messages.splice(start, end - start)
+    c.pausedRunID = ""
+  },
+  async retry(convID) {
+    const c = findConv(convID)
+    await wait(80)
+    if (activeRun(convID)) fail("invalid", "The assistant is still answering in this conversation.")
+    const last = c.messages.map((m) => m.role).lastIndexOf("user")
+    if (last < 0) fail("invalid", "There is no message to run again.")
+    c.messages.splice(last + 1)
+    c.pausedRunID = ""
+    const run: MockRun = { id: newID("run"), convID, cancelled: false }
+    runs.set(run.id, run)
+    void script(run, c, c.messages[last].text)
+    return run.id
+  },
+  async rewind(convID, msgID) {
+    const c = findConv(convID)
+    await wait(80)
+    if (activeRun(convID)) fail("invalid", "The assistant is still answering in this conversation. Stop it first.")
+    const [start] = exchangeOf(c, msgID)
+    const m = c.messages[start]
+    c.messages.splice(start)
+    c.pausedRunID = ""
+    const list = [...stagedOf(convID), ...(m.attachments ?? [])]
+    staged.set(convID, list)
+    return { text: m.text, attachments: [...list] }
   },
   async addAttachment(convID) {
     findConv(convID)

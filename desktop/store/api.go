@@ -306,6 +306,42 @@ func (s *Store) DeleteMessage(id string) error {
 	return nil
 }
 
+// DeleteMessages removes messages of one conversation in one transaction,
+// with their search entries. Their attachments are deleted too, except those
+// of restageID (one of ids, or ""), which go back to staged for the next
+// message (an edited prompt keeps its files). ErrNotFound when an id is not a
+// message of convID; nothing is deleted then.
+func (s *Store) DeleteMessages(convID string, ids []string, restageID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("delete messages: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, id := range ids {
+		var n int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM messages WHERE id=? AND conv_id=?`, id, convID).Scan(&n); err != nil {
+			return fmt.Errorf("delete messages: %w", err)
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		q := `DELETE FROM attachments WHERE msg_id=?`
+		if id == restageID {
+			q = `UPDATE attachments SET msg_id=NULL WHERE msg_id=?`
+		}
+		if _, err := tx.Exec(q, id); err != nil {
+			return fmt.Errorf("delete messages: %w", err)
+		}
+		if err := execOne("delete messages", tx, `DELETE FROM messages WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete messages: %w", err)
+	}
+	return nil
+}
+
 func scanMessages(rows *sql.Rows, what string) ([]Message, error) {
 	defer rows.Close()
 	var out []Message
