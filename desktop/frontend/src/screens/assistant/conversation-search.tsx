@@ -76,7 +76,12 @@ export function ConversationSearch({
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // e.code: the physical F key, whatever the keyboard layout.
-      if (e.code === "KeyF" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
+      if (
+        e.code === "KeyF" &&
+        e.shiftKey &&
+        (e.ctrlKey || e.metaKey) &&
+        !document.querySelector('[role="dialog"], [role="alertdialog"]')
+      ) {
         e.preventDefault()
         inputRef.current?.focus()
         inputRef.current?.select()

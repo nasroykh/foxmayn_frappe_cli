@@ -73,6 +73,21 @@ describe("app shortcuts", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Settings" })).toBeTruthy()
   }, 15000)
 
+  it("toggles the sidebar on Ctrl+B by physical key, not behind a dialog", async () => {
+    renderApp()
+    await screen.findAllByText("Sites")
+    const state = () => document.querySelector('[data-slot="sidebar"]')?.getAttribute("data-state")
+    expect(state()).toBe("expanded")
+    // An Arabic layout: key is that layout's letter, code is still KeyB.
+    fireEvent.keyDown(window, { key: "لا", code: "KeyB", ctrlKey: true })
+    await waitFor(() => expect(state()).toBe("collapsed"))
+    fireEvent.keyDown(window, { key: "/", code: "Slash", ctrlKey: true })
+    await screen.findByRole("dialog", { name: "Keyboard shortcuts" })
+    fireEvent.keyDown(window, { key: "b", code: "KeyB", ctrlKey: true })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(state()).toBe("collapsed")
+  }, 15000)
+
   it("ignores Ctrl+N and Ctrl+, while a dialog is open", async () => {
     renderApp()
     await screen.findAllByText("Sites")
