@@ -117,13 +117,21 @@ jobs:
           grep -q "\"file_version\": \"$CORE.0\"" build/windows/info.json
           grep -q "INFO_PRODUCTVERSION \"$CORE\"" build/windows/nsis/wails_tools.nsh
 
-      # windows-latest may or may not ship NSIS.
+      # windows-latest may or may not ship NSIS. Without it, the portable
+      # NSIS zip from SourceForge, pinned by SHA-256 (Chocolatey's feed was
+      # down for hours on 2026-10-10 and failed the build).
       - name: Ensure makensis
+        env:
+          NSIS_URL: https://downloads.sourceforge.net/project/nsis/NSIS%203/3.11/nsis-3.11.zip
+          NSIS_SHA256: c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1
         run: |
           if ! command -v makensis >/dev/null 2>&1; then
-            choco install nsis --version=3.11 -y --no-progress
-            echo 'C:\Program Files (x86)\NSIS' >> "$GITHUB_PATH"
-            export PATH="$PATH:/c/Program Files (x86)/NSIS"
+            tmp=$(cygpath -u "$RUNNER_TEMP")
+            curl -fsSL --retry 4 --retry-all-errors -o "$tmp/nsis.zip" "$NSIS_URL"
+            echo "$NSIS_SHA256  $tmp/nsis.zip" | sha256sum -c -
+            unzip -q "$tmp/nsis.zip" -d "$tmp"
+            cygpath -w "$tmp/nsis-3.11" >> "$GITHUB_PATH"
+            export PATH="$PATH:$tmp/nsis-3.11"
           fi
           command -v makensis
           makensis -VERSION
