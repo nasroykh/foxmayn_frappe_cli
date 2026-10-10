@@ -1,6 +1,9 @@
 package services
 
 import (
+	"strconv"
+
+	"github.com/nasroykh/foxmayn_frappe_cli/desktop/attach"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/store"
 )
@@ -96,9 +99,11 @@ func (a *AssistantService) DeleteExchange(convID, msgID string) error {
 		if err != nil {
 			return err
 		}
-		// A paused run belongs to the answer being removed.
-		if err := st.AbandonPausedRuns(convID); err != nil {
-			return wrapStoreErr(err)
+		// A paused run belongs to the last answer: close it when that goes.
+		if end == len(rows) {
+			if err := st.AbandonPausedRuns(convID); err != nil {
+				return wrapStoreErr(err)
+			}
 		}
 		if err := st.DeleteMessages(convID, messageIDs(rows[start:end]), ""); err != nil {
 			return wrapStoreErr(err)
@@ -139,13 +144,26 @@ func (a *AssistantService) Rewind(convID, msgID string) (EditResult, error) {
 				out.Text += t.Text
 			}
 		}
+		// The prompt's files join those already staged: refuse before
+		// anything is removed when together they would be too many to send.
+		staged, err := st.StagedAttachments(convID)
+		if err != nil {
+			return wrapStoreErr(err)
+		}
+		own, err := st.MessageAttachments(convID)
+		if err != nil {
+			return wrapStoreErr(err)
+		}
+		if len(staged)+len(own[msgID]) > attach.MaxPerMessage {
+			return keyed(CodeInvalid, "chat.tooManyToEdit", nil, "max", strconv.Itoa(attach.MaxPerMessage))
+		}
 		if err := st.AbandonPausedRuns(convID); err != nil {
 			return wrapStoreErr(err)
 		}
 		if err := st.DeleteMessages(convID, messageIDs(rows[start:]), msgID); err != nil {
 			return wrapStoreErr(err)
 		}
-		staged, err := st.StagedAttachments(convID)
+		staged, err = st.StagedAttachments(convID)
 		if err != nil {
 			return wrapStoreErr(err)
 		}

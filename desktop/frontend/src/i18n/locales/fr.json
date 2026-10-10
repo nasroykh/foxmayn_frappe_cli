@@ -350,7 +350,7 @@
       "delete": "Supprimer",
       "retry": "Réessayer",
       "editTitle": "Modifier ce message ?",
-      "editBody": "Les réponses qui le suivent sont retirées de la conversation, et le message revient dans la zone ci-dessous pour que vous puissiez le changer et l’envoyer à nouveau.",
+      "editBody": "Tout ce qui le suit est retiré de la conversation, y compris les messages suivants et leurs fichiers, et le message revient dans la zone ci-dessous pour que vous puissiez le changer et l’envoyer à nouveau.",
       "deleteTitle": "Supprimer ce message et sa réponse ?",
       "deleteBody": "Ils sont retirés de cette conversation. Ce qu’ils ont coûté reste compté dans le total de la conversation."
     }
@@ -587,7 +587,8 @@
       "messageGone": "Ce message ne fait plus partie de la conversation.",
       "notAPrompt": "Seuls vos propres messages peuvent être modifiés ou supprimés.",
       "importedPrompt": "Un message issu d’un fichier importé ne peut pas être modifié ni relancé.",
-      "nothingToRetry": "Il n’y a aucun message à relancer."
+      "nothingToRetry": "Il n’y a aucun message à relancer.",
+      "tooManyToEdit": "Retirez d’abord des fichiers de la zone de message : avec ceux de ce message, il y en aurait plus de {{max}}."
     },
     "apps": {
       "unknown": "App inconnue.",

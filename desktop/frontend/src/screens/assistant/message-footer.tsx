@@ -41,6 +41,7 @@ export function MessageFooter({
   usage,
   busy,
   canRetry,
+  canEdit = true,
   onEdit,
   onDelete,
   onRetry,
@@ -49,8 +50,10 @@ export function MessageFooter({
   usage?: UsageTotals
   /** A run is active: nothing may change the conversation. */
   busy: boolean
-  /** The last answer of the conversation. */
+  /** The last message, after the user's own last prompt. */
   canRetry: boolean
+  /** Not from an imported file. */
+  canEdit?: boolean
   onEdit: () => void
   onDelete: () => void
   onRetry: () => void
@@ -81,7 +84,7 @@ export function MessageFooter({
             {copied ? <IconCheck /> : <IconCopy />}
           </Action>
         )}
-        {user && (
+        {user && canEdit && (
           <Action label={t("chat.message.edit")} onClick={onEdit} disabled={busy}>
             <IconPencil />
           </Action>
@@ -91,7 +94,7 @@ export function MessageFooter({
             <IconTrash />
           </Action>
         )}
-        {!user && canRetry && (
+        {canRetry && (
           <Action label={t("chat.message.retry")} onClick={onRetry} disabled={busy}>
             <IconRefresh />
           </Action>

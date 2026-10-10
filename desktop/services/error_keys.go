@@ -44,6 +44,7 @@ var errorKeys = map[string]string{
 	"chat.notAPrompt":     "Only your own messages can be edited or deleted.",
 	"chat.importedPrompt": "A message from an imported file cannot be edited or run again.",
 	"chat.nothingToRetry": "There is no message to run again.",
+	"chat.tooManyToEdit":  "Remove some files from the message box first: with this message's files there would be more than {{max}}.",
 
 	"apps.unknown":            "Unknown app.",
 	"apps.ffcMissing":         "Install ffc first: apps reach your sites through it.",

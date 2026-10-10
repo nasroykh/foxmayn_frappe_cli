@@ -348,7 +348,7 @@
       "delete": "Delete",
       "retry": "Try again",
       "editTitle": "Edit this message?",
-      "editBody": "The answers after it are removed from the conversation, and the message goes back to the box below so you can change it and send it again.",
+      "editBody": "Everything after it is removed from the conversation, later messages and their files included, and the message goes back to the box below so you can change it and send it again.",
       "deleteTitle": "Delete this message and its answer?",
       "deleteBody": "They are removed from this conversation. What they cost still counts in the conversation's total."
     }
@@ -582,7 +582,8 @@
       "messageGone": "That message is no longer in the conversation.",
       "notAPrompt": "Only your own messages can be edited or deleted.",
       "importedPrompt": "A message from an imported file cannot be edited or run again.",
-      "nothingToRetry": "There is no message to run again."
+      "nothingToRetry": "There is no message to run again.",
+      "tooManyToEdit": "Remove some files from the message box first: with this message's files there would be more than {{max}}."
     },
     "apps": {
       "unknown": "Unknown app.",

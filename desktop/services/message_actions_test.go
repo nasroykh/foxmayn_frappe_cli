@@ -130,3 +130,46 @@ func TestMessageActionsRefuseImportedPrompts(t *testing.T) {
 		t.Errorf("retry empty: %v", err)
 	}
 }
+
+// Edit refuses, before removing anything, when the prompt's files and those
+// already staged would be more than a message may carry; otherwise the
+// prompt's files are staged again.
+func TestRewindStagedLimit(t *testing.T) {
+	g := newAssistantRig(t)
+	c := g.conv(t, ModeRead)
+	_, st, done, err := g.a.enter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The store stays open; the service's lock is not held across its calls.
+	done()
+	stage := func(name string) store.Attachment {
+		a, err := st.AddAttachment(store.Attachment{ConvID: c.ID, Name: name, Mime: "text/plain", SHA256: name, Text: name}, nil, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	a1, a2 := stage("1.txt"), stage("2.txt")
+	m, err := st.AppendUserMessage(c.ID, "user", `[{"type":"text","text":"with files"}]`, []string{a1.ID, a2.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"3.txt", "4.txt", "5.txt", "6.txt"} {
+		stage(n)
+	}
+	if _, err := g.a.Rewind(c.ID, m.ID); errorCode(t, err) != CodeInvalid {
+		t.Fatalf("over the limit: %v", err)
+	}
+	if msgs, _ := st.ListMessages(c.ID); len(msgs) != 1 {
+		t.Fatalf("a refused edit removed messages: %d left", len(msgs))
+	}
+	staged, _ := st.StagedAttachments(c.ID)
+	if err := st.DeleteStagedAttachment(c.ID, staged[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := g.a.Rewind(c.ID, m.ID)
+	if err != nil || got.Text != "with files" || len(got.Attachments) != 5 {
+		t.Fatalf("rewind: %+v, %v", got, err)
+	}
+}

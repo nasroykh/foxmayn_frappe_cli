@@ -56,6 +56,11 @@ import { chatReducer, initialState } from "@/screens/assistant/chat-reducer"
 import { MessageFooter } from "@/screens/assistant/message-footer"
 import { ProfilePicker } from "@/screens/assistant/profile-picker"
 
+/** A message from an imported file (its id says so): never edited or run again. */
+function isImported(id: string) {
+  return id.startsWith("imp_")
+}
+
 function notify(err: unknown) {
   const e = appError(err)
   toast.add({ title: errorTitle(e), description: e.message, type: "error" })
@@ -335,7 +340,8 @@ export function ChatPane({
     setActing(true)
     try {
       const r = await backend.rewind(convID, m.id)
-      setDraft(r.text)
+      // Text not sent yet stays, after the message being edited.
+      setDraft((d) => (d.trim() ? `${r.text}\n\n${d}` : r.text))
       setStaged(r.attachments)
       await load()
       onChangedRef.current()
@@ -343,7 +349,7 @@ export function ChatPane({
         const el = inputRef.current
         if (!el) return
         el.focus()
-        el.setSelectionRange(r.text.length, r.text.length)
+        el.setSelectionRange(el.value.length, el.value.length)
       })
     } catch (err) {
       notify(err)
@@ -448,11 +454,12 @@ export function ChatPane({
 
   const provider = providers.find((p) => p.id === conv.providerID)
   const usageOf = new Map(runUsage.map((u) => [u.msgID, u.usage]))
-  // Retry belongs to the last answer, and only when a prompt comes before it.
+  // Try again sits on the last message: the last answer, or a last prompt
+  // left without one (a failed or stopped run), when a prompt of the user's
+  // own (not imported) leads to it.
+  const lastPrompt = messages ? messages.map((x) => x.role).lastIndexOf("user") : -1
   const lastAnswer =
-    messages && messages.length > 0 && messages[messages.length - 1].role === "assistant" && messages.some((x) => x.role === "user")
-      ? messages.length - 1
-      : -1
+    messages && lastPrompt >= 0 && !isImported(messages[lastPrompt].id) ? messages.length - 1 : -1
   // The stored total plus the model turns of the run in progress (a reload resets those).
   const shownTotal = active ? mergeTotals(total, state.usage) : total
 
@@ -591,7 +598,8 @@ export function ChatPane({
                 m={m}
                 usage={usageOf.get(m.id)}
                 busy={active || acting}
-                canRetry={m.role === "assistant" && i === lastAnswer && !active}
+                canRetry={i === lastAnswer && !active}
+                canEdit={!isImported(m.id)}
                 onEdit={() => {
                   // Nothing after it: no answer is lost, so no question.
                   if (i === messages.length - 1) void editMessage(m)
