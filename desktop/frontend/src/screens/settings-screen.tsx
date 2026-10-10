@@ -32,7 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { backend } from "@/lib/backend"
-import type { UpdateInfo } from "@/lib/backend-types"
+import type { FFCUpdate, UpdateInfo } from "@/lib/backend-types"
 import { intlLocale } from "@/i18n"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 import { ProfileSettings } from "@/screens/assistant/profile-settings"
@@ -163,7 +163,28 @@ function FFCTab() {
   const { t } = useTranslation()
   const { env, reloadEnv, reloadAssistants, installFFC, ffcUpdate } = useApp()
   const [refreshing, setRefreshing] = React.useState(false)
+  const [checking, setChecking] = React.useState(false)
+  const [checked, setChecked] = React.useState<FFCCheck | null>(null)
   const ffc = env.data?.ffc
+  // A result is about the ffc it checked; an install or "Look again" may
+  // change it, and a check still running then answers for the old one.
+  const checkedFor = `${ffc?.path}\n${ffc?.version}`
+  const current = React.useRef(checkedFor)
+  current.current = checkedFor
+  React.useEffect(() => setChecked(null), [checkedFor])
+
+  async function checkFFC() {
+    const asked = checkedFor
+    setChecking(true)
+    try {
+      const info = await backend.checkFFCUpdate()
+      if (asked === current.current) setChecked({ kind: "done", info })
+    } catch (err) {
+      if (asked === current.current) setChecked({ kind: "error", error: appError(err) })
+    } finally {
+      setChecking(false)
+    }
+  }
 
   async function refresh() {
     setRefreshing(true)
@@ -227,12 +248,18 @@ function FFCTab() {
                   </AlertDescription>
                 </Alert>
               )}
-              {ffcUpdate && (
-                <Alert>
-                  <IconArrowUpCircle />
-                  <AlertTitle>{t("shell.update.ffcTitle", { version: ffcUpdate.latest })}</AlertTitle>
-                  <AlertDescription>{t("settings.ffc.updateBody")}</AlertDescription>
-                </Alert>
+              {checked ? (
+                <div aria-live="polite">
+                  <FFCCheckResult result={checked} updatable={ffc.updatable} onUpdate={installFFC} />
+                </div>
+              ) : (
+                ffcUpdate && (
+                  <Alert>
+                    <IconArrowUpCircle />
+                    <AlertTitle>{t("shell.update.ffcTitle", { version: ffcUpdate.latest })}</AlertTitle>
+                    <AlertDescription>{t("settings.ffc.updateBody")}</AlertDescription>
+                  </Alert>
+                )
               )}
               <p className="text-muted-foreground text-sm">
                 <Trans
@@ -267,6 +294,12 @@ function FFCTab() {
               </Button>
             )
           )}
+          {ok && (
+            <Button variant="outline" onClick={() => void checkFFC()} disabled={checking} data-testid="ffc-check">
+              {checking ? <Spinner data-icon="inline-start" /> : <IconArrowUpCircle data-icon="inline-start" />}
+              {t("settings.ffc.checkUpdates")}
+            </Button>
+          )}
           <Button variant="outline" onClick={refresh} disabled={refreshing}>
             {refreshing ? <Spinner data-icon="inline-start" /> : <IconRefresh data-icon="inline-start" />}
             {t("settings.ffc.lookAgain")}
@@ -280,6 +313,68 @@ function FFCTab() {
         </CardFooter>
       </Card>
     </div>
+  )
+}
+
+type FFCCheck = { kind: "done"; info: FFCUpdate } | { kind: "error"; error: AppError }
+
+/** What the ffc tab's check found, and how to update when it can. */
+function FFCCheckResult({ result, updatable, onUpdate }: { result: FFCCheck; updatable: boolean; onUpdate: () => void }) {
+  const { t } = useTranslation()
+  if (result.kind === "error") {
+    return (
+      <Alert variant="destructive">
+        <IconAlertTriangle />
+        <AlertTitle>{errorTitle(result.error)}</AlertTitle>
+        <AlertDescription>{result.error.message}</AlertDescription>
+      </Alert>
+    )
+  }
+  const u = result.info
+  if (!u.latest) {
+    // A release build with no ffc release in GitHub's list, or a build that
+    // is not a release (CheckFFCUpdate then fetches nothing).
+    const release = /^v?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(u.current) && !/dev/.test(u.current)
+    return (
+      <Alert>
+        <IconAlertTriangle />
+        <AlertDescription>{release ? t("settings.ffc.noRelease") : t("settings.ffc.notCompared")}</AlertDescription>
+      </Alert>
+    )
+  }
+  if (!u.available) {
+    return (
+      <Alert>
+        <IconCircleCheck />
+        <AlertTitle>{t("settings.ffc.upToDate", { version: u.current })}</AlertTitle>
+      </Alert>
+    )
+  }
+  // The app replaces only an ffc it may; a package manager's copy, or one it
+  // would not overwrite, is updated by its own command.
+  const command = u.command || (updatable ? "" : "ffc update")
+  return (
+    <Alert>
+      <IconArrowUpCircle />
+      <AlertTitle>{t("shell.update.ffcTitle", { version: u.latest })}</AlertTitle>
+      <AlertDescription className="flex flex-col gap-2">
+        {command ? (
+          <>
+            <span>{u.manager ? t("settings.ffc.updateWithManager", { manager: u.manager }) : t("settings.ffc.updateWithCommand")}</span>
+            <CopyField value={command} label={t("settings.ffc.updateCommand")} copiedTitle={t("shell.update.commandCopied")} />
+          </>
+        ) : (
+          <span>{t("settings.ffc.updateBody")}</span>
+        )}
+      </AlertDescription>
+      {!command && (
+        <AlertAction>
+          <Button size="sm" onClick={onUpdate}>
+            {t("settings.ffc.updateTo", { version: u.latest })}
+          </Button>
+        </AlertAction>
+      )}
+    </Alert>
   )
 }
 

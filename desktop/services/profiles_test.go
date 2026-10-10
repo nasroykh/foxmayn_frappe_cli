@@ -299,14 +299,22 @@ func TestLoopToolResultsStoredWrapped(t *testing.T) {
 // System text order: base rules, ffc instructions, site context, profile
 // instructions, site instructions.
 func TestSystemTextOrder(t *testing.T) {
-	got := systemText("prod", "FFC", "CTX", Profile{Instructions: "PROF"}, "SITE")
+	got := systemText("prod", "FFC", "CTX", Profile{Name: "Accounts helper", Instructions: "PROF"}, ModeAsk, "SITE")
 	idx := func(s string) int { return strings.Index(got, s) }
 	base := idx("You are the Foxmayn Frappe assistant")
-	if !(base == 0 && base < idx("FFC") && idx("FFC") < idx("CTX") && idx("CTX") < idx("PROF") && idx("PROF") < idx("SITE")) {
+	role := idx(`"Accounts helper"`)
+	if !(base == 0 && base < role && role < idx("FFC") && idx("FFC") < idx("CTX") && idx("CTX") < idx("PROF") && idx("PROF") < idx("SITE")) {
 		t.Errorf("order wrong:\n%s", got)
 	}
-	if bare := systemText("prod", "", "", Profile{}, ""); strings.Contains(bare, "\n\n\n") || strings.Contains(bare, "profile") {
+	if !strings.Contains(got, "approves or declines") || strings.Contains(got, "read only") {
+		t.Errorf("ask mode not stated:\n%s", got)
+	}
+	bare := systemText("prod", "", "", Profile{}, ModeRead, "")
+	if strings.Contains(bare, "\n\n\n") || strings.Contains(bare, "profile") {
 		t.Errorf("empty parts left traces:\n%s", bare)
+	}
+	if !strings.Contains(bare, "This conversation is read only") {
+		t.Errorf("read mode not stated:\n%s", bare)
 	}
 }
 

@@ -105,12 +105,19 @@
       "noAnswerManager": "Son exécution a échoué ({{error}}). Le réinstaller avec {{manager}} règle généralement le problème.",
       "noAnswer": "Son exécution a échoué ({{error}}). Le réinstaller règle généralement le problème.",
       "updateBody": "La mise à jour remplace le ffc ci-dessus, à son emplacement. Redémarrez ensuite vos apps connectées pour qu’elles utilisent la nouvelle version.",
-      "autoCheck": "L’app recherche une version plus récente de ffc une fois par jour ; Rechercher des mises à jour, dans À propos, le fait tout de suite. Vous pouvez aussi exécuter <code>{{command}}</code> dans un terminal.",
+      "autoCheck": "L’app recherche une version plus récente de ffc une fois par jour ; Rechercher des mises à jour le fait tout de suite. Vous pouvez aussi exécuter <code>{{command}}</code> dans un terminal.",
       "installHere": "Installez-le ici, ou exécutez vous-même ceci dans un terminal :",
       "updateTo": "Mettre à jour vers {{version}}",
       "installAgain": "Réinstaller",
       "install": "Installer ffc",
-      "lookAgain": "Vérifier à nouveau"
+      "lookAgain": "Vérifier à nouveau",
+      "checkUpdates": "Rechercher des mises à jour",
+      "upToDate": "ffc {{version}} est la version la plus récente",
+      "notCompared": "Ce ffc n’est pas une version publiée : il ne peut pas être comparé aux versions disponibles.",
+      "updateWithManager": "Il a été installé avec {{manager}} : mettez-le à jour de cette façon, en exécutant ceci dans un terminal.",
+      "updateWithCommand": "L’app ne remplace pas cette copie de ffc. Mettez-la à jour en exécutant ceci dans un terminal :",
+      "updateCommand": "Commande de mise à jour",
+      "noRelease": "Aucune version de ffc n’a été trouvée sur GitHub. Réessayez plus tard."
     },
     "update": {
       "availableTitle": "La version {{version}} est disponible",
@@ -197,7 +204,9 @@
       "showArchive_one": "Afficher les archives ({{count}})",
       "showArchive_many": "Afficher les archives ({{count}})",
       "showArchive_other": "Afficher les archives ({{count}})",
-      "emptyHint": "Commencez-en une avec Nouvelle, ou appuyez sur {{mod}}+N."
+      "emptyHint": "Commencez-en une avec Nouvelle, ou appuyez sur {{mod}}+N.",
+      "emptyFiltered": "Aucune conversation ne correspond à ces filtres.",
+      "resize": "Redimensionner la liste des conversations"
     },
     "search": {
       "label": "Rechercher dans les conversations",
@@ -231,11 +240,13 @@
     },
     "new": {
       "title": "Nouvelle conversation",
-      "body": "Choisissez le site et le modèle. Vous pourrez autoriser les modifications plus tard.",
+      "body": "Choisissez le site, un profil et le modèle. Vous pourrez autoriser les modifications plus tard.",
       "site": "Site",
       "provider": "Fournisseur",
       "model": "Modèle",
-      "start": "Démarrer"
+      "start": "Démarrer",
+      "profile": "Profil",
+      "profileFailed": "La conversation a démarré sans son profil"
     },
     "mode": {
       "label": "Ce que l’Assistant peut faire",

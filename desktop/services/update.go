@@ -49,8 +49,12 @@ type FFCUpdate struct {
 	Current string `json:"current"`
 	// Latest is the newest ffc release ("" when none was found or the
 	// installed ffc is not updatable: not a release build, or a file the app
-	// must not replace).
+	// must not replace; CheckFFCUpdate also compares those).
 	Latest string `json:"latest"`
+	// Manager and Command are set by CheckFFCUpdate when a package manager
+	// installed ffc: the update is that manager's command, never InstallFFC.
+	Manager string `json:"manager,omitempty"`
+	Command string `json:"command,omitempty"`
 }
 
 // updateRelease is the part of GitHub's release JSON the check reads.
@@ -122,6 +126,27 @@ func (s *AppService) CheckForUpdate(ctx context.Context) (UpdateInfo, error) {
 		info.InstallCommand = desktopInstallCommand(s.goos, info.Latest)
 	}
 	return info, nil
+}
+
+// CheckFFCUpdate compares the installed ffc with the newest ffc release,
+// for the ffc helper tab's own button. Unlike CheckForUpdate it also compares
+// an ffc the app would not replace (a package manager's copy: Manager and
+// Command say how to update it). Nothing is fetched when no working release
+// build of ffc is installed. It sends no credentials; cancelling ctx stops it.
+func (s *AppService) CheckFFCUpdate(ctx context.Context) (FFCUpdate, error) {
+	installed := s.ffc.Info()
+	out := FFCUpdate{Current: installed.Version, Manager: installed.Manager, Command: installed.UpgradeCommand}
+	cur, ok := releaseVersion(installed.Version)
+	if !installed.Found || installed.Error != "" || !ok {
+		return out, nil
+	}
+	rels, err := s.fetchReleases(ctx)
+	if err != nil {
+		return out, err
+	}
+	u := newestFFC(rels, cur, installed.Version)
+	u.Manager, u.Command = out.Manager, out.Command
+	return u, nil
 }
 
 // desktopInstallCommand runs install-desktop.sh (macOS) or install-desktop.ps1

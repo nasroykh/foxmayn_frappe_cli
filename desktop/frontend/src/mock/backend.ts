@@ -6,6 +6,7 @@
 //   ?sites=none       no config file and no sites (first run, onboarding)
 //   ?ffc=missing      the ffc helper is not installed
 //   ?ffc=broken       ffc is found but does not answer --version
+//   ?ffc=brew         ffc was installed by Homebrew (the app never replaces it)
 //   ?wsl=1            a WSL ffc config is detected (Windows)
 //   ?os=darwin        macOS paths and install command
 //   ?signin=noreg     the site cannot register an OAuth client (Frappe v15)
@@ -140,7 +141,9 @@ let ffc: FFCInfo =
     ? { found: false, path: "", version: "", updatable: false }
     : params.get("ffc") === "broken"
       ? { found: true, path: ffcPath, version: "", error: "exit status 1", updatable: false }
-      : { found: true, path: ffcPath, version: "1.10.0", updatable: true }
+      : params.get("ffc") === "brew"
+        ? { found: true, path: "/opt/homebrew/bin/ffc", version: "1.10.0", updatable: false, manager: "Homebrew", upgradeCommand: "brew upgrade ffc" }
+        : { found: true, path: ffcPath, version: "1.10.0", updatable: true }
 
 function changed() {
   configExists = true
@@ -747,6 +750,19 @@ export const backend: Backend = {
           : "curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/desktop-v0.2.0/install-desktop.sh | sh",
       ffc: { available: ffc.found && ffcLatest !== ffc.version, current: ffc.version, latest: ffcLatest },
     }
+  },
+  async checkFFCUpdate() {
+    await wait(600)
+    if (params.get("update") === "fail") {
+      fail("network", "GitHub could not be reached. Check your internet connection.", {
+        detail: "dial tcp: lookup api.github.com: no such host",
+      })
+    }
+    const out = { available: false, current: ffc.version, latest: "", manager: ffc.manager, command: ffc.upgradeCommand }
+    if (!ffc.found || ffc.error) return out
+    // ?ffc-update=available (or a Homebrew copy): 1.12.0 is out.
+    const latest = params.get("ffc-update") === "available" || ffc.manager ? "1.12.0" : ffc.version
+    return { ...out, available: latest !== ffc.version, latest }
   },
   async openWebsite(url) {
     window.open(url, "_blank", "noopener")
@@ -1467,27 +1483,29 @@ export const backend: Backend = {
   },
 
   async search(query, filter, limit) {
+    // Like the store: one hit per conversation, titles first, substring
+    // matching standing in for prefix matching.
     await wait(120)
     const words = query.toLowerCase().split(/\s+/).filter(Boolean)
     if (words.length === 0) return []
     const from = filter.from ? new Date(`${filter.from}T00:00:00`).getTime() : -Infinity
     const to = filter.to ? new Date(`${filter.to}T23:59:59.999`).getTime() : Infinity
-    const hits: SearchHit[] = []
+    const titled: SearchHit[] = []
+    const byMessage: SearchHit[] = []
     for (const c of convs.values()) {
       const cv = c.conv
       if (!!cv.archived !== filter.archived || cv.ephemeral) continue
       if ((filter.site && cv.site !== filter.site) || (filter.profileID && cv.profileID !== filter.profileID)) continue
       const upd = new Date(cv.updated).getTime()
-      if (upd < from || upd > to) continue
-      for (const m of c.messages) {
-        const text = m.text.toLowerCase()
-        if (!words.every((w) => text.includes(w))) continue
-        const start = Math.max(0, text.indexOf(words[0]) - 40)
-        const snippet = (start > 0 ? "…" : "") + m.text.slice(start, start + 120).replace(/\s+/g, " ")
-        hits.push({ convID: cv.id, title: cv.title, site: cv.site, msgID: m.id, snippet, updated: cv.updated, pinned: !!cv.pinned })
-      }
+      const byTitle = words.every((w) => cv.title.toLowerCase().includes(w)) && upd >= from && upd <= to
+      const m = c.messages.find((m) => words.every((w) => m.text.toLowerCase().includes(w)) && new Date(m.created).getTime() >= from && new Date(m.created).getTime() <= to)
+      if (!byTitle && !m) continue
+      const start = m ? Math.max(0, m.text.toLowerCase().indexOf(words[0]) - 40) : 0
+      const snippet = m ? (start > 0 ? "…" : "") + m.text.slice(start, start + 120).replace(/\s+/g, " ") : ""
+      ;(byTitle ? titled : byMessage).push({ convID: cv.id, title: cv.title, site: cv.site, msgID: m?.id ?? "", snippet, updated: cv.updated, pinned: !!cv.pinned })
     }
-    return hits.slice(0, limit > 0 ? Math.min(limit, 200) : 50)
+    titled.sort((a, b) => b.updated.localeCompare(a.updated))
+    return [...titled, ...byMessage].slice(0, limit > 0 ? Math.min(limit, 200) : 50)
   },
   async pinConversation(convID, pinned) {
     findConv(convID).conv.pinned = pinned

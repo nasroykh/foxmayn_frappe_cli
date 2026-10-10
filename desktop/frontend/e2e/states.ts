@@ -91,6 +91,28 @@ export const states: State[] = [
       await expect(dialog(page)).toBeVisible()
     },
   },
+  {
+    name: "ffc-check-brew",
+    query: "ffc=brew",
+    reach: async (page) => {
+      await goTo(page, "settings")
+      await page.getByRole("tab").nth(2).click()
+      await page.getByTestId("ffc-check").click()
+      await expect(page.locator("main [data-slot=alert]").first()).toBeVisible({ timeout: 5000 })
+    },
+  },
+  {
+    name: "conversation-search",
+    reach: async (page) => {
+      await newConversation(page)
+      await dialog(page).locator("button[type=submit], [data-slot=button]").last().click()
+      await expect(page.locator("#chat-input")).toBeVisible()
+      await page.getByRole("searchbox").fill("acme")
+      // The count line says the search is done (results or none).
+      await expect(page.locator("nav [aria-live=polite]")).not.toHaveText(/…|\.\.\./, { timeout: 5000 })
+      await page.waitForTimeout(300)
+    },
+  },
   { name: "welcome", query: "sites=none", onboarded: false },
   { name: "assistant-setup", query: "providers=none", reach: (page) => goTo(page, "assistant") },
   { name: "ffc-missing", query: "ffc=missing" },

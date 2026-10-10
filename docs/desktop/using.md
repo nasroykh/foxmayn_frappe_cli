@@ -102,11 +102,11 @@ A pasted key is checked against the provider before it is saved. You can change 
 
 ### Ask a question
 
-Click **New conversation** (or press Ctrl+N) and pick the site, the provider and the model. An empty conversation suggests four questions that suit its profile; picking one only fills the message box, so you can edit it first. Enter sends your message, Shift+Enter adds a line. Answers stream in, and each tool the assistant uses shows as a row (what it looked at, and whether it worked). The model sees your messages and the data its tools return, and that data goes to the provider you chose. With a local model it stays on this computer.
+Click **New conversation** (or press Ctrl+N) and pick the site, a profile (optional), the provider and the model; the new conversation opens right away. An empty conversation suggests four questions that suit its profile; picking one only fills the message box, so you can edit it first. Enter sends your message, Shift+Enter adds a line. Answers stream in, and each tool the assistant uses shows as a row (what it looked at, and whether it worked). The model sees your messages and the data its tools return, and that data goes to the provider you chose. With a local model it stays on this computer.
 
 ### Profiles
 
-A profile sets what the assistant is for in a conversation: which tools it gets, its mode, a step limit and its instructions. Pick one in the profile picker when you start a conversation; a conversation can change it later. A profile can only narrow what the site's [policy](../mcp/safety.md#per-site-policy) allows, never widen it: anything the site refuses stays refused.
+A profile sets what the assistant is for in a conversation: which tools it gets, its mode, a step limit and its instructions. The assistant is told the profile's name and whether it may change anything. Pick one in the profile picker when you start a conversation; a conversation can change it later. A profile can only narrow what the site's [policy](../mcp/safety.md#per-site-policy) allows, never widen it: anything the site refuses stays refused.
 
 Five built-in presets:
 
@@ -193,7 +193,8 @@ Conversations are stored on this computer only, in `assistant.db` (a SQLite file
 
 Delete a conversation from the list to remove it. Provider names and addresses are stored there too, never keys.
 
-- **Search.** The box above the list (Ctrl+Shift+F, Cmd+Shift+F on macOS) searches the messages, with highlighted snippets and filters for site, profile and date. It can search the archive instead of the other conversations.
+- **Search.** The box above the list (Ctrl+Shift+F, Cmd+Shift+F on macOS) searches the conversation titles and messages as you type ("invoi" finds "invoices"), one result per conversation with its best matching message highlighted. The filters (site, profile, date) narrow the list itself when nothing is typed; with text, a date filter applies to the matching message. It can search the archive instead of the other conversations.
+- **List width.** Drag the list's edge, or focus it and use the arrow keys, to make it wider or narrower; a double click gives the default width back.
 - **Pin and archive.** **Pin to the top** keeps a conversation first in the list. **Archive** moves it out of the list without deleting it; **Move out of the archive** brings it back.
 - **Retention.** Settings > Assistant > History: keep conversations **Forever** (the default), or delete those with no message for **90** or **30 days**. The sweep runs when the app starts and once a day, archived conversations included, and asks you to confirm the change first. Pinned conversations and ones being answered are always kept.
 - **Not kept.** Turn off **Keep history** in a profile, and its conversations are marked "not kept" and removed the next time the app starts.
@@ -242,7 +243,7 @@ The app finds an existing ffc on PATH or where the install scripts put it. When 
 | Tab | Contents |
 | --- | --- |
 | General | **Language** (English, Français, العربية). **Theme** (Light, Dark, System). **Settings file**: the path of `config.yaml`, with **Open folder**. |
-| ffc helper | Installed version and path, **Install ffc** / **Update to X** / **Install again**, **Look again**, **Open folder**. |
+| ffc helper | Installed version and path, **Install ffc** / **Update to X** / **Install again**, **Check for updates**, **Look again**, **Open folder**. |
 | About | Version, **Check for updates**, **Source code**, **Report a problem**. |
 
 Number and date formats are CLI settings: `ffc config`.
@@ -251,7 +252,7 @@ The app uses `~/.config/ffc/config.yaml`, or the file `FFC_CONFIG` names, as the
 
 ## Updates
 
-At start, at most once a day, the app asks GitHub for the newest `desktop-v` release. When one is newer, it shows a notice with a **Download** button (opens the release page) and a dot on Settings. Settings > About > **Check for updates** checks at any time. The app does not update itself: download and run the new installer. Development builds (version `0.0.0-dev`) never show the notice. The same check compares the installed ffc with the newest ffc release (the one `ffc update` would install): when it is newer, a notice offers **Update**, the sidebar shows "ffc X available", and Settings > ffc helper shows **Update to X**. The check cannot be turned off.
+At start, at most once a day, the app asks GitHub for the newest `desktop-v` release. When one is newer, it shows a notice with a **Download** button (opens the release page) and a dot on Settings. Settings > About > **Check for updates** checks at any time. The app does not update itself: download and run the new installer. Development builds (version `0.0.0-dev`) never show the notice. The same check compares the installed ffc with the newest ffc release (the one `ffc update` would install): when it is newer, a notice offers **Update**, the sidebar shows "ffc X available", and Settings > ffc helper shows **Update to X**. Settings > ffc helper > **Check for updates** checks ffc alone, at any time, and also checks an ffc that Homebrew, Scoop or winget installed (showing that manager's command). The check cannot be turned off.
 
 ## WSL (Windows)
 

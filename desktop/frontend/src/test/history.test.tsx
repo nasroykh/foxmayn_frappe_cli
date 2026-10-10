@@ -163,6 +163,60 @@ describe("search box", () => {
   })
 })
 
+describe("filters and list", () => {
+  it("narrows the list itself when nothing is typed", async () => {
+    list({
+      conversations: [
+        conv("c1", { site: "acme", updated: "2026-10-05T10:00:00Z" }),
+        conv("c2", { site: "beta", profileID: "explore", updated: "2026-10-08T10:00:00Z" }),
+        conv("c3", { site: "beta", updated: "2026-09-20T10:00:00Z" }),
+      ],
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Search filters" }))
+    fireEvent.change(screen.getByLabelText("Site"), { target: { value: "beta" } })
+    await waitFor(() => expect(screen.queryByText("Conversation c1")).toBeNull())
+    expect(screen.getByText("Conversation c2")).toBeTruthy()
+    expect(screen.getByText("Conversation c3")).toBeTruthy()
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-10-01" } })
+    await waitFor(() => expect(screen.queryByText("Conversation c3")).toBeNull())
+    fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "explore" } })
+    expect(screen.getByText("Conversation c2")).toBeTruthy()
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-10-07" } })
+    await screen.findByText("No conversation matches these filters.")
+    expect(b.search).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }))
+    await screen.findByText("Conversation c1")
+  })
+
+  it("shows a hit found by its title without a snippet, the title marked", async () => {
+    b.search.mockResolvedValue([hit({ msgID: "", snippet: "", title: "Overdue invoices" })])
+    list()
+    await type("overdue")
+    const results = await screen.findByRole("list", { name: "Search results" }, { timeout: 2000 })
+    expect(Array.from(results.querySelectorAll("mark")).map((m) => m.textContent)).toEqual(["Overdue"])
+    expect(results.querySelectorAll("li")).toHaveLength(1)
+    expect(results.textContent).not.toContain("the overdue invoices")
+  })
+
+  it("resizes with the arrow keys and keeps the width", () => {
+    localStorage.removeItem("ffd-conversation-list-width")
+    list()
+    const handle = screen.getByRole("separator", { name: "Resize the conversation list" })
+    const nav = handle.closest("nav")!
+    expect(nav.style.width).toBe("288px")
+    fireEvent.keyDown(handle, { key: "ArrowRight" })
+    expect(nav.style.width).toBe("304px")
+    expect(handle.getAttribute("aria-valuenow")).toBe("304")
+    fireEvent.keyDown(handle, { key: "End" })
+    expect(nav.style.width).toBe("420px")
+    expect(localStorage.getItem("ffd-conversation-list-width")).toBe("420")
+    fireEvent.keyDown(handle, { key: "Home" })
+    expect(nav.style.width).toBe("220px")
+    fireEvent.doubleClick(handle)
+    expect(nav.style.width).toBe("288px")
+  })
+})
+
 describe("pin and archive", () => {
   async function openMenu(title: string) {
     const trigger = screen.getByRole("button", { name: `More actions for ${title}` })

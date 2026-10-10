@@ -513,7 +513,7 @@ func (a *AssistantService) PromptPreview(convID string) (PromptPreview, error) {
 		siteCtx = ""
 	}
 	out := PromptPreview{
-		System:             systemText(conv.Site, sess.Instructions(), siteCtx, prof, ss.Instructions),
+		System:             systemText(conv.Site, sess.Instructions(), siteCtx, prof, effectiveMode(prof.Mode, conv.Mode), ss.Instructions),
 		Tools:              []string{},
 		Mode:               effectiveMode(prof.Mode, conv.Mode),
 		StepLimit:          prof.StepLimit,

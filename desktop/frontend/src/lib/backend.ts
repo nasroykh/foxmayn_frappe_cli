@@ -94,6 +94,7 @@ export const backend: Backend = {
   installFFC: () => cancellable(AppService.InstallFFC()),
   openWebsite: (url) => AppService.OpenWebsite(url),
   checkForUpdate: () => AppService.CheckForUpdate(),
+  checkFFCUpdate: () => AppService.CheckFFCUpdate(),
   openConfigFolder: () => AppService.OpenConfigFolder(),
   openFFCFolder: () => AppService.OpenFFCFolder(),
   setWindowTheme: (dark) => AppService.SetWindowTheme(dark),
