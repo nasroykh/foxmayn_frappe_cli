@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner"
+import { intlLocale } from "@/i18n"
 import { backend } from "@/lib/backend"
 import type { Profile, SearchFilter, SearchHit } from "@/lib/backend-types"
 import { appError, type AppError } from "@/lib/errors"
+import { profileName } from "@/screens/assistant/profile-picker"
 
 const SEARCH_DELAY_MS = 250
 
@@ -187,7 +189,7 @@ export function ConversationSearch({
             <NativeSelectOptGroup label={t("profile.picker.presets")}>
               {profiles.presets.map((p) => (
                 <NativeSelectOption key={p.id} value={p.id}>
-                  {p.name}
+                  {profileName(t, p)}
                 </NativeSelectOption>
               ))}
             </NativeSelectOptGroup>
@@ -253,7 +255,7 @@ export function ConversationSearch({
                   <Highlighted text={h.snippet} query={text} />
                 </span>
                 <span className="text-muted-foreground truncate text-xs">
-                  {h.site} · {new Date(h.updated).toLocaleDateString()}
+                  {h.site} · {new Date(h.updated).toLocaleDateString(intlLocale())}
                 </span>
               </button>
             </li>

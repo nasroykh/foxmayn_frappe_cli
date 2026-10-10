@@ -27,7 +27,7 @@ describe("i18n catalog", () => {
   const used = new Map<string, string>()
   for (const file of walk(src)) {
     const text = readFileSync(file, "utf8")
-    for (const m of text.matchAll(/(?<![\w.])(?:i18n\.)?t\(\s*["'`]([^"'`$]+)["'`]/g)) used.set(m[1], file)
+    for (const m of text.matchAll(/(?<![\w.])(?:i18n\.)?(?:t|tr)\(\s*["'`]([^"'`$]+)["'`]/g)) used.set(m[1], file)
   }
 
   it("finds the keys in use", () => {
@@ -35,7 +35,8 @@ describe("i18n catalog", () => {
   })
 
   it("has every t() key in en.json", () => {
-    const missing = [...used].filter(([key]) => !has(en, key)).map(([key, file]) => `${key} (${path.relative(src, file)})`)
+    // A plural key is found through its _other form.
+    const missing = [...used].filter(([key]) => !has(en, key) && !has(en, `${key}_other`)).map(([key, file]) => `${key} (${path.relative(src, file)})`)
     expect(missing).toEqual([])
   })
 })

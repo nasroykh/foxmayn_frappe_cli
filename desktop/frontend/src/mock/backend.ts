@@ -480,7 +480,7 @@ async function script(run: MockRun, c: MockConv, text: string) {
     emit(chat.error, {
       convID: run.convID,
       runID: run.id,
-      error: { code: "failed", message: "The AI provider returned an error.", detail: "provider error (HTTP 529): overloaded" },
+      error: { code: "failed", message: "The AI provider returned an error.", key: "chat.providerError", detail: "provider error (HTTP 529): overloaded" },
     })
     return finish(run, c, "error")
   }

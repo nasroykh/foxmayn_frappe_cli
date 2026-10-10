@@ -26,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { intlLocale } from "@/i18n"
 import { backend } from "@/lib/backend"
 import type {
   ChatMessage,
@@ -39,7 +40,7 @@ import type {
   UsageTotals,
 } from "@/lib/backend-types"
 import { hasUsage, mergeTotals, noUsage } from "@/lib/cost"
-import { appError, errorTitle, type AppError } from "@/lib/errors"
+import { appError, errorTitle, localizedMessage, type AppError } from "@/lib/errors"
 import { chatReducer, initialState } from "@/screens/assistant/chat-reducer"
 import { ProfilePicker } from "@/screens/assistant/profile-picker"
 
@@ -78,7 +79,7 @@ export function ChatPane({
   /** The conversation list may be stale (title, order, mode): reload it. */
   onChanged: () => void
 }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const convID = conv.id
   const [state, dispatch] = React.useReducer(chatReducer, convID, initialState)
   const [messages, setMessages] = React.useState<ChatMessage[] | null>(null)
@@ -309,7 +310,7 @@ export function ChatPane({
       const e = appError(err)
       setDraft(text)
       setStaged(files)
-      dispatch({ type: "sendFailed", error: { code: e.code, message: e.message, detail: e.detail } })
+      dispatch({ type: "sendFailed", error: { code: e.code, message: e.message, detail: e.detail, key: e.key, args: e.args } })
     }
   }
 
@@ -437,8 +438,8 @@ export function ChatPane({
                 {t("chat.header.total", {
                   usage: [
                     t("chat.usage.tokens", {
-                      input: shownTotal.input.toLocaleString(i18n.language),
-                      output: shownTotal.output.toLocaleString(i18n.language),
+                      input: shownTotal.input.toLocaleString(intlLocale()),
+                      output: shownTotal.output.toLocaleString(intlLocale()),
                     }),
                     costText(shownTotal),
                   ]
@@ -530,7 +531,7 @@ export function ChatPane({
               <IconAlertTriangle />
               <AlertTitle>{t("chat.error.title")}</AlertTitle>
               <AlertDescription>
-                <p>{state.error.message}</p>
+                <p>{localizedMessage(state.error)}</p>
               </AlertDescription>
             </Alert>
           )}

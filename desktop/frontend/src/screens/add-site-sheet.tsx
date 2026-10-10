@@ -12,6 +12,8 @@ import {
   IconUser,
 } from "@tabler/icons-react"
 import * as React from "react"
+import { Trans, useTranslation } from "react-i18next"
+import type { TFunction } from "i18next"
 
 import { useApp } from "@/app/app-context"
 import { copy, CopyField } from "@/components/copy-field"
@@ -47,11 +49,17 @@ import { appError, type AppError } from "@/lib/errors"
 type Method = "oauth" | "apikey" | "password"
 type Step = 1 | 2 | 3 | 4
 
-const stepTitles: Record<Step, string> = {
-  1: "Your site",
-  2: "How to sign in",
-  3: "Sign in",
-  4: "Done",
+function stepTitle(t: TFunction, step: Step) {
+  switch (step) {
+    case 1:
+      return t("addSite.stepTitle.site")
+    case 2:
+      return t("addSite.stepTitle.method")
+    case 3:
+      return t("addSite.stepTitle.signIn")
+    default:
+      return t("addSite.stepTitle.done")
+  }
 }
 
 /** "https://erp.acme.example" -> "erp", a starting point for the name. */
@@ -66,6 +74,7 @@ function suggestName(url: string) {
 }
 
 export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const { t } = useTranslation()
   const { reloadSites, connectAssistant, sites } = useApp()
   const [step, setStep] = React.useState<Step>(1)
   const [url, setURL] = React.useState("")
@@ -129,7 +138,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
       return
     }
     let stale = false
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const v = await backend.validate(name, url)
         if (!stale) setValidation(v)
@@ -139,7 +148,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
     }, 250)
     return () => {
       stale = true
-      clearTimeout(t)
+      clearTimeout(timer)
     }
   }, [open, name, url])
 
@@ -166,7 +175,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
 
   const nameError =
     validation?.nameError ||
-    (validation?.exists && !replace ? `A site called "${validation.name}" already exists.` : "")
+    (validation?.exists && !replace ? t("addSite.nameExists", { name: validation.name }) : "")
   const urlError = validation?.urlError ?? ""
   const step1OK = !!validation && validation.ok && validation.name === name.trim() && (!validation.exists || replace)
 
@@ -188,8 +197,8 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
     setStep(4)
     void reloadSites()
     toast.add({
-      title: site.replaced ? `${site.name} was updated` : `${site.name} was added`,
-      description: site.user ? `Signed in as ${site.user}.` : undefined,
+      title: site.replaced ? t("addSite.toast.updated", { name: site.name }) : t("addSite.toast.added", { name: site.name }),
+      description: site.user ? t("addSite.signedInAs", { user: site.user }) : undefined,
       type: "success",
     })
   }
@@ -242,7 +251,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
       await backend.reopenSignInPage()
     } catch (err) {
       const e = appError(err)
-      toast.add({ title: "Could not open the sign-in page", description: e.message, type: "error" })
+      toast.add({ title: t("addSite.toast.openFailed"), description: e.message, type: "error" })
     }
   }
 
@@ -262,10 +271,10 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
       await backend.setDefault(added.name)
       setIsDefault(true)
       void reloadSites()
-      toast.add({ title: `${added.name} is now the default site`, type: "success" })
+      toast.add({ title: t("sites.toast.nowDefault", { name: added.name }), type: "success" })
     } catch (err) {
       const e = appError(err)
-      toast.add({ title: "Could not change the default site", description: e.message, type: "error" })
+      toast.add({ title: t("addSite.toast.defaultFailed"), description: e.message, type: "error" })
     }
   }
 
@@ -275,11 +284,11 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
     <Sheet open={open} onOpenChange={(o) => (o ? onOpenChange(true) : close())}>
       <SheetContent className="w-full gap-0 data-[side=right]:sm:max-w-md">
         <SheetHeader className="border-b">
-          <SheetTitle>Add a site</SheetTitle>
-          <SheetDescription>Connect a Frappe or ERPNext site to this computer.</SheetDescription>
+          <SheetTitle>{t("sites.add")}</SheetTitle>
+          <SheetDescription>{t("addSite.description")}</SheetDescription>
           <Progress value={(step / 4) * 100} className="pt-2">
             <ProgressLabel>
-              Step {step} of 4: {stepTitles[step]}
+              {t("addSite.stepOf", { step, title: stepTitle(t, step) })}
             </ProgressLabel>
             <ProgressValue className="sr-only" />
           </Progress>
@@ -290,7 +299,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
             <form id="site-form" onSubmit={next1}>
               <FieldGroup>
                 <Field data-invalid={(showErrors && !!urlError) || undefined}>
-                  <FieldLabel htmlFor="site-url">Site address</FieldLabel>
+                  <FieldLabel htmlFor="site-url">{t("addSite.url.label")}</FieldLabel>
                   <Input
                     id="site-url"
                     value={url}
@@ -304,11 +313,11 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                   {showErrors && urlError ? (
                     <FieldError>{urlError}</FieldError>
                   ) : (
-                    <FieldDescription>The address you open in your browser to use the site.</FieldDescription>
+                    <FieldDescription>{t("addSite.url.hint")}</FieldDescription>
                   )}
                 </Field>
                 <Field data-invalid={(showErrors && !!nameError) || undefined}>
-                  <FieldLabel htmlFor="site-name">Name</FieldLabel>
+                  <FieldLabel htmlFor="site-name">{t("addSite.name.label")}</FieldLabel>
                   <Input
                     id="site-name"
                     value={name}
@@ -324,32 +333,31 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                   {showErrors && nameError ? (
                     <FieldError>{nameError}</FieldError>
                   ) : (
-                    <FieldDescription>A short name to tell your sites apart, like acme-prod.</FieldDescription>
+                    <FieldDescription>{t("addSite.name.hint")}</FieldDescription>
                   )}
                 </Field>
                 {validation?.exists && (
                   <Field orientation="horizontal">
                     <Checkbox id="site-replace" checked={replace} onCheckedChange={(v) => setReplace(v === true)} />
                     <FieldContent>
-                      <FieldLabel htmlFor="site-replace">Replace the saved site called {validation.name}</FieldLabel>
-                      <FieldDescription>Its address and sign-in are overwritten when you finish.</FieldDescription>
+                      <FieldLabel htmlFor="site-replace">{t("addSite.replace.label", { name: validation.name })}</FieldLabel>
+                      <FieldDescription>{t("addSite.replace.hint")}</FieldDescription>
                     </FieldContent>
                   </Field>
                 )}
                 {validation?.plainHTTP && !urlError && (
                   <Alert variant="destructive">
                     <IconLockOpen />
-                    <AlertTitle>This address is not encrypted</AlertTitle>
+                    <AlertTitle>{t("addSite.http.title")}</AlertTitle>
                     <AlertDescription>
-                      It starts with http://, so your sign-in details travel in the clear. Use it only for a site on
-                      this computer or your own network.
+                      {t("addSite.http.body")}
                     </AlertDescription>
                   </Alert>
                 )}
                 {error && step === 1 && error.code === "invalid" && (
                   <Alert variant="destructive">
                     <IconAlertTriangle />
-                    <AlertTitle>Check the details</AlertTitle>
+                    <AlertTitle>{t("addSite.checkDetails")}</AlertTitle>
                     <AlertDescription>{error.message}</AlertDescription>
                   </Alert>
                 )}
@@ -360,26 +368,26 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
           {step === 2 && (
             <FieldGroup>
               <FieldSet>
-                <FieldLegend variant="label">Choose how to sign in to {name}</FieldLegend>
+                <FieldLegend variant="label">{t("addSite.method.legend", { name })}</FieldLegend>
                 <RadioGroup value={method} onValueChange={(v) => setMethod(v as Method)}>
                   <MethodCard
                     value="oauth"
                     icon={<IconBrowser />}
-                    title="Sign in with your browser"
-                    badge="Recommended"
-                    description="Sign in on your site's own page. This app never sees your password, and it works with two-factor sign-in."
+                    title={t("addSite.method.oauth.title")}
+                    badge={t("addSite.method.recommended")}
+                    description={t("addSite.method.oauth.description")}
                   />
                   <MethodCard
                     value="apikey"
                     icon={<IconKey />}
-                    title="Use an API key"
-                    description="Paste an API key and secret from your Frappe user settings. Good for integration users."
+                    title={t("addSite.method.apikey.title")}
+                    description={t("addSite.method.apikey.description")}
                   />
                   <MethodCard
                     value="password"
                     icon={<IconUser />}
-                    title="Use your username and password"
-                    description="Saved on this computer. Accounts with two-factor sign-in must use browser sign-in or an API key instead."
+                    title={t("addSite.method.password.title")}
+                    description={t("addSite.method.password.description")}
                   />
                 </RadioGroup>
               </FieldSet>
@@ -392,16 +400,15 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                       data-icon="inline-start"
                       className="transition-transform in-aria-expanded:rotate-180"
                     />
-                    Advanced: use your own OAuth client
+                    {t("addSite.advanced.toggle")}
                   </CollapsibleTrigger>
                   <CollapsibleContent>
                     <FieldGroup className="pt-3">
                       <FieldDescription>
-                        Only needed when your site cannot set up the app by itself, for example on Frappe v15. Create an
-                        OAuth Client on your site and paste its details here.
+                        {t("addSite.advanced.hint")}
                       </FieldDescription>
                       <Field>
-                        <FieldLabel htmlFor="client-id">Client ID</FieldLabel>
+                        <FieldLabel htmlFor="client-id">{t("addSite.advanced.clientId")}</FieldLabel>
                         <Input
                           id="client-id"
                           value={clientID}
@@ -413,11 +420,12 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                       </Field>
                       <Field>
                         <FieldLabel htmlFor="client-secret">
-                          Client secret <span className="text-muted-foreground font-normal">(optional)</span>
+                          {t("addSite.advanced.clientSecret")}{" "}
+                          <span className="text-muted-foreground font-normal">{t("addSite.optional")}</span>
                         </FieldLabel>
                         <SecretInput id="client-secret" value={clientSecret} onChange={setClientSecret} />
                         <FieldDescription>
-                          Leave it empty for a public client. It is stored with the site, never shown again.
+                          {t("addSite.advanced.secretHint")}
                         </FieldDescription>
                       </Field>
                     </FieldGroup>
@@ -447,11 +455,10 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                 {method === "apikey" ? (
                   <>
                     <FieldDescription>
-                      In Frappe, open your user menu, choose My Settings, then API Access, and generate keys. The secret
-                      is shown only once there.
+                      {t("addSite.apikey.help")}
                     </FieldDescription>
                     <Field data-invalid={error?.field === "apiKey" || undefined}>
-                      <FieldLabel htmlFor="api-key">API key</FieldLabel>
+                      <FieldLabel htmlFor="api-key">{t("addSite.apikey.key")}</FieldLabel>
                       <Input
                         id="api-key"
                         value={apiKey}
@@ -464,7 +471,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                       />
                     </Field>
                     <Field data-invalid={error?.field === "apiSecret" || undefined}>
-                      <FieldLabel htmlFor="api-secret">API secret</FieldLabel>
+                      <FieldLabel htmlFor="api-secret">{t("addSite.apikey.secret")}</FieldLabel>
                       <SecretInput
                         id="api-secret"
                         value={apiSecret}
@@ -476,7 +483,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                 ) : (
                   <>
                     <Field data-invalid={error?.field === "username" || undefined}>
-                      <FieldLabel htmlFor="username">Username or email</FieldLabel>
+                      <FieldLabel htmlFor="username">{t("addSite.password.username")}</FieldLabel>
                       <Input
                         id="username"
                         value={username}
@@ -488,7 +495,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                       />
                     </Field>
                     <Field data-invalid={error?.field === "password" || undefined}>
-                      <FieldLabel htmlFor="password">Password</FieldLabel>
+                      <FieldLabel htmlFor="password">{t("addSite.password.password")}</FieldLabel>
                       <SecretInput
                         id="password"
                         value={password}
@@ -497,7 +504,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                         invalid={error?.field === "password"}
                       />
                       <FieldDescription>
-                        Two-factor accounts cannot sign in this way. Go back and choose browser sign-in or an API key.
+                        {t("addSite.password.twoFactor")}
                       </FieldDescription>
                     </Field>
                   </>
@@ -507,10 +514,10 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                     <IconAlertTriangle />
                     <AlertTitle>
                       {error.code === "auth"
-                        ? "The site did not accept these details"
+                        ? t("addSite.error.rejected")
                         : error.code === "network"
-                          ? "Could not reach the site"
-                          : "That did not work"}
+                          ? t("addSite.error.network")
+                          : t("addSite.error.failed")}
                     </AlertTitle>
                     <AlertDescription>
                       <p>{error.message}</p>
@@ -526,19 +533,20 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
             <div className="flex flex-col gap-6">
               <Alert>
                 <IconCircleCheck />
-                <AlertTitle>{added.name} is ready</AlertTitle>
+                <AlertTitle>{t("addSite.ready", { name: added.name })}</AlertTitle>
                 <AlertDescription>
-                  {added.user ? `Signed in as ${added.user}. ` : ""}
-                  {added.registered ? "The app was set up on your site for you." : ""}
+                  {added.user ? t("addSite.signedInAs", { user: added.user }) : ""}
+                  {added.user && added.registered ? " " : ""}
+                  {added.registered ? t("addSite.registered") : ""}
                 </AlertDescription>
               </Alert>
               <Field orientation="horizontal">
                 <FieldContent>
-                  <FieldLabel htmlFor="make-default">Use as the default site</FieldLabel>
+                  <FieldLabel htmlFor="make-default">{t("addSite.default.label")}</FieldLabel>
                   <FieldDescription>
                     {isDefault && onlySite
-                      ? "It is your only site, so it is the default."
-                      : "Assistants that follow the default site use this one."}
+                      ? t("addSite.default.only")
+                      : t("addSite.default.hint")}
                   </FieldDescription>
                 </FieldContent>
                 <Switch id="make-default" checked={isDefault} disabled={isDefault} onCheckedChange={toggleDefault} />
@@ -551,10 +559,10 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
           {step === 1 && (
             <>
               <Button variant="outline" onClick={close}>
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button type="submit" form="site-form" disabled={showErrors && !step1OK}>
-                Continue
+                {t("common.continue")}
                 <IconArrowRight data-icon="inline-end" />
               </Button>
             </>
@@ -563,7 +571,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
             <>
               <Button variant="outline" onClick={() => setStep(1)}>
                 <IconArrowLeft data-icon="inline-start" />
-                Back
+                {t("common.back")}
               </Button>
               <Button
                 onClick={() => {
@@ -572,7 +580,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                 }}
                 disabled={method === "oauth" && advanced && !clientID.trim() && !!clientSecret}
               >
-                {method === "oauth" ? "Open the sign-in page" : "Continue"}
+                {method === "oauth" ? t("addSite.openSignIn") : t("common.continue")}
                 <IconArrowRight data-icon="inline-end" />
               </Button>
             </>
@@ -581,18 +589,18 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
             <>
               <Button variant="outline" onClick={() => (busy ? void cancelOAuth() : setStep(2))}>
                 {busy ? (
-                  "Cancel sign-in"
+                  t("addSite.cancelSignIn")
                 ) : (
                   <>
                     <IconArrowLeft data-icon="inline-start" />
-                    Back
+                    {t("common.back")}
                   </>
                 )}
               </Button>
               {busy && progress?.step === "browser" && (
                 <Button variant="secondary" onClick={() => void reopenSignInPage()}>
                   <IconExternalLink data-icon="inline-start" />
-                  Open the page again
+                  {t("addSite.openAgain")}
                 </Button>
               )}
             </>
@@ -601,7 +609,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
             <>
               <Button variant="outline" onClick={() => setStep(2)} disabled={busy}>
                 <IconArrowLeft data-icon="inline-start" />
-                Back
+                {t("common.back")}
               </Button>
               <Button
                 type="submit"
@@ -609,14 +617,14 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                 disabled={busy || (method === "apikey" ? !apiKey.trim() || !apiSecret : !username.trim() || !password)}
               >
                 {busy && <Spinner data-icon="inline-start" />}
-                {busy ? "Checking…" : method === "apikey" ? "Check and save" : "Sign in"}
+                {busy ? t("sites.checking") : method === "apikey" ? t("addSite.checkAndSave") : t("addSite.signIn")}
               </Button>
             </>
           )}
           {step === 4 && (
             <>
               <Button variant="outline" onClick={close}>
-                Done
+                {t("addSite.done")}
               </Button>
               <Button
                 onClick={() => {
@@ -626,7 +634,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                 }}
               >
                 <IconPlugConnected data-icon="inline-start" />
-                Connect an assistant
+                {t("sites.action.connect")}
               </Button>
             </>
           )}
@@ -667,6 +675,25 @@ function MethodCard({
   )
 }
 
+/** Go's progress message in the page's language, by step (the English text is Go's own). */
+// i18n keys: addSite.progress.starting addSite.progress.registering addSite.progress.browser addSite.progress.saving addSite.progress.done
+function progressText(t: TFunction, p: SignInProgress) {
+  switch (p.step) {
+    case "starting":
+    case "registering":
+    case "browser":
+    case "saving":
+    case "done":
+      return t(`addSite.progress.${p.step}`, { defaultValue: p.message })
+    case "finishing":
+      if (p.message === "Completing the sign-in…") return t("addSite.progress.finishingExchange")
+      if (p.message === "Checking who signed in…") return t("addSite.progress.finishingUser")
+      return t("addSite.progress.finishing", { defaultValue: p.message })
+    default:
+      return p.message
+  }
+}
+
 function OAuthStep({
   busy,
   progress,
@@ -680,36 +707,42 @@ function OAuthStep({
   onRetry: () => void
   onUseClient: () => void
 }) {
+  const { t } = useTranslation()
   if (error?.code === "no_registration") {
     return (
       <div className="flex flex-col gap-4">
         <Alert>
           <IconAlertTriangle />
-          <AlertTitle>This site cannot set up the app by itself</AlertTitle>
+          <AlertTitle>{t("addSite.oauth.noReg.title")}</AlertTitle>
           <AlertDescription>
             {error.unsupported
-              ? "Older Frappe versions, such as v15, do not let apps register themselves. An administrator can create the app on the site once, then you sign in as usual."
-              : "The site refused to set up the app. An administrator can create it by hand instead."}
+              ? t("addSite.oauth.noReg.unsupported")
+              : t("addSite.oauth.noReg.refused")}
           </AlertDescription>
         </Alert>
         <ol className="text-muted-foreground flex list-decimal flex-col gap-3 pl-5 text-sm">
           <li>
-            On your site, open <span className="text-foreground font-medium">OAuth Client</span> and create a new one.
+            <Trans
+              i18nKey="addSite.oauth.manual.step1"
+              components={{ b: <span className="text-foreground font-medium" /> }}
+            />
           </li>
           <li className="flex flex-col gap-2">
             <span>
-              Set the grant type to <span className="text-foreground font-medium">Authorization Code</span>, the
-              response type to <span className="text-foreground font-medium">Code</span>, and this redirect URI:
+              <Trans
+                i18nKey="addSite.oauth.manual.step2"
+                components={{ b: <span className="text-foreground font-medium" /> }}
+              />
             </span>
             {error.redirectURI && (
-              <CopyField value={error.redirectURI} label="Redirect URI" copiedTitle="Redirect URI copied" />
+              <CopyField value={error.redirectURI} label={t("addSite.oauth.redirectUri")} copiedTitle={t("addSite.oauth.redirectUriCopied")} />
             )}
           </li>
-          <li>Save it, then paste its client ID (and secret, if it has one) here.</li>
+          <li>{t("addSite.oauth.manual.step3")}</li>
         </ol>
         {error.detail && <Details>{error.detail}</Details>}
         <Button onClick={onUseClient} className="self-start">
-          Enter the client ID
+          {t("addSite.oauth.enterClientId")}
         </Button>
       </div>
     )
@@ -722,10 +755,10 @@ function OAuthStep({
           <IconAlertTriangle />
           <AlertTitle>
             {error.code === "auth"
-              ? "The sign-in was not completed"
+              ? t("addSite.oauth.error.auth")
               : error.code === "network"
-                ? "Could not reach the site"
-                : "Sign-in did not work"}
+                ? t("addSite.error.network")
+                : t("addSite.oauth.error.failed")}
           </AlertTitle>
           <AlertDescription>
             <p>{error.message}</p>
@@ -733,42 +766,44 @@ function OAuthStep({
           </AlertDescription>
         </Alert>
         <Button onClick={onRetry} className="self-start">
-          Try again
+          {t("common.retry")}
         </Button>
       </div>
     )
   }
 
   const step = progress?.step ?? "starting"
+  // i18n keys: addSite.progress.starting addSite.progress.registering addSite.progress.browser addSite.progress.finishing addSite.progress.finishingExchange addSite.progress.finishingUser addSite.progress.saving addSite.progress.done
+  const message = progress ? progressText(t, progress) : t("addSite.progress.starting")
   return (
     <div className="flex flex-col items-center gap-4 py-6 text-center" aria-live="polite">
       {busy ? <Spinner className="size-8" /> : <IconBrowser className="text-muted-foreground size-8" />}
       <div className="flex flex-col gap-1">
-        <p className="font-medium">{step === "browser" ? "Waiting for your browser" : "Getting things ready"}</p>
+        <p className="font-medium">{step === "browser" ? t("addSite.oauth.waiting") : t("addSite.oauth.preparing")}</p>
         <p className="text-muted-foreground text-sm">
-          {progress?.message ?? "Getting ready…"}
-          {step === "browser" && " When you approve the app there, come back here."}
+          {message}
+          {step === "browser" && ` ${t("addSite.oauth.comeBack")}`}
         </p>
       </div>
       {progress?.browserError && (
         <Alert className="text-left">
           <IconAlertTriangle />
-          <AlertTitle>Your browser did not open</AlertTitle>
-          <AlertDescription>Copy this link into your browser to continue.</AlertDescription>
+          <AlertTitle>{t("addSite.oauth.browserFailed")}</AlertTitle>
+          <AlertDescription>{t("addSite.oauth.copyLinkHint")}</AlertDescription>
         </Alert>
       )}
       {progress?.authURL && step === "browser" && (
         <div className="flex w-full flex-col gap-2 text-left">
           {progress.browserError ? (
-            <CopyField value={progress.authURL} label="Sign-in link" copiedTitle="Link copied" />
+            <CopyField value={progress.authURL} label={t("addSite.oauth.link")} copiedTitle={t("addSite.oauth.linkCopied")} />
           ) : (
             <Button
               variant="link"
               size="sm"
               className="self-center"
-              onClick={() => void copy(progress.authURL!, "Link copied")}
+              onClick={() => void copy(progress.authURL!, t("addSite.oauth.linkCopied"))}
             >
-              Copy the sign-in link instead
+              {t("addSite.oauth.copyLink")}
             </Button>
           )}
         </div>

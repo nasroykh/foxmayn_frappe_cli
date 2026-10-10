@@ -10,6 +10,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group"
 import { IconChevronDown, IconX, IconCheck } from "@tabler/icons-react"
+import { useTranslation } from "react-i18next"
 
 const Combobox = ComboboxPrimitive.Root
 
@@ -235,6 +236,7 @@ function ComboboxChip({
 }: ComboboxPrimitive.Chip.Props & {
   showRemove?: boolean
 }) {
+  const { t } = useTranslation()
   return (
     <ComboboxPrimitive.Chip
       data-slot="combobox-chip"
@@ -249,6 +251,7 @@ function ComboboxChip({
         <ComboboxPrimitive.ChipRemove
           render={<Button variant="ghost" size="icon-xs" />}
           className="-ml-1 opacity-50 hover:opacity-100"
+          aria-label={t("ui.remove")}
           data-slot="combobox-chip-remove"
         >
           <IconX className="pointer-events-none" />

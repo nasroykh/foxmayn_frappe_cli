@@ -1,5 +1,6 @@
 import { IconAlertTriangle, IconDownload, IconInfoCircle } from "@tabler/icons-react"
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 
 import { useApp } from "@/app/app-context"
 import { CopyField } from "@/components/copy-field"
@@ -24,7 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { backend } from "@/lib/backend"
 import type { Preview } from "@/lib/backend-types"
-import { appError, errorTitle, type AppError } from "@/lib/errors"
+import { appError, errorTitle, localizedMessage, type AppError } from "@/lib/errors"
 
 const FOLLOW = "__default__"
 
@@ -34,6 +35,7 @@ export interface ConnectTarget {
 }
 
 export function ConnectDialog({ target, onClose }: { target: ConnectTarget | null; onClose: () => void }) {
+  const { t: tr } = useTranslation()
   const { assistants, sites, reloadAssistants, installFFC } = useApp()
   const list = assistants.data?.assistants ?? []
   const siteList = sites.data?.sites ?? []
@@ -87,11 +89,11 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
     }
   }, [target, client, site, readOnly])
 
-  const name = list.find((a) => a.id === client)?.name ?? "the assistant"
+  const name = list.find((a) => a.id === client)?.name ?? tr("connect.fallbackName")
 
-  const clientItems = list.map((a) => ({ value: a.id, label: a.detected ? a.name : `${a.name} (not found)` }))
+  const clientItems = list.map((a) => ({ value: a.id, label: a.detected ? a.name : tr("connect.notFoundOption", { name: a.name }) }))
   const siteItems = [
-    { value: FOLLOW, label: defaultSite ? `Default site (${defaultSite})` : "Default site" },
+    { value: FOLLOW, label: defaultSite ? tr("connect.defaultSiteNamed", { site: defaultSite }) : tr("connect.defaultSite") },
     ...siteList.map((s) => ({ value: s.name, label: s.name })),
   ]
 
@@ -101,8 +103,8 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
       const res = await backend.connect({ client, site: site === FOLLOW ? "" : site, readOnly })
       await reloadAssistants()
       toast.add({
-        title: `${name} is connected`,
-        description: [res.hint, res.backup ? "The old settings were backed up next to the file." : ""]
+        title: tr("connect.connectedTitle", { name }),
+        description: [res.hint, res.backup ? tr("connect.backedUp") : ""]
           .filter(Boolean)
           .join(" "),
         type: "success",
@@ -119,21 +121,19 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
   const summary = !preview
     ? ""
     : !preview.changed
-      ? `${name} is already set up exactly like this.`
+      ? tr("connect.summary.unchanged", { name })
       : preview.replaces
-        ? `This replaces the existing “${preview.entryName}” entry in ${name}'s settings.`
+        ? tr("connect.summary.replaces", { name, entry: preview.entryName })
         : preview.createsFile
-          ? `This creates ${name}'s settings file with a “${preview.entryName}” entry.`
-          : `This adds a “${preview.entryName}” entry to ${name}'s settings.`
+          ? tr("connect.summary.creates", { name, entry: preview.entryName })
+          : tr("connect.summary.adds", { name, entry: preview.entryName })
 
   return (
     <Dialog open={!!target} onOpenChange={(o) => !o && !busy && onClose()}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Connect {name}</DialogTitle>
-          <DialogDescription>
-            Choose which site it uses and what it may do. Nothing changes until you confirm.
-          </DialogDescription>
+          <DialogTitle>{tr("connect.title", { name })}</DialogTitle>
+          <DialogDescription>{tr("connect.description")}</DialogDescription>
         </DialogHeader>
 
         {/* The body scrolls on short windows so the title and buttons stay in view. */}
@@ -141,7 +141,7 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
           <FieldGroup>
             <div className="grid grid-cols-2 gap-4">
               <Field>
-                <FieldLabel htmlFor="connect-client">Assistant</FieldLabel>
+                <FieldLabel htmlFor="connect-client">{tr("connect.app")}</FieldLabel>
                 <Select items={clientItems} value={client} onValueChange={(v) => v && setClient(v as string)}>
                   <SelectTrigger id="connect-client" className="w-full">
                     <SelectValue />
@@ -158,7 +158,7 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
                 </Select>
               </Field>
               <Field>
-                <FieldLabel htmlFor="connect-site">Site</FieldLabel>
+                <FieldLabel htmlFor="connect-site">{tr("connect.site")}</FieldLabel>
                 <Select items={siteItems} value={site} onValueChange={(v) => v && setSite(v as string)}>
                   <SelectTrigger id="connect-site" className="w-full">
                     <SelectValue />
@@ -177,10 +177,8 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
             </div>
             <Field orientation="horizontal">
               <FieldContent>
-                <FieldLabel htmlFor="connect-readonly">Read-only</FieldLabel>
-                <FieldDescription>
-                  It can look at your data but cannot create, change or delete anything.
-                </FieldDescription>
+                <FieldLabel htmlFor="connect-readonly">{tr("connect.readOnly")}</FieldLabel>
+                <FieldDescription>{tr("connect.readOnlyHelp")}</FieldDescription>
               </FieldContent>
               <Switch id="connect-readonly" checked={readOnly} onCheckedChange={setReadOnly} />
             </Field>
@@ -189,19 +187,19 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
           {previewError?.code === "ffc_missing" ? (
             <Alert className="has-data-[slot=alert-action]:pr-28">
               <IconAlertTriangle />
-              <AlertTitle>Install the ffc helper first</AlertTitle>
-              <AlertDescription>{name} runs ffc to reach your sites.</AlertDescription>
+              <AlertTitle>{tr("connect.installFirst")}</AlertTitle>
+              <AlertDescription>{tr("connect.runsFfc", { name })}</AlertDescription>
               <AlertAction>
                 <Button size="sm" onClick={installFFC}>
                   <IconDownload data-icon="inline-start" />
-                  Install
+                  {tr("connect.install")}
                 </Button>
               </AlertAction>
             </Alert>
           ) : previewError ? (
             <Alert variant="destructive">
               <IconAlertTriangle />
-              <AlertTitle>The change could not be prepared</AlertTitle>
+              <AlertTitle>{tr("connect.prepareFailed")}</AlertTitle>
               <AlertDescription>{previewError.message}</AlertDescription>
             </Alert>
           ) : !preview ? (
@@ -217,39 +215,39 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
               ) : (
                 <Alert variant="destructive">
                   <IconAlertTriangle />
-                  <AlertTitle>This app cannot make the change</AlertTitle>
+                  <AlertTitle>{tr("connect.cannotApply")}</AlertTitle>
                   <AlertDescription>
-                    <p>{preview.problem}</p>
-                    {(preview.commands?.length ?? 0) > 0 && <p>You can run this in a terminal instead:</p>}
+                    <p>{localizedMessage({ message: preview.problem ?? "", key: preview.problemKey })}</p>
+                    {(preview.commands?.length ?? 0) > 0 && <p>{tr("connect.runInTerminal")}</p>}
                   </AlertDescription>
                 </Alert>
               )}
               {!preview.canApply &&
                 (preview.commands ?? []).map((c) => (
-                  <CopyField key={c} value={c} label="Command" copiedTitle="Command copied" />
+                  <CopyField key={c} value={c} label={tr("common.command")} copiedTitle={tr("common.commandCopied")} />
                 ))}
               <Accordion>
                 <AccordionItem value="details">
-                  <AccordionTrigger>Technical details</AccordionTrigger>
+                  <AccordionTrigger>{tr("common.technicalDetails")}</AccordionTrigger>
                   <AccordionContent>
                     <Tabs defaultValue="summary">
                       <TabsList>
-                        <TabsTrigger value="summary">Summary</TabsTrigger>
+                        <TabsTrigger value="summary">{tr("connect.tab.summary")}</TabsTrigger>
                         <TabsTrigger value="diff" disabled={!preview.diff}>
-                          Changes
+                          {tr("connect.tab.changes")}
                         </TabsTrigger>
                       </TabsList>
                       <TabsContent value="summary">
                         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 pt-2 text-xs">
-                          <dt className="text-muted-foreground">Entry name</dt>
+                          <dt className="text-muted-foreground">{tr("connect.detail.entryName")}</dt>
                           <dd className="font-mono">{preview.entryName}</dd>
-                          <dt className="text-muted-foreground">Settings file</dt>
+                          <dt className="text-muted-foreground">{tr("connect.detail.settingsFile")}</dt>
                           <dd className="font-mono break-all">{preview.path}</dd>
-                          <dt className="text-muted-foreground">Runs</dt>
+                          <dt className="text-muted-foreground">{tr("connect.detail.runs")}</dt>
                           <dd className="font-mono break-all">{(preview.server ?? []).join(" ") || "—"}</dd>
                           {(preview.commands?.length ?? 0) > 0 && (
                             <>
-                              <dt className="text-muted-foreground">Through</dt>
+                              <dt className="text-muted-foreground">{tr("connect.detail.through")}</dt>
                               <dd className="font-mono break-all">{(preview.commands ?? []).join("\n")}</dd>
                             </>
                           )}
@@ -268,11 +266,15 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>
-            Cancel
+            {tr("common.cancel")}
           </Button>
           <Button onClick={connect} disabled={busy || loading || !preview || !preview.canApply || !preview.changed}>
             {busy && <Spinner data-icon="inline-start" />}
-            {preview && !preview.changed ? "Already connected" : preview?.replaces ? "Replace and connect" : "Connect"}
+            {preview && !preview.changed
+              ? tr("connect.alreadyConnected")
+              : preview?.replaces
+                ? tr("connect.replaceAndConnect")
+                : tr("connect.connect")}
           </Button>
         </DialogFooter>
       </DialogContent>

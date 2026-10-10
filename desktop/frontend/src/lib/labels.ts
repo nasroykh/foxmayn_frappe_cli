@@ -1,11 +1,17 @@
-export const authLabels: Record<string, string> = {
-  oauth: "Browser sign-in",
-  apikey: "API key",
-  password: "Password",
-}
+import i18n, { intlLocale } from "@/i18n"
 
+/** The sign-in method of a site in the page's language; an unknown one is shown as it is. */
 export function authLabel(auth: string) {
-  return authLabels[auth] ?? auth
+  switch (auth) {
+    case "oauth":
+      return i18n.t("auth.oauth")
+    case "apikey":
+      return i18n.t("auth.apikey")
+    case "password":
+      return i18n.t("auth.password")
+    default:
+      return auth
+  }
 }
 
 /** Up to two letters for a site's avatar: "acme-prod" -> "AP". */
@@ -27,9 +33,10 @@ export function timeAgo(iso: string) {
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return ""
   const s = Math.max(0, Math.round((Date.now() - t) / 1000))
-  if (s < 60) return "just now"
+  if (s < 60) return i18n.t("time.justNow")
+  const rtf = new Intl.RelativeTimeFormat(intlLocale(), { numeric: "auto" })
   const m = Math.round(s / 60)
-  if (m < 60) return `${m} min ago`
+  if (m < 60) return rtf.format(-m, "minute")
   const h = Math.round(m / 60)
-  return `${h} h ago`
+  return rtf.format(-h, "hour")
 }

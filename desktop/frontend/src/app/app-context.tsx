@@ -4,6 +4,7 @@ import { backend } from "@/lib/backend"
 import { copy } from "@/components/copy-field"
 import { toast } from "@/components/ui/toast"
 import type { AssistantList, CheckResult, Environment, FFCUpdate, SiteList, UpdateInfo } from "@/lib/backend-types"
+import i18n from "@/i18n"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 
 const UPDATE_CHECKED_KEY = "ffd-update-checked"
@@ -168,28 +169,31 @@ export function AppProvider({
           // The terminal command avoids the warnings an unsigned download meets.
           const terminal = info.installCommand.startsWith("curl") ? "Terminal" : "PowerShell"
           toast.add({
-            title: `Foxmayn Frappe Desktop ${info.latest} is available`,
-            description: `Copy the install command and run it in ${terminal}. Settings > About has it too.`,
+            title: i18n.t("shell.update.availableTitle", { version: info.latest }),
+            description: i18n.t("shell.update.installHint", { terminal }),
             type: "info",
             timeout: 20000,
-            actionProps: { children: "Copy command", onClick: () => void copy(info.installCommand, "Command copied") },
+            actionProps: {
+              children: i18n.t("shell.update.copyCommand"),
+              onClick: () => void copy(info.installCommand, i18n.t("shell.update.commandCopied")),
+            },
           })
         } else if (info.available) {
           toast.add({
-            title: `Foxmayn Frappe Desktop ${info.latest} is available`,
-            description: "A newer version can be downloaded from GitHub.",
+            title: i18n.t("shell.update.availableTitle", { version: info.latest }),
+            description: i18n.t("shell.update.githubHint"),
             type: "info",
             timeout: 20000,
-            actionProps: { children: "Download", onClick: () => void downloadUpdate(info) },
+            actionProps: { children: i18n.t("common.download"), onClick: () => void downloadUpdate(info) },
           })
         }
         if (info.ffc.available) {
           toast.add({
-            title: `ffc ${info.ffc.latest} is available`,
-            description: `You have ffc ${info.ffc.current}. The app can update it for you.`,
+            title: i18n.t("shell.update.ffcTitle", { version: info.ffc.latest }),
+            description: i18n.t("shell.update.ffcBody", { current: info.ffc.current }),
             type: "info",
             timeout: 20000,
-            actionProps: { children: "Update", onClick: actions.installFFC },
+            actionProps: { children: i18n.t("common.update"), onClick: actions.installFFC },
           })
         }
       },

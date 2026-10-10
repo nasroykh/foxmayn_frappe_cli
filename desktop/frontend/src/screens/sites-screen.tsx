@@ -13,6 +13,7 @@ import {
   IconWorldCheck,
 } from "@tabler/icons-react"
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 
 import { useApp } from "@/app/app-context"
 import { FFCMissingAlert, LoadError, PageHeader } from "@/components/page"
@@ -54,6 +55,7 @@ import { backend } from "@/lib/backend"
 type Pending = { kind: "rename" | "url" | "remove"; site: Site } | null
 
 export function SitesScreen() {
+  const { t } = useTranslation()
   const { sites, reloadSites, addSite } = useApp()
   const [pending, setPending] = React.useState<Pending>(null)
   const list = sites.data?.sites ?? []
@@ -61,13 +63,13 @@ export function SitesScreen() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        title="Sites"
-        description="The Frappe sites this computer can reach. Sites you add with the ffc command line show up here too."
+        title={t("sites.title")}
+        description={t("sites.description")}
         actions={
           list.length > 0 && (
             <Button onClick={addSite}>
               <IconPlus data-icon="inline-start" />
-              Add a site
+              {t("sites.add")}
             </Button>
           )
         }
@@ -76,7 +78,7 @@ export function SitesScreen() {
       <WSLAlert />
 
       {sites.error && !sites.data ? (
-        <LoadError title="Your sites could not be loaded" error={sites.error} onRetry={reloadSites} />
+        <LoadError title={t("sites.loadFailed")} error={sites.error} onRetry={reloadSites} />
       ) : !sites.data ? (
         <SitesSkeleton />
       ) : list.length === 0 ? (
@@ -85,16 +87,15 @@ export function SitesScreen() {
             <EmptyMedia variant="icon">
               <IconWorld />
             </EmptyMedia>
-            <EmptyTitle>No sites yet</EmptyTitle>
+            <EmptyTitle>{t("sites.empty.title")}</EmptyTitle>
             <EmptyDescription>
-              Add your Frappe or ERPNext site to get started. You can sign in with your browser, an API key, or a
-              username and password.
+              {t("sites.empty.body")}
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
             <Button onClick={addSite}>
               <IconPlus data-icon="inline-start" />
-              Add your first site
+              {t("sites.empty.add")}
             </Button>
           </EmptyContent>
         </Empty>
@@ -114,8 +115,9 @@ export function SitesScreen() {
 }
 
 function SitesSkeleton() {
+  const { t } = useTranslation()
   return (
-    <div className="flex flex-col gap-2" aria-busy="true" aria-label="Loading sites">
+    <div className="flex flex-col gap-2" aria-busy="true" aria-label={t("sites.loading")}>
       {[0, 1, 2].map((i) => (
         <div key={i} className="flex items-center gap-3 rounded-lg border p-3">
           <Skeleton className="size-8 rounded-full" />
@@ -131,6 +133,7 @@ function SitesSkeleton() {
 }
 
 function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "url" | "remove") => void }) {
+  const { t } = useTranslation()
   const { checking, checkSite, connectAssistant, reloadSites } = useApp()
   const busy = checking.has(site.name)
   const check = site.lastCheck
@@ -140,7 +143,7 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
       const res = await checkSite(site.name)
       if (!res) return
       toast.add({
-        title: res.ok ? `${site.name} is connected` : `${site.name} did not accept the saved sign-in`,
+        title: res.ok ? t("sites.toast.connected", { name: site.name }) : t("sites.toast.rejected", { name: site.name }),
         description: localizedMessage(res),
         type: res.ok ? "success" : "error",
       })
@@ -155,8 +158,8 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
       await backend.setDefault(site.name)
       await reloadSites()
       toast.add({
-        title: `${site.name} is now the default site`,
-        description: "Assistants that follow the default use it.",
+        title: t("sites.toast.nowDefault", { name: site.name }),
+        description: t("sites.toast.nowDefaultHint"),
         type: "success",
       })
     } catch (err) {
@@ -166,20 +169,20 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
   }
 
   const actions = [
-    { id: "check", label: "Check connection", icon: IconWorldCheck, run: runCheck, disabled: busy },
-    { id: "default", label: "Make default", icon: IconStar, run: makeDefault, disabled: site.isDefault },
+    { id: "check", label: t("sites.action.check"), icon: IconWorldCheck, run: runCheck, disabled: busy },
+    { id: "default", label: t("sites.action.makeDefault"), icon: IconStar, run: makeDefault, disabled: site.isDefault },
     {
       id: "connect",
-      label: "Connect an assistant",
+      label: t("sites.action.connect"),
       icon: IconPlugConnected,
       run: () => connectAssistant(undefined, site.name),
     },
   ]
   const edits = [
-    { id: "rename", label: "Rename…", icon: IconPencil, run: () => onAction("rename") },
+    { id: "rename", label: t("sites.action.rename"), icon: IconPencil, run: () => onAction("rename") },
     {
       id: "url",
-      label: "Change address…",
+      label: t("sites.action.changeAddress"),
       icon: IconLink,
       run: () => onAction("url"),
       disabled: site.auth === "oauth",
@@ -213,15 +216,15 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
                   <SiteCard site={site} />
                 </HoverCardContent>
               </HoverCard>
-              {site.isDefault && <Badge>Default</Badge>}
+              {site.isDefault && <Badge>{t("sites.default")}</Badge>}
               <Badge variant="secondary">{authLabel(site.auth)}</Badge>
               {site.plainHTTP && (
                 <Tooltip>
                   <TooltipTrigger render={<Badge variant="destructive" tabIndex={0} />}>
                     <IconLockOpen data-icon="inline-start" />
-                    Not encrypted
+                    {t("sites.notEncrypted")}
                   </TooltipTrigger>
-                  <TooltipContent>This address uses http://, so sign-in details travel unencrypted.</TooltipContent>
+                  <TooltipContent>{t("sites.notEncryptedHint")}</TooltipContent>
                 </Tooltip>
               )}
             </ItemTitle>
@@ -230,7 +233,7 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
               {check && (
                 <>
                   {" · "}
-                  {check.ok ? `Connected as ${check.user}` : "Last check failed"} · {timeAgo(check.checkedAt)}
+                  {check.ok ? t("sites.connectedAs", { user: check.user }) : t("sites.lastCheckFailed")} · {timeAgo(check.checkedAt)}
                 </>
               )}
             </ItemDescription>
@@ -258,7 +261,7 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
           <ContextMenuGroup>
             <ContextMenuItem variant="destructive" onClick={() => onAction("remove")}>
               <IconTrash />
-              Remove…
+              {t("sites.action.remove")}
             </ContextMenuItem>
           </ContextMenuGroup>
         </ContextMenuContent>
@@ -266,20 +269,20 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
       <ItemActions>
         <Button variant="outline" size="sm" onClick={runCheck} disabled={busy}>
           {busy ? <Spinner data-icon="inline-start" /> : <IconWorldCheck data-icon="inline-start" />}
-          {busy ? "Checking…" : "Check"}
+          {busy ? t("sites.checking") : t("sites.check")}
         </Button>
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger
               render={
                 <DropdownMenuTrigger
-                  render={<Button variant="ghost" size="icon-sm" aria-label={`More actions for ${site.name}`} />}
+                  render={<Button variant="ghost" size="icon-sm" aria-label={t("sites.moreFor", { name: site.name })} />}
                 />
               }
             >
               <IconDots />
             </TooltipTrigger>
-            <TooltipContent>More actions</TooltipContent>
+            <TooltipContent>{t("sites.more")}</TooltipContent>
           </Tooltip>
           <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuGroup>
@@ -303,7 +306,7 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
             <DropdownMenuGroup>
               <DropdownMenuItem variant="destructive" onClick={() => onAction("remove")}>
                 <IconTrash />
-                Remove…
+                {t("sites.action.remove")}
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
@@ -314,6 +317,7 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
 }
 
 function SiteCard({ site }: { site: Site }) {
+  const { t } = useTranslation()
   const check = site.lastCheck
   return (
     <div className="flex flex-col gap-3">
@@ -328,26 +332,26 @@ function SiteCard({ site }: { site: Site }) {
       </div>
       <Separator />
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-        <dt className="text-muted-foreground">Sign-in</dt>
+        <dt className="text-muted-foreground">{t("sites.card.signIn")}</dt>
         <dd>{authLabel(site.auth)}</dd>
         {site.username && (
           <>
-            <dt className="text-muted-foreground">Username</dt>
+            <dt className="text-muted-foreground">{t("sites.card.username")}</dt>
             <dd className="truncate">{site.username}</dd>
           </>
         )}
-        <dt className="text-muted-foreground">Signed in as</dt>
-        <dd className="truncate">{check?.ok ? check.user : check ? "Check failed" : "Not checked yet"}</dd>
-        <dt className="text-muted-foreground">Security</dt>
+        <dt className="text-muted-foreground">{t("sites.card.signedInAs")}</dt>
+        <dd className="truncate">{check?.ok ? check.user : check ? t("sites.card.checkFailed") : t("sites.card.notChecked")}</dd>
+        <dt className="text-muted-foreground">{t("sites.card.security")}</dt>
         <dd className="flex items-center gap-1">
           {site.plainHTTP ? <IconLockOpen className="text-destructive size-3.5" /> : <IconLock className="size-3.5" />}
-          {site.plainHTTP ? "Not encrypted (http)" : "Encrypted (https)"}
+          {site.plainHTTP ? t("sites.card.http") : t("sites.card.https")}
         </dd>
       </dl>
       {check && !check.ok && (
         <Alert variant="destructive">
           <IconAlertTriangle />
-          <AlertTitle>Last check failed</AlertTitle>
+          <AlertTitle>{t("sites.lastCheckFailed")}</AlertTitle>
           <AlertDescription>{localizedMessage(check)}</AlertDescription>
         </Alert>
       )}

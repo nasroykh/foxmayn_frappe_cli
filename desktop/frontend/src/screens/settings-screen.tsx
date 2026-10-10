@@ -12,7 +12,7 @@ import {
   IconSun,
 } from "@tabler/icons-react"
 import * as React from "react"
-import { useTranslation } from "react-i18next"
+import { Trans, useTranslation } from "react-i18next"
 
 import { useApp } from "@/app/app-context"
 import { useTheme, type Theme } from "@/app/theme"
@@ -33,6 +33,7 @@ import { toast } from "@/components/ui/toast"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { backend } from "@/lib/backend"
 import type { UpdateInfo } from "@/lib/backend-types"
+import { intlLocale } from "@/i18n"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 import { ProfileSettings } from "@/screens/assistant/profile-settings"
 import { HistorySettings } from "@/screens/assistant/history-settings"
@@ -55,13 +56,13 @@ export function SettingsScreen() {
   const { t } = useTranslation()
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="Settings" description="How the app looks, where things are kept, and what it is." />
+      <PageHeader title={t("shell.nav.settings")} description={t("settings.description")} />
       <Tabs defaultValue="general">
         <TabsList>
-          <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="general">{t("settings.generalTab")}</TabsTrigger>
           <TabsTrigger value="assistant">{t("settings.assistantTab")}</TabsTrigger>
-          <TabsTrigger value="ffc">ffc helper</TabsTrigger>
-          <TabsTrigger value="about">About</TabsTrigger>
+          <TabsTrigger value="ffc">{t("settings.ffcTab")}</TabsTrigger>
+          <TabsTrigger value="about">{t("settings.aboutTab")}</TabsTrigger>
         </TabsList>
         <TabsContent value="general" className="pt-4">
           <GeneralTab />
@@ -103,36 +104,36 @@ function GeneralTab() {
         <Separator />
         <Field orientation="horizontal">
           <FieldContent>
-            <FieldTitle>Theme</FieldTitle>
-            <FieldDescription>Light, dark, or the same as your system.</FieldDescription>
+            <FieldTitle>{t("theme.title")}</FieldTitle>
+            <FieldDescription>{t("theme.description")}</FieldDescription>
           </FieldContent>
           <ToggleGroup
             variant="outline"
             value={[theme]}
             onValueChange={(v: string[]) => v[0] && setTheme(v[0] as Theme)}
-            aria-label="Theme"
+            aria-label={t("theme.title")}
           >
-            <ToggleGroupItem value="light" aria-label="Light">
+            <ToggleGroupItem value="light" aria-label={t("theme.light")}>
               <IconSun data-icon="inline-start" />
-              Light
+              {t("theme.light")}
             </ToggleGroupItem>
-            <ToggleGroupItem value="dark" aria-label="Dark">
+            <ToggleGroupItem value="dark" aria-label={t("theme.dark")}>
               <IconMoon data-icon="inline-start" />
-              Dark
+              {t("theme.dark")}
             </ToggleGroupItem>
-            <ToggleGroupItem value="system" aria-label="Same as system">
+            <ToggleGroupItem value="system" aria-label={t("theme.system")}>
               <IconDeviceDesktop data-icon="inline-start" />
-              System
+              {t("theme.systemShort")}
             </ToggleGroupItem>
           </ToggleGroup>
         </Field>
         <Separator />
         <Field>
-          <FieldLabel htmlFor="config-path">Settings file</FieldLabel>
+          <FieldLabel htmlFor="config-path">{t("settings.configFile")}</FieldLabel>
           {env.data ? (
             <div className="flex gap-2">
               <div className="min-w-0 flex-1">
-                <CopyField value={env.data.configPath} label="Settings file path" copiedTitle="Path copied" />
+                <CopyField value={env.data.configPath} label={t("settings.configPath")} copiedTitle={t("settings.pathCopied")} />
               </div>
               <Button
                 variant="outline"
@@ -140,7 +141,7 @@ function GeneralTab() {
                 disabled={!env.data.configExists}
               >
                 <IconFolderOpen data-icon="inline-start" />
-                Open folder
+                {t("settings.openFolder")}
               </Button>
             </div>
           ) : (
@@ -148,8 +149,8 @@ function GeneralTab() {
           )}
           <FieldDescription>
             {env.data && !env.data.configExists
-              ? "It does not exist yet. It is created when you add your first site."
-              : "Shared with the ffc command line. Changes made there show up here right away."}
+              ? t("settings.configMissing")
+              : t("settings.configShared")}
           </FieldDescription>
         </Field>
       </FieldGroup>
@@ -159,6 +160,7 @@ function GeneralTab() {
 }
 
 function FFCTab() {
+  const { t } = useTranslation()
   const { env, reloadEnv, reloadAssistants, installFFC, ffcUpdate } = useApp()
   const [refreshing, setRefreshing] = React.useState(false)
   const ffc = env.data?.ffc
@@ -184,71 +186,70 @@ function FFCTab() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            ffc helper
+            {t("settings.ffcTab")}
             {ok && ffcUpdate ? (
               <Badge variant="secondary">
                 <IconArrowUpCircle data-icon="inline-start" />
-                Update available
+                {t("settings.ffc.updateAvailable")}
               </Badge>
             ) : ok ? (
               <Badge>
                 <IconCircleCheck data-icon="inline-start" />
-                Installed
+                {t("settings.ffc.installed")}
               </Badge>
             ) : (
               <Badge variant="destructive">
                 <IconAlertTriangle data-icon="inline-start" />
-                {ffc.found ? "Not working" : "Not installed"}
+                {ffc.found ? t("settings.ffc.notWorking") : t("settings.ffc.notInstalled")}
               </Badge>
             )}
           </CardTitle>
           <CardDescription>
-            The program assistants run to reach your sites. This app finds it on your PATH or where the ffc
-            installers put it, and can install the latest release for you; it never ships its own copy.
+            {t("settings.ffc.description")}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {ffc.found ? (
             <>
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
-                <dt className="text-muted-foreground">Version</dt>
-                <dd>{ffc.version || "Unknown"}</dd>
+                <dt className="text-muted-foreground">{t("settings.ffc.version")}</dt>
+                <dd>{ffc.version || t("settings.ffc.unknown")}</dd>
               </dl>
-              <CopyField value={ffc.path} label="ffc location" copiedTitle="Path copied" />
+              <CopyField value={ffc.path} label={t("settings.ffc.location")} copiedTitle={t("settings.pathCopied")} />
               {ffc.error && (
                 <Alert variant="destructive">
                   <IconAlertTriangle />
-                  <AlertTitle>ffc did not answer</AlertTitle>
+                  <AlertTitle>{t("settings.ffc.noAnswerTitle")}</AlertTitle>
                   <AlertDescription>
-                    Running it failed ({ffc.error}).{" "}
                     {ffc.manager
-                      ? `Reinstalling it with ${ffc.manager} usually fixes this.`
-                      : "Installing it again usually fixes this."}
+                      ? t("settings.ffc.noAnswerManager", { error: ffc.error, manager: ffc.manager })
+                      : t("settings.ffc.noAnswer", { error: ffc.error })}
                   </AlertDescription>
                 </Alert>
               )}
               {ffcUpdate && (
                 <Alert>
                   <IconArrowUpCircle />
-                  <AlertTitle>ffc {ffcUpdate.latest} is available</AlertTitle>
-                  <AlertDescription>
-                    Updating replaces the ffc above, where it is. Restart your connected assistants afterwards so they
-                    use the new version.
-                  </AlertDescription>
+                  <AlertTitle>{t("shell.update.ffcTitle", { version: ffcUpdate.latest })}</AlertTitle>
+                  <AlertDescription>{t("settings.ffc.updateBody")}</AlertDescription>
                 </Alert>
               )}
               <p className="text-muted-foreground text-sm">
-                The app looks for a newer ffc once a day (Check for updates in About looks now). You can also run{" "}
-                <code className="bg-muted rounded px-1 py-0.5 font-mono text-xs">
-                  {ffc.upgradeCommand || "ffc update"}
-                </code>{" "}
-                in a terminal.
+                <Trans
+                  i18nKey="settings.ffc.autoCheck"
+                  values={{ command: ffc.upgradeCommand || "ffc update" }}
+                  components={{ code: <code className="bg-muted rounded px-1 py-0.5 font-mono text-xs" /> }}
+                />
               </p>
             </>
           ) : (
             <div className="flex flex-col gap-2">
-              <p className="text-muted-foreground text-sm">Install it here, or run this in a terminal yourself:</p>
-              <CopyField value={env.data.installCommand} label="Install command" copiedTitle="Command copied" />
+              <p className="text-muted-foreground text-sm">{t("settings.ffc.installHere")}</p>
+              <CopyField
+                value={env.data.installCommand}
+                label={t("settings.installCommand")}
+                copiedTitle={t("shell.update.commandCopied")}
+              />
             </div>
           )}
         </CardContent>
@@ -256,24 +257,24 @@ function FFCTab() {
           {ok && ffcUpdate ? (
             <Button onClick={installFFC}>
               <IconArrowUpCircle data-icon="inline-start" />
-              Update to {ffcUpdate.latest}
+              {t("settings.ffc.updateTo", { version: ffcUpdate.latest })}
             </Button>
           ) : (
             !ffc.manager && (
               <Button onClick={installFFC} variant={ok ? "outline" : "default"}>
                 <IconDownload data-icon="inline-start" />
-                {ffc.found ? "Install again" : "Install ffc"}
+                {ffc.found ? t("settings.ffc.installAgain") : t("settings.ffc.install")}
               </Button>
             )
           )}
           <Button variant="outline" onClick={refresh} disabled={refreshing}>
             {refreshing ? <Spinner data-icon="inline-start" /> : <IconRefresh data-icon="inline-start" />}
-            Look again
+            {t("settings.ffc.lookAgain")}
           </Button>
           {ffc.found && (
             <Button variant="ghost" onClick={() => attempt(backend.openFFCFolder)}>
               <IconFolderOpen data-icon="inline-start" />
-              Open folder
+              {t("settings.openFolder")}
             </Button>
           )}
         </CardFooter>
@@ -283,6 +284,7 @@ function FFCTab() {
 }
 
 function UpdateResult({ result }: { result: UpdateOutcome }) {
+  const { t } = useTranslation()
   const { downloadUpdate, env } = useApp()
   const terminal = env.data?.os === "darwin" ? "Terminal" : "PowerShell"
   if (result.kind === "error") {
@@ -295,27 +297,33 @@ function UpdateResult({ result }: { result: UpdateOutcome }) {
     )
   }
   if (result.kind === "available") {
+    const released = result.info.publishedAt ? formatDate(result.info.publishedAt) : ""
+    const youHave = [
+      t("settings.update.youHave", { current: result.info.current }),
+      released ? t("settings.update.released", { date: released }) : "",
+    ]
+      .filter(Boolean)
+      .join(" ")
     return (
       <Alert>
         <IconArrowUpCircle />
-        <AlertTitle>Version {result.info.latest} is available</AlertTitle>
+        <AlertTitle>{t("settings.update.availableTitle", { version: result.info.latest })}</AlertTitle>
         <AlertDescription className="flex flex-col gap-2">
           {result.info.installCommand ? (
             <>
               <span>
-                You have {result.info.current}.
-                {result.info.publishedAt ? ` Released ${formatDate(result.info.publishedAt)}.` : ""} The easiest way
-                to install it: run this in {terminal}. It checks the download, closes this app, installs the new
-                version over it and opens it again, with no security warning to click through.
+                {youHave} {t("settings.update.easiestWay", { terminal })}
               </span>
-              <CopyField value={result.info.installCommand} label="Install command" copiedTitle="Command copied" />
-              <span>Or download it from GitHub and install it over this one.</span>
+              <CopyField
+                value={result.info.installCommand}
+                label={t("settings.installCommand")}
+                copiedTitle={t("shell.update.commandCopied")}
+              />
+              <span>{t("settings.update.orDownload")}</span>
             </>
           ) : (
             <span>
-              You have {result.info.current}.
-              {result.info.publishedAt ? ` Released ${formatDate(result.info.publishedAt)}.` : ""} Download it from
-              GitHub and install it over this one.
+              {youHave} {t("settings.update.downloadFromGitHub")}
             </span>
           )}
         </AlertDescription>
@@ -326,7 +334,7 @@ function UpdateResult({ result }: { result: UpdateOutcome }) {
             onClick={() => void downloadUpdate(result.info)}
           >
             <IconDownload data-icon="inline-start" />
-            Download
+            {t("common.download")}
           </Button>
         </AlertAction>
       </Alert>
@@ -335,8 +343,8 @@ function UpdateResult({ result }: { result: UpdateOutcome }) {
   return (
     <Alert>
       <IconCircleCheck />
-      <AlertTitle>The app is up to date</AlertTitle>
-      <AlertDescription>Version {result.info.current} is the newest one.</AlertDescription>
+      <AlertTitle>{t("settings.update.upToDateTitle")}</AlertTitle>
+      <AlertDescription>{t("settings.update.upToDateBody", { version: result.info.current })}</AlertDescription>
     </Alert>
   )
 }
@@ -348,10 +356,11 @@ type UpdateOutcome =
 
 function formatDate(iso: string) {
   const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { dateStyle: "medium" })
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(intlLocale(), { dateStyle: "medium" })
 }
 
 function AboutTab() {
+  const { t } = useTranslation()
   const { env, update, checkingUpdate, checkUpdate, ffcUpdate, installFFC } = useApp()
   // What the button found; before any click, what the startup check found.
   const [clicked, setClicked] = React.useState<UpdateOutcome | null>(null)
@@ -375,27 +384,24 @@ function AboutTab() {
         <div className="flex flex-col gap-1">
           <h2 className="font-heading text-lg font-semibold">Foxmayn Frappe Desktop</h2>
           <p className="text-muted-foreground text-sm">
-            Version {env.data?.appVersion ?? "…"}
+            {t("settings.about.version", { version: env.data?.appVersion ?? "…" })}
             {os ? ` · ${os}` : ""}
           </p>
         </div>
       </div>
       <p className="text-sm">
-        Connects your Frappe and ERPNext sites to the AI assistants on your computer, using the ffc command line
-        underneath. Made by Foxmayn. For Windows and macOS.
+        {t("settings.about.summary")}
       </p>
       <Alert>
         <IconAlertTriangle />
-        <AlertTitle>Not an official Frappe product.</AlertTitle>
-        <AlertDescription>
-          Foxmayn makes this app independently. It is not affiliated with or endorsed by Frappe Technologies.
-        </AlertDescription>
+        <AlertTitle>{t("welcome.notOfficial")}</AlertTitle>
+        <AlertDescription>{t("settings.about.independent")}</AlertDescription>
       </Alert>
       <div className="flex flex-col gap-3">
         <div>
           <Button variant="outline" onClick={check} disabled={checkingUpdate}>
             {checkingUpdate ? <Spinner data-icon="inline-start" /> : <IconRefresh data-icon="inline-start" />}
-            Check for updates
+            {t("settings.about.checkUpdates")}
           </Button>
         </div>
         <div aria-live="polite" className="flex flex-col gap-3">
@@ -403,11 +409,11 @@ function AboutTab() {
           {ffcUpdate && (
             <Alert>
               <IconArrowUpCircle />
-              <AlertTitle>ffc {ffcUpdate.latest} is available</AlertTitle>
-              <AlertDescription>You have ffc {ffcUpdate.current}.</AlertDescription>
+              <AlertTitle>{t("shell.update.ffcTitle", { version: ffcUpdate.latest })}</AlertTitle>
+              <AlertDescription>{t("settings.about.ffcYouHave", { current: ffcUpdate.current })}</AlertDescription>
               <AlertAction>
                 <Button size="sm" onClick={installFFC}>
-                  Update ffc
+                  {t("settings.about.updateFfc")}
                 </Button>
               </AlertAction>
             </Alert>
@@ -417,11 +423,11 @@ function AboutTab() {
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={() => attempt(() => backend.openWebsite(REPO))}>
           <IconBrandGithub data-icon="inline-start" />
-          Source code
+          {t("settings.about.sourceCode")}
         </Button>
         <Button variant="outline" onClick={() => attempt(() => backend.openWebsite(`${REPO}/issues`))}>
           <IconBug data-icon="inline-start" />
-          Report a problem
+          {t("settings.about.reportProblem")}
         </Button>
       </div>
     </div>

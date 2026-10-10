@@ -91,7 +91,7 @@ func (b *approvalBroker) answer(convID, id string, approve bool) error {
 	defer b.mu.Unlock()
 	p, ok := b.pending[id]
 	if !ok || p.convID != convID {
-		return &Error{Code: CodeNotFound, Message: "This request was already answered or has ended."}
+		return keyed(CodeNotFound, "chat.approvalGone", nil)
 	}
 	delete(b.pending, id)
 	p.ch <- approve

@@ -1,18 +1,20 @@
 import { IconCheck, IconCopy } from "@tabler/icons-react"
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { toast } from "@/components/ui/toast"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import i18n from "@/i18n"
 import { backend } from "@/lib/backend"
 
-export async function copy(text: string, what = "Copied") {
+export async function copy(text: string, what?: string) {
   try {
     await backend.copyText(text)
-    toast.add({ title: what, description: "It is on your clipboard.", type: "success" })
+    toast.add({ title: what ?? i18n.t("copy.copied"), description: i18n.t("copy.onClipboard"), type: "success" })
     return true
   } catch {
-    toast.add({ title: "Could not copy", description: "Select the text and copy it yourself.", type: "error" })
+    toast.add({ title: i18n.t("copy.failed"), description: i18n.t("copy.failedHint"), type: "error" })
     return false
   }
 }
@@ -29,11 +31,12 @@ export function CopyField({
   copiedTitle?: string
   mono?: boolean
 }) {
+  const { t } = useTranslation()
   const [done, setDone] = React.useState(false)
   React.useEffect(() => {
     if (!done) return
-    const t = setTimeout(() => setDone(false), 1500)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => setDone(false), 1500)
+    return () => clearTimeout(timer)
   }, [done])
 
   return (
@@ -51,14 +54,14 @@ export function CopyField({
             render={
               <InputGroupButton
                 size="icon-xs"
-                aria-label={`Copy ${label.toLowerCase()}`}
+                aria-label={t("copy.copyLabel", { label: label.toLowerCase() })}
                 onClick={async () => setDone(await copy(value, copiedTitle))}
               />
             }
           >
             {done ? <IconCheck /> : <IconCopy />}
           </TooltipTrigger>
-          <TooltipContent>Copy</TooltipContent>
+          <TooltipContent>{t("common.copy")}</TooltipContent>
         </Tooltip>
       </InputGroupAddon>
     </InputGroup>

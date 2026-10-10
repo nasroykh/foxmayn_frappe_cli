@@ -17,6 +17,7 @@ import {
   InputGroupAddon,
 } from "@/components/ui/input-group"
 import { IconSearch, IconCheck } from "@tabler/icons-react"
+import { useTranslation } from "react-i18next"
 
 function Command({
   className,
@@ -35,8 +36,8 @@ function Command({
 }
 
 function CommandDialog({
-  title = "Command Palette",
-  description = "Search for a command to run...",
+  title,
+  description,
   children,
   className,
   showCloseButton = false,
@@ -48,11 +49,12 @@ function CommandDialog({
   showCloseButton?: boolean
   children: React.ReactNode
 }) {
+  const { t } = useTranslation()
   return (
     <Dialog {...props}>
       <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
+        <DialogTitle>{title ?? t("ui.commandPalette")}</DialogTitle>
+        <DialogDescription>{description ?? t("ui.commandDescription")}</DialogDescription>
       </DialogHeader>
       <DialogContent
         className={cn(
@@ -94,9 +96,11 @@ function CommandList({
   className,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.List>) {
+  const { t } = useTranslation()
   return (
     <CommandPrimitive.List
       data-slot="command-list"
+      label={t("ui.suggestions")}
       className={cn(
         "no-scrollbar max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
         className

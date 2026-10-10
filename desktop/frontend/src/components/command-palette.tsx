@@ -47,7 +47,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       const res = await checkSite(name)
       if (!res) return
       toast.add({
-        title: res.ok ? `${name} is connected` : `${name} did not answer as expected`,
+        title: res.ok ? t("palette.connected", { name }) : t("palette.notAsExpected", { name }),
         description: localizedMessage(res),
         type: res.ok ? "success" : "error",
       })
@@ -63,54 +63,54 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
     <CommandDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Command palette"
-      description="Search for a page or an action"
+      title={t("palette.title")}
+      description={t("palette.description")}
     >
       <Command>
-        <CommandInput placeholder="Type a command or search…" />
+        <CommandInput placeholder={t("palette.placeholder")} />
         <CommandList>
-          <CommandEmpty>Nothing matches.</CommandEmpty>
-          <CommandGroup heading="Go to">
-            <CommandItem onSelect={run(() => setScreen("sites"))}>
+          <CommandEmpty>{t("palette.empty")}</CommandEmpty>
+          <CommandGroup heading={t("palette.goTo")}>
+            <CommandItem value={`sites ${t("shell.nav.sites")}`} onSelect={run(() => setScreen("sites"))}>
               <IconWorld />
-              Sites
+              {t("shell.nav.sites")}
             </CommandItem>
-            <CommandItem onSelect={run(() => setScreen("assistant"))}>
+            <CommandItem value={`assistant ${t("nav.assistant")}`} onSelect={run(() => setScreen("assistant"))}>
               <IconMessageChatbot />
               {t("nav.assistant")}
             </CommandItem>
-            <CommandItem onSelect={run(() => setScreen("assistants"))}>
+            <CommandItem value={`connect apps ${t("nav.connectApps")}`} onSelect={run(() => setScreen("assistants"))}>
               <IconRobot />
               {t("nav.connectApps")}
             </CommandItem>
-            <CommandItem onSelect={run(() => setScreen("settings"))}>
+            <CommandItem value={`settings ${t("shell.nav.settings")}`} onSelect={run(() => setScreen("settings"))}>
               <IconSettings />
-              Settings
+              {t("shell.nav.settings")}
             </CommandItem>
           </CommandGroup>
           <CommandSeparator />
-          <CommandGroup heading="Actions">
-            <CommandItem onSelect={run(addSite)}>
+          <CommandGroup heading={t("palette.actions")}>
+            <CommandItem value={`add a site ${t("palette.addSite")}`} onSelect={run(addSite)}>
               <IconPlus />
-              Add a site
+              {t("palette.addSite")}
             </CommandItem>
-            <CommandItem onSelect={run(() => connectAssistant())}>
+            <CommandItem value={`connect an app ${t("palette.connectApp")}`} onSelect={run(() => connectAssistant())}>
               <IconPlugConnected />
-              Connect an assistant
+              {t("palette.connectApp")}
             </CommandItem>
             {env.data && !env.data.ffc.found && (
-              <CommandItem onSelect={run(installFFC)}>
+              <CommandItem value={`install the ffc helper ${t("palette.installFfc")}`} onSelect={run(installFFC)}>
                 <IconDownload />
-                Install the ffc helper
+                {t("palette.installFfc")}
               </CommandItem>
             )}
           </CommandGroup>
           {list.length > 0 && (
             <>
               <CommandSeparator />
-              <CommandGroup heading="Check a connection">
+              <CommandGroup heading={t("palette.checkConnection")}>
                 {list.map((s) => (
-                  <CommandItem key={s.name} value={`check ${s.name} ${s.url}`} onSelect={run(() => void check(s.name))}>
+                  <CommandItem key={s.name} value={`check ${s.name} ${s.url} ${t("palette.checkConnection")}`} onSelect={run(() => void check(s.name))}>
                     <IconWorldCheck />
                     {s.name}
                   </CommandItem>
@@ -132,18 +132,18 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             ))}
           </CommandGroup>
           <CommandSeparator />
-          <CommandGroup heading="Theme">
-            <CommandItem value="theme light" onSelect={run(() => setTheme("light"))}>
+          <CommandGroup heading={t("theme.title")}>
+            <CommandItem value={`theme light ${t("theme.light")}`} onSelect={run(() => setTheme("light"))}>
               <IconSun />
-              Light
+              {t("theme.light")}
             </CommandItem>
-            <CommandItem value="theme dark" onSelect={run(() => setTheme("dark"))}>
+            <CommandItem value={`theme dark ${t("theme.dark")}`} onSelect={run(() => setTheme("dark"))}>
               <IconMoon />
-              Dark
+              {t("theme.dark")}
             </CommandItem>
-            <CommandItem value="theme system" onSelect={run(() => setTheme("system"))}>
+            <CommandItem value={`theme system ${t("theme.system")}`} onSelect={run(() => setTheme("system"))}>
               <IconDeviceDesktop />
-              Same as system
+              {t("theme.system")}
             </CommandItem>
           </CommandGroup>
         </CommandList>

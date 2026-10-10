@@ -10,7 +10,7 @@ A command line, an MCP server and a desktop app for Frappe and ERPNext sites.
 
 - **ffc** works with documents, reports, workflows, files and permissions over the REST API, with output made for scripts (JSON, NDJSON, CSV, `--jq`).
 - **`ffc mcp`** lets AI assistants (Claude Desktop, Claude Code, Cursor, VS Code, Codex) use your sites, with per-site limits, confirmations and an audit log.
-- **Foxmayn Frappe Desktop** (Windows and macOS) adds sites and connects assistants without the terminal.
+- **Foxmayn Frappe Desktop** (Windows and macOS) adds sites, chats with them through its Assistant and connects AI apps, without the terminal.
 
 ## Install
 
@@ -69,7 +69,7 @@ More in the [Quickstart](docs/getting-started/quickstart.md).
 | Install, first site, sign-in methods, config file and env vars | [Installation](docs/getting-started/installation.md) · [Authentication](docs/getting-started/authentication.md) · [Configuration](docs/getting-started/configuration.md) |
 | Every command, global flags, output formats, exit codes, dry runs | [CLI reference](docs/cli/README.md) |
 | MCP server: setup per client, running it, tools, safety and policy | [MCP](docs/mcp/README.md) |
-| Desktop app: install, sites, assistants, updates | [Desktop](docs/desktop/README.md) |
+| Desktop app: install, sites, the Assistant, connecting apps, updates | [Desktop](docs/desktop/README.md) |
 | Release signing, where credentials live | [Security](docs/security.md) |
 | Problems and questions | [Troubleshooting](docs/troubleshooting.md) · [FAQ](docs/faq.md) |
 | Building, testing, releasing, the desktop dev loop | [Development](docs/development/README.md) |

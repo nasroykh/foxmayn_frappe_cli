@@ -1,5 +1,6 @@
 import { IconAlertTriangle, IconCircleCheck, IconDownload } from "@tabler/icons-react"
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 
 import { useApp } from "@/app/app-context"
 import { CopyField } from "@/components/copy-field"
@@ -25,6 +26,7 @@ import { appError, type AppError } from "@/lib/errors"
 type Phase = "confirm" | "running" | "done" | "failed"
 
 export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const { t } = useTranslation()
   const { env, reloadEnv, reloadAssistants } = useApp()
   const [phase, setPhase] = React.useState<Phase>("confirm")
   const [log, setLog] = React.useState<string[]>([])
@@ -72,10 +74,10 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
       setResult(info)
       setPhase("done")
       toast.add({
-        title: updating ? "ffc is updated" : "ffc is installed",
+        title: updating ? t("installFfc.updated") : t("installFfc.installed"),
         description: updating
-          ? `Version ${info.version || "unknown"} is ready. Restart your connected assistants to use it.`
-          : `Version ${info.version || "unknown"} is ready.`,
+          ? t("installFfc.readyRestart", { version: info.version || t("installFfc.unknownVersion") })
+          : t("installFfc.ready", { version: info.version || t("installFfc.unknownVersion") }),
         type: "success",
       })
       void reloadEnv()
@@ -84,7 +86,7 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
       const e = appError(err)
       setError(e)
       setPhase(e.code === "cancelled" ? "confirm" : "failed")
-      if (e.code === "cancelled") toast.add({ title: "Installation cancelled", type: "info" })
+      if (e.code === "cancelled") toast.add({ title: t("installFfc.cancelled"), type: "info" })
       // Refused because a package manager owns the ffc found now: show it.
       if (e.code === "unavailable") void reloadEnv()
     } finally {
@@ -105,34 +107,32 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
     >
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg" showCloseButton={!running}>
         <DialogHeader>
-          <DialogTitle>{manager || updating ? "Update the ffc helper" : "Install the ffc helper"}</DialogTitle>
+          <DialogTitle>{manager || updating ? t("installFfc.updateTitle") : t("installFfc.installTitle")}</DialogTitle>
           <DialogDescription>
             {manager
-              ? `ffc was installed with ${manager}, so ${manager} updates and reinstalls it, not this app.${installed?.upgradeCommand ? " Run this in a terminal, then restart your connected assistants so they use the new version." : ""}`
+              ? installed?.upgradeCommand
+                ? t("installFfc.managerRun", { manager })
+                : t("installFfc.manager", { manager })
               : updating
-              ? `This downloads the latest ffc release from GitHub, checks its signature and replaces the ffc ${installed?.version || ""} at ${installed?.path ?? ""}. A development build of ffc is left alone and a new copy is installed for your user instead.`
-              : "Assistants use ffc, a small program from Foxmayn, to talk to your Frappe sites. This downloads the latest ffc release from GitHub, checks its signature and installs it for your user only."}
+                ? t("installFfc.updateBody", { version: installed?.version || "", path: installed?.path ?? "" })
+                : t("installFfc.installBody")}
           </DialogDescription>
         </DialogHeader>
 
         {phase === "confirm" && manager && installed?.upgradeCommand && (
-          <CopyField value={installed.upgradeCommand} label="Update command" copiedTitle="Command copied" />
+          <CopyField value={installed.upgradeCommand} label={t("installFfc.updateCommand")} copiedTitle={t("common.commandCopied")} />
         )}
 
         {phase === "confirm" && !updating && !manager && (
           <Collapsible>
             <CollapsibleTrigger render={<Button variant="link" size="sm" className="px-0" />}>
-              Where it goes
+              {t("installFfc.whereTitle")}
             </CollapsibleTrigger>
             <CollapsibleContent className="flex flex-col gap-2 pt-2">
               <p className="text-muted-foreground text-xs">
-                {isMac
-                  ? "It installs ffc to ~/.local/bin."
-                  : "It installs ffc to your user's Programs folder and adds that folder to your PATH."}{" "}
-                The download is refused unless its signature matches Foxmayn's release key. You can also install it
-                yourself in a terminal:
+                {isMac ? t("installFfc.whereMac") : t("installFfc.whereWindows")} {t("installFfc.whereSignature")}
               </p>
-              <CopyField value={command} label="Install command" copiedTitle="Command copied" />
+              <CopyField value={command} label={t("installFfc.installCommand")} copiedTitle={t("common.commandCopied")} />
             </CollapsibleContent>
           </Collapsible>
         )}
@@ -142,19 +142,19 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
             {running && (
               <Progress value={null}>
                 <ProgressLabel className="flex items-center gap-2">
-                  <Spinner /> Installing…
+                  <Spinner /> {t("installFfc.installing")}
                 </ProgressLabel>
               </Progress>
             )}
             {phase === "done" && result && (
               <Alert>
                 <IconCircleCheck />
-                <AlertTitle>ffc {result.version} is installed</AlertTitle>
+                <AlertTitle>{t("installFfc.versionInstalled", { version: result.version })}</AlertTitle>
                 <AlertDescription className="break-all">
                   {result.path}
                   {updating && (
                     <span className="block break-normal">
-                      Restart your connected assistants (quit them fully) so they use the new version.
+                      {t("installFfc.restartApps")}
                     </span>
                   )}
                 </AlertDescription>
@@ -163,14 +163,14 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
             {phase === "failed" && error && (
               <Alert variant="destructive">
                 <IconAlertTriangle />
-                <AlertTitle>The installation did not finish</AlertTitle>
+                <AlertTitle>{t("installFfc.failed")}</AlertTitle>
                 <AlertDescription>{error.message}</AlertDescription>
               </Alert>
             )}
             <ScrollArea className="bg-muted h-40 rounded-lg">
               <div className="p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap" role="log" aria-live="polite">
                 {log.length === 0 ? (
-                  <span className="text-muted-foreground">Starting…</span>
+                  <span className="text-muted-foreground">{t("installFfc.starting")}</span>
                 ) : (
                   log.join("\n")
                 )}
@@ -179,8 +179,8 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
             </ScrollArea>
             {phase === "failed" && (
               <div className="flex flex-col gap-2">
-                <p className="text-muted-foreground text-xs">You can also install it yourself in a terminal:</p>
-                <CopyField value={command} label="Install command" copiedTitle="Command copied" />
+                <p className="text-muted-foreground text-xs">{t("installFfc.alsoTerminal")}</p>
+                <CopyField value={command} label={t("installFfc.installCommand")} copiedTitle={t("common.commandCopied")} />
               </div>
             )}
           </div>
@@ -189,34 +189,34 @@ export function InstallFFCDialog({ open, onOpenChange }: { open: boolean; onOpen
         <DialogFooter>
           {phase === "confirm" && manager && (
             <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Close
+              {t("common.close")}
             </Button>
           )}
           {phase === "confirm" && !manager && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Not now
+                {t("installFfc.notNow")}
               </Button>
               <Button onClick={start}>
                 <IconDownload data-icon="inline-start" />
-                {updating ? "Update ffc" : "Install ffc"}
+                {updating ? t("installFfc.updateButton") : t("installFfc.installButton")}
               </Button>
             </>
           )}
           {running && (
             <Button variant="outline" onClick={() => run.current?.cancel()}>
-              Cancel
+              {t("common.cancel")}
             </Button>
           )}
           {phase === "failed" && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Close
+                {t("common.close")}
               </Button>
-              <Button onClick={start}>Try again</Button>
+              <Button onClick={start}>{t("common.retry")}</Button>
             </>
           )}
-          {phase === "done" && <Button onClick={() => onOpenChange(false)}>Done</Button>}
+          {phase === "done" && <Button onClick={() => onOpenChange(false)}>{t("common.done")}</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

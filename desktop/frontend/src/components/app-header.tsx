@@ -36,7 +36,7 @@ export function useModKey() {
 export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
   const { t } = useTranslation()
   const { screen, setScreen } = useApp()
-  const titles = { sites: "Sites", assistant: t("nav.assistant"), assistants: t("connectApps.title"), settings: "Settings" }
+  const titles = { sites: t("shell.nav.sites"), assistant: t("nav.assistant"), assistants: t("connectApps.title"), settings: t("shell.nav.settings") }
   const { theme, setTheme } = useTheme()
   const mod = useModKey()
   const ThemeIcon = theme === "light" ? IconSun : theme === "dark" ? IconMoon : IconDeviceDesktop
@@ -45,7 +45,7 @@ export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
     <header className="bg-background/95 flex h-12 shrink-0 items-center gap-2 border-b px-3 backdrop-blur">
       <Tooltip>
         <TooltipTrigger render={<SidebarTrigger />} />
-        <TooltipContent>Show or hide the sidebar</TooltipContent>
+        <TooltipContent>{t("shell.header.toggleSidebar")}</TooltipContent>
       </Tooltip>
       <Separator orientation="vertical" className="mx-1 data-[orientation=vertical]:h-4" />
       <Breadcrumb>
@@ -65,7 +65,7 @@ export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
       <div className="ml-auto flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={onOpenPalette} className="text-muted-foreground">
           <IconSearch data-icon="inline-start" />
-          Search
+          {t("shell.header.search")}
           <KbdGroup>
             <Kbd>{mod}</Kbd>
             <Kbd>K</Kbd>
@@ -74,27 +74,27 @@ export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger
-              render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Theme" />} />}
+              render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t("theme.title")} />} />}
             >
               <ThemeIcon />
             </TooltipTrigger>
-            <TooltipContent>Theme</TooltipContent>
+            <TooltipContent>{t("theme.title")}</TooltipContent>
           </Tooltip>
           <DropdownMenuContent align="end" className="w-44">
             <DropdownMenuGroup>
-              <DropdownMenuLabel>Theme</DropdownMenuLabel>
+              <DropdownMenuLabel>{t("theme.title")}</DropdownMenuLabel>
               <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as Theme)}>
                 <DropdownMenuRadioItem value="light">
                   <IconSun />
-                  Light
+                  {t("theme.light")}
                 </DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="dark">
                   <IconMoon />
-                  Dark
+                  {t("theme.dark")}
                 </DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="system">
                   <IconDeviceDesktop />
-                  Same as system
+                  {t("theme.system")}
                 </DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
             </DropdownMenuGroup>

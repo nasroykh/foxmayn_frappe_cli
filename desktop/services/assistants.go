@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,7 +92,9 @@ type Preview struct {
 	// why (claude CLI missing, read-only file).
 	CanApply bool   `json:"canApply"`
 	Problem  string `json:"problem,omitempty"`
-	Hint     string `json:"hint"`
+	// ProblemKey translates Problem, as Error.Key does.
+	ProblemKey string `json:"problemKey,omitempty"`
+	Hint       string `json:"hint"`
 }
 
 // ApplyResult is the outcome of Connect or Disconnect.
@@ -205,7 +206,7 @@ func (s *AssistantsService) siteNames() []string {
 func (s *AssistantsService) List() (AssistantList, error) {
 	env, err := s.env()
 	if err != nil {
-		return AssistantList{}, newError(CodeFailed, "Your user folders could not be found.", err)
+		return AssistantList{}, keyed(CodeFailed, "apps.noUserFolders", err)
 	}
 	ffc := s.ffc.Info()
 	out := AssistantList{FFC: ffc, EntryName: mcpinstall.DefaultName, Assistants: []Assistant{}}
@@ -282,29 +283,29 @@ func (s *AssistantsService) detected(id string, env mcpinstall.Env, configPath s
 // plan validates req and plans the entry.
 func (s *AssistantsService) plan(req ConnectRequest) (*mcpinstall.Change, mcpinstall.Server, error) {
 	if _, ok := clientNames[req.Client]; !ok {
-		return nil, mcpinstall.Server{}, invalid("client", "Unknown assistant.")
+		return nil, mcpinstall.Server{}, keyedInvalid("client", "apps.unknown")
 	}
 	ffc := s.ffc.Info()
 	if !ffc.Found {
-		return nil, mcpinstall.Server{}, &Error{Code: CodeFFCMissing, Message: "Install ffc first: assistants reach your sites through it."}
+		return nil, mcpinstall.Server{}, keyed(CodeFFCMissing, "apps.ffcMissing", nil)
 	}
 	if req.Site != "" {
 		cfg, err := config.Read(s.configPath)
 		if err != nil {
-			return nil, mcpinstall.Server{}, newError(CodeFailed, "The ffc config file could not be read.", err)
+			return nil, mcpinstall.Server{}, keyed(CodeFailed, "apps.configUnreadable", err)
 		}
 		if _, ok := cfg.Sites[req.Site]; !ok {
-			return nil, mcpinstall.Server{}, invalid("site", fmt.Sprintf("There is no site called %q any more.", req.Site))
+			return nil, mcpinstall.Server{}, keyedInvalid("site", "apps.noSite", "site", req.Site)
 		}
 	}
 	env, err := s.env()
 	if err != nil {
-		return nil, mcpinstall.Server{}, newError(CodeFailed, "Your user folders could not be found.", err)
+		return nil, mcpinstall.Server{}, keyed(CodeFailed, "apps.noUserFolders", err)
 	}
 	srv := server(ffc.Path, s.configArg(), req.Site, req.ReadOnly)
 	ch, err := mcpinstall.Plan(req.Client, srv, env)
 	if err != nil {
-		return nil, srv, newError(CodeFailed, "The assistant's settings file could not be read, so it was left as it is.", err)
+		return nil, srv, keyed(CodeFailed, "apps.settingsUnreadable", err)
 	}
 	return ch, srv, nil
 }
@@ -330,22 +331,24 @@ func preview(ch *mcpinstall.Change, srv mcpinstall.Server) Preview {
 	}
 	if p.Changed {
 		if err := ch.Check(); err != nil {
-			p.CanApply, p.Problem = false, problemText(err)
+			e := problemError(err)
+			p.CanApply, p.Problem, p.ProblemKey = false, e.Message, e.Key
 		}
 	}
 	return p
 }
 
-func problemText(err error) string {
+// problemError is a Change.Check problem as an *Error.
+func problemError(err error) *Error {
 	switch {
 	case errors.Is(err, mcpinstall.ErrClaudeNotFound):
-		return "The claude command was not found. Install Claude Code first, or run the commands below yourself."
+		return keyed(CodeUnavailable, "apps.claudeNotFound", nil)
 	case errors.Is(err, mcpinstall.ErrClaudeBatch):
-		return "The claude command is a Windows script the app does not run. Run the commands below yourself."
+		return keyed(CodeUnavailable, "apps.claudeBatch", nil)
 	case errors.Is(err, mcpinstall.ErrReadOnly):
-		return "The assistant's settings file is read-only."
+		return keyed(CodeUnavailable, "apps.readOnly", nil)
 	}
-	return text.Sanitize(err.Error())
+	return &Error{Code: CodeUnavailable, Message: text.Sanitize(err.Error())}
 }
 
 // Preview shows what Connect would change, without changing anything.
@@ -373,11 +376,11 @@ func apply(ch *mcpinstall.Change) (ApplyResult, error) {
 		return res, nil
 	}
 	if err := ch.Check(); err != nil {
-		return ApplyResult{}, &Error{Code: CodeUnavailable, Message: problemText(err)}
+		return ApplyResult{}, problemError(err)
 	}
 	backup, err := ch.Apply()
 	if err != nil {
-		return ApplyResult{}, newError(CodeFailed, "The assistant's settings could not be changed.", err)
+		return ApplyResult{}, keyed(CodeFailed, "apps.settingsUnchanged", err)
 	}
 	res.Backup = backup
 	// A claude-code removal whose state file was unreadable: claude said
@@ -410,11 +413,11 @@ func (s *AssistantsService) Disconnect(client string) (ApplyResult, error) {
 
 func (s *AssistantsService) removal(client string) (*mcpinstall.Change, error) {
 	if _, ok := clientNames[client]; !ok {
-		return nil, invalid("client", "Unknown assistant.")
+		return nil, keyedInvalid("client", "apps.unknown")
 	}
 	env, err := s.env()
 	if err != nil {
-		return nil, newError(CodeFailed, "Your user folders could not be found.", err)
+		return nil, keyed(CodeFailed, "apps.noUserFolders", err)
 	}
 	ch, err := s.planRemove(client, mcpinstall.DefaultName, env)
 	if err != nil {
@@ -422,7 +425,7 @@ func (s *AssistantsService) removal(client string) (*mcpinstall.Change, error) {
 		if errors.As(err, &e) {
 			return nil, e
 		}
-		return nil, newError(CodeFailed, "The assistant's settings file could not be read, so it was left as it is.", err)
+		return nil, keyed(CodeFailed, "apps.settingsUnreadable", err)
 	}
 	return ch, nil
 }

@@ -10,7 +10,8 @@ import {
   IconSettingsExclamation,
 } from "@tabler/icons-react"
 import * as React from "react"
-import { useTranslation } from "react-i18next"
+import type { TFunction } from "i18next"
+import { Trans, useTranslation } from "react-i18next"
 
 import { useApp } from "@/app/app-context"
 import { FFCMissingAlert, LoadError, PageHeader } from "@/components/page"
@@ -25,20 +26,20 @@ import type { Assistant } from "@/lib/backend-types"
 import { cn } from "cn"
 import { DisconnectDialog } from "@/screens/disconnect-dialog"
 
+// i18n keys: connectApps.status.connected connectApps.status.different connectApps.status.notConnected connectApps.status.error
 const statusText: Record<
   string,
   { label: string; variant: "default" | "secondary" | "outline" | "destructive"; icon: typeof IconCircleCheck }
 > = {
-  connected: { label: "Connected", variant: "default", icon: IconCircleCheck },
-  different: { label: "Other settings", variant: "secondary", icon: IconSettingsExclamation },
-  not_connected: { label: "Not connected", variant: "outline", icon: IconCircleDashed },
-  error: { label: "Problem", variant: "destructive", icon: IconAlertTriangle },
+  connected: { label: "connectApps.status.connected", variant: "default", icon: IconCircleCheck },
+  different: { label: "connectApps.status.different", variant: "secondary", icon: IconSettingsExclamation },
+  not_connected: { label: "connectApps.status.notConnected", variant: "outline", icon: IconCircleDashed },
+  error: { label: "connectApps.status.error", variant: "destructive", icon: IconAlertTriangle },
 }
 
-function notDetectedReason(a: Assistant) {
-  if (a.id === "claude-code")
-    return "The claude command was not found on this computer. Install Claude Code, or connect anyway and it will be used once installed."
-  return `No ${a.name} settings were found. Open ${a.name} once after installing it, or connect anyway to create the settings file.`
+function notDetectedReason(a: Assistant, t: TFunction) {
+  if (a.id === "claude-code") return t("connectApps.notFoundReasonClaudeCode")
+  return t("connectApps.notFoundReason", { name: a.name })
 }
 
 export function AssistantsScreen() {
@@ -52,7 +53,7 @@ export function AssistantsScreen() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title={t("connectApps.title")}
-        description="Connect the AI assistants on this computer to your Frappe sites. Each gets a “frappe” entry in its settings that runs ffc."
+        description={t("connectApps.description")}
         actions={
           <Tooltip>
             <TooltipTrigger
@@ -60,7 +61,7 @@ export function AssistantsScreen() {
                 <Button
                   variant="outline"
                   size="icon"
-                  aria-label="Look again"
+                  aria-label={t("connectApps.lookAgain")}
                   onClick={reloadAssistants}
                   disabled={assistants.loading}
                 />
@@ -68,7 +69,7 @@ export function AssistantsScreen() {
             >
               <IconRefresh />
             </TooltipTrigger>
-            <TooltipContent>Look again</TooltipContent>
+            <TooltipContent>{t("connectApps.lookAgain")}</TooltipContent>
           </Tooltip>
         }
       />
@@ -80,21 +81,19 @@ export function AssistantsScreen() {
             <EmptyMedia variant="icon">
               <IconRobot />
             </EmptyMedia>
-            <EmptyTitle>Add a site first</EmptyTitle>
-            <EmptyDescription>
-              Assistants work with the sites you add here. Add one, then come back to connect.
-            </EmptyDescription>
+            <EmptyTitle>{t("connectApps.addSiteFirst")}</EmptyTitle>
+            <EmptyDescription>{t("connectApps.noSites")}</EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button onClick={addSite}>Add a site</Button>
+            <Button onClick={addSite}>{t("connectApps.addSite")}</Button>
           </EmptyContent>
         </Empty>
       )}
 
       {assistants.error && !assistants.data ? (
-        <LoadError title="Your assistants could not be checked" error={assistants.error} onRetry={reloadAssistants} />
+        <LoadError title={t("connectApps.loadFailed")} error={assistants.error} onRetry={reloadAssistants} />
       ) : !assistants.data ? (
-        <div className="grid grid-cols-2 gap-4 xl:grid-cols-3" aria-busy="true" aria-label="Loading assistants">
+        <div className="grid grid-cols-2 gap-4 xl:grid-cols-3" aria-busy="true" aria-label={t("connectApps.loading")}>
           {[0, 1, 2, 3, 4].map((i) => (
             <Skeleton key={i} className="h-44 rounded-xl" />
           ))}
@@ -129,6 +128,7 @@ function AssistantCard({
   onConnect: () => void
   onDisconnect: () => void
 }) {
+  const { t } = useTranslation()
   const s = statusText[a.status] ?? statusText.error
   const hasEntry = a.status === "connected" || a.status === "different"
 
@@ -138,22 +138,22 @@ function AssistantCard({
         <CardTitle>{a.name}</CardTitle>
         <CardDescription>
           {a.detected ? (
-            "Found on this computer"
+            t("connectApps.found")
           ) : (
             <Tooltip>
               <TooltipTrigger
                 render={<span tabIndex={0} className="cursor-help underline decoration-dotted underline-offset-4" />}
               >
-                Not found on this computer
+                {t("connectApps.notFound")}
               </TooltipTrigger>
-              <TooltipContent className="max-w-64">{notDetectedReason(a)}</TooltipContent>
+              <TooltipContent className="max-w-64">{notDetectedReason(a, t)}</TooltipContent>
             </Tooltip>
           )}
         </CardDescription>
         <CardAction>
           <Badge variant={s.variant}>
             <s.icon data-icon="inline-start" />
-            {s.label}
+            {t(s.label)}
           </Badge>
         </CardAction>
       </CardHeader>
@@ -161,29 +161,35 @@ function AssistantCard({
         {a.status === "connected" && (
           <>
             <p>
-              Uses {a.site ? <span className="font-medium">{a.site}</span> : "your default site"}
-              {a.site ? "." : ", whichever it is."}
+              {a.site ? (
+                <Trans
+                  i18nKey="connectApps.usesSite"
+                  values={{ site: a.site }}
+                  components={{ b: <span className="font-medium" /> }}
+                />
+              ) : (
+                t("connectApps.usesDefault")
+              )}
             </p>
             {a.readOnly && (
               <p className="text-muted-foreground flex items-center gap-1.5">
-                <IconEye className="size-4" /> Read-only: it can look but not change anything.
+                <IconEye className="size-4" /> {t("connectApps.readOnly")}
               </p>
             )}
           </>
         )}
         {a.status === "different" && (
           <p className="text-muted-foreground">
-            It already has a “frappe” entry that this app did not set up. Connecting replaces it, after showing you the
-            change.
+            {t("connectApps.different")}
           </p>
         )}
         {a.status === "not_connected" && (
-          <p className="text-muted-foreground">Not set up to use your Frappe sites yet.</p>
+          <p className="text-muted-foreground">{t("connectApps.notSetUp")}</p>
         )}
         {a.status === "error" && (
           <Alert variant="destructive">
             <IconAlertTriangle />
-            <AlertTitle>Its settings could not be read</AlertTitle>
+            <AlertTitle>{t("connectApps.settingsUnreadable")}</AlertTitle>
             <AlertDescription>{a.error}</AlertDescription>
           </Alert>
         )}
@@ -191,12 +197,12 @@ function AssistantCard({
       <CardFooter className="gap-2">
         <Button size="sm" onClick={onConnect} disabled={disabled || a.status === "error"}>
           <IconPlugConnected data-icon="inline-start" />
-          {hasEntry ? "Update" : "Connect"}
+          {hasEntry ? t("connectApps.update") : t("connectApps.connect")}
         </Button>
         {hasEntry && (
           <Button size="sm" variant="ghost" onClick={onDisconnect}>
             <IconPlugConnectedX data-icon="inline-start" />
-            Disconnect
+            {t("connectApps.disconnect")}
           </Button>
         )}
       </CardFooter>

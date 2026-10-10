@@ -656,6 +656,11 @@ export interface Preview {
      */
     "canApply": boolean;
     "problem"?: string;
+
+    /**
+     * ProblemKey translates Problem, as Error.Key does.
+     */
+    "problemKey"?: string;
     "hint": string;
 }
 
