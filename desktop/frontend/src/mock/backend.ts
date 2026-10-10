@@ -375,6 +375,11 @@ const sampleFiles: (StagedAttachment | string)[] = [
   "setup.exe: this type of file cannot be attached. Attach text, CSV, JSON, XLSX, DOCX, PDF, PNG, JPEG, WebP or GIF files.",
 ]
 let sampleNext = 0
+
+/** Tests: the next attached sample is the first again. */
+export function resetMockSamples() {
+  sampleNext = 0
+}
 const MAX_ATTACHMENTS = 5
 const MAX_PASTED_BYTES = 5 << 20
 

@@ -79,6 +79,8 @@ func renderMarkdown(f exportFile) string {
 				}
 			case llm.Image:
 				fmt.Fprintf(&body, "*[image: %s]*\n\n", oneLine(v.MediaType))
+			case llm.Document:
+				fmt.Fprintf(&body, "*[PDF: %s]*\n\n", htmlEscape(oneLine(v.Name)))
 			case llm.ToolUse:
 				var row *exportToolCall
 				if rows := callsByMsg[m.ID]; next < len(rows) {

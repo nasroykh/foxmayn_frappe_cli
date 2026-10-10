@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import "@/i18n"
 import { AppProvider } from "@/app/app-context"
 import { toast } from "@/components/ui/toast"
-import { backend } from "@/mock/backend"
+import { backend, resetMockSamples } from "@/mock/backend"
 import { AssistantScreen } from "@/screens/assistant/assistant-screen"
 
 // The composer's attachments against the mock backend (its "file dialog"
@@ -17,6 +17,8 @@ afterEach(() => {
 })
 
 beforeEach(async () => {
+  // Each test starts from the first sample (CSV, XLSX, PDF, DOCX, refusal).
+  resetMockSamples()
   for (const c of await backend.listConversations()) await backend.deleteConversation(c.id)
 })
 
@@ -82,7 +84,10 @@ describe("composer attachments", () => {
     await backend.newConversation("acme-prod", "read", "anthropic", "")
     const add = vi.spyOn(toast, "add")
     show()
-    // The mock's samples go on from the test before: a PDF, a DOCX, then a refusal.
+    // The samples in order: CSV, XLSX, then a PDF, a DOCX and a refusal.
+    await attach()
+    await attach()
+    await waitFor(() => expect(staged()?.textContent).toContain("prices.xlsx"))
     await attach()
     await waitFor(() => expect(staged()?.textContent).toContain("invoice.pdf"))
     await attach()
@@ -93,7 +98,7 @@ describe("composer attachments", () => {
         expect.objectContaining({ title: "Not attached", description: expect.stringContaining("cannot be attached") }),
       ),
     )
-    expect(staged()?.querySelectorAll("li")).toHaveLength(2)
+    expect(staged()?.querySelectorAll("li")).toHaveLength(4)
   })
 
   it("stages a pasted image and refuses one over 5 MB", async () => {

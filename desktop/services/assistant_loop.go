@@ -463,6 +463,12 @@ func (a *activeRun) loop(ctx context.Context) outcome {
 		}
 		if a.r.pdfs == nil || !a.r.pdfs(a.conv) {
 			history = dropDocuments(history)
+		} else {
+			sizes, err := a.r.store.AttachmentSizes(a.conv.ID)
+			if err != nil {
+				return outcome{status: RunError, err: wrapStoreErr(err)}
+			}
+			history = labelDocuments(history, sizes)
 		}
 		req := llm.Request{Model: model, System: system, Messages: history, Tools: tools,
 			Images: attachmentImages{st: a.r.store, convID: a.conv.ID}}

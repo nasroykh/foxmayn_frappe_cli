@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	sdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -372,10 +373,7 @@ func userMessage(ctx context.Context, images llm.ImageResolver, m llm.Message) (
 			if err != nil {
 				return responses.ResponseInputItemUnionParam{}, false, err
 			}
-			name := p.Name
-			if name == "" {
-				name = "document.pdf"
-			}
+			name := safeFilename(p.Name)
 			f := responses.ResponseInputFileParam{
 				Filename: param.NewOpt(name),
 				FileData: param.NewOpt("data:application/pdf;base64," + base64.StdEncoding.EncodeToString(b)),
@@ -765,4 +763,27 @@ func (p *Provider) scrub(s string) string {
 		s = strings.ReplaceAll(s, p.key, "[redacted]")
 	}
 	return clip(s, maxMessageLen)
+}
+
+// safeFilename keeps a PDF's name to letters, digits, space, dot, dash and
+// underscore (the name is metadata the model may read, not a channel for
+// anything else), clipped to 100 runes; "document.pdf" when nothing is left.
+func safeFilename(name string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range name {
+		if n == 100 {
+			break
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '.' || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+		n++
+	}
+	if s := strings.TrimSpace(b.String()); s != "" {
+		return s
+	}
+	return "document.pdf"
 }

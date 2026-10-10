@@ -14,8 +14,14 @@ import (
 // docxUnzipLimit caps the unpacked size of a document's text part
 // (word/document.xml). The size the zip declares is checked before reading,
 // and the read itself stops one byte past the limit, so a zip bomb is never
-// unpacked whole.
-const docxUnzipLimit = 64 << 20
+// unpacked whole. docxMaxDepth and docxMaxTokens bound the XML walk, so a
+// small file of deeply nested or countless empty elements cannot cost
+// seconds of CPU and gigabytes of memory.
+const (
+	docxUnzipLimit = 32 << 20
+	docxMaxDepth   = 256
+	docxMaxTokens  = 2_000_000
+)
 
 var blankLines = regexp.MustCompile(`\n{3,}`)
 
@@ -39,7 +45,7 @@ func docxText(name string, data []byte) (string, error) {
 		return "", refuse("%s is not a valid DOCX document.", name)
 	}
 	if doc.UncompressedSize64 > docxUnzipLimit {
-		return "", refuse("%s unpacks to more than 64 MB and was not read.", name)
+		return "", refuse("%s unpacks to more than 32 MB and was not read.", name)
 	}
 	rc, err := doc.Open()
 	if err != nil {
@@ -52,11 +58,14 @@ func docxText(name string, data []byte) (string, error) {
 		return "", refuse("%s is not a valid DOCX document.", name)
 	}
 	if len(body) > docxUnzipLimit {
-		return "", refuse("%s unpacks to more than 64 MB and was not read.", name)
+		return "", refuse("%s unpacks to more than 32 MB and was not read.", name)
 	}
 	text, err := wordText(body)
 	if errors.Is(err, errTooMuchText) {
 		return "", refuse("%s has more than 200 000 characters of text.", name)
+	}
+	if errors.Is(err, errTooComplex) {
+		return "", refuse("%s is too complex to read.", name)
 	}
 	if err != nil {
 		return "", refuse("%s is not a valid DOCX document.", name)
@@ -67,15 +76,25 @@ func docxText(name string, data []byte) (string, error) {
 	return text, nil
 }
 
-var errTooMuchText = errors.New("too much text")
+var (
+	errTooMuchText = errors.New("too much text")
+	errTooComplex  = errors.New("too deep or too many elements")
+)
 
-// wordText walks WordprocessingML. Only the text of w:t runs counts; w:tab
-// and w:br/w:cr add a tab or a line, a paragraph ends a line (a space inside
-// a table cell), a cell a tab and a row a line.
+// wordText walks WordprocessingML. Only the text of w:t in a run counts,
+// and only runs that are not hidden (w:vanish); w:tab and w:br/w:cr in a run
+// add a tab or a line (a space inside a table cell, so cells stay columns).
+// A paragraph ends a line (a space inside a cell), a cell a tab and a row a
+// line. Property subtrees (pPr, rPr, sectPr: tab stops, fonts) and the
+// mc:Fallback copy of text boxes are skipped.
 func wordText(body []byte) (string, error) {
 	d := xml.NewDecoder(bytes.NewReader(body))
 	var out strings.Builder
-	inText, cells := false, 0
+	depth, tokens := 0, 0
+	// skip is the depth of a subtree being skipped (0: none).
+	skip := 0
+	inRun, inText, hidden, cells := false, false, false, 0
+	inProps := 0 // inside a run's rPr: where w:vanish is read
 	chars := 0
 	// A paragraph ending inside a cell becomes a space only when more text
 	// follows in that cell.
@@ -100,23 +119,68 @@ func wordText(body []byte) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		tokens++
+		if tokens > docxMaxTokens {
+			return "", errTooComplex
+		}
 		var s string
 		switch t := tok.(type) {
 		case xml.StartElement:
+			depth++
+			if depth > docxMaxDepth {
+				return "", errTooComplex
+			}
+			if skip > 0 {
+				continue
+			}
 			switch t.Name.Local {
+			case "pPr", "sectPr", "Fallback":
+				skip = depth
+			case "rPr":
+				if inRun {
+					inProps = depth
+				} else {
+					skip = depth
+				}
+			case "vanish":
+				if inProps > 0 {
+					hidden = true
+				}
+			case "r":
+				inRun, hidden = true, false
 			case "t":
-				inText = true
+				inText = inRun
 			case "tab":
-				s = "\t"
+				if inProps == 0 && inRun && !hidden {
+					s = "\t"
+				}
 			case "br", "cr":
-				s = "\n"
+				if inProps == 0 && inRun && !hidden {
+					s = "\n"
+				}
 			case "tc":
 				cells++
 			}
+			if cells > 0 && (s == "\t" || s == "\n") {
+				s = " "
+			}
 		case xml.EndElement:
+			if skip > 0 {
+				if depth == skip {
+					skip = 0
+				}
+				depth--
+				continue
+			}
+			if depth == inProps {
+				inProps = 0
+			}
+			depth--
 			switch t.Name.Local {
 			case "t":
 				inText = false
+			case "r":
+				inRun, hidden = false, false
 			case "p":
 				if cells > 0 {
 					space = true
@@ -130,7 +194,7 @@ func wordText(body []byte) (string, error) {
 				s = "\n"
 			}
 		case xml.CharData:
-			if inText {
+			if inText && !hidden && skip == 0 {
 				s = string(t)
 			}
 		}

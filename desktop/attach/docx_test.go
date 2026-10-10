@@ -6,6 +6,7 @@ import (
 	"compress/flate"
 	"strings"
 	"testing"
+	"time"
 )
 
 const wordNS = `xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"`
@@ -89,7 +90,7 @@ func TestParseDOCXZipBombs(t *testing.T) {
 		_, _ = w.Write(chunk)
 	}
 	_ = zw.Close()
-	refusal(t, parseErr("bomb.docx", b.Bytes()), "unpacks to more than 64 MB")
+	refusal(t, parseErr("bomb.docx", b.Bytes()), "unpacks to more than 32 MB")
 
 	var raw bytes.Buffer
 	fw, _ := flate.NewWriter(&raw, flate.BestCompression)
@@ -109,4 +110,39 @@ func TestParseDOCXZipBombs(t *testing.T) {
 	_, _ = w.Write(raw.Bytes())
 	_ = zw.Close()
 	refusal(t, parseErr("liar.docx", b.Bytes()), "not a valid DOCX document")
+}
+
+// Tab stops, cell tabs and breaks, text box fallbacks and hidden text.
+func TestParseDOCXLayout(t *testing.T) {
+	body := `<w:p><w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs></w:pPr><w:r><w:t>Invoice</w:t></w:r></w:p>` +
+		`<w:tbl><w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p><w:p><w:r><w:tab/><w:t>B</w:t><w:br/><w:t>C</w:t></w:r></w:p></w:tc>` +
+		`<w:tc><w:p><w:r><w:t>2</w:t></w:r></w:p></w:tc></w:tr></w:tbl>` +
+		`<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">` +
+		`<mc:Choice Requires="wps"><w:t>BOX</w:t></mc:Choice><mc:Fallback><w:t>BOX</w:t></mc:Fallback></mc:AlternateContent></w:r></w:p>` +
+		`<w:p><w:r><w:rPr><w:vanish/></w:rPr><w:t>hidden instructions</w:t></w:r><w:r><w:t>shown</w:t></w:r></w:p>`
+	f, err := Parse("layout.docx", docxOf(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Invoice\nA  B C\t2\nBOX\nshown"
+	if f.Text != want {
+		t.Fatalf("text:\n%q\nwant\n%q", f.Text, want)
+	}
+}
+
+// Deep nesting and countless elements are refused quickly, without the
+// memory a full walk would take.
+func TestParseDOCXComplexity(t *testing.T) {
+	deep := strings.Repeat("<a>", docxMaxDepth+1) + strings.Repeat("</a>", docxMaxDepth+1)
+	refusal(t, parseErr("deep.docx", docxOf(t, deep)), "too complex")
+	start := time.Now()
+	many := strings.Repeat("<a/>", docxMaxTokens/2+10)
+	refusal(t, parseErr("many.docx", docxOf(t, many)), "too complex")
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("refusing took %v", d)
+	}
+}
+
+func TestParsePDFEncrypted(t *testing.T) {
+	refusal(t, parseErr("locked.pdf", []byte("%PDF-1.7\ntrailer\n<< /Encrypt 5 0 R >>\n%%EOF")), "password protected or encrypted")
 }

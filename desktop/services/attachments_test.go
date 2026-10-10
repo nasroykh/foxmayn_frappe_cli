@@ -549,8 +549,11 @@ func TestPDFAttachment(t *testing.T) {
 	g.a.run.wg.Wait()
 	req := g.prov.Requests()[0]
 	user := req.Messages[len(req.Messages)-1]
-	doc, ok := user.Parts[0].(llm.Document)
-	if !ok || doc.MediaType != attach.MimePDF || doc.Name != "Facture 12.pdf" {
+	// A wrapper that names the PDF and marks it as data, then the PDF.
+	label, _ := user.Parts[0].(llm.Text)
+	doc, ok := user.Parts[1].(llm.Document)
+	if !ok || doc.MediaType != attach.MimePDF || doc.Name != "Facture 12.pdf" ||
+		!strings.HasPrefix(label.Text, `<attachment name="Facture 12.pdf" untrusted="true">`) {
 		t.Fatalf("parts = %#v", user.Parts)
 	}
 	if b, err := llm.DocumentBytes(context.Background(), req.Images, doc); err != nil || string(b) != testPDF {
@@ -613,5 +616,47 @@ func TestTakesPDFs(t *testing.T) {
 		if got := takesPDFs(c.kind, c.model); got != c.want {
 			t.Errorf("takesPDFs(%s, %s) = %v", c.kind, c.model, got)
 		}
+	}
+}
+
+// The newest PDFs go up to the byte budget, each after its data wrapper;
+// older ones, and any of unknown size, become notes.
+func TestLabelDocumentsBudget(t *testing.T) {
+	doc := func(id string) llm.Message {
+		return llm.Message{Role: llm.RoleUser, Parts: []llm.Part{llm.Document{AttachmentID: id, MediaType: attach.MimePDF, Name: id + ".pdf"}, llm.Text{Text: "q"}}}
+	}
+	in := []llm.Message{doc("old"), doc("mid"), doc("new"), doc("unknown")}
+	sizes := map[string]int64{"old": 6 << 20, "mid": 6 << 20, "new": 6 << 20}
+	out := labelDocuments(in, sizes)
+	sent := func(m llm.Message) bool {
+		for _, p := range m.Parts {
+			if _, ok := p.(llm.Document); ok {
+				return true
+			}
+		}
+		return false
+	}
+	if sent(out[0]) || !sent(out[1]) || !sent(out[2]) || sent(out[3]) {
+		t.Fatalf("kept: %v %v %v %v", sent(out[0]), sent(out[1]), sent(out[2]), sent(out[3]))
+	}
+	if note := out[0].Parts[0].(llm.Text).Text; !strings.Contains(note, "not sent again") || !strings.Contains(note, `name="old.pdf"`) {
+		t.Fatalf("note = %q", note)
+	}
+	if _, ok := in[0].Parts[0].(llm.Document); !ok {
+		t.Fatal("labelDocuments changed its input")
+	}
+}
+
+// One message may carry at most MaxPDFBytes of PDF.
+func TestPDFMessageCap(t *testing.T) {
+	atts := []store.Attachment{
+		{ID: "a", Name: "a.pdf", Mime: attach.MimePDF, Size: 10 << 20},
+		{ID: "b", Name: "b.pdf", Mime: attach.MimePDF, Size: 6 << 20},
+	}
+	if _, err := attachmentParts(atts, true, true); errorCode(t, err) != CodeInvalid {
+		t.Fatalf("over the cap: %v", err)
+	}
+	if parts, err := attachmentParts(atts[:1], true, true); err != nil || len(parts) != 1 {
+		t.Fatalf("one PDF: %v %v", parts, err)
 	}
 }

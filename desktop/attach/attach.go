@@ -31,6 +31,10 @@ const (
 	MaxFileBytes = 10 << 20
 	// MaxPastedBytes is the largest pasted image, decoded.
 	MaxPastedBytes = 5 << 20
+	// MaxPDFBytes is the most PDF bytes one message may carry, and the most
+	// a request sends (older PDFs past it reach the model as notes): the
+	// providers' request limits are about 20 to 32 MB, base64 included.
+	MaxPDFBytes = 15 << 20
 	// MaxPerMessage is how many attachments one message may carry.
 	MaxPerMessage = 5
 	// MaxTextChars is the most characters the text of one attachment may
@@ -65,7 +69,8 @@ const (
 type File struct {
 	Name string
 	// Mime is the type found from the content: text/plain, text/csv,
-	// application/json, the XLSX type, or one of the image types.
+	// application/json, the XLSX or DOCX type, application/pdf, or one of
+	// the image types.
 	Mime string
 	Kind string
 	// Size is the byte size of the file as given.
@@ -188,6 +193,10 @@ func Parse(name string, data []byte) (File, error) {
 	case "pdf":
 		if ext != ".pdf" {
 			return File{}, mismatch(name, ext)
+		}
+		// The provider would refuse an encrypted PDF on every later turn.
+		if bytes.Contains(data, []byte("/Encrypt")) {
+			return File{}, refuse("%s is password protected or encrypted. Remove the protection and attach it again.", name)
 		}
 		out.Mime, out.Kind, out.Data = MimePDF, KindDocument, data
 		return out, nil

@@ -973,7 +973,8 @@ export interface SiteSettings {
 
 /**
  * StagedAttachment is a file attached to a conversation's next message, or
- * (in ChatMessage) to a sent one. Kind is "text" or "image".
+ * (in ChatMessage) to a sent one. Kind is "text", "image" or "document" (a
+ * PDF).
  */
 export interface StagedAttachment {
     "id": string;

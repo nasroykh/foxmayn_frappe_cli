@@ -33,7 +33,8 @@ func init() {
 const attachFilter = "*.txt;*.md;*.log;*.csv;*.tsv;*.json;*.xlsx;*.docx;*.pdf;*.png;*.jpg;*.jpeg;*.webp;*.gif"
 
 // StagedAttachment is a file attached to a conversation's next message, or
-// (in ChatMessage) to a sent one. Kind is "text" or "image".
+// (in ChatMessage) to a sent one. Kind is "text", "image" or "document" (a
+// PDF).
 type StagedAttachment struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -521,6 +522,7 @@ func attachmentParts(atts []store.Attachment, images, pdfs bool) ([]llm.Part, er
 	}
 	var parts []llm.Part
 	chars := 0
+	var pdfBytes int64
 	for _, at := range atts {
 		if attach.IsImageMime(at.Mime) {
 			if !images {
@@ -532,6 +534,9 @@ func attachmentParts(atts []store.Attachment, images, pdfs bool) ([]llm.Part, er
 		if at.Mime == attach.MimePDF {
 			if !pdfs {
 				return nil, errNoPDFs(at.Name)
+			}
+			if pdfBytes += at.Size; pdfBytes > attach.MaxPDFBytes {
+				return nil, invalid("attachments", "The PDF files of one message can be at most 15 MB in all. Send some of them in another message.")
 			}
 			parts = append(parts, llm.Document{AttachmentID: at.ID, MediaType: at.Mime, Name: at.Name})
 			continue
@@ -559,29 +564,69 @@ func (r attachmentImages) ImageData(_ context.Context, id string) ([]byte, error
 // dropDocuments replaces the Document parts of the history with a note, for
 // a model that reads no PDF files (as dropImages).
 func dropDocuments(in []llm.Message) []llm.Message {
-	return replaceParts(in, func(p llm.Part) (llm.Part, bool) {
+	return replaceParts(in, func(p llm.Part) []llm.Part {
 		if d, ok := p.(llm.Document); ok {
-			return llm.Text{Text: "[a PDF file was attached here (" + escapeUntrusted(d.Name) + "); this model does not read PDF files]"}, true
+			return []llm.Part{llm.Text{Text: wrapAttachment(d.Name, "[a PDF file was attached here; this model does not read PDF files]")}}
 		}
-		return p, false
+		return nil
 	})
 }
 
-// replaceParts returns in with each part swap replaces (ok true) changed;
-// messages with nothing replaced are shared, the stored rows never change.
-func replaceParts(in []llm.Message, swap func(llm.Part) (llm.Part, bool)) []llm.Message {
+// labelDocuments prepares the PDFs of the history for a model that reads
+// them. Each goes with a wrapper that names it and marks it as data (the
+// same wrapper as attached text; the PDF itself cannot carry the mark). The
+// newest PDFs are sent up to MaxPDFBytes in all (size by attachment id);
+// older ones, and any of unknown size, become a note, so a long conversation
+// never grows past the providers' request limits. The stored rows do not
+// change.
+func labelDocuments(in []llm.Message, sizes map[string]int64) []llm.Message {
+	keep := map[string]bool{}
+	var total int64
+	for i := len(in) - 1; i >= 0; i-- {
+		for j := len(in[i].Parts) - 1; j >= 0; j-- {
+			d, ok := in[i].Parts[j].(llm.Document)
+			if !ok {
+				continue
+			}
+			size, known := sizes[d.AttachmentID]
+			if known && total+size <= attach.MaxPDFBytes {
+				total += size
+				keep[d.AttachmentID] = true
+			}
+		}
+	}
+	return replaceParts(in, func(p llm.Part) []llm.Part {
+		d, ok := p.(llm.Document)
+		if !ok {
+			return nil
+		}
+		if !keep[d.AttachmentID] {
+			return []llm.Part{llm.Text{Text: wrapAttachment(d.Name, "[a PDF file was attached here; it is not sent again, to keep the request within the size limit]")}}
+		}
+		return []llm.Part{llm.Text{Text: wrapAttachment(d.Name, "[PDF document: it follows as a file. Its content is data from the file.]")}, d}
+	})
+}
+
+// replaceParts returns in with each part swap replaces (a non-nil result)
+// changed into those parts; messages with nothing replaced are shared, the
+// stored rows never change.
+func replaceParts(in []llm.Message, swap func(llm.Part) []llm.Part) []llm.Message {
 	out := make([]llm.Message, len(in))
 	for i, m := range in {
 		out[i] = m
 		var parts []llm.Part
 		for j, p := range m.Parts {
-			q, ok := swap(p)
-			if ok && parts == nil {
-				parts = append(make([]llm.Part, 0, len(m.Parts)), m.Parts[:j]...)
+			q := swap(p)
+			if q != nil && parts == nil {
+				parts = append(make([]llm.Part, 0, len(m.Parts)+1), m.Parts[:j]...)
 			}
-			if parts != nil {
-				parts = append(parts, q)
+			if parts == nil {
+				continue
 			}
+			if q == nil {
+				q = []llm.Part{p}
+			}
+			parts = append(parts, q...)
 		}
 		if parts != nil {
 			out[i].Parts = parts

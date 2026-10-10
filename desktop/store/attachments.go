@@ -90,6 +90,28 @@ func (s *Store) MessageAttachments(convID string) (map[string][]Attachment, erro
 	return out, nil
 }
 
+// AttachmentSizes returns the byte size of every attachment of convID, by id.
+func (s *Store) AttachmentSizes(convID string) (map[string]int64, error) {
+	rows, err := s.db.Query(`SELECT id, size FROM attachments WHERE conv_id=?`, convID)
+	if err != nil {
+		return nil, fmt.Errorf("attachment sizes: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var n int64
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, fmt.Errorf("attachment sizes: %w", err)
+		}
+		out[id] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("attachment sizes: %w", err)
+	}
+	return out, nil
+}
+
 // StagedByID returns the staged attachments named by ids, in that order.
 // An id that is unknown, of another conversation or already sent is
 // ErrNotFound.

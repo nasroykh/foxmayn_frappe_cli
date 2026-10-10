@@ -143,7 +143,7 @@ export interface ChatMessage extends Omit<GeneratedChatMessage, "role" | "tools"
   attachments?: StagedAttachment[]
 }
 
-/** "text" for text, CSV, JSON and XLSX files, "image" for pictures. */
+/** "text" for text, CSV, JSON, XLSX and DOCX files, "image" for pictures, "document" for PDFs. */
 export type AttachmentKind = "text" | "image" | "document"
 
 /** A file attached to the next message (staged) or to a sent one. */
