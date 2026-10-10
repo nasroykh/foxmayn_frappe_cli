@@ -221,6 +221,7 @@ func (a *AssistantService) open() error {
 	r.check = a.checkRun
 	r.titles = !a.noTitles
 	r.images = func(conv store.Conversation) bool { return a.convTakesImages(st, conv) }
+	r.pdfs = func(conv store.Conversation) bool { return a.convTakesPDFs(st, conv) }
 	ctx, cancel := context.WithCancel(context.Background())
 	a.mu.Lock()
 	a.st, a.engine, a.run = st, eng, r
@@ -329,7 +330,7 @@ func (a *AssistantService) Send(convID, text string, attachmentIDs []string) (st
 		if err != nil {
 			return "", wrapStoreErr(err)
 		}
-		if parts, err = attachmentParts(atts, a.convTakesImages(st, conv)); err != nil {
+		if parts, err = attachmentParts(atts, a.convTakesImages(st, conv), a.convTakesPDFs(st, conv)); err != nil {
 			return "", err
 		}
 		firstName = atts[0].Name
@@ -532,6 +533,8 @@ func (a *AssistantService) GetConversation(id string) (ConversationDetail, error
 				text = append(text, v.Text)
 			case llm.Image:
 				cm.Attachments = append(cm.Attachments, chatAttachment(rows, v.AttachmentID, "image", v.MediaType))
+			case llm.Document:
+				cm.Attachments = append(cm.Attachments, chatAttachment(rows, v.AttachmentID, v.Name, v.MediaType))
 			case llm.ToolUse:
 				rows := byMsg[m.ID]
 				tc := ChatToolCall{Tool: v.Name, Site: c.Site, Status: ToolStopped}

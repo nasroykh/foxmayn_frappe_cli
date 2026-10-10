@@ -26,13 +26,14 @@ type partJSON struct {
 	Redacted  bool            `json:"redacted,omitempty"`
 	Data      string          `json:"data,omitempty"`
 	Provider  string          `json:"provider,omitempty"`
-	// AttachmentID and MediaType belong to image parts.
+	// AttachmentID and MediaType belong to image and document parts (a
+	// document also has its file name in Name).
 	AttachmentID string `json:"attachment_id,omitempty"`
 	MediaType    string `json:"media_type,omitempty"`
 }
 
 // MarshalParts encodes parts as a JSON array of objects with a "type" key
-// (text, attachment, tool_use, tool_result, thinking or image). The strings of a Thinking part
+// (text, attachment, tool_use, tool_result, thinking, image or document). The strings of a Thinking part
 // round-trip exactly, as providers require.
 func MarshalParts(parts []Part) (string, error) {
 	out := make([]partJSON, 0, len(parts))
@@ -59,6 +60,11 @@ func MarshalParts(parts []Part) (string, error) {
 				return "", fmt.Errorf("llm: image part without an attachment id")
 			}
 			out = append(out, partJSON{Type: "image", AttachmentID: v.AttachmentID, MediaType: v.MediaType})
+		case Document:
+			if v.AttachmentID == "" {
+				return "", fmt.Errorf("llm: document part without an attachment id")
+			}
+			out = append(out, partJSON{Type: "document", AttachmentID: v.AttachmentID, MediaType: v.MediaType, Name: v.Name})
 		default:
 			return "", fmt.Errorf("llm: cannot encode part %T", p)
 		}
@@ -99,6 +105,11 @@ func UnmarshalParts(s string) ([]Part, error) {
 				return nil, fmt.Errorf("llm: image part without an attachment id")
 			}
 			out = append(out, Image{AttachmentID: p.AttachmentID, MediaType: p.MediaType})
+		case "document":
+			if p.AttachmentID == "" {
+				return nil, fmt.Errorf("llm: document part without an attachment id")
+			}
+			out = append(out, Document{AttachmentID: p.AttachmentID, MediaType: p.MediaType, Name: p.Name})
 		default:
 			return nil, fmt.Errorf("llm: unknown part type %q", p.Type)
 		}

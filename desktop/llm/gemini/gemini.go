@@ -666,6 +666,12 @@ func buildContents(ctx context.Context, images llm.ImageResolver, in []llm.Messa
 					return nil, err
 				}
 				parts = append(parts, part{InlineData: &blob{MimeType: p.MediaType, Data: base64.StdEncoding.EncodeToString(b)}})
+			case llm.Document:
+				b, err := llm.DocumentBytes(ctx, images, p)
+				if err != nil {
+					return nil, err
+				}
+				parts = append(parts, part{InlineData: &blob{MimeType: p.MediaType, Data: base64.StdEncoding.EncodeToString(b)}})
 			}
 		}
 		if len(parts) > 0 {

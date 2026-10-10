@@ -19,6 +19,7 @@ func TestPartsRoundTrip(t *testing.T) {
 		Thinking{Provider: ProviderOpenAI, Signature: "rs_1", Data: "gAAAA=="},
 		Thinking{Provider: ProviderGemini, Signature: "c2ln"},
 		Image{AttachmentID: "att-1", MediaType: "image/png"},
+		Document{AttachmentID: "att-4", MediaType: "application/pdf", Name: "facture <1>.pdf"},
 		Text{Text: "<attachment name=\"a.csv\">\na,b\n</attachment>", AttachmentID: "att-2"},
 		Text{AttachmentID: "att-3"},
 	}
@@ -72,6 +73,12 @@ func TestPartsEmptyAndErrors(t *testing.T) {
 	}
 	if _, err := MarshalParts([]Part{Image{MediaType: "image/png"}}); err == nil {
 		t.Error("image without attachment id encoded")
+	}
+	if _, err := UnmarshalParts(`[{"type":"document","media_type":"application/pdf"}]`); err == nil {
+		t.Error("document without attachment id accepted")
+	}
+	if _, err := MarshalParts([]Part{Document{MediaType: "application/pdf"}}); err == nil {
+		t.Error("document without attachment id encoded")
 	}
 	if _, err := UnmarshalParts(`nope`); err == nil {
 		t.Error("garbage accepted")

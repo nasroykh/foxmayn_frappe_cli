@@ -53,9 +53,9 @@ var dialogStrings = map[string]map[string]string{
 		LangArabic:  "إرفاق ملفات",
 	},
 	"attachFilter": {
-		LangEnglish: "Text, CSV, JSON, XLSX or images",
-		LangFrench:  "Texte, CSV, JSON, XLSX ou images",
-		LangArabic:  "نص أو CSV أو JSON أو XLSX أو صور",
+		LangEnglish: "Text, CSV, JSON, XLSX, DOCX, PDF or images",
+		LangFrench:  "Texte, CSV, JSON, XLSX, DOCX, PDF ou images",
+		LangArabic:  "نص أو CSV أو JSON أو XLSX أو DOCX أو PDF أو صور",
 	},
 	"dropTitle": {
 		LangEnglish: "Attach dropped files?",

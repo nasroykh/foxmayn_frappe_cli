@@ -299,7 +299,7 @@ func TestAttachmentMessageLimits(t *testing.T) {
 	// Refusals from package attach come back per file.
 	ah.paths = []string{writeFile(t, "r.pdf", []byte("%PDF-1.4")), writeFile(t, "fake.png", []byte("text"))}
 	res, err = g.a.AddAttachment(c.ID)
-	if err != nil || len(res.Errors) != 2 || !strings.Contains(res.Errors[0], "V1.x") || !strings.Contains(res.Errors[1], "does not match") {
+	if err != nil || len(res.Errors) != 2 || !strings.Contains(res.Errors[0], "does not read PDF files") || !strings.Contains(res.Errors[1], "does not match") {
 		t.Fatalf("refusals = %+v, %v", res, err)
 	}
 	ah.paths = nil
@@ -526,5 +526,137 @@ func TestAttachmentExport(t *testing.T) {
 	}
 	if !strings.Contains(string(f.Messages[0].Parts), `"type":"attachment"`) || !strings.Contains(string(f.Messages[0].Parts), "hello file") {
 		t.Fatalf("json parts: %s", f.Messages[0].Parts)
+	}
+}
+
+const testPDF = "%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n"
+
+// A PDF reaches a model that reads PDFs as a Document part (bytes from the
+// store), shows as a document chip, and is refused for a model that does
+// not read PDFs, at attach time and, for an older message, as a note.
+func TestPDFAttachment(t *testing.T) {
+	g, ah := attachRig(t, textTurn("ok"), textTurn("ok again"))
+	c := g.imageConv(t)
+	ah.paths = []string{writeFile(t, "Facture 12.pdf", []byte(testPDF))}
+	res, err := g.a.AddAttachment(c.ID)
+	if err != nil || len(res.Attachments) != 1 || res.Attachments[0].Kind != attach.KindDocument {
+		t.Fatalf("attach = %+v, %v", res, err)
+	}
+	if _, err := g.a.Send(c.ID, "what is due?", []string{res.Attachments[0].ID}); err != nil {
+		t.Fatal(err)
+	}
+	g.done(t, 1)
+	g.a.run.wg.Wait()
+	req := g.prov.Requests()[0]
+	user := req.Messages[len(req.Messages)-1]
+	// A wrapper that names the PDF and marks it as data, then the PDF.
+	label, _ := user.Parts[0].(llm.Text)
+	doc, ok := user.Parts[1].(llm.Document)
+	if !ok || doc.MediaType != attach.MimePDF || doc.Name != "Facture 12.pdf" ||
+		!strings.HasPrefix(label.Text, `<attachment name="Facture 12.pdf" untrusted="true">`) {
+		t.Fatalf("parts = %#v", user.Parts)
+	}
+	if b, err := llm.DocumentBytes(context.Background(), req.Images, doc); err != nil || string(b) != testPDF {
+		t.Fatalf("bytes = %q, %v", b, err)
+	}
+	if !strings.Contains(req.System, "or as PDF documents") {
+		t.Error("the base rules do not cover PDF documents")
+	}
+	d, _ := g.a.GetConversation(c.ID)
+	if a := d.Messages[0].Attachments; len(a) != 1 || a[0].Kind != attach.KindDocument || a[0].Name != "Facture 12.pdf" {
+		t.Fatalf("chips = %+v", a)
+	}
+
+	// A model that does not read PDFs: refused at attach time ...
+	g.provider(t)
+	other, err := g.a.NewConversation("prod", ModeRead, "p1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = g.a.AddAttachment(other.ID)
+	if err != nil || len(res.Attachments) != 0 || len(res.Errors) != 1 || !strings.Contains(res.Errors[0], "does not read PDF files") {
+		t.Fatalf("attach on a text model = %+v, %v", res, err)
+	}
+	// ... and an earlier PDF becomes a note when the conversation moves to it.
+	_, st, done, _ := g.a.enter()
+	err = st.SetConversationProvider(c.ID, "p1", "m1")
+	done()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.send(t, c.ID, "and now?", 2)
+	last := g.prov.Requests()[1].Messages
+	for _, m := range last {
+		for _, p := range m.Parts {
+			if _, ok := p.(llm.Document); ok {
+				t.Fatalf("a document reached a model without PDFs: %#v", last)
+			}
+		}
+	}
+	if note := last[0].Parts[0].(llm.Text).Text; !strings.Contains(note, "does not read PDF files") || !strings.Contains(note, "Facture 12.pdf") {
+		t.Fatalf("note = %q", note)
+	}
+}
+
+func TestTakesPDFs(t *testing.T) {
+	for _, c := range []struct {
+		kind, model string
+		want        bool
+	}{
+		{KindAnthropic, "claude-sonnet-5-5", true},
+		{KindAnthropic, "claude-3-5-haiku-latest", true},
+		{KindAnthropic, "claude-3-7-sonnet-latest", true},
+		{KindAnthropic, "claude-3-haiku-20240307", false},
+		{KindOpenAI, "gpt-4o", true},
+		{KindOpenAI, "o3-mini", false},
+		{KindGemini, "gemini-2.5-pro", true},
+		{KindOpenRouter, "anthropic/claude-sonnet-5", false},
+		{KindCustom, "llama3", false},
+	} {
+		if got := takesPDFs(c.kind, c.model); got != c.want {
+			t.Errorf("takesPDFs(%s, %s) = %v", c.kind, c.model, got)
+		}
+	}
+}
+
+// The newest PDFs go up to the byte budget, each after its data wrapper;
+// older ones, and any of unknown size, become notes.
+func TestLabelDocumentsBudget(t *testing.T) {
+	doc := func(id string) llm.Message {
+		return llm.Message{Role: llm.RoleUser, Parts: []llm.Part{llm.Document{AttachmentID: id, MediaType: attach.MimePDF, Name: id + ".pdf"}, llm.Text{Text: "q"}}}
+	}
+	in := []llm.Message{doc("old"), doc("mid"), doc("new"), doc("unknown")}
+	sizes := map[string]int64{"old": 6 << 20, "mid": 6 << 20, "new": 6 << 20}
+	out := labelDocuments(in, sizes)
+	sent := func(m llm.Message) bool {
+		for _, p := range m.Parts {
+			if _, ok := p.(llm.Document); ok {
+				return true
+			}
+		}
+		return false
+	}
+	if sent(out[0]) || !sent(out[1]) || !sent(out[2]) || sent(out[3]) {
+		t.Fatalf("kept: %v %v %v %v", sent(out[0]), sent(out[1]), sent(out[2]), sent(out[3]))
+	}
+	if note := out[0].Parts[0].(llm.Text).Text; !strings.Contains(note, "not sent again") || !strings.Contains(note, `name="old.pdf"`) {
+		t.Fatalf("note = %q", note)
+	}
+	if _, ok := in[0].Parts[0].(llm.Document); !ok {
+		t.Fatal("labelDocuments changed its input")
+	}
+}
+
+// One message may carry at most MaxPDFBytes of PDF.
+func TestPDFMessageCap(t *testing.T) {
+	atts := []store.Attachment{
+		{ID: "a", Name: "a.pdf", Mime: attach.MimePDF, Size: 10 << 20},
+		{ID: "b", Name: "b.pdf", Mime: attach.MimePDF, Size: 6 << 20},
+	}
+	if _, err := attachmentParts(atts, true, true); errorCode(t, err) != CodeInvalid {
+		t.Fatalf("over the cap: %v", err)
+	}
+	if parts, err := attachmentParts(atts[:1], true, true); err != nil || len(parts) != 1 {
+		t.Fatalf("one PDF: %v %v", parts, err)
 	}
 }

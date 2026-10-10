@@ -112,8 +112,10 @@ func TestParseSniffMismatch(t *testing.T) {
 		{"archive.txt", []byte("PK\x03\x04rest"), "does not match its .txt extension"},
 		{"program.exe", []byte{0x4d, 0x5a, 0x90, 0x00, 0xff}, "cannot be attached"},
 		{"script.sh", []byte("echo hi"), "cannot be attached"},
-		{"report.pdf", []byte("%PDF-1.7 ..."), "PDF files cannot be attached yet (planned for V1.x)"},
-		{"report.txt", []byte("%PDF-1.7 ..."), "PDF files cannot be attached yet"},
+		{"report.txt", []byte("%PDF-1.7 ..."), "does not match its .txt extension"},
+		{"report.docx", []byte("%PDF-1.7 ..."), "does not match its .docx extension"},
+		{"letter.doc", []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00}, "old Office format. Save it as .docx"},
+		{"secret.docx", []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00}, "password protected or not a valid Office file"},
 	} {
 		_, err := Parse(c.name, c.data)
 		refusal(t, err, c.want)

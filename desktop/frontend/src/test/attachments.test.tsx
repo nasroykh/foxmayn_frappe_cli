@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import "@/i18n"
 import { AppProvider } from "@/app/app-context"
 import { toast } from "@/components/ui/toast"
-import { backend } from "@/mock/backend"
+import { backend, resetMockSamples } from "@/mock/backend"
 import { AssistantScreen } from "@/screens/assistant/assistant-screen"
 
 // The composer's attachments against the mock backend (its "file dialog"
@@ -17,6 +17,8 @@ afterEach(() => {
 })
 
 beforeEach(async () => {
+  // Each test starts from the first sample (CSV, XLSX, PDF, DOCX, refusal).
+  resetMockSamples()
   for (const c of await backend.listConversations()) await backend.deleteConversation(c.id)
 })
 
@@ -78,17 +80,25 @@ describe("composer attachments", () => {
     expect(within(sent).queryByRole("button")).toBeNull()
   }, 20000)
 
-  it("shows a refused file as a toast", async () => {
+  it("stages a PDF and a Word file, and shows a refused file as a toast", async () => {
     await backend.newConversation("acme-prod", "read", "anthropic", "")
     const add = vi.spyOn(toast, "add")
     show()
+    // The samples in order: CSV, XLSX, then a PDF, a DOCX and a refusal.
+    await attach()
+    await attach()
+    await waitFor(() => expect(staged()?.textContent).toContain("prices.xlsx"))
+    await attach()
+    await waitFor(() => expect(staged()?.textContent).toContain("invoice.pdf"))
+    await attach()
+    await waitFor(() => expect(staged()?.textContent).toContain("memo.docx"))
     await attach()
     await waitFor(() =>
       expect(add).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Not attached", description: expect.stringContaining("PDF files cannot be attached yet") }),
+        expect.objectContaining({ title: "Not attached", description: expect.stringContaining("cannot be attached") }),
       ),
     )
-    expect(staged()).toBeNull()
+    expect(staged()?.querySelectorAll("li")).toHaveLength(4)
   })
 
   it("stages a pasted image and refuses one over 5 MB", async () => {

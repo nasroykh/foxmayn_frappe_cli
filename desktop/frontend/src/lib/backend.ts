@@ -57,7 +57,8 @@ function approval(a: wire.ChatApproval): ChatApproval {
 }
 
 function staged(a: wire.StagedAttachment): StagedAttachment {
-  return { ...a, kind: (a.kind === "image" ? "image" : "text") as AttachmentKind }
+  const kind: AttachmentKind = a.kind === "image" || a.kind === "document" ? a.kind : "text"
+  return { ...a, kind }
 }
 
 function detail(d: wire.ConversationDetail): ConversationDetail {

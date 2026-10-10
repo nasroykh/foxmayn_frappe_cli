@@ -226,12 +226,13 @@ A file of another format or version, or one that does not hold together, is refu
 
 Drop files on the message box, click the paperclip, or paste an image, and they go with your next message. The app asks before it attaches dropped files. You can remove one before you send.
 
-- Text, Markdown, log, CSV, TSV and JSON files are sent as text. An XLSX workbook is sent as CSV, one block per sheet.
+- Text, Markdown, log, CSV, TSV and JSON files are sent as text. An XLSX workbook is sent as CSV, one block per sheet. A Word document (DOCX) is sent as its text: paragraphs, and tables as tab-separated rows (headers, footers, comments and tracked deletions are left out). Old .doc and .xls files and password-protected ones are refused: save them as DOCX or XLSX first.
 - PNG, JPEG, WebP and GIF images are sent only to a model that reads images: Claude 3 and later; OpenAI GPT-4o, GPT-4.1, GPT-4.5, GPT-5 and the o1, o3 and o4 chat models (not mini previews, audio, realtime, search, Codex, image or embedding models); and Gemini 1.5 and later. OpenRouter and models on your computer get no images yet. If you switch a conversation to a model without images, earlier images reach it as a short note.
 - At most 10 MB a file, 5 files a message, 200 000 characters of text a file and 400 000 a message. A pasted image may be up to 5 MB.
-- PDF files cannot be attached yet (planned for a later release). A file whose content does not match its name, such as a renamed executable, is refused.
+- PDF files go to the model as files, which it reads itself (text, tables and scanned pages): Claude 3.5 and later, and the OpenAI and Gemini models that read images. Other models (OpenRouter, models on your computer) cannot take them: attach the text as DOCX or TXT instead. The app does not read the PDF itself. A PDF counts like several pages of text toward the model's limits and cost, and is sent again with each later question: a message can carry up to 15 MB of PDF, and only the newest PDFs of a conversation (15 MB in all) are sent, older ones as a short note. Encrypted PDFs are refused. If you switch a conversation to a model without PDFs, earlier PDFs reach it as a short note.
+- A file whose content does not match its name, such as a renamed executable, is refused.
 
-The model gets an attached file's text marked as untrusted data, like what it reads from the site, so instructions inside a file are not followed as yours. Attached text is not part of the history search. An export keeps the text of attached files but not the images; importing it turns each image into a note.
+The model gets an attached file's text marked as untrusted data, like what it reads from the site, so instructions inside a file are not followed as yours. Attached text is not part of the history search. An export keeps the text of attached files but not the images or PDFs; importing it turns each of them into a note.
 
 ## The ffc helper
 

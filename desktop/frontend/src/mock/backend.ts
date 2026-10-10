@@ -370,9 +370,16 @@ const staged = new Map<string, StagedAttachment[]>()
 const sampleFiles: (StagedAttachment | string)[] = [
   { id: "", name: "stock.csv", mime: "text/csv", size: 1824, kind: "text" },
   { id: "", name: "prices.xlsx", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: 9_216, kind: "text" },
-  "report.pdf is a PDF. PDF files cannot be attached yet (planned for V1.x).",
+  { id: "", name: "invoice.pdf", mime: "application/pdf", size: 48_120, kind: "document" },
+  { id: "", name: "memo.docx", mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", size: 12_800, kind: "text" },
+  "setup.exe: this type of file cannot be attached. Attach text, CSV, JSON, XLSX, DOCX, PDF, PNG, JPEG, WebP or GIF files.",
 ]
 let sampleNext = 0
+
+/** Tests: the next attached sample is the first again. */
+export function resetMockSamples() {
+  sampleNext = 0
+}
 const MAX_ATTACHMENTS = 5
 const MAX_PASTED_BYTES = 5 << 20
 

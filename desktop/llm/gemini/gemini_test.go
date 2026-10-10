@@ -849,3 +849,15 @@ func TestLineEndings(t *testing.T) {
 		}
 	}
 }
+
+func TestPDFEncoding(t *testing.T) {
+	pdf := []byte("%PDF-1.7 fake")
+	req := hi()
+	req.Images = llmtest.Images{"d": pdf}
+	req.Messages = []llm.Message{{Role: llm.RoleUser, Parts: []llm.Part{llm.Document{AttachmentID: "d", MediaType: "application/pdf", Name: "f.pdf"}}}}
+	b, raw := sent(t, req)
+	inline, _ := b.Contents[0].Parts[0]["inlineData"].(map[string]any)
+	if inline["mimeType"] != "application/pdf" || inline["data"] != base64.StdEncoding.EncodeToString(pdf) {
+		t.Fatalf("inlineData %s", raw)
+	}
+}

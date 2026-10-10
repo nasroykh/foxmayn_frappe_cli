@@ -222,7 +222,7 @@ func toolParam(t llm.Tool) (sdk.ToolParam, error) {
 // tool results come first in a user message, as the API requires. Thinking
 // parts are replayed verbatim, except another provider's, which mean nothing
 // here and are skipped. Empty text is dropped (the API rejects it). An image
-// becomes a base64 image block.
+// becomes a base64 image block, a PDF a base64 document block.
 func messageParam(ctx context.Context, images llm.ImageResolver, m llm.Message) (sdk.MessageParam, bool, error) {
 	var results, rest []sdk.ContentBlockParamUnion
 	for _, part := range m.Parts {
@@ -237,6 +237,12 @@ func messageParam(ctx context.Context, images llm.ImageResolver, m llm.Message) 
 				return sdk.MessageParam{}, false, err
 			}
 			rest = append(rest, sdk.NewImageBlockBase64(p.MediaType, base64.StdEncoding.EncodeToString(b)))
+		case llm.Document:
+			b, err := llm.DocumentBytes(ctx, images, p)
+			if err != nil {
+				return sdk.MessageParam{}, false, err
+			}
+			rest = append(rest, sdk.NewDocumentBlock(sdk.Base64PDFSourceParam{Data: base64.StdEncoding.EncodeToString(b)}))
 		case llm.Thinking:
 			if llm.ForeignThinking(p, llm.ProviderAnthropic) {
 				continue

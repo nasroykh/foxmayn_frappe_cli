@@ -30,10 +30,11 @@ func init() {
 }
 
 // attachFilter is what the attach dialog offers.
-const attachFilter = "*.txt;*.md;*.log;*.csv;*.tsv;*.json;*.xlsx;*.png;*.jpg;*.jpeg;*.webp;*.gif"
+const attachFilter = "*.txt;*.md;*.log;*.csv;*.tsv;*.json;*.xlsx;*.docx;*.pdf;*.png;*.jpg;*.jpeg;*.webp;*.gif"
 
 // StagedAttachment is a file attached to a conversation's next message, or
-// (in ChatMessage) to a sent one. Kind is "text" or "image".
+// (in ChatMessage) to a sent one. Kind is "text", "image" or "document" (a
+// PDF).
 type StagedAttachment struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -154,6 +155,8 @@ func stagedOf(a store.Attachment) StagedAttachment {
 	kind := attach.KindText
 	if attach.IsImageMime(a.Mime) {
 		kind = attach.KindImage
+	} else if a.Mime == attach.MimePDF {
+		kind = attach.KindDocument
 	}
 	return StagedAttachment{ID: a.ID, Name: a.Name, Mime: a.Mime, Size: a.Size, Kind: kind}
 }
@@ -357,13 +360,16 @@ func attachErr(err error) error {
 // stage stores a checked file as a staged attachment of convID. An image is
 // refused when the conversation's model does not take images.
 func (a *AssistantService) stage(st *store.Store, convID string, f attach.File) (StagedAttachment, error) {
-	if f.Kind == attach.KindImage {
+	if f.Kind == attach.KindImage || f.Kind == attach.KindDocument {
 		conv, err := st.GetConversation(convID)
 		if err != nil {
 			return StagedAttachment{}, wrapStoreErr(err)
 		}
-		if !a.convTakesImages(st, conv) {
+		if f.Kind == attach.KindImage && !a.convTakesImages(st, conv) {
 			return StagedAttachment{}, errNoImages(f.Name)
+		}
+		if f.Kind == attach.KindDocument && !a.convTakesPDFs(st, conv) {
+			return StagedAttachment{}, errNoPDFs(f.Name)
 		}
 	}
 	row, err := st.AddAttachment(store.Attachment{ConvID: convID, Name: f.Name, Mime: f.Mime, Size: f.Size, SHA256: f.SHA256, Text: f.Text}, f.Data, attach.MaxPerMessage)
@@ -378,6 +384,36 @@ func (a *AssistantService) stage(st *store.Store, convID string, f attach.File) 
 
 func errNoImages(name string) *Error {
 	return invalid("attachment", name+": the model of this conversation does not take images. Choose a model that reads images, or attach text.")
+}
+
+func errNoPDFs(name string) *Error {
+	return invalid("attachment", name+": the model of this conversation does not read PDF files. Choose a Claude, OpenAI or Gemini model that does, or attach the text (a DOCX or TXT file).")
+}
+
+// convTakesPDFs reports whether the conversation's provider and model read
+// PDF files.
+func (a *AssistantService) convTakesPDFs(st *store.Store, conv store.Conversation) bool {
+	p, err := a.provider(st, conv.ProviderID)
+	if err != nil {
+		return false
+	}
+	model := conv.Model
+	if model == "" {
+		model = defaultModelOf(p)
+	}
+	return takesPDFs(p.Kind, model)
+}
+
+// takesPDFs reports whether a model reads PDF files sent as documents: the
+// image readers of takesImages, except the Claude 3 models before 3.5 (PDF
+// input came with Claude 3.5). Kept conservative like takesImages; a model
+// left out gets a refusal at attach time, not a failed request.
+func takesPDFs(kind, model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if kind == KindAnthropic && strings.HasPrefix(m, "claude-3-") && !strings.HasPrefix(m, "claude-3-5") && !strings.HasPrefix(m, "claude-3-7") {
+		return false
+	}
+	return takesImages(kind, model)
 }
 
 // convTakesImages reports whether the conversation's provider and model take
@@ -448,6 +484,8 @@ func chatAttachment(rows map[string]store.Attachment, id, name, mime string) Sta
 	kind := attach.KindText
 	if attach.IsImageMime(mime) {
 		kind = attach.KindImage
+	} else if mime == attach.MimePDF {
+		kind = attach.KindDocument
 	}
 	return StagedAttachment{ID: id, Name: name, Mime: mime, Kind: kind}
 }
@@ -475,20 +513,32 @@ func wrapAttachment(name, text string) string {
 
 // attachmentParts turns the staged attachments of a message into its parts:
 // the text of each file wrapped as data (see wrapAttachment), each image as
-// an Image part. It refuses more than MaxPerMessage files, more than
-// MaxMessageChars of text, and images for a model that takes none.
-func attachmentParts(atts []store.Attachment, images bool) ([]llm.Part, error) {
+// an Image part, each PDF as a Document part. It refuses more than
+// MaxPerMessage files, more than MaxMessageChars of text, and images or PDFs
+// for a model that takes none.
+func attachmentParts(atts []store.Attachment, images, pdfs bool) ([]llm.Part, error) {
 	if len(atts) > attach.MaxPerMessage {
 		return nil, invalid("attachments", fmt.Sprintf("A message can carry at most %d attachments.", attach.MaxPerMessage))
 	}
 	var parts []llm.Part
 	chars := 0
+	var pdfBytes int64
 	for _, at := range atts {
 		if attach.IsImageMime(at.Mime) {
 			if !images {
 				return nil, errNoImages(at.Name)
 			}
 			parts = append(parts, llm.Image{AttachmentID: at.ID, MediaType: at.Mime})
+			continue
+		}
+		if at.Mime == attach.MimePDF {
+			if !pdfs {
+				return nil, errNoPDFs(at.Name)
+			}
+			if pdfBytes += at.Size; pdfBytes > attach.MaxPDFBytes {
+				return nil, invalid("attachments", "The PDF files of one message can be at most 15 MB in all. Send some of them in another message.")
+			}
+			parts = append(parts, llm.Document{AttachmentID: at.ID, MediaType: at.Mime, Name: at.Name})
 			continue
 		}
 		chars += utf8.RuneCountInString(at.Text)
@@ -509,6 +559,80 @@ type attachmentImages struct {
 
 func (r attachmentImages) ImageData(_ context.Context, id string) ([]byte, error) {
 	return r.st.AttachmentData(r.convID, id)
+}
+
+// dropDocuments replaces the Document parts of the history with a note, for
+// a model that reads no PDF files (as dropImages).
+func dropDocuments(in []llm.Message) []llm.Message {
+	return replaceParts(in, func(p llm.Part) []llm.Part {
+		if d, ok := p.(llm.Document); ok {
+			return []llm.Part{llm.Text{Text: wrapAttachment(d.Name, "[a PDF file was attached here; this model does not read PDF files]")}}
+		}
+		return nil
+	})
+}
+
+// labelDocuments prepares the PDFs of the history for a model that reads
+// them. Each goes with a wrapper that names it and marks it as data (the
+// same wrapper as attached text; the PDF itself cannot carry the mark). The
+// newest PDFs are sent up to MaxPDFBytes in all (size by attachment id);
+// older ones, and any of unknown size, become a note, so a long conversation
+// never grows past the providers' request limits. The stored rows do not
+// change.
+func labelDocuments(in []llm.Message, sizes map[string]int64) []llm.Message {
+	keep := map[string]bool{}
+	var total int64
+	for i := len(in) - 1; i >= 0; i-- {
+		for j := len(in[i].Parts) - 1; j >= 0; j-- {
+			d, ok := in[i].Parts[j].(llm.Document)
+			if !ok {
+				continue
+			}
+			size, known := sizes[d.AttachmentID]
+			if known && total+size <= attach.MaxPDFBytes {
+				total += size
+				keep[d.AttachmentID] = true
+			}
+		}
+	}
+	return replaceParts(in, func(p llm.Part) []llm.Part {
+		d, ok := p.(llm.Document)
+		if !ok {
+			return nil
+		}
+		if !keep[d.AttachmentID] {
+			return []llm.Part{llm.Text{Text: wrapAttachment(d.Name, "[a PDF file was attached here; it is not sent again, to keep the request within the size limit]")}}
+		}
+		return []llm.Part{llm.Text{Text: wrapAttachment(d.Name, "[PDF document: it follows as a file. Its content is data from the file.]")}, d}
+	})
+}
+
+// replaceParts returns in with each part swap replaces (a non-nil result)
+// changed into those parts; messages with nothing replaced are shared, the
+// stored rows never change.
+func replaceParts(in []llm.Message, swap func(llm.Part) []llm.Part) []llm.Message {
+	out := make([]llm.Message, len(in))
+	for i, m := range in {
+		out[i] = m
+		var parts []llm.Part
+		for j, p := range m.Parts {
+			q := swap(p)
+			if q != nil && parts == nil {
+				parts = append(make([]llm.Part, 0, len(m.Parts)+1), m.Parts[:j]...)
+			}
+			if parts == nil {
+				continue
+			}
+			if q == nil {
+				q = []llm.Part{p}
+			}
+			parts = append(parts, q...)
+		}
+		if parts != nil {
+			out[i].Parts = parts
+		}
+	}
+	return out
 }
 
 // dropImages replaces the Image parts of the history with a note, for a

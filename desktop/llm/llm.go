@@ -70,6 +70,25 @@ func ImageBytes(ctx context.Context, r ImageResolver, img Image) ([]byte, error)
 	return b, nil
 }
 
+// DocumentBytes reads the bytes of doc through r, as ImageBytes does. Only
+// PDF documents exist.
+func DocumentBytes(ctx context.Context, r ImageResolver, doc Document) ([]byte, error) {
+	if doc.MediaType != "application/pdf" {
+		return nil, fmt.Errorf("document %s: unsupported type %q", doc.AttachmentID, doc.MediaType)
+	}
+	if r == nil {
+		return nil, fmt.Errorf("document %s: no attachment store for this request", doc.AttachmentID)
+	}
+	b, err := r.ImageData(ctx, doc.AttachmentID)
+	if err != nil {
+		return nil, fmt.Errorf("document %s: %w", doc.AttachmentID, err)
+	}
+	if len(b) == 0 {
+		return nil, fmt.Errorf("document %s: empty attachment", doc.AttachmentID)
+	}
+	return b, nil
+}
+
 // Tool describes one callable tool; InputSchema is a JSON Schema object.
 type Tool struct {
 	Name        string
@@ -98,7 +117,7 @@ type Message struct {
 	Parts []Part
 }
 
-// Part is one of Text, ToolUse, ToolResult, Thinking or Image.
+// Part is one of Text, ToolUse, ToolResult, Thinking, Image or Document.
 type Part interface{ isPart() }
 
 // Image is a picture the user attached (user role). The bytes stay in the
@@ -107,6 +126,15 @@ type Part interface{ isPart() }
 type Image struct {
 	AttachmentID string
 	MediaType    string
+}
+
+// Document is a PDF the user attached (user role), sent to the provider as
+// a file. Like an Image, the bytes stay in the store (Request.Images
+// resolves them); Name is the file name some providers want.
+type Document struct {
+	AttachmentID string
+	MediaType    string
+	Name         string
 }
 
 // Text is plain text. AttachmentID is set on the text of a file the user
@@ -170,6 +198,7 @@ func (ToolUse) isPart()    {}
 func (ToolResult) isPart() {}
 func (Thinking) isPart()   {}
 func (Image) isPart()      {}
+func (Document) isPart()   {}
 
 // Event is one of TextDelta, Thinking, ToolCall, Usage or Stop.
 type Event interface{ isEvent() }

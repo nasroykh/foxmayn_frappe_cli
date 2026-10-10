@@ -1,8 +1,10 @@
 // Package attach reads the files a person attaches to a chat message: it
 // tells their type from their content (the extension must agree), checks the
 // size limits, and turns them into what the model gets: text for text, CSV
-// and JSON files, CSV per sheet for XLSX workbooks, the bytes for PNG, JPEG,
-// WebP and GIF images. Everything else, PDF included, is refused.
+// and JSON files, CSV per sheet for XLSX workbooks, the text of DOCX
+// documents, the bytes for PNG, JPEG, WebP and GIF images and for PDF
+// documents (which are never parsed here: the provider reads them).
+// Everything else is refused.
 package attach
 
 import (
@@ -29,6 +31,10 @@ const (
 	MaxFileBytes = 10 << 20
 	// MaxPastedBytes is the largest pasted image, decoded.
 	MaxPastedBytes = 5 << 20
+	// MaxPDFBytes is the most PDF bytes one message may carry, and the most
+	// a request sends (older PDFs past it reach the model as notes): the
+	// providers' request limits are about 20 to 32 MB, base64 included.
+	MaxPDFBytes = 15 << 20
 	// MaxPerMessage is how many attachments one message may carry.
 	MaxPerMessage = 5
 	// MaxTextChars is the most characters the text of one attachment may
@@ -55,13 +61,16 @@ const (
 const (
 	KindText  = "text"
 	KindImage = "image"
+	// KindDocument is a PDF, sent to the provider as a file.
+	KindDocument = "document"
 )
 
 // File is an attachment read and checked.
 type File struct {
 	Name string
 	// Mime is the type found from the content: text/plain, text/csv,
-	// application/json, the XLSX type, or one of the image types.
+	// application/json, the XLSX or DOCX type, application/pdf, or one of
+	// the image types.
 	Mime string
 	Kind string
 	// Size is the byte size of the file as given.
@@ -69,11 +78,14 @@ type File struct {
 	SHA256 string
 	// Text is what the model gets for a text attachment.
 	Text string
-	// Data is the bytes of an image attachment.
+	// Data is the bytes of an image or PDF attachment.
 	Data []byte
 	// Width and Height are an image's size in pixels.
 	Width, Height int
 }
+
+// kindsHint lists what can be attached, for a refusal.
+const kindsHint = "Attach text, CSV, JSON, XLSX, DOCX, PDF, PNG, JPEG, WebP or GIF files."
 
 // Error is a refusal the person can act on; Error() is shown as is.
 type Error struct{ Msg string }
@@ -90,6 +102,9 @@ const (
 	mimeCSV  = "text/csv"
 	mimeJSON = "application/json"
 	mimeXLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	mimeDOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	// MimePDF is the type of a PDF attachment.
+	MimePDF  = "application/pdf"
 	mimePNG  = "image/png"
 	mimeJPEG = "image/jpeg"
 	mimeWebP = "image/webp"
@@ -176,16 +191,32 @@ func Parse(name string, data []byte) (File, error) {
 	out := File{Name: name, Size: int64(len(data)), SHA256: sum(data)}
 	switch sniffed := sniff(data); sniffed {
 	case "pdf":
-		return File{}, refuse("%s is a PDF. PDF files cannot be attached yet (planned for V1.x).", name)
-	case "zip":
-		if ext != ".xlsx" {
+		if ext != ".pdf" {
 			return File{}, mismatch(name, ext)
 		}
-		text, err := xlsxText(name, data)
+		// The provider would refuse an encrypted PDF on every later turn.
+		if bytes.Contains(data, []byte("/Encrypt")) {
+			return File{}, refuse("%s is password protected or encrypted. Remove the protection and attach it again.", name)
+		}
+		out.Mime, out.Kind, out.Data = MimePDF, KindDocument, data
+		return out, nil
+	case "zip":
+		var text, mime string
+		var err error
+		switch ext {
+		case ".xlsx":
+			text, err = xlsxText(name, data)
+			mime = mimeXLSX
+		case ".docx":
+			text, err = docxText(name, data)
+			mime = mimeDOCX
+		default:
+			return File{}, mismatch(name, ext)
+		}
 		if err != nil {
 			return File{}, err
 		}
-		out.Mime, out.Kind, out.Text = mimeXLSX, KindText, text
+		out.Mime, out.Kind, out.Text = mime, KindText, text
 		return out, nil
 	case mimePNG, mimeJPEG, mimeWebP, mimeGIF:
 		if !hasExt(imageExts[sniffed], ext) {
@@ -204,14 +235,21 @@ func Parse(name string, data []byte) (File, error) {
 		if _, ok := textExts[ext]; ok {
 			return File{}, refuse("%s is not UTF-8 text.", name)
 		}
-		return File{}, refuse("%s: this type of file cannot be attached. Attach text, CSV, JSON, XLSX, PNG, JPEG, WebP or GIF files.", name)
+		switch ext {
+		case ".docx", ".xlsx":
+			// An encrypted Office file is not a zip.
+			return File{}, refuse("%s is password protected or not a valid Office file.", name)
+		case ".doc", ".xls":
+			return File{}, refuse("%s is an old Office format. Save it as %sx and attach that.", name, ext)
+		}
+		return File{}, refuse("%s: this type of file cannot be attached. %s", name, kindsHint)
 	default: // text
 		mime, ok := textExts[ext]
 		if !ok {
-			if ext == ".xlsx" || hasAnyImageExt(ext) || ext == ".pdf" {
+			if ext == ".xlsx" || ext == ".docx" || hasAnyImageExt(ext) || ext == ".pdf" {
 				return File{}, mismatch(name, ext)
 			}
-			return File{}, refuse("%s: this type of file cannot be attached. Attach text, CSV, JSON, XLSX, PNG, JPEG, WebP or GIF files.", name)
+			return File{}, refuse("%s: this type of file cannot be attached. %s", name, kindsHint)
 		}
 		text, err := cleanText(name, data)
 		if err != nil {
