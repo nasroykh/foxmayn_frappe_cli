@@ -1,5 +1,6 @@
 import { IconAlertTriangle, IconPlugConnectedX } from "@tabler/icons-react"
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 
 import { useApp } from "@/app/app-context"
 import { CopyField } from "@/components/copy-field"
@@ -22,9 +23,11 @@ import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { backend } from "@/lib/backend"
 import type { Assistant, Preview } from "@/lib/backend-types"
+import { appHint } from "@/lib/labels"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 
 export function DisconnectDialog({ assistant, onClose }: { assistant: Assistant | null; onClose: () => void }) {
+  const { t } = useTranslation()
   const { reloadAssistants } = useApp()
   const [kept, setKept] = React.useState<Assistant | null>(null)
   const [preview, setPreview] = React.useState<Preview | null>(null)
@@ -54,8 +57,8 @@ export function DisconnectDialog({ assistant, onClose }: { assistant: Assistant 
       await reloadAssistants()
       toast.add(
         res.changed
-          ? { title: `${kept.name} is disconnected`, description: res.hint, type: "success" }
-          : { title: `${kept.name} was not connected`, description: "There was nothing to remove.", type: "info" },
+          ? { title: t("disconnect.done", { name: kept.name }), description: appHint(kept.id, "disconnect", res.hint), type: "success" }
+          : { title: t("disconnect.wasNot", { name: kept.name }), description: t("disconnect.nothing"), type: "info" },
       )
       onClose()
     } catch (err) {
@@ -67,7 +70,7 @@ export function DisconnectDialog({ assistant, onClose }: { assistant: Assistant 
     }
   }
 
-  const name = kept?.name ?? "the assistant"
+  const name = kept?.name ?? t("disconnect.fallbackName")
 
   return (
     <AlertDialog open={!!assistant} onOpenChange={(o) => !o && !busy && onClose()}>
@@ -76,11 +79,8 @@ export function DisconnectDialog({ assistant, onClose }: { assistant: Assistant 
           <AlertDialogMedia>
             <IconPlugConnectedX />
           </AlertDialogMedia>
-          <AlertDialogTitle>Disconnect {name}?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This removes the “frappe” entry from {name}'s settings, so it can no longer reach your Frappe sites. Your
-            sites stay saved in this app.
-          </AlertDialogDescription>
+          <AlertDialogTitle>{t("disconnect.title", { name })}</AlertDialogTitle>
+          <AlertDialogDescription>{t("disconnect.description", { name })}</AlertDialogDescription>
         </AlertDialogHeader>
 
         {error ? (
@@ -88,14 +88,12 @@ export function DisconnectDialog({ assistant, onClose }: { assistant: Assistant 
             <Alert variant={error.code === "unavailable" ? "default" : "destructive"}>
               <IconAlertTriangle />
               <AlertTitle>
-                {error.code === "unavailable"
-                  ? "Not available in this version yet"
-                  : "The change could not be prepared"}
+                {error.code === "unavailable" ? t("disconnect.unavailable") : t("connect.prepareFailed")}
               </AlertTitle>
               <AlertDescription>{error.message}</AlertDescription>
             </Alert>
             {kept?.configPath && error.code === "unavailable" && (
-              <CopyField value={kept.configPath} label="Settings file" copiedTitle="Path copied" />
+              <CopyField value={kept.configPath} label={t("disconnect.settingsFile")} copiedTitle={t("disconnect.pathCopied")} />
             )}
           </div>
         ) : !preview ? (
@@ -103,7 +101,7 @@ export function DisconnectDialog({ assistant, onClose }: { assistant: Assistant 
         ) : (
           <Accordion>
             <AccordionItem value="details">
-              <AccordionTrigger>Technical details</AccordionTrigger>
+              <AccordionTrigger>{t("common.technicalDetails")}</AccordionTrigger>
               <AccordionContent>
                 <p className="text-muted-foreground font-mono text-xs break-all">{preview.path}</p>
                 <DiffView diff={preview.diff} />
@@ -118,14 +116,14 @@ export function DisconnectDialog({ assistant, onClose }: { assistant: Assistant 
         )}
 
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>{error?.code === "unavailable" ? "Close" : "Cancel"}</AlertDialogCancel>
+          <AlertDialogCancel disabled={busy}>{error?.code === "unavailable" ? t("common.close") : t("common.cancel")}</AlertDialogCancel>
           <Button
             variant="destructive"
             onClick={disconnect}
             disabled={busy || !preview || !!error || !preview.canApply}
           >
             {busy && <Spinner data-icon="inline-start" />}
-            Disconnect
+            {t("disconnect.button")}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

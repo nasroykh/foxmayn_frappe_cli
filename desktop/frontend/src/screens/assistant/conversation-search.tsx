@@ -7,9 +7,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner"
+import { intlLocale } from "@/i18n"
 import { backend } from "@/lib/backend"
 import type { Profile, SearchFilter, SearchHit } from "@/lib/backend-types"
 import { appError, type AppError } from "@/lib/errors"
+import { modalOpen } from "@/lib/modal"
+import { profileName } from "@/screens/assistant/profile-picker"
 
 const SEARCH_DELAY_MS = 250
 
@@ -73,7 +76,13 @@ export function ConversationSearch({
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "f" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
+      // e.code: the physical F key, whatever the keyboard layout.
+      if (
+        e.code === "KeyF" &&
+        e.shiftKey &&
+        (e.ctrlKey || e.metaKey) &&
+        !modalOpen()
+      ) {
         e.preventDefault()
         inputRef.current?.focus()
         inputRef.current?.select()
@@ -125,14 +134,16 @@ export function ConversationSearch({
     <div className="flex flex-col gap-2 px-3 pb-2">
       <div className="flex items-center gap-1">
         <div className="relative min-w-0 flex-1">
-          <IconSearch className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2" aria-hidden />
+          <IconSearch className="text-muted-foreground pointer-events-none absolute top-1/2 start-2 size-4 -translate-y-1/2" aria-hidden />
           <Input
             ref={inputRef}
             type="search"
             role="searchbox"
             aria-label={t("chat.search.label")}
             placeholder={t("chat.search.placeholder")}
-            className="h-8 pr-7 pl-8"
+            title={t("chat.search.tooltip")}
+            aria-keyshortcuts="Control+Shift+F Meta+Shift+F"
+            className="h-8 pe-7 ps-8"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -147,7 +158,7 @@ export function ConversationSearch({
             <Button
               variant="ghost"
               size="icon-xs"
-              className="absolute top-1/2 right-1 -translate-y-1/2"
+              className="absolute top-1/2 end-1 -translate-y-1/2"
               aria-label={t("chat.search.clear")}
               onClick={clear}
             >
@@ -187,7 +198,7 @@ export function ConversationSearch({
             <NativeSelectOptGroup label={t("profile.picker.presets")}>
               {profiles.presets.map((p) => (
                 <NativeSelectOption key={p.id} value={p.id}>
-                  {p.name}
+                  {profileName(t, p)}
                 </NativeSelectOption>
               ))}
             </NativeSelectOptGroup>
@@ -239,6 +250,9 @@ export function ConversationSearch({
               : t("chat.search.count", { count: hits?.length ?? 0 })}
         </div>
       )}
+      {active && !busy && !error && hits?.length === 0 && (
+        <p className="text-muted-foreground text-xs">{filtered ? t("chat.search.noneFiltered") : t("chat.search.none")}</p>
+      )}
       {active && hits && hits.length > 0 && (
         <ul aria-label={t("chat.search.results")} className={cn("flex flex-col gap-0.5", busy && "opacity-60")}>
           {hits.map((h) => (
@@ -246,14 +260,14 @@ export function ConversationSearch({
               <button
                 type="button"
                 onClick={() => onOpen(h.convID)}
-                className="hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col rounded-lg px-2 py-1.5 text-left text-sm outline-none focus-visible:ring-3"
+                className="hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col rounded-lg px-2 py-1.5 text-start text-sm outline-none focus-visible:ring-3"
               >
                 <span className="truncate font-medium">{h.title || t("chat.list.untitled")}</span>
                 <span className="text-muted-foreground line-clamp-2 text-xs break-words">
                   <Highlighted text={h.snippet} query={text} />
                 </span>
                 <span className="text-muted-foreground truncate text-xs">
-                  {h.site} · {new Date(h.updated).toLocaleDateString()}
+                  {h.site} · {new Date(h.updated).toLocaleDateString(intlLocale())}
                 </span>
               </button>
             </li>

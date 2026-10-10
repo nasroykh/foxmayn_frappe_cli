@@ -6,6 +6,9 @@ import useEmblaCarousel, {
 
 import { Button } from "@/components/ui/button"
 import { IconChevronLeft, IconChevronRight } from "@tabler/icons-react"
+import { useTranslation } from "react-i18next"
+
+import { useDirection } from "@/components/ui/direction"
 
 type CarouselApi = UseEmblaCarouselType[1]
 type UseCarouselParameters = Parameters<typeof useEmblaCarousel>
@@ -49,8 +52,11 @@ function Carousel({
   children,
   ...props
 }: React.ComponentProps<"div"> & CarouselProps) {
+  const { t } = useTranslation()
+  const direction = useDirection()
   const [carouselRef, api] = useEmblaCarousel(
     {
+      direction,
       ...opts,
       axis: orientation === "horizontal" ? "x" : "y",
     },
@@ -75,15 +81,18 @@ function Carousel({
 
   const handleKeyDown = React.useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (event.key === "ArrowLeft") {
+      // The previous slide is on the right in a right-to-left page.
+      const back = direction === "rtl" ? "ArrowRight" : "ArrowLeft"
+      const forward = direction === "rtl" ? "ArrowLeft" : "ArrowRight"
+      if (event.key === back) {
         event.preventDefault()
         scrollPrev()
-      } else if (event.key === "ArrowRight") {
+      } else if (event.key === forward) {
         event.preventDefault()
         scrollNext()
       }
     },
-    [scrollPrev, scrollNext]
+    [scrollPrev, scrollNext, direction]
   )
 
   React.useEffect(() => {
@@ -120,7 +129,7 @@ function Carousel({
         onKeyDownCapture={handleKeyDown}
         className={cn("relative", className)}
         role="region"
-        aria-roledescription="carousel"
+        aria-roledescription={t("ui.carousel")}
         data-slot="carousel"
         {...props}
       >
@@ -142,7 +151,7 @@ function CarouselContent({ className, ...props }: React.ComponentProps<"div">) {
       <div
         className={cn(
           "flex",
-          orientation === "horizontal" ? "-ml-4" : "-mt-4 flex-col",
+          orientation === "horizontal" ? "-ms-4" : "-mt-4 flex-col",
           className
         )}
         {...props}
@@ -153,15 +162,16 @@ function CarouselContent({ className, ...props }: React.ComponentProps<"div">) {
 
 function CarouselItem({ className, ...props }: React.ComponentProps<"div">) {
   const { orientation } = useCarousel()
+  const { t } = useTranslation()
 
   return (
     <div
       role="group"
-      aria-roledescription="slide"
+      aria-roledescription={t("ui.slide")}
       data-slot="carousel-item"
       className={cn(
         "min-w-0 shrink-0 grow-0 basis-full",
-        orientation === "horizontal" ? "pl-4" : "pt-4",
+        orientation === "horizontal" ? "ps-4" : "pt-4",
         className
       )}
       {...props}
@@ -175,6 +185,7 @@ function CarouselPrevious({
   size = "icon-sm",
   ...props
 }: React.ComponentProps<typeof Button>) {
+  const { t } = useTranslation()
   const { orientation, scrollPrev, canScrollPrev } = useCarousel()
 
   return (
@@ -185,8 +196,8 @@ function CarouselPrevious({
       className={cn(
         "absolute touch-manipulation rounded-full",
         orientation === "horizontal"
-          ? "inset-y-0 -left-12 my-auto"
-          : "-top-12 left-1/2 -translate-x-1/2 rotate-90",
+          ? "inset-y-0 -start-12 my-auto"
+          : "-top-12 start-1/2 -translate-x-1/2 rtl:translate-x-1/2 rotate-90",
         className
       )}
       disabled={!canScrollPrev}
@@ -194,7 +205,7 @@ function CarouselPrevious({
       {...props}
     >
       <IconChevronLeft />
-      <span className="sr-only">Previous slide</span>
+      <span className="sr-only">{t("ui.previousSlide")}</span>
     </Button>
   )
 }
@@ -205,6 +216,7 @@ function CarouselNext({
   size = "icon-sm",
   ...props
 }: React.ComponentProps<typeof Button>) {
+  const { t } = useTranslation()
   const { orientation, scrollNext, canScrollNext } = useCarousel()
 
   return (
@@ -215,8 +227,8 @@ function CarouselNext({
       className={cn(
         "absolute touch-manipulation rounded-full",
         orientation === "horizontal"
-          ? "inset-y-0 -right-12 my-auto"
-          : "-bottom-12 left-1/2 -translate-x-1/2 rotate-90",
+          ? "inset-y-0 -end-12 my-auto"
+          : "-bottom-12 start-1/2 -translate-x-1/2 rtl:translate-x-1/2 rotate-90",
         className
       )}
       disabled={!canScrollNext}
@@ -224,7 +236,7 @@ function CarouselNext({
       {...props}
     >
       <IconChevronRight />
-      <span className="sr-only">Next slide</span>
+      <span className="sr-only">{t("ui.nextSlide")}</span>
     </Button>
   )
 }

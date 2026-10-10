@@ -1,14 +1,15 @@
 # Foxmayn Frappe Desktop
 
-A desktop app for Windows and macOS that manages your Frappe and ERPNext sites and connects them to the AI assistants on your computer, without the command line.
+A desktop app for Windows and macOS that manages your Frappe and ERPNext sites and connects them to the AI apps on your computer, without the command line.
 
 **Not an official Frappe product.** Foxmayn makes this app independently; it is not affiliated with or endorsed by Frappe Technologies.
 
 ## What it does
 
 - **Sites.** Add a site with browser sign-in (OAuth), an API key, or a username and password. Check the connection, make a site the default, rename it, change its address, remove it.
-- **Assistants.** Connect Claude Desktop, Claude Code, Cursor, VS Code or Codex to a site, optionally read-only, with a preview of the change first. Disconnect again with one click.
-- **ffc helper.** Assistants reach your sites through the `ffc` command line. If it is missing, the app downloads the latest ffc release, verifies its signature and checksum, and installs it for you.
+- **Connect apps.** Connect Claude Desktop, Claude Code, Cursor, VS Code or Codex to a site, optionally read-only, with a preview of the change first. Disconnect again with one click.
+- **ffc helper.** Apps reach your sites through the `ffc` command line. If it is missing, the app downloads the latest ffc release, verifies its signature and checksum, and installs it for you.
+- **English, French and Arabic.** The whole app, right to left in Arabic, following your system's language until you choose one. Keyboard shortcuts, and the chat works with the keyboard alone.
 - **Update notice.** Tells you when a newer version of the app is available, and updates ffc for you when a newer ffc release is out.
 
 The app and the CLI share one config file, `~/.config/ffc/config.yaml`. Sites you add with `ffc` show up in the app, and the other way round, live.
@@ -24,11 +25,11 @@ The app and the CLI share one config file, `~/.config/ffc/config.yaml`. Sites yo
 | Page | What it covers |
 | --- | --- |
 | [Install](install.md) | Windows installer, macOS disk image, unsigned-build warnings, verifying downloads, uninstalling. |
-| [Using the app](using.md) | First run, sites, sign-in methods, assistants, the ffc helper, settings, updates. |
+| [Using the app](using.md) | First run, sites, sign-in methods, the Assistant, connecting apps, the ffc helper, settings, updates. |
 | [Troubleshooting](troubleshooting.md) | Common messages and what to do. |
 
 ## See also
 
-- [MCP server](../mcp/README.md) (what the assistants get)
+- [MCP server](../mcp/README.md) (what connected apps get)
 - [Security](../security.md)
 - [Development: desktop app](../development/desktop.md)

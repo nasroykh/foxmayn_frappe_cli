@@ -48,6 +48,7 @@ export function ApprovalCard({
 
   return (
     <section
+      data-slot="approval-card"
       aria-label={t("chat.approval.label")}
       className="border-primary/40 bg-card flex flex-col gap-3 rounded-xl border p-4 text-sm"
     >

@@ -84,11 +84,13 @@ func (h *WailsHost) ConfirmDroppedFiles(paths []string) (bool, error) {
 		return false, errors.New("the app is not running")
 	}
 	var b strings.Builder
-	b.WriteString("These files were dropped on the chat. Attach them?\n")
+	b.WriteString(dialogT("dropBody") + "\n")
 	for _, p := range paths {
-		fmt.Fprintf(&b, "\n%s\n    in %s", dialogText(filepath.Base(p)), dialogText(filepath.Dir(p)))
+		// First-strong isolates keep a Latin path whole inside an Arabic
+		// sentence, and an Arabic name whole inside an English one.
+		fmt.Fprintf(&b, "\n%s\n    %s", isolate(dialogText(filepath.Base(p))), fmt.Sprintf(dialogT("dropIn"), isolate(dialogText(filepath.Dir(p)))))
 	}
-	d := h.App.Dialog.Question().SetTitle("Attach dropped files?").SetMessage(b.String())
+	d := h.App.Dialog.Question().SetTitle(dialogT("dropTitle")).SetMessage(b.String())
 	if w := h.App.Window.Current(); w != nil {
 		d.AttachToWindow(w)
 	}
@@ -97,8 +99,8 @@ func (h *WailsHost) ConfirmDroppedFiles(paths []string) (bool, error) {
 	// answer comes through a channel. A dialog closed without a button, or
 	// left open past dropConfirmWait, counts as Cancel.
 	answer := make(chan bool, 2)
-	d.AddButton("Attach").SetAsDefault().OnClick(func() { answer <- true })
-	d.AddButton("Cancel").SetAsCancel().OnClick(func() { answer <- false })
+	d.AddButton(dialogT("dropAttach")).SetAsDefault().OnClick(func() { answer <- true })
+	d.AddButton(dialogT("dropCancel")).SetAsCancel().OnClick(func() { answer <- false })
 	d.Show()
 	select {
 	case ok := <-answer:
@@ -110,6 +112,9 @@ func (h *WailsHost) ConfirmDroppedFiles(paths []string) (bool, error) {
 
 // dropConfirmWait bounds the wait for an answer to the drop dialog.
 const dropConfirmWait = 10 * time.Minute
+
+// isolate wraps s in FIRST STRONG ISOLATE ... POP DIRECTIONAL ISOLATE.
+func isolate(s string) string { return "\u2068" + s + "\u2069" }
 
 // dialogText makes a file name safe to show in a dialog: control characters
 // become spaces.
@@ -169,7 +174,7 @@ func (a *AssistantService) AddAttachment(convID string) (AttachResult, error) {
 	if !ok {
 		return AttachResult{}, errNoDialogs
 	}
-	paths, err := dlg.OpenFilesDialog("Attach files", "Text, CSV, JSON, XLSX or images", attachFilter)
+	paths, err := dlg.OpenFilesDialog(dialogT("attachTitle"), dialogT("attachFilter"), attachFilter)
 	if err != nil {
 		return AttachResult{}, newError(CodeFailed, "The file dialog failed.", err)
 	}

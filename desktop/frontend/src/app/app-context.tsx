@@ -4,7 +4,9 @@ import { backend } from "@/lib/backend"
 import { copy } from "@/components/copy-field"
 import { toast } from "@/components/ui/toast"
 import type { AssistantList, CheckResult, Environment, FFCUpdate, SiteList, UpdateInfo } from "@/lib/backend-types"
+import i18n from "@/i18n"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
+import { feedbackURL } from "@/lib/feedback"
 
 const UPDATE_CHECKED_KEY = "ffd-update-checked"
 const UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -94,6 +96,16 @@ interface AppContextValue {
   connectAssistant: (client?: string, site?: string) => void
   /** Opens the ffc install dialog. */
   installFFC: () => void
+  /** Goes to the Assistant and asks for a new conversation. */
+  newConversation: () => void
+  /** A new conversation was asked for and the Assistant has not opened its form yet. */
+  newConversationPending: boolean
+  /** The Assistant took the request (it opens its form). */
+  takeNewConversation: () => void
+  /** Opens the keyboard shortcuts sheet. */
+  openShortcuts: () => void
+  /** Opens the feedback issue form in the browser. */
+  sendFeedback: () => void
 }
 
 const AppContext = React.createContext<AppContextValue | null>(null)
@@ -102,6 +114,9 @@ export interface AppActions {
   addSite: () => void
   connectAssistant: (client?: string, site?: string) => void
   installFFC: () => void
+  newConversation: () => void
+  takeNewConversation: () => void
+  openShortcuts: () => void
 }
 
 export function AppProvider({
@@ -109,11 +124,13 @@ export function AppProvider({
   actions,
   screen,
   setScreen,
+  newConversationPending = false,
 }: {
   children: React.ReactNode
   actions: AppActions
   screen: Screen
   setScreen: (s: Screen) => void
+  newConversationPending?: boolean
 }) {
   const [env, reloadEnv] = useLoader(backend.environment)
   const [sites, reloadSites] = useLoader(backend.listSites)
@@ -168,28 +185,31 @@ export function AppProvider({
           // The terminal command avoids the warnings an unsigned download meets.
           const terminal = info.installCommand.startsWith("curl") ? "Terminal" : "PowerShell"
           toast.add({
-            title: `Foxmayn Frappe Desktop ${info.latest} is available`,
-            description: `Copy the install command and run it in ${terminal}. Settings > About has it too.`,
+            title: i18n.t("shell.update.availableTitle", { version: info.latest }),
+            description: i18n.t("shell.update.installHint", { terminal }),
             type: "info",
             timeout: 20000,
-            actionProps: { children: "Copy command", onClick: () => void copy(info.installCommand, "Command copied") },
+            actionProps: {
+              children: i18n.t("shell.update.copyCommand"),
+              onClick: () => void copy(info.installCommand, i18n.t("shell.update.commandCopied")),
+            },
           })
         } else if (info.available) {
           toast.add({
-            title: `Foxmayn Frappe Desktop ${info.latest} is available`,
-            description: "A newer version can be downloaded from GitHub.",
+            title: i18n.t("shell.update.availableTitle", { version: info.latest }),
+            description: i18n.t("shell.update.githubHint"),
             type: "info",
             timeout: 20000,
-            actionProps: { children: "Download", onClick: () => void downloadUpdate(info) },
+            actionProps: { children: i18n.t("common.download"), onClick: () => void downloadUpdate(info) },
           })
         }
         if (info.ffc.available) {
           toast.add({
-            title: `ffc ${info.ffc.latest} is available`,
-            description: `You have ffc ${info.ffc.current}. The app can update it for you.`,
+            title: i18n.t("shell.update.ffcTitle", { version: info.ffc.latest }),
+            description: i18n.t("shell.update.ffcBody", { current: info.ffc.current }),
             type: "info",
             timeout: 20000,
-            actionProps: { children: "Update", onClick: actions.installFFC },
+            actionProps: { children: i18n.t("common.update"), onClick: actions.installFFC },
           })
         }
       },
@@ -220,6 +240,13 @@ export function AppProvider({
     [reloadSites],
   )
 
+  const sendFeedback = React.useCallback(() => {
+    backend.openWebsite(feedbackURL(env.data)).catch((err) => {
+      const e = appError(err)
+      toast.add({ title: errorTitle(e), description: e.message, type: "error" })
+    })
+  }, [env.data])
+
   const value = React.useMemo<AppContextValue>(
     () => ({
       env,
@@ -237,6 +264,8 @@ export function AppProvider({
       checkSite,
       screen,
       setScreen,
+      newConversationPending,
+      sendFeedback,
       ...actions,
     }),
     [
@@ -255,10 +284,17 @@ export function AppProvider({
       checkSite,
       screen,
       setScreen,
+      newConversationPending,
+      sendFeedback,
       actions,
     ],
   )
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
+}
+
+/** The app context, or null outside AppProvider (components tested on their own). */
+export function useOptionalApp() {
+  return React.useContext(AppContext)
 }
 
 export function useApp() {

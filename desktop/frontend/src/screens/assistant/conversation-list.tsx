@@ -11,6 +11,7 @@ import {
 } from "@tabler/icons-react"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
+import { useModKey } from "@/components/app-header"
 import { cn } from "cn"
 
 import {
@@ -67,6 +68,7 @@ export function ConversationList({
   onImport: () => Promise<void>
 }) {
   const { t } = useTranslation()
+  const mod = useModKey()
   const { presets, own } = useProfiles()
   const [doomed, setDoomed] = React.useState<Conversation | null>(null)
   const [busy, setBusy] = React.useState(false)
@@ -90,7 +92,7 @@ export function ConversationList({
   const archivedCount = conversations.filter((c) => c.archived).length
 
   return (
-    <nav aria-label={t("chat.list.label")} className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r">
+    <nav aria-label={t("chat.list.label")} className="flex h-full min-h-0 w-60 shrink-0 flex-col border-e">
       <div className="flex items-center justify-between gap-1 p-3 pb-2">
         <h2 className="min-w-0 truncate text-sm font-semibold">{archive ? t("chat.list.archiveTitle") : t("chat.list.title")}</h2>
         <div className="flex items-center gap-1">
@@ -139,7 +141,10 @@ export function ConversationList({
       />
       <ul className={cn("flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2", searching && "hidden")}>
         {ordered.length === 0 && (
-          <li className="text-muted-foreground px-2 py-1 text-sm">{archive ? t("chat.list.emptyArchive") : t("chat.list.empty")}</li>
+          <li className="text-muted-foreground flex flex-col gap-1 px-2 py-1 text-sm">
+            <span>{archive ? t("chat.list.emptyArchive") : t("chat.list.empty")}</span>
+            {!archive && <span className="text-xs">{t("chat.list.emptyHint", { mod })}</span>}
+          </li>
         )}
         {ordered.map((c) => {
           const title = c.title || t("chat.list.untitled")
@@ -148,15 +153,23 @@ export function ConversationList({
               <button
                 type="button"
                 onClick={() => onSelect(c.id)}
+                // Delete opens the same confirmation as the trash button.
+                onKeyDown={(e) => {
+                  if (e.key === "Delete") {
+                    e.preventDefault()
+                    setDoomed(c)
+                  }
+                }}
                 aria-current={c.id === selected ? "true" : undefined}
+                aria-keyshortcuts="Delete"
                 className={cn(
-                  "hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col rounded-lg px-2 py-1.5 pr-14 text-left text-sm outline-none focus-visible:ring-3",
+                  "hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col rounded-lg px-2 py-1.5 pe-14 text-start text-sm outline-none focus-visible:ring-3",
                   c.id === selected && "bg-muted",
                 )}
               >
                 <span className="flex items-center gap-1 font-medium">
                   {c.pinned && <IconPinFilled className="text-muted-foreground size-3 shrink-0" aria-label={t("chat.list.pinned")} />}
-                  <span className="truncate">{title}</span>
+                  <span dir="auto" className="truncate">{title}</span>
                 </span>
                 <span className="text-muted-foreground truncate text-xs">
                   {c.site}
@@ -170,7 +183,7 @@ export function ConversationList({
                       variant="ghost"
                       size="icon-xs"
                       aria-label={t("chat.list.moreLabel", { title })}
-                      className="absolute top-1.5 right-7 opacity-0 group-hover/conv:opacity-100 focus-visible:opacity-100 data-[popup-open]:opacity-100"
+                      className={cn("absolute top-1.5 end-7 opacity-0 group-hover/conv:opacity-100 group-focus-within/conv:opacity-100 focus-visible:opacity-100 data-[popup-open]:opacity-100", c.id === selected && "opacity-100")}
                     />
                   }
                 >
@@ -207,7 +220,7 @@ export function ConversationList({
                       variant="ghost"
                       size="icon-xs"
                       aria-label={t("chat.list.deleteLabel", { title })}
-                      className="absolute top-1.5 right-1 opacity-0 group-hover/conv:opacity-100 focus-visible:opacity-100"
+                      className={cn("absolute top-1.5 end-1 opacity-0 group-hover/conv:opacity-100 group-focus-within/conv:opacity-100 focus-visible:opacity-100", c.id === selected && "opacity-100")}
                       onClick={() => setDoomed(c)}
                     />
                   }

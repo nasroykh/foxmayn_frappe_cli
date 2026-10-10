@@ -1,0 +1,39 @@
+name: Desktop app feedback
+description: A problem, an idea or a translation fix for Foxmayn Frappe Desktop.
+title: "[Desktop] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Please do not paste API keys, passwords, tokens or private site data.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is it about?
+      options:
+        - Something does not work
+        - An idea or a wish
+        - A translation (French or Arabic)
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What happened, what you expected, or what you would like. Steps to reproduce help a lot.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Filled in by the app's Send feedback link.
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+  - type: input
+    id: lang
+    attributes:
+      label: App language

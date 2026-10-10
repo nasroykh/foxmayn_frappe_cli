@@ -1,5 +1,8 @@
 // Errors from the Go services arrive as a Wails RuntimeError whose `cause`
-// is the services.Error JSON. appError turns anything thrown into that shape.
+// is the services.Error JSON. appError turns anything thrown into that shape,
+// with the message in the page's language when Go named its key.
+import i18n from "@/i18n"
+
 
 export type ErrorCode =
   | "invalid"
@@ -20,32 +23,47 @@ export interface AppError {
   field?: string
   unsupported?: boolean
   redirectURI?: string
+  /** errors.<key> in the catalogs; message is its English text. */
+  key?: string
+  /** Values for the key's {{placeholders}}. */
+  args?: Record<string, string>
+}
+
+/** A message from Go (an error, a check result) in the page's language when it names a key. */
+export function localizedMessage(m: { message: string; key?: string; args?: { [k: string]: string | undefined } | null }): string {
+  if (!m.key) return m.message
+  return i18n.t(`errors.${m.key}`, { ...m.args, defaultValue: m.message })
+}
+
+/** The error with its message translated, when Go sent a key the catalog has. */
+function localize(e: AppError): AppError {
+  return e.key ? { ...e, message: localizedMessage(e) } : e
 }
 
 export function appError(err: unknown): AppError {
   const cause = (err as { cause?: unknown } | null)?.cause
   if (cause && typeof cause === "object" && "code" in cause && "message" in cause) {
-    return cause as AppError
+    return localize(cause as AppError)
   }
   if (err && typeof err === "object" && "code" in err && "message" in err) {
-    return err as AppError
+    return localize(err as AppError)
   }
   const message = err instanceof Error ? err.message : String(err)
-  return { code: "failed", message: message || "Something went wrong." }
+  return { code: "failed", message: message || i18n.t("errors.title.failed") }
 }
 
 /** A short title for a toast, by error kind. */
 export function errorTitle(e: AppError): string {
   switch (e.code) {
     case "auth":
-      return "The site refused the sign-in"
+      return i18n.t("errors.title.auth")
     case "network":
-      return "Could not reach the site"
+      return i18n.t("errors.title.network")
     case "ffc_missing":
-      return "The ffc helper is not installed"
+      return i18n.t("errors.title.ffcMissing")
     case "unavailable":
-      return "Not available"
+      return i18n.t("errors.title.unavailable")
     default:
-      return "Something went wrong"
+      return i18n.t("errors.title.failed")
   }
 }

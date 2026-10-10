@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next"
 import { IconDeviceDesktop, IconMoon, IconSearch, IconSun } from "@tabler/icons-react"
 
-import { useApp } from "@/app/app-context"
+import { useApp, useOptionalApp } from "@/app/app-context"
 import { useTheme, type Theme } from "@/app/theme"
 import {
   Breadcrumb,
@@ -28,15 +28,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 
 export function useModKey() {
-  const { env } = useApp()
-  const mac = env.data ? env.data.os === "darwin" : /Mac/i.test(navigator.platform)
+  const env = useOptionalApp()?.env
+  const mac = env?.data ? env.data.os === "darwin" : /Mac/i.test(navigator.platform)
   return mac ? "⌘" : "Ctrl"
 }
 
 export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
   const { t } = useTranslation()
   const { screen, setScreen } = useApp()
-  const titles = { sites: "Sites", assistant: t("nav.assistant"), assistants: t("connectApps.title"), settings: "Settings" }
+  const titles = { sites: t("shell.nav.sites"), assistant: t("nav.assistant"), assistants: t("connectApps.title"), settings: t("shell.nav.settings") }
   const { theme, setTheme } = useTheme()
   const mod = useModKey()
   const ThemeIcon = theme === "light" ? IconSun : theme === "dark" ? IconMoon : IconDeviceDesktop
@@ -45,7 +45,7 @@ export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
     <header className="bg-background/95 flex h-12 shrink-0 items-center gap-2 border-b px-3 backdrop-blur">
       <Tooltip>
         <TooltipTrigger render={<SidebarTrigger />} />
-        <TooltipContent>Show or hide the sidebar</TooltipContent>
+        <TooltipContent>{t("shell.header.toggleSidebar")}</TooltipContent>
       </Tooltip>
       <Separator orientation="vertical" className="mx-1 data-[orientation=vertical]:h-4" />
       <Breadcrumb>
@@ -62,10 +62,10 @@ export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
         </BreadcrumbList>
       </Breadcrumb>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ms-auto flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={onOpenPalette} className="text-muted-foreground">
           <IconSearch data-icon="inline-start" />
-          Search
+          {t("shell.header.search")}
           <KbdGroup>
             <Kbd>{mod}</Kbd>
             <Kbd>K</Kbd>
@@ -74,27 +74,27 @@ export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger
-              render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Theme" />} />}
+              render={<DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t("theme.title")} />} />}
             >
               <ThemeIcon />
             </TooltipTrigger>
-            <TooltipContent>Theme</TooltipContent>
+            <TooltipContent>{t("theme.title")}</TooltipContent>
           </Tooltip>
           <DropdownMenuContent align="end" className="w-44">
             <DropdownMenuGroup>
-              <DropdownMenuLabel>Theme</DropdownMenuLabel>
+              <DropdownMenuLabel>{t("theme.title")}</DropdownMenuLabel>
               <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as Theme)}>
                 <DropdownMenuRadioItem value="light">
                   <IconSun />
-                  Light
+                  {t("theme.light")}
                 </DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="dark">
                   <IconMoon />
-                  Dark
+                  {t("theme.dark")}
                 </DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="system">
                   <IconDeviceDesktop />
-                  Same as system
+                  {t("theme.system")}
                 </DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
             </DropdownMenuGroup>

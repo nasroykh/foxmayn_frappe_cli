@@ -1,5 +1,6 @@
 import { IconTrash } from "@tabler/icons-react"
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 
 import { useApp } from "@/app/app-context"
 import {
@@ -62,6 +63,7 @@ function OneFieldDialog({
   submitLabel: string
   submit: (s: Site, value: string) => Promise<string>
 }) {
+  const { t } = useTranslation()
   const kept = useKept(site)
   const [value, setValue] = React.useState("")
   const [error, setError] = React.useState("")
@@ -118,7 +120,7 @@ function OneFieldDialog({
           </FieldGroup>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button type="submit" disabled={busy || !value.trim() || (kept ? value.trim() === initial(kept) : true)}>
               {busy && <Spinner data-icon="inline-start" />}
@@ -132,48 +134,51 @@ function OneFieldDialog({
 }
 
 export function RenameSiteDialog({ site, onClose }: { site: Site | null; onClose: () => void }) {
+  const { t } = useTranslation()
   const { reloadSites, reloadAssistants } = useApp()
   return (
     <OneFieldDialog
       site={site}
       onClose={onClose}
-      title="Rename site"
-      description="Assistants set to use this site by name stop reaching it until you connect them again."
-      label="New name"
-      hint="Any name without spaces, for example acme-prod."
+      title={t("siteDialogs.rename.title")}
+      description={t("siteDialogs.rename.description")}
+      label={t("siteDialogs.rename.label")}
+      hint={t("siteDialogs.rename.hint")}
       initial={(s) => s.name}
-      submitLabel="Rename"
+      submitLabel={t("siteDialogs.rename.submit")}
       submit={async (s, name) => {
         await backend.rename(s.name, name)
         await Promise.all([reloadSites(), reloadAssistants()])
-        return `Renamed to ${name}`
+        return t("siteDialogs.rename.done", { name })
       }}
     />
   )
 }
 
 export function SiteURLDialog({ site, onClose }: { site: Site | null; onClose: () => void }) {
+  const { t } = useTranslation()
   const { reloadSites } = useApp()
   return (
     <OneFieldDialog
       site={site}
       onClose={onClose}
-      title="Change address"
-      description="Use this when the site moved to a new address. The saved sign-in stays the same."
-      label="Site address"
-      hint="For example erp.example.com or https://erp.example.com."
+      title={t("siteDialogs.url.title")}
+      description={t("siteDialogs.url.description")}
+      label={t("siteDialogs.url.label")}
+      hint={t("siteDialogs.url.hint")}
       initial={(s) => s.url}
-      submitLabel="Save address"
+      submitLabel={t("siteDialogs.url.submit")}
       submit={async (s, url) => {
         const saved = await backend.changeURL(s.name, url)
         await reloadSites()
-        return `${s.name} now uses ${saved}`
+        return t("siteDialogs.url.done", { name: s.name, url: saved })
       }}
     />
   )
 }
 
 export function RemoveSiteDialog({ site, onClose }: { site: Site | null; onClose: () => void }) {
+  const { t } = useTranslation()
   const { reloadSites, reloadAssistants } = useApp()
   const kept = useKept(site)
   const [busy, setBusy] = React.useState(false)
@@ -188,12 +193,12 @@ export function RemoveSiteDialog({ site, onClose }: { site: Site | null; onClose
       if (kept.auth === "oauth") {
         parts.push(
           res.revoked
-            ? "Its sign-in was revoked on the site."
-            : "The sign-in could not be revoked on the site; it expires on its own.",
+            ? t("siteDialogs.remove.revoked")
+            : t("siteDialogs.remove.notRevoked"),
         )
       }
-      if (res.newDefault) parts.push(`${res.newDefault} is now the default site.`)
-      toast.add({ title: `Removed ${kept.name}`, description: parts.join(" ") || undefined, type: "success" })
+      if (res.newDefault) parts.push(t("siteDialogs.remove.newDefault", { name: res.newDefault }))
+      toast.add({ title: t("siteDialogs.remove.done", { name: kept.name }), description: parts.join(" ") || undefined, type: "success" })
       onClose()
     } catch (err) {
       const e = appError(err)
@@ -210,19 +215,17 @@ export function RemoveSiteDialog({ site, onClose }: { site: Site | null; onClose
           <AlertDialogMedia>
             <IconTrash />
           </AlertDialogMedia>
-          <AlertDialogTitle>Remove {kept?.name}?</AlertDialogTitle>
+          <AlertDialogTitle>{t("siteDialogs.remove.title", { name: kept?.name })}</AlertDialogTitle>
           <AlertDialogDescription>
-            {kept?.auth === "oauth"
-              ? "The app signs out of the site first, so the saved sign-in stops working everywhere. "
-              : "The saved sign-in details are deleted from this computer. "}
-            Assistants using this site lose access to it. Nothing on the site itself is deleted.
+            {kept?.auth === "oauth" ? t("siteDialogs.remove.bodyOAuth") : t("siteDialogs.remove.bodyLocal")}
+
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel disabled={busy}>{t("common.cancel")}</AlertDialogCancel>
           <Button variant="destructive" onClick={remove} disabled={busy}>
             {busy && <Spinner data-icon="inline-start" />}
-            Remove site
+            {t("siteDialogs.remove.submit")}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -1,5 +1,6 @@
 import { IconEye, IconEyeOff } from "@tabler/icons-react"
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -20,8 +21,9 @@ export function SecretInput({
   autoComplete?: string
   placeholder?: string
 }) {
+  const { t } = useTranslation()
   const [shown, setShown] = React.useState(false)
-  const label = shown ? "Hide" : "Show"
+  const label = shown ? t("common.hide") : t("common.show")
   return (
     <InputGroup>
       <InputGroupInput

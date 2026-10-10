@@ -86,7 +86,7 @@ The app shares its settings with the CLI. Uninstalling the app does not remove:
 
 - `~/.config/ffc/config.yaml` (your sites and credentials) and the other files in `~/.config/ffc`;
 - the `ffc` binary, if the app installed it (`%LOCALAPPDATA%\Programs\ffc` on Windows, `~/.local/bin/ffc` on macOS);
-- assistant entries you connected. Disconnect them in the app first, or later with `ffc mcp uninstall --client <client>`.
+- app entries you connected. Disconnect them in the app first, or later with `ffc mcp uninstall --client <client>`.
 
 To remove everything, see [Installation: uninstall](../getting-started/installation.md#uninstall).
 

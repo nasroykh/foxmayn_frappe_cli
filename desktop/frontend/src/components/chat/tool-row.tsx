@@ -52,12 +52,12 @@ export function ToolRow({
     <Collapsible className="bg-muted/50 rounded-lg border text-xs">
       <CollapsibleTrigger
         disabled={!summary}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left disabled:cursor-default"
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-start disabled:cursor-default"
       >
         {icon}
         <span className="font-mono font-medium">{tool}</span>
         {site && <span className="text-muted-foreground truncate">{site}</span>}
-        <span className="text-muted-foreground ml-auto">{statusText[status]}</span>
+        <span className="text-muted-foreground ms-auto">{statusText[status]}</span>
         {approvalText[approval] && (
           <Badge variant={declined ? "destructive" : "secondary"}>{approvalText[approval]}</Badge>
         )}

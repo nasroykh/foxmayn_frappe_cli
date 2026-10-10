@@ -26,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { intlLocale } from "@/i18n"
 import { backend } from "@/lib/backend"
 import type {
   ChatMessage,
@@ -39,7 +40,8 @@ import type {
   UsageTotals,
 } from "@/lib/backend-types"
 import { hasUsage, mergeTotals, noUsage } from "@/lib/cost"
-import { appError, errorTitle, type AppError } from "@/lib/errors"
+import { appError, errorTitle, localizedMessage, type AppError } from "@/lib/errors"
+import { MODAL } from "@/lib/modal"
 import { chatReducer, initialState } from "@/screens/assistant/chat-reducer"
 import { ProfilePicker } from "@/screens/assistant/profile-picker"
 
@@ -60,7 +62,7 @@ function readDataURL(file: Blob): Promise<string> {
   })
 }
 
-const OVERLAYS = '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]'
+const OVERLAYS = `${MODAL},[role="menu"],[role="listbox"]`
 
 /** Esc belongs to an open dialog, menu or list first. */
 function escapeIsTaken(e: KeyboardEvent) {
@@ -78,7 +80,7 @@ export function ChatPane({
   /** The conversation list may be stale (title, order, mode): reload it. */
   onChanged: () => void
 }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const convID = conv.id
   const [state, dispatch] = React.useReducer(chatReducer, convID, initialState)
   const [messages, setMessages] = React.useState<ChatMessage[] | null>(null)
@@ -309,7 +311,7 @@ export function ChatPane({
       const e = appError(err)
       setDraft(text)
       setStaged(files)
-      dispatch({ type: "sendFailed", error: { code: e.code, message: e.message, detail: e.detail } })
+      dispatch({ type: "sendFailed", error: { code: e.code, message: e.message, detail: e.detail, key: e.key, args: e.args } })
     }
   }
 
@@ -437,8 +439,8 @@ export function ChatPane({
                 {t("chat.header.total", {
                   usage: [
                     t("chat.usage.tokens", {
-                      input: shownTotal.input.toLocaleString(i18n.language),
-                      output: shownTotal.output.toLocaleString(i18n.language),
+                      input: shownTotal.input.toLocaleString(intlLocale()),
+                      output: shownTotal.output.toLocaleString(intlLocale()),
                     }),
                     costText(shownTotal),
                   ]
@@ -486,7 +488,20 @@ export function ChatPane({
           )}
           {messages === null && !loadError && <Skeleton className="h-16 w-2/3" />}
           {messages?.length === 0 && !state.pending && (
-            <p className="text-muted-foreground text-sm">{t("chat.emptyConversation")}</p>
+            <StarterPrompts
+              profileID={conv.profileID}
+              disabled={active}
+              onPick={(text) => {
+                setDraft(text)
+                // After the render that puts the text in: caret at its end.
+                requestAnimationFrame(() => {
+                  const el = inputRef.current
+                  if (!el) return
+                  el.focus()
+                  el.setSelectionRange(text.length, text.length)
+                })
+              }}
+            />
           )}
           {messages?.map((m) => (
             <React.Fragment key={m.id}>
@@ -530,7 +545,7 @@ export function ChatPane({
               <IconAlertTriangle />
               <AlertTitle>{t("chat.error.title")}</AlertTitle>
               <AlertDescription>
-                <p>{state.error.message}</p>
+                <p>{localizedMessage(state.error)}</p>
               </AlertDescription>
             </Alert>
           )}
@@ -626,6 +641,46 @@ export function ChatPane({
   )
 }
 
+// Starter prompts per built-in profile; user profiles and conversations
+// without one get Explore's.
+// i18n keys: chat.starters.explore chat.starters.accounts chat.starters.site-admin
+// chat.starters.data-entry chat.starters.local-model (each p1 to p4)
+const STARTER_SETS = new Set(["explore", "accounts", "site-admin", "data-entry", "local-model"])
+const STARTER_KEYS = ["p1", "p2", "p3", "p4"] as const
+
+/** An empty conversation: what it is for and four prompts that fill the composer (never send). */
+function StarterPrompts({ profileID, disabled, onPick }: { profileID: string; disabled: boolean; onPick: (text: string) => void }) {
+  const { t } = useTranslation()
+  const set = STARTER_SETS.has(profileID) ? profileID : "explore"
+  const headingID = React.useId()
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-muted-foreground text-sm">{t("chat.emptyConversation")}</p>
+      <h2 id={headingID} className="text-sm font-medium">
+        {t("chat.starters.title")}
+      </h2>
+      <ul className="grid gap-2 sm:grid-cols-2" aria-labelledby={headingID}>
+        {STARTER_KEYS.map((k) => {
+          const text = t(`chat.starters.${set}.${k}`)
+          return (
+            <li key={k}>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => onPick(text)}
+                className="hover:bg-muted focus-visible:ring-ring/50 h-full w-full rounded-lg border px-3 py-2 text-start text-sm outline-none focus-visible:ring-3 disabled:opacity-50"
+              >
+                <span dir="auto">{text}</span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+      <p className="text-muted-foreground text-xs">{t("chat.starters.hint")}</p>
+    </div>
+  )
+}
+
 /** File chips: staged ones with a remove button, sent ones without. */
 function AttachmentChips({
   items,
@@ -652,7 +707,7 @@ function AttachmentChips({
           {onRemove && (
             <button
               type="button"
-              className="hover:text-destructive -mr-1 shrink-0 rounded p-0.5"
+              className="hover:text-destructive -me-1 shrink-0 rounded p-0.5"
               aria-label={t("chat.composer.remove", { name: a.name })}
               onClick={() => onRemove(a)}
             >
@@ -671,7 +726,7 @@ function UserBubble({ text, attachments = [] }: { text: string; attachments?: St
     <div className="flex flex-col items-end gap-1">
       {attachments.length > 0 && <AttachmentChips items={attachments} label={t("chat.attachments.label")} />}
       {text && (
-        <p className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl px-3 py-2 text-sm break-words whitespace-pre-wrap">
+        <p dir="auto" className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl px-3 py-2 text-sm break-words whitespace-pre-wrap">
           {text}
         </p>
       )}

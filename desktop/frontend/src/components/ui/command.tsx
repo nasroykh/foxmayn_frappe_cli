@@ -17,6 +17,7 @@ import {
   InputGroupAddon,
 } from "@/components/ui/input-group"
 import { IconSearch, IconCheck } from "@tabler/icons-react"
+import { useTranslation } from "react-i18next"
 
 function Command({
   className,
@@ -35,8 +36,8 @@ function Command({
 }
 
 function CommandDialog({
-  title = "Command Palette",
-  description = "Search for a command to run...",
+  title,
+  description,
   children,
   className,
   showCloseButton = false,
@@ -48,11 +49,12 @@ function CommandDialog({
   showCloseButton?: boolean
   children: React.ReactNode
 }) {
+  const { t } = useTranslation()
   return (
     <Dialog {...props}>
       <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
+        <DialogTitle>{title ?? t("ui.commandPalette")}</DialogTitle>
+        <DialogDescription>{description ?? t("ui.commandDescription")}</DialogDescription>
       </DialogHeader>
       <DialogContent
         className={cn(
@@ -73,7 +75,7 @@ function CommandInput({
 }: React.ComponentProps<typeof CommandPrimitive.Input>) {
   return (
     <div data-slot="command-input-wrapper" className="p-1 pb-0">
-      <InputGroup className="h-8! rounded-lg! border-input/30 bg-input/30 shadow-none! *:data-[slot=input-group-addon]:pl-2!">
+      <InputGroup className="h-8! rounded-lg! border-input/30 bg-input/30 shadow-none! *:data-[slot=input-group-addon]:ps-2!">
         <CommandPrimitive.Input
           data-slot="command-input"
           className={cn(
@@ -94,9 +96,11 @@ function CommandList({
   className,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.List>) {
+  const { t } = useTranslation()
   return (
     <CommandPrimitive.List
       data-slot="command-list"
+      label={t("ui.suggestions")}
       className={cn(
         "no-scrollbar max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
         className
@@ -142,6 +146,8 @@ function CommandSeparator({
   return (
     <CommandPrimitive.Separator
       data-slot="command-separator"
+      // Decoration only: a listbox may hold options and groups, not separators.
+      aria-hidden="true"
       className={cn("-mx-1 h-px bg-border", className)}
       {...props}
     />
@@ -163,7 +169,7 @@ function CommandItem({
       {...props}
     >
       {children}
-      <IconCheck className="ml-auto opacity-0 group-has-data-[slot=command-shortcut]/command-item:hidden group-data-[checked=true]/command-item:opacity-100" />
+      <IconCheck className="ms-auto opacity-0 group-has-data-[slot=command-shortcut]/command-item:hidden group-data-[checked=true]/command-item:opacity-100" />
     </CommandPrimitive.Item>
   )
 }
@@ -176,7 +182,7 @@ function CommandShortcut({
     <span
       data-slot="command-shortcut"
       className={cn(
-        "ml-auto text-xs tracking-widest text-muted-foreground group-data-selected/command-item:text-foreground",
+        "ms-auto text-xs tracking-widest text-muted-foreground group-data-selected/command-item:text-foreground",
         className
       )}
       {...props}

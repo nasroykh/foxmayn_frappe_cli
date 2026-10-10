@@ -1,5 +1,6 @@
 // Settings > Assistant providers: where the Assistant's models run.
 import { IconAlertTriangle, IconKey, IconPencil, IconPlus, IconRadar, IconTrash } from "@tabler/icons-react"
+import type { TFunction } from "i18next"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 
@@ -38,7 +39,7 @@ import {
 
 const KINDS: ProviderKind[] = ["anthropic", "openai", "gemini", "openrouter", "ollama", "lmstudio", "custom"]
 
-function kindName(kind: string): string {
+function kindName(kind: string, t: TFunction): string {
   switch (kind) {
     case "anthropic":
       return "Anthropic"
@@ -53,7 +54,7 @@ function kindName(kind: string): string {
     case "lmstudio":
       return "LM Studio"
     default:
-      return "Custom"
+      return t("provider.kindCustom")
   }
 }
 
@@ -178,7 +179,7 @@ export function ProviderSettings() {
               <div className="flex min-w-0 flex-col gap-0.5">
                 <p className="flex items-center gap-2 text-sm font-medium">
                   <span className="truncate">{p.label || p.id}</span>
-                  <Badge variant="secondary">{kindName(p.kind)}</Badge>
+                  <Badge variant="secondary">{kindName(p.kind, t)}</Badge>
                   {!usable(p) && <Badge variant="destructive">{t("provider.needsKey")}</Badge>}
                 </p>
                 {p.baseURL && <p className="text-muted-foreground truncate text-xs">{p.baseURL}</p>}
@@ -381,7 +382,7 @@ function ProviderForm({
           >
             {KINDS.map((k) => (
               <NativeSelectOption key={k} value={k}>
-                {kindName(k)}
+                {kindName(k, t)}
               </NativeSelectOption>
             ))}
           </NativeSelect>

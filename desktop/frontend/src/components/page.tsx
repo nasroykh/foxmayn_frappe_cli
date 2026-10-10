@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 import { IconAlertTriangle, IconChevronDown, IconDownload, IconRefresh } from "@tabler/icons-react"
 
 import { useApp } from "@/app/app-context"
@@ -20,7 +21,7 @@ export function PageHeader({
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="flex max-w-prose min-w-0 flex-col gap-1">
-        <h1 className="font-heading text-xl font-semibold tracking-tight">{title}</h1>
+        <h1 className="font-heading text-xl font-semibold tracking-tight outline-none">{title}</h1>
         <p className="text-muted-foreground text-sm">{description}</p>
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
@@ -31,18 +32,19 @@ export function PageHeader({
 /** Technical detail behind a disclosure, so the main text stays friendly. */
 export function Details({
   children,
-  label = "Technical details",
+  label,
   defaultOpen,
 }: {
   children: React.ReactNode
   label?: string
   defaultOpen?: boolean
 }) {
+  const { t } = useTranslation()
   return (
     <Collapsible defaultOpen={defaultOpen}>
       <CollapsibleTrigger render={<Button variant="link" size="xs" className="text-muted-foreground h-auto px-0" />}>
         <IconChevronDown data-icon="inline-start" className="transition-transform in-aria-expanded:rotate-180" />
-        {label}
+        {label ?? t("common.technicalDetails")}
       </CollapsibleTrigger>
       <CollapsibleContent>
         <pre className="bg-muted mt-1 max-h-40 overflow-auto rounded-md p-2 font-mono text-xs whitespace-pre-wrap break-all">
@@ -55,8 +57,9 @@ export function Details({
 
 /** A failed load, with a retry button. */
 export function LoadError({ title, error, onRetry }: { title: string; error: AppError; onRetry: () => void }) {
+  const { t } = useTranslation()
   return (
-    <Alert variant="destructive" className="has-data-[slot=alert-action]:pr-28">
+    <Alert variant="destructive" className="has-data-[slot=alert-action]:pe-28">
       <IconAlertTriangle />
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription>
@@ -66,7 +69,7 @@ export function LoadError({ title, error, onRetry }: { title: string; error: App
       <AlertAction>
         <Button variant="outline" size="sm" onClick={onRetry}>
           <IconRefresh data-icon="inline-start" />
-          Try again
+          {t("common.retry")}
         </Button>
       </AlertAction>
     </Alert>
@@ -75,25 +78,26 @@ export function LoadError({ title, error, onRetry }: { title: string; error: App
 
 /** Shown while the ffc helper is not installed: assistants cannot run without it. */
 export function FFCMissingAlert() {
+  const { t } = useTranslation()
   const { env, installFFC } = useApp()
   const ffc = env.data?.ffc
   if (!ffc || (ffc.found && !ffc.error)) return null
   return (
-    <Alert className="has-data-[slot=alert-action]:pr-28">
+    <Alert className="has-data-[slot=alert-action]:pe-28">
       <IconAlertTriangle />
-      <AlertTitle>{ffc.found ? "The ffc helper does not answer" : "One more thing: install the ffc helper"}</AlertTitle>
+      <AlertTitle>{ffc.found ? t("page.ffcNoAnswer") : t("page.ffcMissing")}</AlertTitle>
       <AlertDescription>
         {ffc.found
           ? ffc.manager
-            ? `ffc was found but did not start. Reinstalling it with ${ffc.manager} usually fixes this.`
-            : "ffc was found but did not start. Installing it again usually fixes this."
-          : "Assistants use ffc, a small program from Foxmayn, to reach your sites. You can add sites without it, but assistants need it."}
+            ? t("page.reinstallWith", { manager: ffc.manager })
+            : t("page.reinstall")
+          : t("page.needed")}
       </AlertDescription>
       {!ffc.manager && (
         <AlertAction>
           <Button size="sm" onClick={installFFC}>
             <IconDownload data-icon="inline-start" />
-            {ffc.found ? "Reinstall" : "Install ffc"}
+            {ffc.found ? t("page.reinstallButton") : t("page.installButton")}
           </Button>
         </AlertAction>
       )}

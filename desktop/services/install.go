@@ -144,12 +144,12 @@ func (i *ffcInstaller) run(ctx context.Context, over string, log func(string)) (
 	if i.goos == "windows" {
 		switch added, err := i.addToPath(dir); {
 		case err != nil:
-			log("Could not add " + dir + " to your PATH (" + err.Error() + "). Assistants use the full path, so they work anyway.")
+			log("Could not add " + dir + " to your PATH (" + err.Error() + "). Apps use the full path, so they work anyway.")
 		case added:
 			log("Added " + dir + " to your PATH. New terminals will see it.")
 		}
 	} else if p, err := i.shellPath(); err != nil || !pathHas(p, dir, false) {
-		log(dir + " is not on your PATH. Assistants use the full path, so they work anyway; to run ffc in a terminal, add it to your shell profile:")
+		log(dir + " is not on your PATH. Apps use the full path, so they work anyway; to run ffc in a terminal, add it to your shell profile:")
 		log(`  echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile`)
 	}
 	return path, nil

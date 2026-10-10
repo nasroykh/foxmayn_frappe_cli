@@ -137,7 +137,7 @@ describe("search box", () => {
     list()
     const box = screen.getByRole("searchbox", { name: "Search conversations" })
     expect(document.activeElement).not.toBe(box)
-    fireEvent.keyDown(window, { key: "F", ctrlKey: true, shiftKey: true })
+    fireEvent.keyDown(window, { key: "F", code: "KeyF", ctrlKey: true, shiftKey: true })
     expect(document.activeElement).toBe(box)
   })
 

@@ -99,3 +99,46 @@ jobs:
       - name: govulncheck
         if: runner.os == 'macOS'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+  # The UI in Chromium against the mock backend, served from a mock-mode
+  # build under the production CSP: every screen in en/fr/ar, light and dark
+  # (no clipped text, no serious or critical axe finding, a screenshot each),
+  # the chat flow with the keyboard only, and the pseudo-locale (text outside
+  # the catalog). WebView2 is Chromium; WKWebView is not covered here.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright and axe
+        run: npx playwright test
+
+      - name: Upload screenshots and report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-e2e
+          path: |
+            desktop/frontend/test-results/
+            desktop/frontend/playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore

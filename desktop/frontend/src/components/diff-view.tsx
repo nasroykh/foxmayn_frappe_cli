@@ -28,7 +28,8 @@ export function DiffView({
             className={cn(
               "px-3 whitespace-pre-wrap break-all",
               added && "bg-primary/10 text-foreground",
-              removed && "bg-destructive/10 text-destructive",
+              // Darker than --destructive: 4.5:1 on the tinted line in both themes.
+              removed && "bg-destructive/10 text-red-700 dark:text-red-300",
               !added && !removed && "text-muted-foreground",
             )}
           >

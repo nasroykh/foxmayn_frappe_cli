@@ -3,8 +3,9 @@ package services
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/client"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
@@ -39,6 +40,12 @@ type Error struct {
 	// RedirectURI (no_registration): the callback to register on a manual
 	// OAuth Client.
 	RedirectURI string `json:"redirectURI,omitempty"`
+	// Key names the message in the page's catalogs (errors.<Key>), so the
+	// page shows it in its language; Args fill its {{placeholders}}. Message
+	// is the English text of the same key (errorKeys), so a page without the
+	// key, logs and Error() still read it.
+	Key  string            `json:"key,omitempty"`
+	Args map[string]string `json:"args,omitempty"`
 }
 
 func (e *Error) Error() string {
@@ -56,33 +63,79 @@ func newError(code, msg string, cause error) *Error {
 	return e
 }
 
+// keyed is newError with a message from errorKeys; args are name, value
+// pairs for its {{name}} placeholders.
+func keyed(code, key string, cause error, args ...string) *Error {
+	e := newError(code, errorText(key, args...), cause)
+	e.Key = key
+	if len(args) > 1 {
+		e.Args = make(map[string]string, len(args)/2)
+		for i := 0; i+1 < len(args); i += 2 {
+			e.Args[args[i]] = args[i+1]
+		}
+	}
+	return e
+}
+
+// keyedInvalid is invalid with a message from errorKeys.
+func keyedInvalid(field, key string, args ...string) *Error {
+	e := keyed(CodeInvalid, key, nil, args...)
+	e.Field = field
+	return e
+}
+
+// errorText fills the English text of key with args (name, value pairs).
+// An unknown key gives the key itself (TestErrorKeysUsed keeps that from
+// shipping).
+func errorText(key string, args ...string) string {
+	s, ok := errorKeys[key]
+	if !ok {
+		return key
+	}
+	for i := 0; i+1 < len(args); i += 2 {
+		s = strings.ReplaceAll(s, "{{"+args[i]+"}}", args[i+1])
+	}
+	return s
+}
+
 func invalid(field, msg string) *Error {
 	return &Error{Code: CodeInvalid, Message: msg, Field: field}
 }
 
+// Steps of siteError: what was attempted. Each has the keys
+// site.<step>Cancelled and site.<step>Failed.
+const (
+	stepEngine     = "engine"     // starting the assistant engine
+	stepOAuthSetup = "oauthSetup" // setting up the sign-in
+	stepSignIn     = "signIn"     // signing in
+	stepAPIKey     = "apiKey"     // checking the API key
+	stepCheck      = "check"      // checking the connection
+	stepRenew      = "renew"      // renewing the sign-in
+	stepNewURL     = "newURL"     // checking the new address
+)
+
 // siteError turns an error from a request to a site into an *Error with a
-// message people understand. what says what was attempted ("Checking the
-// connection").
-func siteError(what string, err error) error {
+// message people understand. step says what was attempted (stepCheck, ...).
+func siteError(step string, err error) error {
 	var e *Error
 	if errors.As(err, &e) {
 		return e
 	}
 	if errors.Is(err, context.Canceled) {
-		return newError(CodeCancelled, what+" was cancelled.", nil)
+		return keyed(CodeCancelled, "site."+step+"Cancelled", nil)
 	}
 	var ae *client.APIError
 	var authErr *client.AuthError
 	var te *client.TransportError
 	switch {
 	case errors.As(err, &authErr):
-		return newError(CodeAuth, "The site did not accept these sign-in details.", err)
+		return keyed(CodeAuth, "site.refused", err)
 	case errors.As(err, &ae) && (ae.Status == http.StatusUnauthorized || ae.Status == http.StatusForbidden):
-		return newError(CodeAuth, "The site did not accept these sign-in details.", err)
+		return keyed(CodeAuth, "site.refused", err)
 	case errors.As(err, &te), errors.Is(err, context.DeadlineExceeded):
-		return newError(CodeNetwork, "The site could not be reached. Check the address and your internet connection.", err)
+		return keyed(CodeNetwork, "site.unreachable", err)
 	case errors.As(err, &ae):
-		return newError(CodeFailed, fmt.Sprintf("The site answered with an error (%d).", ae.Status), err)
+		return keyed(CodeFailed, "site.status", err, "status", strconv.Itoa(ae.Status))
 	}
-	return newError(CodeFailed, what+" failed.", err)
+	return keyed(CodeFailed, "site."+step+"Failed", err)
 }

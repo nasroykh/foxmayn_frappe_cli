@@ -1,6 +1,7 @@
 // The conversation header's profile picker and the prompt preview.
 import { IconFileDescription } from "@tabler/icons-react"
 import * as React from "react"
+import type { TFunction } from "i18next"
 import { useTranslation } from "react-i18next"
 
 import { Badge } from "@/components/ui/badge"
@@ -12,6 +13,15 @@ import { toast } from "@/components/ui/toast"
 import { backend } from "@/lib/backend"
 import type { Conversation, Profile, PromptPreview } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
+
+/**
+ * A profile's name: a built-in preset by its id in the page's language
+ * (Go sends the English name), a user's profile as they named it.
+ */
+// i18n keys: profile.preset.explore.name profile.preset.accounts.name profile.preset.site-admin.name profile.preset.data-entry.name profile.preset.local-model.name
+export function profileName(t: TFunction, p: Pick<Profile, "id" | "name" | "preset">): string {
+  return p.preset ? t(`profile.preset.${p.id}.name`, { defaultValue: p.name }) : p.name
+}
 
 /** Presets and the user's own profiles, loaded once per mount. */
 export function useProfiles() {
@@ -82,7 +92,7 @@ export function ProfilePicker({
           <NativeSelectOptGroup label={t("profile.picker.presets")}>
             {presets.map((p) => (
               <NativeSelectOption key={p.id} value={p.id}>
-                {p.name}
+                {profileName(t, p)}
               </NativeSelectOption>
             ))}
           </NativeSelectOptGroup>
@@ -156,13 +166,13 @@ export function PromptPreviewDialog({
           <div className="flex min-h-0 flex-col gap-3">
             <div className="flex flex-wrap gap-2 text-xs">
               <Badge variant="outline">{preview.mode === "ask" ? t("chat.mode.ask") : t("chat.mode.read")}</Badge>
-              <Badge variant="outline">{t("prompt.steps", { n: preview.stepLimit })}</Badge>
+              <Badge variant="outline">{t("prompt.steps", { count: preview.stepLimit })}</Badge>
               <Badge variant="outline">{preview.profileName || t("profile.picker.none")}</Badge>
               {preview.localOnly && <Badge variant="secondary">{t("siteSettings.localOnly")}</Badge>}
             </div>
             {preview.siteContextPending && <p className="text-muted-foreground text-xs">{t("prompt.contextPending")}</p>}
             <div className="flex flex-col gap-1">
-              <h3 className="text-xs font-medium">{t("prompt.tools", { n: preview.tools.length })}</h3>
+              <h3 className="text-xs font-medium">{t("prompt.tools", { count: preview.tools.length })}</h3>
               <p className="text-muted-foreground font-mono text-xs break-words">{preview.tools.join(", ")}</p>
             </div>
             <div className="flex min-h-0 flex-col gap-1">

@@ -219,6 +219,8 @@ export interface Backend {
   openConfigFolder(): Promise<void>
   openFFCFolder(): Promise<void>
   setWindowTheme(dark: boolean): Promise<void>
+  /** Sets the language of the native dialogs; answers the one in use (en, fr or ar). */
+  setLanguage(lang: string): Promise<string>
 
   listSites(): Promise<SiteList>
   validate(name: string, url: string): Promise<Validation>

@@ -1,0 +1,1006 @@
+{
+  "nav": {
+    "connectApps": "Connecter des apps",
+    "assistant": "Assistant"
+  },
+  "connectApps": {
+    "title": "Connecter des apps",
+    "description": "Connectez les apps d’IA de cet ordinateur à vos sites Frappe. Chacune reçoit dans ses paramètres une entrée « frappe » qui exécute ffc.",
+    "lookAgain": "Vérifier à nouveau",
+    "addSiteFirst": "Ajoutez d’abord un site",
+    "noSites": "Les apps fonctionnent avec les sites que vous ajoutez ici. Ajoutez-en un, puis revenez pour connecter.",
+    "addSite": "Ajouter un site",
+    "loadFailed": "Impossible de vérifier vos apps",
+    "loading": "Chargement des apps",
+    "status": {
+      "connected": "Connectée",
+      "different": "Autres paramètres",
+      "notConnected": "Non connectée",
+      "error": "Problème"
+    },
+    "notFoundReasonClaudeCode": "La commande claude est introuvable sur cet ordinateur. Installez Claude Code, ou connectez quand même : elle sera utilisée une fois installée.",
+    "notFoundReason": "Aucun paramètre de {{name}} trouvé. Ouvrez {{name}} une fois après l’avoir installé, ou connectez quand même pour créer le fichier de paramètres.",
+    "found": "Trouvée sur cet ordinateur",
+    "notFound": "Introuvable sur cet ordinateur",
+    "usesSite": "Utilise <b>{{site}}</b>.",
+    "usesDefault": "Utilise votre site par défaut, quel qu’il soit.",
+    "readOnly": "Lecture seule : elle peut consulter, sans rien modifier.",
+    "different": "Elle a déjà une entrée « frappe » que cette app n’a pas créée. La connexion la remplace, après vous avoir montré la modification.",
+    "notSetUp": "Pas encore configurée pour utiliser vos sites Frappe.",
+    "settingsUnreadable": "Impossible de lire ses paramètres",
+    "update": "Mettre à jour",
+    "connect": "Connecter",
+    "disconnect": "Déconnecter",
+    "hint": {
+      "connect": {
+        "claude-code": "Ouvrez une nouvelle session Claude Code (ou lancez /mcp) pour l’utiliser.",
+        "claude-desktop": "Quittez complètement Claude Desktop (y compris depuis la zone de notification ou la barre des menus), puis relancez-le.",
+        "cursor": "Redémarrez Cursor pour le charger.",
+        "vscode": "Rechargez VS Code, ou lancez « MCP: List Servers » depuis la palette de commandes, pour le démarrer.",
+        "codex": "Ouvrez une nouvelle session Codex pour l’utiliser."
+      },
+      "disconnect": {
+        "claude-code": "Ouvrez une nouvelle session Claude Code (ou lancez /mcp) pour appliquer la modification.",
+        "claude-desktop": "Quittez complètement Claude Desktop (y compris depuis la zone de notification ou la barre des menus), puis relancez-le.",
+        "cursor": "Redémarrez Cursor pour retirer le serveur.",
+        "vscode": "Rechargez VS Code pour arrêter le serveur.",
+        "codex": "Ouvrez une nouvelle session Codex pour appliquer la modification."
+      }
+    }
+  },
+  "common": {
+    "cancel": "Annuler",
+    "retry": "Réessayer",
+    "save": "Enregistrer",
+    "continue": "Continuer",
+    "back": "Retour",
+    "close": "Fermer",
+    "done": "Terminé",
+    "command": "Commande",
+    "commandCopied": "Commande copiée",
+    "technicalDetails": "Détails techniques",
+    "previous": "Précédent",
+    "next": "Suivant",
+    "skip": "Passer",
+    "submit": "Valider",
+    "loading": "Chargement",
+    "download": "Télécharger",
+    "update": "Mettre à jour",
+    "copy": "Copier",
+    "show": "Afficher",
+    "hide": "Masquer"
+  },
+  "language": {
+    "label": "Langue",
+    "description": "La langue de l’app. Les données des sites restent telles que le site les fournit.",
+    "names": {
+      "en": "Anglais",
+      "fr": "Français",
+      "ar": "Arabe"
+    }
+  },
+  "settings": {
+    "assistantTab": "Assistant",
+    "description": "L’apparence de l’app, l’emplacement de ses fichiers et ce qu’elle est.",
+    "generalTab": "Général",
+    "ffcTab": "Outil ffc",
+    "aboutTab": "À propos",
+    "configFile": "Fichier de paramètres",
+    "configPath": "Chemin du fichier de paramètres",
+    "pathCopied": "Chemin copié",
+    "openFolder": "Ouvrir le dossier",
+    "installCommand": "Commande d’installation",
+    "configMissing": "Il n’existe pas encore. Il est créé lorsque vous ajoutez votre premier site.",
+    "configShared": "Partagé avec la ligne de commande ffc. Les modifications faites là-bas apparaissent ici immédiatement.",
+    "ffc": {
+      "updateAvailable": "Mise à jour disponible",
+      "installed": "Installé",
+      "notWorking": "Ne fonctionne pas",
+      "notInstalled": "Non installé",
+      "description": "Le programme que vos apps connectées exécutent pour atteindre vos sites. Cette app le trouve dans votre PATH ou là où les installateurs de ffc le placent, et peut installer la dernière version pour vous ; elle n’en fournit jamais sa propre copie.",
+      "version": "Version",
+      "unknown": "Inconnue",
+      "location": "Emplacement de ffc",
+      "noAnswerTitle": "ffc n’a pas répondu",
+      "noAnswerManager": "Son exécution a échoué ({{error}}). Le réinstaller avec {{manager}} règle généralement le problème.",
+      "noAnswer": "Son exécution a échoué ({{error}}). Le réinstaller règle généralement le problème.",
+      "updateBody": "La mise à jour remplace le ffc ci-dessus, à son emplacement. Redémarrez ensuite vos apps connectées pour qu’elles utilisent la nouvelle version.",
+      "autoCheck": "L’app recherche une version plus récente de ffc une fois par jour ; Rechercher des mises à jour, dans À propos, le fait tout de suite. Vous pouvez aussi exécuter <code>{{command}}</code> dans un terminal.",
+      "installHere": "Installez-le ici, ou exécutez vous-même ceci dans un terminal :",
+      "updateTo": "Mettre à jour vers {{version}}",
+      "installAgain": "Réinstaller",
+      "install": "Installer ffc",
+      "lookAgain": "Vérifier à nouveau"
+    },
+    "update": {
+      "availableTitle": "La version {{version}} est disponible",
+      "youHave": "Vous avez la version {{current}}.",
+      "released": "Publiée le {{date}}.",
+      "easiestWay": "Le plus simple pour l’installer : exécutez ceci dans {{terminal}}. La commande vérifie le téléchargement, ferme cette app, installe la nouvelle version par-dessus et la rouvre, sans avertissement de sécurité à valider.",
+      "orDownload": "Ou téléchargez-la depuis GitHub et installez-la par-dessus celle-ci.",
+      "downloadFromGitHub": "Téléchargez-la depuis GitHub et installez-la par-dessus celle-ci.",
+      "upToDateTitle": "L’app est à jour",
+      "upToDateBody": "La version {{version}} est la plus récente."
+    },
+    "about": {
+      "version": "Version {{version}}",
+      "summary": "Connecte vos sites Frappe et ERPNext aux apps d’IA de votre ordinateur, en s’appuyant sur la ligne de commande ffc. Conçu par Foxmayn. Pour Windows et macOS.",
+      "independent": "Foxmayn développe cette app de manière indépendante. Elle n’est ni affiliée à Frappe Technologies, ni approuvée par celle-ci.",
+      "checkUpdates": "Rechercher des mises à jour",
+      "ffcYouHave": "Vous avez ffc {{current}}.",
+      "updateFfc": "Mettre à jour ffc",
+      "sourceCode": "Code source",
+      "reportProblem": "Signaler un problème"
+    }
+  },
+  "history": {
+    "title": "Historique",
+    "intro": "Les conversations sont conservées sur cet ordinateur. Les exports ne contiennent jamais vos clés d’API.",
+    "keep": "Conserver les conversations",
+    "choice": {
+      "0": "Toujours",
+      "90": "90 jours après le dernier message",
+      "30": "30 jours après le dernier message"
+    },
+    "help": "Les conversations plus anciennes sont supprimées au démarrage de l’app puis une fois par jour, y compris celles archivées. Les conversations épinglées et celles en cours de réponse sont toujours conservées.",
+    "confirmTitle": "Supprimer les conversations après {{days}} jours ?",
+    "confirmBody": "Les conversations sans message depuis {{days}} jours sont supprimées de cet ordinateur au prochain démarrage de l’app ou dans la journée, puis chaque jour. Cette action est irréversible. Épinglez une conversation pour la conserver.",
+    "confirm": "Conserver {{days}} jours"
+  },
+  "chat": {
+    "title": "Assistant",
+    "loadFailed": "Impossible de charger l’Assistant",
+    "noSitesTitle": "Ajoutez d’abord un site",
+    "noSites": "L’Assistant travaille sur l’un de vos sites. Ajoutez un site pour commencer.",
+    "addSite": "Ajouter un site",
+    "noConversation": "Aucune conversation pour l’instant",
+    "noConversationHint": "Démarrez-en une pour poser une question sur un site ou modifier ses données.",
+    "emptyConversation": "Posez une question sur votre site. Rien n’est modifié sans votre accord.",
+    "thinking": "En cours…",
+    "header": {
+      "site": "Site : {{site}}",
+      "rename": "Renommer",
+      "renameLabel": "Renommer cette conversation",
+      "renameField": "Nom de la conversation",
+      "renameSave": "Enregistrer le nom",
+      "renameCancel": "Annuler le renommage",
+      "total": "Total : {{usage}}",
+      "totalHelp": "Tous les appels au modèle de cette conversation, y compris celui qui lui donne son nom."
+    },
+    "usage": {
+      "tokens": "{{input}} en entrée · {{output}} en sortie",
+      "cached": "{{cached}} en cache",
+      "atLeast": "au moins {{amount}}",
+      "unknown": "coût inconnu",
+      "unknownHelp": "Le prix de ce modèle ne figure pas dans la table de prix de l’app : son coût est donc inconnu."
+    },
+    "list": {
+      "label": "Conversations",
+      "title": "Conversations",
+      "new": "Nouvelle",
+      "empty": "Aucune conversation pour l’instant.",
+      "untitled": "Nouvelle conversation",
+      "delete": "Supprimer",
+      "deleteLabel": "Supprimer la conversation {{title}}",
+      "deleteTitle": "Supprimer cette conversation ?",
+      "deleteBody": "« {{title}} » et ses messages sont supprimés de cet ordinateur. Cette action est irréversible.",
+      "archiveTitle": "Archives",
+      "emptyArchive": "Aucune conversation archivée.",
+      "showActive": "Retour aux conversations",
+      "moreLabel": "Plus d’actions pour {{title}}",
+      "pin": "Épingler en haut",
+      "unpin": "Désépingler",
+      "pinned": "Épinglées",
+      "archive": "Archiver",
+      "unarchive": "Désarchiver",
+      "notKept": "non conservée",
+      "showArchive_one": "Afficher les archives ({{count}})",
+      "showArchive_many": "Afficher les archives ({{count}})",
+      "showArchive_other": "Afficher les archives ({{count}})",
+      "emptyHint": "Commencez-en une avec Nouvelle, ou appuyez sur {{mod}}+N."
+    },
+    "search": {
+      "label": "Rechercher dans les conversations",
+      "placeholder": "Rechercher",
+      "tooltip": "Rechercher dans les conversations (Ctrl+Shift+F)",
+      "clear": "Effacer la recherche",
+      "filters": "Filtres de recherche",
+      "site": "Site",
+      "anySite": "Tous les sites",
+      "profile": "Profil",
+      "anyProfile": "Tous les profils",
+      "from": "Du",
+      "to": "Au",
+      "reset": "Effacer les filtres",
+      "searching": "Recherche…",
+      "results": "Résultats de la recherche",
+      "count_one": "{{count}} résultat",
+      "count_many": "{{count}} résultats",
+      "count_other": "{{count}} résultats",
+      "none": "Aucun résultat. Essayez d’autres mots.",
+      "noneFiltered": "Aucun résultat. Essayez d’autres mots ou effacez les filtres."
+    },
+    "history": {
+      "import": "Importer une conversation",
+      "importFailed": "Impossible d’importer ce fichier",
+      "imported": "Conversation importée",
+      "importedHint": "Elle démarre en lecture seule. Choisissez un modèle avant de la poursuivre.",
+      "exported": "Conversation enregistrée",
+      "exportJSON": "Exporter en JSON",
+      "exportMarkdown": "Exporter en Markdown"
+    },
+    "new": {
+      "title": "Nouvelle conversation",
+      "body": "Choisissez le site et le modèle. Vous pourrez autoriser les modifications plus tard.",
+      "site": "Site",
+      "provider": "Fournisseur",
+      "model": "Modèle",
+      "start": "Démarrer"
+    },
+    "mode": {
+      "label": "Ce que l’Assistant peut faire",
+      "read": "Lecture seule",
+      "ask": "Demander avant de modifier",
+      "readHelp": "Lecture seule : l’Assistant peut consulter vos données, mais ne peut rien modifier.",
+      "askHelp": "Demander avant de modifier : l’Assistant vous montre chaque modification et attend votre réponse.",
+      "locked": "Le mode ne peut pas changer pendant que l’Assistant répond."
+    },
+    "composer": {
+      "label": "Message",
+      "placeholder": "Posez une question sur votre site…",
+      "send": "Envoyer",
+      "sendLabel": "Envoyer le message",
+      "stop": "Arrêter",
+      "stopLabel": "Arrêter l’Assistant",
+      "hint": "Enter envoie, Shift+Enter ajoute une ligne. Esc arrête l’Assistant.",
+      "attachLabel": "Joindre des fichiers (texte, CSV, JSON, XLSX ou images)",
+      "attachHint": "Vous pouvez aussi déposer des fichiers ici ou coller une image.",
+      "attachFailed": "Non joint",
+      "pasteTooBig": "L’image collée dépasse 5 Mo.",
+      "staged": "Fichiers pour le prochain message",
+      "remove": "Retirer {{name}}"
+    },
+    "attachments": {
+      "label": "Fichiers joints"
+    },
+    "approval": {
+      "label": "Approbation requise",
+      "appTitle": "L’Assistant veut faire une modification",
+      "ffcFallback": "Autoriser cette modification ?",
+      "tool": "Outil",
+      "site": "Site",
+      "doctypes": "Types de document",
+      "names": "Documents",
+      "noChanges": "Aucun champ modifié",
+      "diffLabel": "Champs modifiés",
+      "args": "Requête exacte",
+      "approve": "Approuver",
+      "decline": "Refuser"
+    },
+    "tool": {
+      "running": "En cours",
+      "ok": "Terminé",
+      "error": "Échec",
+      "stopped": "Arrêté",
+      "approved": "Approuvé",
+      "declined": "Refusé",
+      "cancelled": "Sans réponse"
+    },
+    "error": {
+      "title": "L’Assistant s’est arrêté"
+    },
+    "paused": {
+      "title": "En pause après de nombreuses étapes",
+      "body": "L’Assistant s’est mis en pause pour ne pas tourner indéfiniment. Cliquez sur Continuer pour le laisser poursuivre.",
+      "continue": "Continuer"
+    },
+    "announce": {
+      "approval": "En attente de votre approbation",
+      "finished": "Réponse terminée"
+    },
+    "starters": {
+      "title": "Essayez de demander",
+      "hint": "Une suggestion remplit seulement la zone de message. Modifiez-la, puis appuyez sur Entrée.",
+      "explore": {
+        "p1": "Quelles applications et quelles versions sont installées sur ce site ?",
+        "p2": "Affiche les 10 dernières Sales Invoices avec leur client, leur total et leur statut.",
+        "p3": "Quels champs a le DocType Customer, et lesquels sont obligatoires ?",
+        "p4": "Combien y a-t-il de ToDos ouverts, regroupés par personne assignée ?"
+      },
+      "accounts": {
+        "p1": "Quelles Sales Invoices sont en retard ? Trie-les par montant restant dû.",
+        "p2": "Affiche les Purchase Invoices impayées à échéance dans les 14 prochains jours.",
+        "p3": "Prépare un brouillon de Payment Entry pour la plus ancienne Sales Invoice impayée.",
+        "p4": "Résume les ventes de ce mois par client."
+      },
+      "site-admin": {
+        "p1": "Fais un rapide bilan de santé de ce site.",
+        "p2": "Le planificateur tourne-t-il, et une tâche planifiée a-t-elle échoué aujourd’hui ?",
+        "p3": "Affiche les dernières entrées de l’Error Log et ce qu’elles ont en commun.",
+        "p4": "Des tâches d’arrière-plan sont-elles bloquées dans la file ?"
+      },
+      "data-entry": {
+        "p1": "Crée un Customer nommé … dans le groupe de clients … et le territoire …",
+        "p2": "Ajoute un ToDo pour moi : … à faire pour le …",
+        "p3": "Change le numéro de téléphone du Contact … en …",
+        "p4": "Quels champs du DocType Item dois-je remplir pour en créer un ?"
+      },
+      "local-model": {
+        "p1": "Combien y a-t-il de Customers ?",
+        "p2": "Affiche les cinq Items les plus récents.",
+        "p3": "Quel est le statut de la Sales Invoice … ?",
+        "p4": "Liste les DocTypes du module Selling."
+      }
+    }
+  },
+  "onboarding": {
+    "title": "Configurer l’Assistant",
+    "intro": "Choisissez le modèle utilisé par l’Assistant. Votre clé reste dans le trousseau de cet ordinateur.",
+    "back": "Retour",
+    "next": "Suivant",
+    "chooseLabel": "Choisir un fournisseur",
+    "anthropicHint": "Modèles Claude. Une clé d’API est nécessaire.",
+    "openaiHint": "Modèles GPT avec votre clé d’API OpenAI.",
+    "geminiHint": "Modèles Gemini avec une clé d’API Google AI Studio.",
+    "openrouterHint": "De nombreux modèles avec une seule clé.",
+    "detecting": "Recherche d’un modèle sur cet ordinateur…",
+    "localFound": "{{name}} (trouvé sur cet ordinateur)",
+    "localHint": "Fonctionne sur cet ordinateur. Aucune clé nécessaire.",
+    "noLocal": "Ni Ollama ni LM Studio trouvé sur cet ordinateur.",
+    "custom": "Autre serveur",
+    "customHint": "Tout serveur compatible avec l’API OpenAI, à l’adresse que vous indiquez.",
+    "customName": "Nom",
+    "customUrl": "Adresse du serveur",
+    "customUrlHint": "Utilisez https, sauf si le serveur tourne sur cet ordinateur.",
+    "skipKey": "Aucune clé nécessaire",
+    "model": "Modèle",
+    "startChat": "Commencer à discuter"
+  },
+  "provider": {
+    "title": "Fournisseurs de l’Assistant",
+    "intro": "Là où tournent les modèles de l’Assistant. Les clés sont conservées dans le trousseau de cet ordinateur, jamais dans le fichier de paramètres.",
+    "add": "Ajouter un fournisseur",
+    "addAndKey": "Ajouter et saisir la clé",
+    "addTitle": "Ajouter un fournisseur",
+    "addBody": "Choisissez où le modèle s’exécute.",
+    "addFound": "Ajouter",
+    "addKey": "Ajouter une clé",
+    "detect": "Chercher en local",
+    "detectNone": "Ni Ollama ni LM Studio trouvé.",
+    "detectAlready": "Tout ce qui a été trouvé est déjà ajouté.",
+    "detectFound": "{{name}} trouvé à {{url}}.",
+    "none": "Aucun fournisseur pour l’instant.",
+    "needsKey": "Clé requise",
+    "defaultModelIs": "Modèle par défaut : {{model}}",
+    "noDefaultModel": "Aucun modèle par défaut",
+    "defaultModel": "Modèle par défaut",
+    "editTitle": "Modifier le fournisseur",
+    "editBody": "Modifiez le nom, l’adresse ou le modèle par défaut.",
+    "editLabel": "Modifier {{name}}",
+    "saveChanges": "Enregistrer",
+    "kind": "Type",
+    "name": "Nom",
+    "url": "Adresse du serveur",
+    "urlHint": "Utilisez https, sauf si le serveur tourne sur cet ordinateur.",
+    "rekey": "Remplacer la clé",
+    "rekeyLabel": "Remplacer la clé de {{name}}",
+    "keyDialogTitle": "Clé pour {{name}}",
+    "keyDialogBody": "Collez la clé. Elle est vérifiée, puis enregistrée dans le trousseau.",
+    "delete": "Supprimer",
+    "deleteLabel": "Supprimer {{name}}",
+    "deleteTitle": "Supprimer ce fournisseur ?",
+    "deleteBody": "{{name}} et sa clé enregistrée sont supprimés de cet ordinateur. Les conversations existantes gardent leur texte mais ne peuvent plus continuer.",
+    "key": {
+      "label": "Clé d’API {{name}}",
+      "hint": "Collez la clé ici. Elle ne sera plus affichée.",
+      "optionalHint": "Facultatif. Seulement si le serveur en demande une.",
+      "save": "Enregistrer la clé",
+      "checking": "Vérification…",
+      "rejected": "La clé n’a pas été acceptée",
+      "empty": "Collez la clé d’API.",
+      "saved": "Enregistrée",
+      "savedEnds": "Enregistrée, se termine par ••••{{last4}}",
+      "notSet": "Aucune clé enregistrée"
+    },
+    "models": {
+      "loading": "Chargement des modèles…",
+      "failed": "Impossible de lister les modèles",
+      "none": "Ce fournisseur ne propose aucun modèle.",
+      "defaultFlag": "{{name}} (par défaut)"
+    },
+    "keyCleared": "L’adresse a changé : la clé enregistrée a donc été supprimée. Saisissez-la à nouveau.",
+    "openrouter": {
+      "signIn": "Se connecter avec OpenRouter",
+      "hint": "Ouvre OpenRouter dans votre navigateur pour créer une clé pour cette app. La clé est enregistrée dans le trousseau de cet ordinateur.",
+      "browser": "Continuez dans votre navigateur…",
+      "exchanging": "Obtention de la clé…",
+      "verifying": "Vérification de la clé…",
+      "cancel": "Annuler la connexion",
+      "browserFailed": "Le navigateur ne s’est pas ouvert. Ouvrez vous-même cette page :",
+      "pageLabel": "Page de connexion OpenRouter",
+      "failed": "La connexion n’a pas abouti",
+      "orPaste": "Ou collez une clé"
+    },
+    "kindCustom": "Personnalisé"
+  },
+  "diff": {
+    "none": "Aucune modification.",
+    "settingsLabel": "Modifications du fichier de paramètres",
+    "added": "Ajouté : ",
+    "removed": "Supprimé : "
+  },
+  "profile": {
+    "title": "Profils",
+    "intro": "Un profil définit le rôle de l’Assistant : ses outils, son mode et ses instructions. Il peut seulement restreindre ce qu’un site autorise, jamais l’étendre.",
+    "builtIn": "Prédéfini",
+    "summary_one": "Outils : {{toolsets}} · jusqu’à {{count}} étape",
+    "summary_many": "Outils : {{toolsets}} · jusqu’à {{count}} étapes",
+    "summary_other": "Outils : {{toolsets}} · jusqu’à {{count}} étapes",
+    "defaultToolsets": "par défaut",
+    "new": "Nouveau profil",
+    "newTitle": "Nouveau profil",
+    "editTitle": "Modifier le profil",
+    "duplicateTitle": "Dupliquer le profil",
+    "editorBody": "Les règles propres au site s’appliquent toujours : ce que le site n’autorise pas reste refusé.",
+    "duplicate": "Dupliquer",
+    "copyName": "{{name}} (copie)",
+    "duplicateLabel": "Dupliquer {{name}}",
+    "editLabel": "Modifier {{name}}",
+    "deleteLabel": "Supprimer {{name}}",
+    "delete": "Supprimer le profil",
+    "deleteTitle": "Supprimer {{name}} ?",
+    "deleteBody": "Les conversations qui utilisent ce profil passent à Explorer (lecture seule).",
+    "modeHelp": "Le plus strict entre ce réglage et celui de la conversation s’applique.",
+    "toolsetsHelp": "Si rien n’est coché, les ensembles d’outils par défaut s’appliquent (core et lifecycle).",
+    "callMethodHelp": "Permet à l’Assistant d’appeler des méthodes du serveur, seulement si la conversation demande avant de modifier et si le site l’autorise.",
+    "keepHistoryHelp": "Désactivé : les conversations avec ce profil ne sont pas conservées et sont supprimées au prochain démarrage de l’app.",
+    "field": {
+      "name": "Nom",
+      "toolsets": "Ensembles d’outils",
+      "denyTools": "Outils à masquer",
+      "allowTools": "Uniquement ces outils",
+      "allowDoctypes": "Uniquement ces DocTypes",
+      "denyDoctypes": "DocTypes à refuser",
+      "allowMethods": "Uniquement ces méthodes",
+      "denyMethods": "Méthodes à refuser",
+      "callMethod": "Méthodes du serveur",
+      "keepHistory": "Conserver l’historique",
+      "stepLimit": "Limite d’étapes (1 à 100)",
+      "instructions": "Instructions"
+    },
+    "picker": {
+      "label": "Profil",
+      "none": "Aucun profil",
+      "presets": "Prédéfinis",
+      "own": "Vos profils",
+      "missing": "Profil introuvable",
+      "readOnly": "Lecture seule imposée par le profil"
+    },
+    "preset": {
+      "explore": {
+        "name": "Explorer"
+      },
+      "accounts": {
+        "name": "Aide comptable"
+      },
+      "site-admin": {
+        "name": "Admin du site"
+      },
+      "data-entry": {
+        "name": "Saisie de données"
+      },
+      "local-model": {
+        "name": "Modèle local"
+      }
+    }
+  },
+  "prompt": {
+    "open": "Voir ce que reçoit le modèle",
+    "title": "Ce que reçoit le modèle",
+    "body": "Les instructions et les outils avec lesquels démarre la prochaine réponse de cette conversation.",
+    "contextPending": "Les détails du site (utilisateur, rôles, versions) sont ajoutés à la première réponse.",
+    "system": "Instructions",
+    "steps_one": "Jusqu’à {{count}} étape",
+    "steps_many": "Jusqu’à {{count}} étapes",
+    "steps_other": "Jusqu’à {{count}} étapes",
+    "tools_one": "Outils ({{count}})",
+    "tools_many": "Outils ({{count}})",
+    "tools_other": "Outils ({{count}})"
+  },
+  "siteSettings": {
+    "title": "Paramètres des sites",
+    "intro": "Instructions et limites de l’Assistant pour chaque site.",
+    "noSites": "Ajoutez d’abord un site.",
+    "site": "Site",
+    "instructions": "Instructions pour ce site",
+    "instructionsHelp": "Envoyées au modèle dans chaque conversation sur ce site.",
+    "localOnly": "Modèles locaux uniquement",
+    "localOnlyHelp": "Les conversations sur ce site ne peuvent utiliser qu’un serveur de modèles sur cet ordinateur (Ollama, LM Studio ou une adresse locale). Les modèles cloud d’Ollama (noms se terminant par cloud) sont refusés : ils tournent sur ollama.com.",
+    "localOnlyFrom": "Défini sous l’ancien nom du site, « {{site}} ». Désactivez-le ici pour l’effacer.",
+    "saved": "Paramètres du site enregistrés"
+  },
+  "errors": {
+    "title": {
+      "auth": "Le site a refusé la connexion",
+      "network": "Impossible de joindre le site",
+      "ffcMissing": "L’outil ffc n’est pas installé",
+      "unavailable": "Non disponible",
+      "failed": "Une erreur s’est produite"
+    },
+    "site": {
+      "refused": "Le site n’a pas accepté ces identifiants.",
+      "unreachable": "Impossible de joindre le site. Vérifiez l’adresse et votre connexion internet.",
+      "status": "Le site a répondu par une erreur ({{status}}).",
+      "engineCancelled": "Le démarrage du moteur de l’Assistant a été annulé.",
+      "engineFailed": "Le démarrage du moteur de l’Assistant a échoué.",
+      "oauthSetupCancelled": "La préparation de la connexion a été annulée.",
+      "oauthSetupFailed": "La préparation de la connexion a échoué.",
+      "signInCancelled": "La connexion a été annulée.",
+      "signInFailed": "La connexion a échoué.",
+      "apiKeyCancelled": "La vérification de la clé d’API a été annulée.",
+      "apiKeyFailed": "La vérification de la clé d’API a échoué.",
+      "checkCancelled": "La vérification de la connexion a été annulée.",
+      "checkFailed": "La vérification de la connexion a échoué.",
+      "renewCancelled": "Le renouvellement de la connexion a été annulé.",
+      "renewFailed": "Le renouvellement de la connexion a échoué.",
+      "newURLCancelled": "La vérification de la nouvelle adresse a été annulée.",
+      "newURLFailed": "La vérification de la nouvelle adresse a échoué.",
+      "connected": "Connecté",
+      "signInExpired": "Votre connexion a expiré. Reconnectez-vous pour continuer à utiliser ce site.",
+      "signInRejected": "Le site n’accepte plus cette connexion. Reconnectez-vous."
+    },
+    "chat": {
+      "busy": "L’Assistant est encore en train de répondre dans cette conversation.",
+      "busyStopFirst": "L’Assistant est encore en train de répondre dans cette conversation. Arrêtez-le d’abord.",
+      "notPaused": "Cette exécution n’est pas en pause.",
+      "shuttingDown": "L’Assistant est en cours d’arrêt.",
+      "gone": "Cette conversation ou cette exécution n’existe plus.",
+      "store": "Impossible de lire ou d’enregistrer la conversation.",
+      "save": "Impossible d’enregistrer la conversation.",
+      "keyRefused": "Le fournisseur n’a pas accepté la clé d’API.",
+      "modelStopped": "Le modèle s’est arrêté sans répondre : {{reason}}.",
+      "providerError": "Le fournisseur d’IA a renvoyé une erreur.",
+      "failed": "L’Assistant s’est arrêté à cause d’une erreur.",
+      "approvalGone": "Cette demande a déjà reçu une réponse ou est terminée."
+    },
+    "apps": {
+      "unknown": "App inconnue.",
+      "ffcMissing": "Installez d’abord ffc : c’est par lui que les apps atteignent vos sites.",
+      "configUnreadable": "Impossible de lire le fichier de configuration de ffc.",
+      "noSite": "Il n’existe plus de site nommé « {{site}} ».",
+      "noUserFolders": "Impossible de trouver vos dossiers utilisateur.",
+      "settingsUnreadable": "Impossible de lire le fichier de paramètres de l’app : il a donc été laissé tel quel.",
+      "settingsUnchanged": "Impossible de modifier les paramètres de l’app.",
+      "claudeNotFound": "La commande claude est introuvable. Installez d’abord Claude Code, ou exécutez vous-même les commandes ci-dessous.",
+      "claudeBatch": "La commande claude est un script Windows que l’app n’exécute pas. Exécutez vous-même les commandes ci-dessous.",
+      "readOnly": "Le fichier de paramètres de l’app est en lecture seule."
+    }
+  },
+  "auth": {
+    "oauth": "Connexion par le navigateur",
+    "apikey": "Clé d’API",
+    "password": "Mot de passe"
+  },
+  "time": {
+    "justNow": "à l’instant"
+  },
+  "sites": {
+    "title": "Sites",
+    "description": "Les sites Frappe accessibles depuis cet ordinateur. Les sites ajoutés avec la ligne de commande ffc apparaissent aussi ici.",
+    "add": "Ajouter un site",
+    "loadFailed": "Impossible de charger vos sites",
+    "loading": "Chargement des sites",
+    "empty": {
+      "title": "Aucun site pour l’instant",
+      "body": "Ajoutez votre site Frappe ou ERPNext pour commencer. Vous pouvez vous connecter avec votre navigateur, une clé d’API, ou un nom d’utilisateur et un mot de passe.",
+      "add": "Ajouter votre premier site"
+    },
+    "default": "Par défaut",
+    "notEncrypted": "Non chiffré",
+    "notEncryptedHint": "Cette adresse utilise http:// : les identifiants de connexion circulent sans chiffrement.",
+    "connectedAs": "Connecté en tant que {{user}}",
+    "lastCheckFailed": "Échec de la dernière vérification",
+    "check": "Vérifier",
+    "checking": "Vérification…",
+    "more": "Plus d’actions",
+    "moreFor": "Plus d’actions pour {{name}}",
+    "toast": {
+      "connected": "{{name}} est connecté",
+      "rejected": "{{name}} n’a pas accepté la connexion enregistrée",
+      "nowDefault": "{{name}} est désormais le site par défaut",
+      "nowDefaultHint": "Les apps qui suivent le site par défaut l’utilisent."
+    },
+    "action": {
+      "check": "Vérifier la connexion",
+      "makeDefault": "Définir par défaut",
+      "connect": "Connecter une app",
+      "rename": "Renommer…",
+      "changeAddress": "Changer l’adresse…",
+      "remove": "Supprimer…"
+    },
+    "card": {
+      "signIn": "Connexion",
+      "username": "Nom d’utilisateur",
+      "signedInAs": "Connecté en tant que",
+      "checkFailed": "Échec de la vérification",
+      "notChecked": "Pas encore vérifié",
+      "security": "Sécurité",
+      "http": "Non chiffré (http)",
+      "https": "Chiffré (https)"
+    }
+  },
+  "siteDialogs": {
+    "rename": {
+      "title": "Renommer le site",
+      "description": "Les apps configurées pour utiliser ce site par son nom ne l’atteignent plus tant que vous ne les reconnectez pas.",
+      "label": "Nouveau nom",
+      "hint": "N’importe quel nom sans espace, par exemple acme-prod.",
+      "submit": "Renommer",
+      "done": "Renommé en {{name}}"
+    },
+    "url": {
+      "title": "Changer l’adresse",
+      "description": "À utiliser lorsque le site a déménagé à une nouvelle adresse. La connexion enregistrée reste la même.",
+      "label": "Adresse du site",
+      "hint": "Par exemple erp.example.com ou https://erp.example.com.",
+      "submit": "Enregistrer l’adresse",
+      "done": "{{name}} utilise désormais {{url}}"
+    },
+    "remove": {
+      "title": "Supprimer {{name}} ?",
+      "bodyOAuth": "L’app se déconnecte d’abord du site : la connexion enregistrée cesse alors de fonctionner partout. Les apps qui utilisent ce site n’y ont plus accès. Rien n’est supprimé sur le site lui-même.",
+      "bodyLocal": "Les identifiants de connexion enregistrés sont supprimés de cet ordinateur. Les apps qui utilisent ce site n’y ont plus accès. Rien n’est supprimé sur le site lui-même.",
+      "submit": "Supprimer le site",
+      "done": "{{name}} supprimé",
+      "revoked": "Sa connexion a été révoquée sur le site.",
+      "notRevoked": "La connexion n’a pas pu être révoquée sur le site ; elle expirera d’elle-même.",
+      "newDefault": "{{name}} est désormais le site par défaut."
+    }
+  },
+  "addSite": {
+    "description": "Connectez un site Frappe ou ERPNext à cet ordinateur.",
+    "stepOf": "Étape {{step}} sur 4 : {{title}}",
+    "stepTitle": {
+      "site": "Votre site",
+      "method": "Mode de connexion",
+      "signIn": "Connexion",
+      "done": "Terminé"
+    },
+    "nameExists": "Un site nommé « {{name}} » existe déjà.",
+    "signedInAs": "Connecté en tant que {{user}}.",
+    "registered": "L’app a été configurée sur votre site pour vous.",
+    "ready": "{{name}} est prêt",
+    "optional": "(facultatif)",
+    "checkDetails": "Vérifier les informations",
+    "checkAndSave": "Vérifier et enregistrer",
+    "signIn": "Se connecter",
+    "done": "Terminé",
+    "openSignIn": "Ouvrir la page de connexion",
+    "cancelSignIn": "Annuler la connexion",
+    "openAgain": "Rouvrir la page",
+    "toast": {
+      "added": "{{name}} a été ajouté",
+      "updated": "{{name}} a été mis à jour",
+      "openFailed": "Impossible d’ouvrir la page de connexion",
+      "defaultFailed": "Impossible de changer le site par défaut"
+    },
+    "url": {
+      "label": "Adresse du site",
+      "hint": "L’adresse que vous ouvrez dans votre navigateur pour utiliser le site."
+    },
+    "name": {
+      "label": "Nom",
+      "hint": "Un nom court pour distinguer vos sites, comme acme-prod."
+    },
+    "replace": {
+      "label": "Remplacer le site enregistré nommé {{name}}",
+      "hint": "Son adresse et sa connexion sont écrasées lorsque vous terminez."
+    },
+    "http": {
+      "title": "Cette adresse n’est pas chiffrée",
+      "body": "Elle commence par http:// : vos identifiants de connexion circulent en clair. Ne l’utilisez que pour un site sur cet ordinateur ou sur votre propre réseau."
+    },
+    "method": {
+      "legend": "Choisissez comment vous connecter à {{name}}",
+      "recommended": "Recommandé",
+      "oauth": {
+        "title": "Se connecter avec votre navigateur",
+        "description": "Connectez-vous sur la page de votre site. Cette app ne voit jamais votre mot de passe, et cela fonctionne avec la connexion à deux facteurs."
+      },
+      "apikey": {
+        "title": "Utiliser une clé d’API",
+        "description": "Collez une clé d’API et son secret depuis vos paramètres utilisateur Frappe. Idéal pour les utilisateurs d’intégration."
+      },
+      "password": {
+        "title": "Utiliser votre nom d’utilisateur et votre mot de passe",
+        "description": "Enregistrés sur cet ordinateur. Les comptes avec connexion à deux facteurs doivent plutôt utiliser la connexion par le navigateur ou une clé d’API."
+      }
+    },
+    "advanced": {
+      "toggle": "Avancé : utiliser votre propre client OAuth",
+      "hint": "Nécessaire seulement si votre site ne peut pas configurer l’app lui-même, par exemple sur Frappe v15. Créez un OAuth Client sur votre site et collez ses informations ici.",
+      "clientId": "ID client",
+      "clientSecret": "Secret client",
+      "secretHint": "Laissez vide pour un client public. Il est enregistré avec le site et n’est plus jamais affiché."
+    },
+    "apikey": {
+      "help": "Dans Frappe, ouvrez le menu utilisateur, choisissez My Settings, puis API Access, et générez les clés. Le secret n’y est affiché qu’une seule fois.",
+      "key": "Clé d’API",
+      "secret": "Secret d’API"
+    },
+    "password": {
+      "username": "Nom d’utilisateur ou e-mail",
+      "password": "Mot de passe",
+      "twoFactor": "Les comptes à deux facteurs ne peuvent pas se connecter ainsi. Revenez en arrière et choisissez la connexion par le navigateur ou une clé d’API."
+    },
+    "error": {
+      "rejected": "Le site n’a pas accepté ces informations",
+      "network": "Impossible de joindre le site",
+      "failed": "Cela n’a pas fonctionné"
+    },
+    "default": {
+      "label": "Utiliser comme site par défaut",
+      "only": "C’est votre seul site : c’est donc le site par défaut.",
+      "hint": "Les apps qui suivent le site par défaut utilisent celui-ci."
+    },
+    "progress": {
+      "starting": "Préparation…",
+      "registering": "Mise en place d’une connexion sécurisée avec votre site…",
+      "browser": "Continuez dans votre navigateur…",
+      "finishing": "Finalisation de la connexion…",
+      "finishingExchange": "Finalisation de la connexion…",
+      "finishingUser": "Vérification de l’utilisateur connecté…",
+      "saving": "Enregistrement du site…",
+      "done": "Connecté"
+    },
+    "oauth": {
+      "waiting": "En attente de votre navigateur",
+      "preparing": "Préparation en cours",
+      "comeBack": "Une fois l’app approuvée là-bas, revenez ici.",
+      "browserFailed": "Votre navigateur ne s’est pas ouvert",
+      "copyLinkHint": "Copiez ce lien dans votre navigateur pour continuer.",
+      "link": "Lien de connexion",
+      "linkCopied": "Lien copié",
+      "copyLink": "Copier plutôt le lien de connexion",
+      "redirectUri": "URI de redirection",
+      "redirectUriCopied": "URI de redirection copiée",
+      "enterClientId": "Saisissez l’ID client",
+      "noReg": {
+        "title": "Ce site ne peut pas configurer l’app lui-même",
+        "unsupported": "Les anciennes versions de Frappe, comme la v15, ne permettent pas aux apps de s’enregistrer elles-mêmes. Un administrateur peut créer l’app une fois sur le site, puis vous vous connectez normalement.",
+        "refused": "Le site a refusé de configurer l’app. Un administrateur peut la créer manuellement."
+      },
+      "manual": {
+        "step1": "Sur votre site, ouvrez <b>OAuth Client</b> et créez-en un nouveau.",
+        "step2": "Définissez le type d’autorisation sur <b>Authorization Code</b>, le type de réponse sur <b>Code</b>, et cette URI de redirection :",
+        "step3": "Enregistrez-le, puis collez ici son ID client (et son secret, s’il en a un)."
+      },
+      "error": {
+        "auth": "La connexion n’a pas abouti",
+        "failed": "La connexion n’a pas fonctionné"
+      }
+    }
+  },
+  "connect": {
+    "fallbackName": "l’app",
+    "notFoundOption": "{{name}} (introuvable)",
+    "defaultSite": "Site par défaut",
+    "defaultSiteNamed": "Site par défaut ({{site}})",
+    "connectedTitle": "{{name}} est connectée",
+    "backedUp": "Les anciens paramètres ont été sauvegardés à côté du fichier.",
+    "summary": {
+      "unchanged": "{{name}} est déjà configurée exactement ainsi.",
+      "replaces": "Ceci remplace l’entrée « {{entry}} » existante dans les paramètres de {{name}}.",
+      "creates": "Ceci crée le fichier de paramètres de {{name}} avec une entrée « {{entry}} ».",
+      "adds": "Ceci ajoute une entrée « {{entry}} » aux paramètres de {{name}}."
+    },
+    "title": "Connecter {{name}}",
+    "description": "Choisissez le site qu’elle utilise et ce qu’elle peut faire. Rien n’est modifié avant votre confirmation.",
+    "app": "App",
+    "site": "Site",
+    "readOnly": "Lecture seule",
+    "readOnlyHelp": "Elle peut consulter vos données, mais ne peut rien créer, modifier ni supprimer.",
+    "installFirst": "Installez d’abord l’outil ffc",
+    "runsFfc": "{{name}} exécute ffc pour atteindre vos sites.",
+    "install": "Installer",
+    "prepareFailed": "Impossible de préparer la modification",
+    "cannotApply": "Cette app ne peut pas effectuer la modification",
+    "runInTerminal": "Vous pouvez plutôt exécuter ceci dans un terminal :",
+    "tab": {
+      "summary": "Résumé",
+      "changes": "Modifications"
+    },
+    "detail": {
+      "entryName": "Nom de l’entrée",
+      "settingsFile": "Fichier de paramètres",
+      "runs": "Exécute",
+      "through": "Via"
+    },
+    "alreadyConnected": "Déjà connectée",
+    "replaceAndConnect": "Remplacer et connecter",
+    "connect": "Connecter"
+  },
+  "disconnect": {
+    "done": "{{name}} est déconnectée",
+    "wasNot": "{{name}} n’était pas connectée",
+    "nothing": "Il n’y avait rien à supprimer.",
+    "fallbackName": "l’app",
+    "title": "Déconnecter {{name}} ?",
+    "description": "Ceci supprime l’entrée « frappe » des paramètres de {{name}}, qui ne pourra plus atteindre vos sites Frappe. Vos sites restent enregistrés dans cette app.",
+    "unavailable": "Pas encore disponible dans cette version",
+    "settingsFile": "Fichier de paramètres",
+    "pathCopied": "Chemin copié",
+    "button": "Déconnecter"
+  },
+  "installFfc": {
+    "updated": "ffc est mis à jour",
+    "installed": "ffc est installé",
+    "unknownVersion": "inconnue",
+    "readyRestart": "La version {{version}} est prête. Redémarrez vos apps connectées pour l’utiliser.",
+    "ready": "La version {{version}} est prête.",
+    "cancelled": "Installation annulée",
+    "updateTitle": "Mettre à jour l’outil ffc",
+    "installTitle": "Installer l’outil ffc",
+    "manager": "ffc a été installé avec {{manager}} : c’est donc {{manager}} qui le met à jour et le réinstalle, pas cette app.",
+    "managerRun": "ffc a été installé avec {{manager}} : c’est donc {{manager}} qui le met à jour et le réinstalle, pas cette app. Exécutez ceci dans un terminal, puis redémarrez vos apps connectées pour qu’elles utilisent la nouvelle version.",
+    "updateBody": "Ceci télécharge la dernière version de ffc depuis GitHub, vérifie sa signature et remplace ffc {{version}} dans {{path}}. Une version de développement de ffc n’est pas touchée : une nouvelle copie est alors installée pour votre utilisateur.",
+    "installBody": "Les apps connectées utilisent ffc, un petit programme de Foxmayn, pour communiquer avec vos sites Frappe. Ceci télécharge la dernière version de ffc depuis GitHub, vérifie sa signature et l’installe pour votre utilisateur uniquement.",
+    "updateCommand": "Commande de mise à jour",
+    "installCommand": "Commande d’installation",
+    "whereTitle": "Où il est installé",
+    "whereMac": "ffc est installé dans ~/.local/bin.",
+    "whereWindows": "ffc est installé dans le dossier Programs de votre utilisateur, et ce dossier est ajouté à votre PATH.",
+    "whereSignature": "Le téléchargement est refusé si sa signature ne correspond pas à la clé de publication de Foxmayn. Vous pouvez aussi l’installer vous-même dans un terminal :",
+    "installing": "Installation…",
+    "versionInstalled": "ffc {{version}} est installé",
+    "restartApps": "Redémarrez vos apps connectées (quittez-les complètement) pour qu’elles utilisent la nouvelle version.",
+    "failed": "L’installation n’a pas abouti",
+    "starting": "Démarrage…",
+    "alsoTerminal": "Vous pouvez aussi l’installer vous-même dans un terminal :",
+    "notNow": "Plus tard",
+    "updateButton": "Mettre à jour ffc",
+    "installButton": "Installer ffc"
+  },
+  "wsl": {
+    "title": "Paramètres ffc trouvés dans WSL",
+    "bodyOne": "Votre environnement Linux ({{distro}}) a ses propres paramètres ffc. Cette app gère uniquement les paramètres Windows, et les deux ne sont pas synchronisés. Ajoutez aussi les sites ici si vous voulez que les apps Windows les utilisent.",
+    "bodyMany": "L’un de vos environnements Linux a ses propres paramètres ffc. Cette app gère uniquement les paramètres Windows, et les deux ne sont pas synchronisés. Ajoutez aussi les sites ici si vous voulez que les apps Windows les utilisent.",
+    "where": "Où ils se trouvent"
+  },
+  "page": {
+    "ffcNoAnswer": "L’outil ffc ne répond pas",
+    "ffcMissing": "Encore une chose : installez l’outil ffc",
+    "reinstallWith": "ffc a été trouvé mais n’a pas démarré. Le réinstaller avec {{manager}} règle généralement le problème.",
+    "reinstall": "ffc a été trouvé mais n’a pas démarré. Le réinstaller règle généralement le problème.",
+    "needed": "Les apps connectées utilisent ffc, un petit programme de Foxmayn, pour atteindre vos sites. Vous pouvez ajouter des sites et utiliser l’Assistant sans lui, mais les apps connectées en ont besoin.",
+    "reinstallButton": "Réinstaller",
+    "installButton": "Installer ffc"
+  },
+  "shell": {
+    "logoAlt": "Logo Foxmayn",
+    "nav": {
+      "sites": "Sites",
+      "settings": "Paramètres"
+    },
+    "header": {
+      "toggleSidebar": "Afficher ou masquer la barre latérale",
+      "search": "Rechercher"
+    },
+    "sidebar": {
+      "goToSites": "Foxmayn Frappe Desktop, aller aux Sites",
+      "manage": "Gérer",
+      "quickActions": "Actions rapides",
+      "addSite": "Ajouter un site",
+      "updateAvailable": "Mise à jour {{version}} disponible",
+      "ffcUpdateTip": "Mettre à jour ffc {{current}} vers {{latest}}",
+      "ffcAvailable": "ffc {{version}} disponible",
+      "ffcLocation": "Outil ffc dans {{path}}",
+      "ffcVersion": "Outil ffc {{version}}",
+      "ffcNoAnswerTip": "ffc a été trouvé mais ne répond pas",
+      "ffcInstallTip": "Installer l’outil ffc",
+      "ffcNeedsAttention": "L’outil ffc requiert votre attention",
+      "ffcMissing": "Outil ffc manquant",
+      "feedback": "Envoyer un avis",
+      "feedbackTip": "Ouvre un court formulaire sur GitHub dans votre navigateur"
+    },
+    "update": {
+      "availableTitle": "Foxmayn Frappe Desktop {{version}} est disponible",
+      "installHint": "Copiez la commande d’installation et exécutez-la dans {{terminal}}. Elle se trouve aussi dans Paramètres > À propos.",
+      "copyCommand": "Copier la commande",
+      "commandCopied": "Commande copiée",
+      "githubHint": "Une version plus récente peut être téléchargée depuis GitHub.",
+      "ffcTitle": "ffc {{version}} est disponible",
+      "ffcBody": "Vous avez ffc {{current}}. L’app peut le mettre à jour pour vous."
+    }
+  },
+  "palette": {
+    "title": "Palette de commandes",
+    "description": "Rechercher une page ou une action",
+    "placeholder": "Tapez une commande ou recherchez…",
+    "empty": "Aucun résultat.",
+    "goTo": "Aller à",
+    "actions": "Actions",
+    "addSite": "Ajouter un site",
+    "connectApp": "Connecter une app",
+    "installFfc": "Installer l’outil ffc",
+    "checkConnection": "Vérifier une connexion",
+    "connected": "{{name}} est connecté",
+    "notAsExpected": "{{name}} n’a pas répondu comme prévu",
+    "newConversation": "Nouvelle conversation",
+    "shortcuts": "Raccourcis clavier",
+    "feedback": "Envoyer un avis"
+  },
+  "theme": {
+    "title": "Thème",
+    "description": "Clair, sombre, ou identique à votre système.",
+    "light": "Clair",
+    "dark": "Sombre",
+    "system": "Identique au système",
+    "systemShort": "Système"
+  },
+  "copy": {
+    "copied": "Copié",
+    "onClipboard": "C’est dans votre presse-papiers.",
+    "failed": "Impossible de copier",
+    "failedHint": "Sélectionnez le texte et copiez-le vous-même.",
+    "copyLabel": "Copier {{label}}"
+  },
+  "welcome": {
+    "label": "Bienvenue",
+    "slidesLabel": "Diapositives",
+    "slideLabel": "Diapositive {{n}} : {{title}}",
+    "lookAround": "D’abord jeter un œil",
+    "addFirstSite": "Ajouter votre premier site",
+    "notOfficial": "Pas un produit officiel de Frappe.",
+    "slides": {
+      "welcome": {
+        "title": "Bienvenue dans Foxmayn Frappe Desktop",
+        "body": "Connectez vos sites Frappe et ERPNext aux apps d’IA de cet ordinateur, comme Claude, Cursor et VS Code. Aucun terminal nécessaire."
+      },
+      "sites": {
+        "title": "Ajoutez vos sites",
+        "body": "Connectez-vous une seule fois avec votre navigateur. Votre connexion reste sur cet ordinateur, et vous pouvez la vérifier ou la supprimer à tout moment."
+      },
+      "apps": {
+        "title": "Connectez vos apps",
+        "body": "Choisissez une app et un site, et voyez exactement ce qui change avant tout enregistrement. Activez la lecture seule pour qu’elle puisse consulter sans rien modifier."
+      }
+    }
+  },
+  "ui": {
+    "previousSlide": "Diapositive précédente",
+    "nextSlide": "Diapositive suivante",
+    "breadcrumb": "fil d’Ariane",
+    "more": "Plus",
+    "pagination": "pagination",
+    "goPrevPage": "Aller à la page précédente",
+    "goNextPage": "Aller à la page suivante",
+    "morePages": "Plus de pages",
+    "scrollToEnd": "Défiler jusqu’à la fin",
+    "scrollToStart": "Défiler jusqu’au début",
+    "closeToast": "Fermer la notification",
+    "sidebar": "Barre latérale",
+    "sidebarDescription": "Affiche la barre latérale mobile.",
+    "toggleSidebar": "Afficher/masquer la barre latérale",
+    "remove": "Supprimer",
+    "commandPalette": "Palette de commandes",
+    "commandDescription": "Rechercher une commande à exécuter…",
+    "notifications": "Notifications",
+    "suggestions": "Suggestions",
+    "carousel": "carrousel",
+    "slide": "diapositive"
+  },
+  "shortcuts": {
+    "title": "Raccourcis clavier",
+    "body": "Sur macOS, utilisez ⌘ à la place de Ctrl.",
+    "palette": "Ouvrir la palette de commandes",
+    "newChat": "Nouvelle conversation",
+    "settings": "Ouvrir les Paramètres",
+    "help": "Afficher ces raccourcis",
+    "search": "Rechercher dans les conversations",
+    "sidebar": "Afficher ou masquer la barre latérale",
+    "send": "Envoyer le message",
+    "newLine": "Nouvelle ligne dans le message",
+    "stop": "Arrêter l’Assistant"
+  }
+}

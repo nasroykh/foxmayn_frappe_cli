@@ -107,7 +107,7 @@ func (s *SitesService) SignInWithBrowser(ctx context.Context, req BrowserSignInR
 		}
 		return AddedSite{}, e
 	case err != nil:
-		return AddedSite{}, siteError("Setting up the sign-in", err)
+		return AddedSite{}, siteError(stepOAuthSetup, err)
 	}
 
 	site, user, err := flow.Login(ctx, siteURL, app, sitesetup.LoginHooks{
@@ -134,7 +134,7 @@ func (s *SitesService) SignInWithBrowser(ctx context.Context, req BrowserSignInR
 	case err != nil && strings.Contains(err.Error(), "timed out"):
 		return AddedSite{}, newError(CodeFailed, fmt.Sprintf("The sign-in took too long. Try again, and finish it in your browser within %d minutes.", int(flow.Timeout.Minutes())), err)
 	case err != nil:
-		return AddedSite{}, siteError("Signing in", err)
+		return AddedSite{}, siteError(stepSignIn, err)
 	}
 
 	s.progress(attempt, "saving", "Saving the site…")

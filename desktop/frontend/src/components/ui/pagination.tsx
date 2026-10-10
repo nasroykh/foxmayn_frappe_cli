@@ -3,12 +3,14 @@ import { cn } from "cn"
 
 import { Button } from "@/components/ui/button"
 import { IconChevronLeft, IconChevronRight, IconDots } from "@tabler/icons-react"
+import { useTranslation } from "react-i18next"
 
 function Pagination({ className, ...props }: React.ComponentProps<"nav">) {
+  const { t } = useTranslation()
   return (
     <nav
       role="navigation"
-      aria-label="pagination"
+      aria-label={t("ui.pagination")}
       data-slot="pagination"
       className={cn("mx-auto flex w-full justify-center", className)}
       {...props}
@@ -64,35 +66,37 @@ function PaginationLink({
 
 function PaginationPrevious({
   className,
-  text = "Previous",
+  text,
   ...props
 }: React.ComponentProps<typeof PaginationLink> & { text?: string }) {
+  const { t } = useTranslation()
   return (
     <PaginationLink
-      aria-label="Go to previous page"
+      aria-label={t("ui.goPrevPage")}
       size="default"
-      className={cn("pl-1.5!", className)}
+      className={cn("ps-1.5!", className)}
       {...props}
     >
       <IconChevronLeft data-icon="inline-start" />
-      <span className="hidden sm:block">{text}</span>
+      <span className="hidden sm:block">{text ?? t("common.previous")}</span>
     </PaginationLink>
   )
 }
 
 function PaginationNext({
   className,
-  text = "Next",
+  text,
   ...props
 }: React.ComponentProps<typeof PaginationLink> & { text?: string }) {
+  const { t } = useTranslation()
   return (
     <PaginationLink
-      aria-label="Go to next page"
+      aria-label={t("ui.goNextPage")}
       size="default"
-      className={cn("pr-1.5!", className)}
+      className={cn("pe-1.5!", className)}
       {...props}
     >
-      <span className="hidden sm:block">{text}</span>
+      <span className="hidden sm:block">{text ?? t("common.next")}</span>
       <IconChevronRight data-icon="inline-end" />
     </PaginationLink>
   )
@@ -102,6 +106,7 @@ function PaginationEllipsis({
   className,
   ...props
 }: React.ComponentProps<"span">) {
+  const { t } = useTranslation()
   return (
     <span
       aria-hidden
@@ -114,7 +119,7 @@ function PaginationEllipsis({
     >
       <IconDots
       />
-      <span className="sr-only">More pages</span>
+      <span className="sr-only">{t("ui.morePages")}</span>
     </span>
   )
 }

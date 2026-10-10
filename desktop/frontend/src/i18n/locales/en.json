@@ -4,15 +4,134 @@
     "assistant": "Assistant"
   },
   "connectApps": {
-    "title": "Connect apps"
+    "title": "Connect apps",
+    "description": "Connect the AI apps on this computer to your Frappe sites. Each gets a “frappe” entry in its settings that runs ffc.",
+    "lookAgain": "Look again",
+    "addSiteFirst": "Add a site first",
+    "noSites": "Apps work with the sites you add here. Add one, then come back to connect.",
+    "addSite": "Add a site",
+    "loadFailed": "Your apps could not be checked",
+    "loading": "Loading apps",
+    "status": {
+      "connected": "Connected",
+      "different": "Other settings",
+      "notConnected": "Not connected",
+      "error": "Problem"
+    },
+    "notFoundReasonClaudeCode": "The claude command was not found on this computer. Install Claude Code, or connect anyway and it will be used once installed.",
+    "notFoundReason": "No {{name}} settings were found. Open {{name}} once after installing it, or connect anyway to create the settings file.",
+    "found": "Found on this computer",
+    "notFound": "Not found on this computer",
+    "usesSite": "Uses <b>{{site}}</b>.",
+    "usesDefault": "Uses your default site, whichever it is.",
+    "readOnly": "Read-only: it can look but not change anything.",
+    "different": "It already has a “frappe” entry that this app did not set up. Connecting replaces it, after showing you the change.",
+    "notSetUp": "Not set up to use your Frappe sites yet.",
+    "settingsUnreadable": "Its settings could not be read",
+    "update": "Update",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "hint": {
+      "connect": {
+        "claude-code": "Start a new Claude Code session (or run /mcp) to use it.",
+        "claude-desktop": "Fully quit Claude Desktop (also from the tray or menu bar) and start it again.",
+        "cursor": "Restart Cursor to load it.",
+        "vscode": "Reload VS Code, or run 'MCP: List Servers' from the command palette, to start it.",
+        "codex": "Start a new Codex session to use it."
+      },
+      "disconnect": {
+        "claude-code": "Start a new Claude Code session (or run /mcp) for the change to take effect.",
+        "claude-desktop": "Fully quit Claude Desktop (also from the tray or menu bar) and start it again.",
+        "cursor": "Restart Cursor to drop the server.",
+        "vscode": "Reload VS Code to stop the server.",
+        "codex": "Start a new Codex session for the change to take effect."
+      }
+    }
   },
   "common": {
     "cancel": "Cancel",
     "retry": "Try again",
-    "save": "Save"
+    "save": "Save",
+    "continue": "Continue",
+    "back": "Back",
+    "close": "Close",
+    "done": "Done",
+    "command": "Command",
+    "commandCopied": "Command copied",
+    "technicalDetails": "Technical details",
+    "previous": "Previous",
+    "next": "Next",
+    "skip": "Skip",
+    "submit": "Submit",
+    "loading": "Loading",
+    "download": "Download",
+    "update": "Update",
+    "copy": "Copy",
+    "show": "Show",
+    "hide": "Hide"
+  },
+  "language": {
+    "label": "Language",
+    "description": "The language of the app. Site data stays as the site has it.",
+    "names": {
+      "en": "English",
+      "fr": "French",
+      "ar": "Arabic"
+    }
   },
   "settings": {
-    "assistantTab": "Assistant"
+    "assistantTab": "Assistant",
+    "description": "How the app looks, where things are kept, and what it is.",
+    "generalTab": "General",
+    "ffcTab": "ffc helper",
+    "aboutTab": "About",
+    "configFile": "Settings file",
+    "configPath": "Settings file path",
+    "pathCopied": "Path copied",
+    "openFolder": "Open folder",
+    "installCommand": "Install command",
+    "configMissing": "It does not exist yet. It is created when you add your first site.",
+    "configShared": "Shared with the ffc command line. Changes made there show up here right away.",
+    "ffc": {
+      "updateAvailable": "Update available",
+      "installed": "Installed",
+      "notWorking": "Not working",
+      "notInstalled": "Not installed",
+      "description": "The program your connected apps run to reach your sites. This app finds it on your PATH or where the ffc installers put it, and can install the latest release for you; it never ships its own copy.",
+      "version": "Version",
+      "unknown": "Unknown",
+      "location": "ffc location",
+      "noAnswerTitle": "ffc did not answer",
+      "noAnswerManager": "Running it failed ({{error}}). Reinstalling it with {{manager}} usually fixes this.",
+      "noAnswer": "Running it failed ({{error}}). Installing it again usually fixes this.",
+      "updateBody": "Updating replaces the ffc above, where it is. Restart your connected apps afterwards so they use the new version.",
+      "autoCheck": "The app looks for a newer ffc once a day; Check for updates in About looks right away. You can also run <code>{{command}}</code> in a terminal.",
+      "installHere": "Install it here, or run this in a terminal yourself:",
+      "updateTo": "Update to {{version}}",
+      "installAgain": "Install again",
+      "install": "Install ffc",
+      "lookAgain": "Look again"
+    },
+    "update": {
+      "availableTitle": "Version {{version}} is available",
+      "youHave": "You have {{current}}.",
+      "released": "Released {{date}}.",
+      "easiestWay": "The easiest way to install it: run this in {{terminal}}. It checks the download, closes this app, installs the new version over it and opens it again, with no security warning to click through.",
+      "orDownload": "Or download it from GitHub and install it over this one.",
+      "downloadFromGitHub": "Download it from GitHub and install it over this one.",
+      "upToDateTitle": "The app is up to date",
+      "upToDateBody": "Version {{version}} is the newest one."
+    },
+    "about": {
+      "version": "Version {{version}}",
+      "summary": "Connects your Frappe and ERPNext sites to the AI apps on your computer, using the ffc command line underneath. Made by Foxmayn. For Windows and macOS.",
+      "independent": "Foxmayn makes this app independently. It is not affiliated with or endorsed by Frappe Technologies.",
+      "checkUpdates": "Check for updates",
+      "ffcYouHave": "You have ffc {{current}}.",
+      "updateFfc": "Update ffc",
+      "sourceCode": "Source code",
+      "reportProblem": "Report a problem"
+    }
   },
   "history": {
     "title": "History",
@@ -67,7 +186,6 @@
       "deleteBody": "“{{title}}” and its messages are removed from this computer. This cannot be undone.",
       "archiveTitle": "Archive",
       "emptyArchive": "Nothing is archived.",
-      "showArchive": "Show the archive ({{count}})",
       "showActive": "Back to conversations",
       "moreLabel": "More actions for {{title}}",
       "pin": "Pin to the top",
@@ -75,11 +193,15 @@
       "pinned": "Pinned",
       "archive": "Archive",
       "unarchive": "Move out of the archive",
-      "notKept": "not kept"
+      "notKept": "not kept",
+      "showArchive_one": "Show the archive ({{count}})",
+      "showArchive_other": "Show the archive ({{count}})",
+      "emptyHint": "Start one with New, or press {{mod}}+N."
     },
     "search": {
       "label": "Search conversations",
-      "placeholder": "Search (Ctrl+Shift+F)",
+      "placeholder": "Search",
+      "tooltip": "Search conversations (Ctrl+Shift+F)",
       "clear": "Clear the search",
       "filters": "Search filters",
       "site": "Site",
@@ -90,8 +212,11 @@
       "to": "To",
       "reset": "Clear filters",
       "searching": "Searching…",
-      "count": "{{count}} found",
-      "results": "Search results"
+      "results": "Search results",
+      "count_one": "{{count}} found",
+      "count_other": "{{count}} found",
+      "none": "Nothing matches. Try other words.",
+      "noneFiltered": "Nothing matches. Try other words or clear the filters."
     },
     "history": {
       "import": "Import a conversation",
@@ -126,7 +251,6 @@
       "stop": "Stop",
       "stopLabel": "Stop the assistant",
       "hint": "Enter sends, Shift+Enter adds a line. Esc stops the assistant.",
-      "attach": "Attach",
       "attachLabel": "Attach files (text, CSV, JSON, XLSX or images)",
       "attachHint": "You can also drop files here or paste an image.",
       "attachFailed": "Not attached",
@@ -171,6 +295,40 @@
     "announce": {
       "approval": "Waiting for your approval",
       "finished": "Reply finished"
+    },
+    "starters": {
+      "title": "Try asking",
+      "hint": "A prompt only fills the message box. Edit it, then press Enter.",
+      "explore": {
+        "p1": "Which apps and versions are installed on this site?",
+        "p2": "Show the 10 most recent Sales Invoices with their customer, total and status.",
+        "p3": "What fields does the Customer DocType have, and which are required?",
+        "p4": "How many open ToDos are there, grouped by who they are assigned to?"
+      },
+      "accounts": {
+        "p1": "Which Sales Invoices are overdue? Sort them by outstanding amount.",
+        "p2": "Show the unpaid Purchase Invoices due in the next 14 days.",
+        "p3": "Prepare a draft Payment Entry for the oldest unpaid Sales Invoice.",
+        "p4": "Summarise this month's sales by customer."
+      },
+      "site-admin": {
+        "p1": "Give me a quick health check of this site.",
+        "p2": "Is the scheduler running, and did any scheduled job fail today?",
+        "p3": "Show the latest entries of the Error Log and what they have in common.",
+        "p4": "Are any background jobs stuck in the queue?"
+      },
+      "data-entry": {
+        "p1": "Create a Customer named … in the customer group … and the territory …",
+        "p2": "Add a ToDo for me: … due on …",
+        "p3": "Change the phone number of the Contact … to …",
+        "p4": "Which fields of the Item DocType must I fill in to create one?"
+      },
+      "local-model": {
+        "p1": "How many Customers are there?",
+        "p2": "Show the five newest Items.",
+        "p3": "What is the status of Sales Invoice …?",
+        "p4": "List the DocTypes of the Selling module."
+      }
     }
   },
   "onboarding": {
@@ -260,7 +418,8 @@
       "pageLabel": "OpenRouter sign-in page",
       "failed": "The sign-in did not finish",
       "orPaste": "Or paste a key"
-    }
+    },
+    "kindCustom": "Custom"
   },
   "diff": {
     "none": "No changes.",
@@ -272,7 +431,8 @@
     "title": "Profiles",
     "intro": "A profile sets what the assistant is for: its tools, its mode and its instructions. It can only narrow what a site allows, never widen it.",
     "builtIn": "Built in",
-    "summary": "Tools: {{toolsets}} · up to {{steps}} steps",
+    "summary_one": "Tools: {{toolsets}} · up to {{count}} step",
+    "summary_other": "Tools: {{toolsets}} · up to {{count}} steps",
     "defaultToolsets": "default",
     "new": "New profile",
     "newTitle": "New profile",
@@ -312,16 +472,35 @@
       "own": "Your profiles",
       "missing": "Missing profile",
       "readOnly": "Read only by profile"
+    },
+    "preset": {
+      "explore": {
+        "name": "Explore"
+      },
+      "accounts": {
+        "name": "Accounts helper"
+      },
+      "site-admin": {
+        "name": "Site admin"
+      },
+      "data-entry": {
+        "name": "Data entry"
+      },
+      "local-model": {
+        "name": "Local model"
+      }
     }
   },
   "prompt": {
     "open": "Show what the model gets",
     "title": "What the model gets",
     "body": "The instructions and tools the next answer in this conversation starts with.",
-    "steps": "Up to {{n}} steps",
     "contextPending": "Details about the site (user, roles, versions) are added at the first answer.",
-    "tools": "Tools ({{n}})",
-    "system": "Instructions"
+    "system": "Instructions",
+    "steps_one": "Up to {{count}} step",
+    "steps_other": "Up to {{count}} steps",
+    "tools_one": "Tools ({{count}})",
+    "tools_other": "Tools ({{count}})"
   },
   "siteSettings": {
     "title": "Site settings",
@@ -334,5 +513,489 @@
     "localOnlyHelp": "Conversations on this site may use only a model server on this computer (Ollama, LM Studio or a local address). Ollama cloud models (names ending in cloud) are refused: they run on ollama.com.",
     "localOnlyFrom": "Set under the site's earlier name \"{{site}}\". Turn it off here to clear it.",
     "saved": "Site settings saved"
+  },
+  "errors": {
+    "title": {
+      "auth": "The site refused the sign-in",
+      "network": "Could not reach the site",
+      "ffcMissing": "The ffc helper is not installed",
+      "unavailable": "Not available",
+      "failed": "Something went wrong"
+    },
+    "site": {
+      "refused": "The site did not accept these sign-in details.",
+      "unreachable": "The site could not be reached. Check the address and your internet connection.",
+      "status": "The site answered with an error ({{status}}).",
+      "engineCancelled": "Starting the assistant engine was cancelled.",
+      "engineFailed": "Starting the assistant engine failed.",
+      "oauthSetupCancelled": "Setting up the sign-in was cancelled.",
+      "oauthSetupFailed": "Setting up the sign-in failed.",
+      "signInCancelled": "Signing in was cancelled.",
+      "signInFailed": "Signing in failed.",
+      "apiKeyCancelled": "Checking the API key was cancelled.",
+      "apiKeyFailed": "Checking the API key failed.",
+      "checkCancelled": "Checking the connection was cancelled.",
+      "checkFailed": "Checking the connection failed.",
+      "renewCancelled": "Renewing the sign-in was cancelled.",
+      "renewFailed": "Renewing the sign-in failed.",
+      "newURLCancelled": "Checking the new address was cancelled.",
+      "newURLFailed": "Checking the new address failed.",
+      "connected": "Connected",
+      "signInExpired": "Your sign-in has expired. Sign in again to keep using this site.",
+      "signInRejected": "The site no longer accepts this sign-in. Sign in again."
+    },
+    "chat": {
+      "busy": "The assistant is still answering in this conversation.",
+      "busyStopFirst": "The assistant is still answering in this conversation. Stop it first.",
+      "notPaused": "This run is not paused.",
+      "shuttingDown": "The assistant is shutting down.",
+      "gone": "That conversation or run no longer exists.",
+      "store": "Could not read or save the conversation.",
+      "save": "Could not save the conversation.",
+      "keyRefused": "The provider did not accept the API key.",
+      "modelStopped": "The model stopped without an answer: {{reason}}.",
+      "providerError": "The AI provider returned an error.",
+      "failed": "The assistant stopped because of an error.",
+      "approvalGone": "This request was already answered or has ended."
+    },
+    "apps": {
+      "unknown": "Unknown app.",
+      "ffcMissing": "Install ffc first: apps reach your sites through it.",
+      "configUnreadable": "The ffc config file could not be read.",
+      "noSite": "There is no site called “{{site}}” any more.",
+      "noUserFolders": "Your user folders could not be found.",
+      "settingsUnreadable": "The app's settings file could not be read, so it was left as it is.",
+      "settingsUnchanged": "The app's settings could not be changed.",
+      "claudeNotFound": "The claude command was not found. Install Claude Code first, or run the commands below yourself.",
+      "claudeBatch": "The claude command is a Windows script the app does not run. Run the commands below yourself.",
+      "readOnly": "The app's settings file is read-only."
+    }
+  },
+  "auth": {
+    "oauth": "Browser sign-in",
+    "apikey": "API key",
+    "password": "Password"
+  },
+  "time": {
+    "justNow": "just now"
+  },
+  "sites": {
+    "title": "Sites",
+    "description": "The Frappe sites this computer can reach. Sites you add with the ffc command line show up here too.",
+    "add": "Add a site",
+    "loadFailed": "Your sites could not be loaded",
+    "loading": "Loading sites",
+    "empty": {
+      "title": "No sites yet",
+      "body": "Add your Frappe or ERPNext site to get started. You can sign in with your browser, an API key, or a username and password.",
+      "add": "Add your first site"
+    },
+    "default": "Default",
+    "notEncrypted": "Not encrypted",
+    "notEncryptedHint": "This address uses http://, so sign-in details travel unencrypted.",
+    "connectedAs": "Connected as {{user}}",
+    "lastCheckFailed": "Last check failed",
+    "check": "Check",
+    "checking": "Checking…",
+    "more": "More actions",
+    "moreFor": "More actions for {{name}}",
+    "toast": {
+      "connected": "{{name}} is connected",
+      "rejected": "{{name}} did not accept the saved sign-in",
+      "nowDefault": "{{name}} is now the default site",
+      "nowDefaultHint": "Apps that follow the default use it."
+    },
+    "action": {
+      "check": "Check connection",
+      "makeDefault": "Make default",
+      "connect": "Connect an app",
+      "rename": "Rename…",
+      "changeAddress": "Change address…",
+      "remove": "Remove…"
+    },
+    "card": {
+      "signIn": "Sign-in",
+      "username": "Username",
+      "signedInAs": "Signed in as",
+      "checkFailed": "Check failed",
+      "notChecked": "Not checked yet",
+      "security": "Security",
+      "http": "Not encrypted (http)",
+      "https": "Encrypted (https)"
+    }
+  },
+  "siteDialogs": {
+    "rename": {
+      "title": "Rename site",
+      "description": "Apps set to use this site by name stop reaching it until you connect them again.",
+      "label": "New name",
+      "hint": "Any name without spaces, for example acme-prod.",
+      "submit": "Rename",
+      "done": "Renamed to {{name}}"
+    },
+    "url": {
+      "title": "Change address",
+      "description": "Use this when the site moved to a new address. The saved sign-in stays the same.",
+      "label": "Site address",
+      "hint": "For example erp.example.com or https://erp.example.com.",
+      "submit": "Save address",
+      "done": "{{name}} now uses {{url}}"
+    },
+    "remove": {
+      "title": "Remove {{name}}?",
+      "bodyOAuth": "The app signs out of the site first, so the saved sign-in stops working everywhere. Apps using this site lose access to it. Nothing on the site itself is deleted.",
+      "bodyLocal": "The saved sign-in details are deleted from this computer. Apps using this site lose access to it. Nothing on the site itself is deleted.",
+      "submit": "Remove site",
+      "done": "Removed {{name}}",
+      "revoked": "Its sign-in was revoked on the site.",
+      "notRevoked": "The sign-in could not be revoked on the site; it expires on its own.",
+      "newDefault": "{{name}} is now the default site."
+    }
+  },
+  "addSite": {
+    "description": "Connect a Frappe or ERPNext site to this computer.",
+    "stepOf": "Step {{step}} of 4: {{title}}",
+    "stepTitle": {
+      "site": "Your site",
+      "method": "How to sign in",
+      "signIn": "Sign in",
+      "done": "Done"
+    },
+    "nameExists": "A site called \"{{name}}\" already exists.",
+    "signedInAs": "Signed in as {{user}}.",
+    "registered": "The app was set up on your site for you.",
+    "ready": "{{name}} is ready",
+    "optional": "(optional)",
+    "checkDetails": "Check the details",
+    "checkAndSave": "Check and save",
+    "signIn": "Sign in",
+    "done": "Done",
+    "openSignIn": "Open the sign-in page",
+    "cancelSignIn": "Cancel sign-in",
+    "openAgain": "Open the page again",
+    "toast": {
+      "added": "{{name}} was added",
+      "updated": "{{name}} was updated",
+      "openFailed": "Could not open the sign-in page",
+      "defaultFailed": "Could not change the default site"
+    },
+    "url": {
+      "label": "Site address",
+      "hint": "The address you open in your browser to use the site."
+    },
+    "name": {
+      "label": "Name",
+      "hint": "A short name to tell your sites apart, like acme-prod."
+    },
+    "replace": {
+      "label": "Replace the saved site called {{name}}",
+      "hint": "Its address and sign-in are overwritten when you finish."
+    },
+    "http": {
+      "title": "This address is not encrypted",
+      "body": "It starts with http://, so your sign-in details travel in the clear. Use it only for a site on this computer or your own network."
+    },
+    "method": {
+      "legend": "Choose how to sign in to {{name}}",
+      "recommended": "Recommended",
+      "oauth": {
+        "title": "Sign in with your browser",
+        "description": "Sign in on your site's own page. This app never sees your password, and it works with two-factor sign-in."
+      },
+      "apikey": {
+        "title": "Use an API key",
+        "description": "Paste an API key and secret from your Frappe user settings. Good for integration users."
+      },
+      "password": {
+        "title": "Use your username and password",
+        "description": "Saved on this computer. Accounts with two-factor sign-in must use browser sign-in or an API key instead."
+      }
+    },
+    "advanced": {
+      "toggle": "Advanced: use your own OAuth client",
+      "hint": "Only needed when your site cannot set up the app by itself, for example on Frappe v15. Create an OAuth Client on your site and paste its details here.",
+      "clientId": "Client ID",
+      "clientSecret": "Client secret",
+      "secretHint": "Leave it empty for a public client. It is stored with the site, never shown again."
+    },
+    "apikey": {
+      "help": "In Frappe, open your user menu, choose My Settings, then API Access, and generate keys. The secret is shown only once there.",
+      "key": "API key",
+      "secret": "API secret"
+    },
+    "password": {
+      "username": "Username or email",
+      "password": "Password",
+      "twoFactor": "Two-factor accounts cannot sign in this way. Go back and choose browser sign-in or an API key."
+    },
+    "error": {
+      "rejected": "The site did not accept these details",
+      "network": "Could not reach the site",
+      "failed": "That did not work"
+    },
+    "default": {
+      "label": "Use as the default site",
+      "only": "It is your only site, so it is the default.",
+      "hint": "Apps that follow the default site use this one."
+    },
+    "progress": {
+      "starting": "Getting ready…",
+      "registering": "Setting up a secure connection with your site…",
+      "browser": "Continue in your browser…",
+      "finishing": "Finishing sign-in…",
+      "finishingExchange": "Completing the sign-in…",
+      "finishingUser": "Checking who signed in…",
+      "saving": "Saving the site…",
+      "done": "Signed in"
+    },
+    "oauth": {
+      "waiting": "Waiting for your browser",
+      "preparing": "Getting things ready",
+      "comeBack": "When you approve the app there, come back here.",
+      "browserFailed": "Your browser did not open",
+      "copyLinkHint": "Copy this link into your browser to continue.",
+      "link": "Sign-in link",
+      "linkCopied": "Link copied",
+      "copyLink": "Copy the sign-in link instead",
+      "redirectUri": "Redirect URI",
+      "redirectUriCopied": "Redirect URI copied",
+      "enterClientId": "Enter the client ID",
+      "noReg": {
+        "title": "This site cannot set up the app by itself",
+        "unsupported": "Older Frappe versions, such as v15, do not let apps register themselves. An administrator can create the app on the site once, then you sign in as usual.",
+        "refused": "The site refused to set up the app. An administrator can create it by hand instead."
+      },
+      "manual": {
+        "step1": "On your site, open <b>OAuth Client</b> and create a new one.",
+        "step2": "Set the grant type to <b>Authorization Code</b>, the response type to <b>Code</b>, and this redirect URI:",
+        "step3": "Save it, then paste its client ID (and secret, if it has one) here."
+      },
+      "error": {
+        "auth": "The sign-in was not completed",
+        "failed": "Sign-in did not work"
+      }
+    }
+  },
+  "connect": {
+    "fallbackName": "the app",
+    "notFoundOption": "{{name}} (not found)",
+    "defaultSite": "Default site",
+    "defaultSiteNamed": "Default site ({{site}})",
+    "connectedTitle": "{{name}} is connected",
+    "backedUp": "The old settings were backed up next to the file.",
+    "summary": {
+      "unchanged": "{{name}} is already set up exactly like this.",
+      "replaces": "This replaces the existing “{{entry}}” entry in {{name}}'s settings.",
+      "creates": "This creates {{name}}'s settings file with a “{{entry}}” entry.",
+      "adds": "This adds a “{{entry}}” entry to {{name}}'s settings."
+    },
+    "title": "Connect {{name}}",
+    "description": "Choose which site it uses and what it may do. Nothing changes until you confirm.",
+    "app": "App",
+    "site": "Site",
+    "readOnly": "Read-only",
+    "readOnlyHelp": "It can look at your data but cannot create, change or delete anything.",
+    "installFirst": "Install the ffc helper first",
+    "runsFfc": "{{name}} runs ffc to reach your sites.",
+    "install": "Install",
+    "prepareFailed": "The change could not be prepared",
+    "cannotApply": "This app cannot make the change",
+    "runInTerminal": "You can run this in a terminal instead:",
+    "tab": {
+      "summary": "Summary",
+      "changes": "Changes"
+    },
+    "detail": {
+      "entryName": "Entry name",
+      "settingsFile": "Settings file",
+      "runs": "Runs",
+      "through": "Through"
+    },
+    "alreadyConnected": "Already connected",
+    "replaceAndConnect": "Replace and connect",
+    "connect": "Connect"
+  },
+  "disconnect": {
+    "done": "{{name}} is disconnected",
+    "wasNot": "{{name}} was not connected",
+    "nothing": "There was nothing to remove.",
+    "fallbackName": "the app",
+    "title": "Disconnect {{name}}?",
+    "description": "This removes the “frappe” entry from {{name}}'s settings, so it can no longer reach your Frappe sites. Your sites stay saved in this app.",
+    "unavailable": "Not available in this version yet",
+    "settingsFile": "Settings file",
+    "pathCopied": "Path copied",
+    "button": "Disconnect"
+  },
+  "installFfc": {
+    "updated": "ffc is updated",
+    "installed": "ffc is installed",
+    "unknownVersion": "unknown",
+    "readyRestart": "Version {{version}} is ready. Restart your connected apps to use it.",
+    "ready": "Version {{version}} is ready.",
+    "cancelled": "Installation cancelled",
+    "updateTitle": "Update the ffc helper",
+    "installTitle": "Install the ffc helper",
+    "manager": "ffc was installed with {{manager}}, so {{manager}} updates and reinstalls it, not this app.",
+    "managerRun": "ffc was installed with {{manager}}, so {{manager}} updates and reinstalls it, not this app. Run this in a terminal, then restart your connected apps so they use the new version.",
+    "updateBody": "This downloads the latest ffc release from GitHub, checks its signature and replaces the ffc {{version}} at {{path}}. A development build of ffc is left alone and a new copy is installed for your user instead.",
+    "installBody": "Connected apps use ffc, a small program from Foxmayn, to talk to your Frappe sites. This downloads the latest ffc release from GitHub, checks its signature and installs it for your user only.",
+    "updateCommand": "Update command",
+    "installCommand": "Install command",
+    "whereTitle": "Where it goes",
+    "whereMac": "It installs ffc to ~/.local/bin.",
+    "whereWindows": "It installs ffc to your user's Programs folder and adds that folder to your PATH.",
+    "whereSignature": "The download is refused unless its signature matches Foxmayn's release key. You can also install it yourself in a terminal:",
+    "installing": "Installing…",
+    "versionInstalled": "ffc {{version}} is installed",
+    "restartApps": "Restart your connected apps (quit them fully) so they use the new version.",
+    "failed": "The installation did not finish",
+    "starting": "Starting…",
+    "alsoTerminal": "You can also install it yourself in a terminal:",
+    "notNow": "Not now",
+    "updateButton": "Update ffc",
+    "installButton": "Install ffc"
+  },
+  "wsl": {
+    "title": "ffc settings found in WSL",
+    "bodyOne": "Your Linux environment ({{distro}}) has its own ffc settings. This app manages the Windows settings only, and the two are not synced. Add the sites here too if you want Windows apps to use them.",
+    "bodyMany": "One of your Linux environments has its own ffc settings. This app manages the Windows settings only, and the two are not synced. Add the sites here too if you want Windows apps to use them.",
+    "where": "Where they are"
+  },
+  "page": {
+    "ffcNoAnswer": "The ffc helper does not answer",
+    "ffcMissing": "One more thing: install the ffc helper",
+    "reinstallWith": "ffc was found but did not start. Reinstalling it with {{manager}} usually fixes this.",
+    "reinstall": "ffc was found but did not start. Installing it again usually fixes this.",
+    "needed": "Connected apps use ffc, a small program from Foxmayn, to reach your sites. You can add sites and use the Assistant without it, but connected apps need it.",
+    "reinstallButton": "Reinstall",
+    "installButton": "Install ffc"
+  },
+  "shell": {
+    "logoAlt": "Foxmayn logo",
+    "nav": {
+      "sites": "Sites",
+      "settings": "Settings"
+    },
+    "header": {
+      "toggleSidebar": "Show or hide the sidebar",
+      "search": "Search"
+    },
+    "sidebar": {
+      "goToSites": "Foxmayn Frappe Desktop, go to Sites",
+      "manage": "Manage",
+      "quickActions": "Quick actions",
+      "addSite": "Add a site",
+      "updateAvailable": "Update {{version}} available",
+      "ffcUpdateTip": "Update ffc {{current}} to {{latest}}",
+      "ffcAvailable": "ffc {{version}} available",
+      "ffcLocation": "ffc helper at {{path}}",
+      "ffcVersion": "ffc helper {{version}}",
+      "ffcNoAnswerTip": "ffc was found but does not answer",
+      "ffcInstallTip": "Install the ffc helper",
+      "ffcNeedsAttention": "ffc helper needs attention",
+      "ffcMissing": "ffc helper missing",
+      "feedback": "Send feedback",
+      "feedbackTip": "Opens a short form on GitHub in your browser"
+    },
+    "update": {
+      "availableTitle": "Foxmayn Frappe Desktop {{version}} is available",
+      "installHint": "Copy the install command and run it in {{terminal}}. Settings > About has it too.",
+      "copyCommand": "Copy command",
+      "commandCopied": "Command copied",
+      "githubHint": "A newer version can be downloaded from GitHub.",
+      "ffcTitle": "ffc {{version}} is available",
+      "ffcBody": "You have ffc {{current}}. The app can update it for you."
+    }
+  },
+  "palette": {
+    "title": "Command palette",
+    "description": "Search for a page or an action",
+    "placeholder": "Type a command or search…",
+    "empty": "Nothing matches.",
+    "goTo": "Go to",
+    "actions": "Actions",
+    "addSite": "Add a site",
+    "connectApp": "Connect an app",
+    "installFfc": "Install the ffc helper",
+    "checkConnection": "Check a connection",
+    "connected": "{{name}} is connected",
+    "notAsExpected": "{{name}} did not answer as expected",
+    "newConversation": "New conversation",
+    "shortcuts": "Keyboard shortcuts",
+    "feedback": "Send feedback"
+  },
+  "theme": {
+    "title": "Theme",
+    "description": "Light, dark, or the same as your system.",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "Same as system",
+    "systemShort": "System"
+  },
+  "copy": {
+    "copied": "Copied",
+    "onClipboard": "It is on your clipboard.",
+    "failed": "Could not copy",
+    "failedHint": "Select the text and copy it yourself.",
+    "copyLabel": "Copy {{label}}"
+  },
+  "welcome": {
+    "label": "Welcome",
+    "slidesLabel": "Slides",
+    "slideLabel": "Slide {{n}}: {{title}}",
+    "lookAround": "Look around first",
+    "addFirstSite": "Add your first site",
+    "notOfficial": "Not an official Frappe product.",
+    "slides": {
+      "welcome": {
+        "title": "Welcome to Foxmayn Frappe Desktop",
+        "body": "Connect your Frappe and ERPNext sites to the AI apps on this computer, like Claude, Cursor and VS Code. No terminal needed."
+      },
+      "sites": {
+        "title": "Add your sites",
+        "body": "Sign in once with your browser. Your sign-in stays on this computer, and you can check or remove it at any time."
+      },
+      "apps": {
+        "title": "Connect your apps",
+        "body": "Pick an app and a site, and see exactly what changes before anything is saved. Turn on read-only to let it look without changing anything."
+      }
+    }
+  },
+  "ui": {
+    "previousSlide": "Previous slide",
+    "nextSlide": "Next slide",
+    "breadcrumb": "breadcrumb",
+    "more": "More",
+    "pagination": "pagination",
+    "goPrevPage": "Go to previous page",
+    "goNextPage": "Go to next page",
+    "morePages": "More pages",
+    "scrollToEnd": "Scroll to end",
+    "scrollToStart": "Scroll to start",
+    "closeToast": "Close toast",
+    "sidebar": "Sidebar",
+    "sidebarDescription": "Displays the mobile sidebar.",
+    "toggleSidebar": "Toggle sidebar",
+    "remove": "Remove",
+    "commandPalette": "Command palette",
+    "commandDescription": "Search for a command to run…",
+    "notifications": "Notifications",
+    "suggestions": "Suggestions",
+    "carousel": "carousel",
+    "slide": "slide"
+  },
+  "shortcuts": {
+    "title": "Keyboard shortcuts",
+    "body": "On macOS, use ⌘ where it says Ctrl.",
+    "palette": "Open the command palette",
+    "newChat": "New conversation",
+    "settings": "Open Settings",
+    "help": "Show these shortcuts",
+    "search": "Search conversations",
+    "sidebar": "Show or hide the sidebar",
+    "send": "Send the message",
+    "newLine": "New line in the message",
+    "stop": "Stop the assistant"
   }
 }

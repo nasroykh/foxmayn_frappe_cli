@@ -29,7 +29,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { backend } from "@/lib/backend"
 import type { ConversationMode, Profile, Toolset } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
-import { useProfiles } from "@/screens/assistant/profile-picker"
+import { profileName, useProfiles } from "@/screens/assistant/profile-picker"
 
 export const TOOLSETS: Toolset[] = ["core", "lifecycle", "collab", "admin", "files", "erp"]
 
@@ -93,14 +93,14 @@ export function ProfileSettings() {
     <li key={p.id} className="flex items-start justify-between gap-2 rounded-xl border p-3">
       <div className="flex min-w-0 flex-col gap-0.5">
         <p className="flex items-center gap-2 text-sm font-medium">
-          <span className="truncate">{p.name}</span>
+          <span className="truncate">{profileName(t, p)}</span>
           {p.preset && <Badge variant="secondary">{t("profile.builtIn")}</Badge>}
           <Badge variant="outline">{p.mode === "ask" ? t("chat.mode.ask") : t("chat.mode.read")}</Badge>
         </p>
         <p className="text-muted-foreground text-xs">
           {t("profile.summary", {
             toolsets: p.toolsets.length ? p.toolsets.join(", ") : t("profile.defaultToolsets"),
-            steps: p.stepLimit,
+            count: p.stepLimit,
           })}
         </p>
       </div>
@@ -108,8 +108,8 @@ export function ProfileSettings() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setEditing({ p: duplicate(p, t("profile.copyName", { name: p.name })), title: t("profile.duplicateTitle") })}
-          aria-label={t("profile.duplicateLabel", { name: p.name })}
+          onClick={() => setEditing({ p: duplicate(p, t("profile.copyName", { name: profileName(t, p) })), title: t("profile.duplicateTitle") })}
+          aria-label={t("profile.duplicateLabel", { name: profileName(t, p) })}
         >
           <IconCopy data-icon="inline-start" />
           {t("profile.duplicate")}

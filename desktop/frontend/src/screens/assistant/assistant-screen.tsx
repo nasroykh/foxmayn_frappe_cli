@@ -24,7 +24,7 @@ let lastSelected = ""
 /** The Assistant: chat with a model that works on a site, or onboarding when no provider is usable. */
 export function AssistantScreen() {
   const { t } = useTranslation()
-  const { sites, addSite } = useApp()
+  const { sites, addSite, newConversationPending, takeNewConversation } = useApp()
   const [providers, setProviders] = React.useState<ProviderInfo[] | null>(null)
   const [conversations, setConversations] = React.useState<Conversation[] | null>(null)
   const [error, setError] = React.useState<AppError | null>(null)
@@ -32,6 +32,18 @@ export function AssistantScreen() {
   const [newOpen, setNewOpen] = React.useState(false)
   // Decided once, from the first answer: a key saved mid-way must not end the onboarding before the chat starts.
   const [onboarding, setOnboarding] = React.useState<boolean | null>(null)
+
+  // Ctrl+N and the palette ask for a new conversation, also from another
+  // screen (this one then mounts with the request pending). Answered once the
+  // screen knows what it shows: the form when it can start a conversation;
+  // dropped during the setup or without sites, which have their own way.
+  const ready = !!providers && !!conversations && !!sites.data && onboarding !== null
+  const canStart = ready && !onboarding && (sites.data?.sites?.length ?? 0) > 0
+  React.useEffect(() => {
+    if (!newConversationPending || !ready) return
+    takeNewConversation()
+    if (canStart) setNewOpen(true)
+  }, [newConversationPending, ready, canStart, takeNewConversation])
 
   const select = React.useCallback((id: string) => {
     lastSelected = id

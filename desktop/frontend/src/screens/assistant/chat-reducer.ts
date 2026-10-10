@@ -9,6 +9,9 @@ export interface ChatFailure {
   code: string
   message: string
   detail?: string
+  /** errors.<key> in the catalogs when Go named one. */
+  key?: string
+  args?: { [k: string]: string | undefined } | null
 }
 
 /** idle: nothing running. starting: sent, run id not known yet. paused: waits for Continue. */

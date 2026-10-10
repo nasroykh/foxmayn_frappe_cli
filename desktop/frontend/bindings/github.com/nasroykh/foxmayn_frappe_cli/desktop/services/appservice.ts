@@ -80,6 +80,15 @@ export function RefreshFFC(): $CancellablePromise<$models.FFCInfo> {
 }
 
 /**
+ * SetLanguage sets the language of the native dialogs ("en", "fr", "ar" or
+ * a tag such as "fr-FR"; anything else is English) and returns the one in
+ * use. The page calls it on start and whenever the language changes.
+ */
+export function SetLanguage(lang: string): $CancellablePromise<string> {
+    return $Call.ByID(2714722024, lang);
+}
+
+/**
  * SetWindowTheme matches the window background to the theme the page applied
  * (the in-app choice, not only the system theme) and shows the window if it
  * is still hidden. The page calls it on start and on every theme change.

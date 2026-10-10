@@ -1,5 +1,15 @@
 import { useTranslation } from "react-i18next"
-import { IconAlertTriangle, IconArrowUpCircle, IconCircleCheck, IconPlus, IconMessageChatbot, IconRobot, IconSettings, IconWorld } from "@tabler/icons-react"
+import {
+  IconAlertTriangle,
+  IconArrowUpCircle,
+  IconCircleCheck,
+  IconMessageChatbot,
+  IconMessageReport,
+  IconPlus,
+  IconRobot,
+  IconSettings,
+  IconWorld,
+} from "@tabler/icons-react"
 
 import { useApp, type Screen } from "@/app/app-context"
 import { BrandLogo } from "@/components/brand-logo"
@@ -18,17 +28,17 @@ import {
   SidebarMenuSkeleton,
 } from "@/components/ui/sidebar"
 
-const nav: { id: Screen; label?: string; labelKey?: string; icon: typeof IconWorld }[] = [
-  { id: "sites", label: "Sites", icon: IconWorld },
+const nav: { id: Screen; labelKey: string; icon: typeof IconWorld }[] = [
+  { id: "sites", labelKey: "shell.nav.sites", icon: IconWorld },
   { id: "assistant", labelKey: "nav.assistant", icon: IconMessageChatbot },
   // The screen id stays "assistants"; the label is "Connect apps". The chat is "assistant".
   { id: "assistants", labelKey: "nav.connectApps", icon: IconRobot },
-  { id: "settings", label: "Settings", icon: IconSettings },
+  { id: "settings", labelKey: "shell.nav.settings", icon: IconSettings },
 ]
 
 export function AppSidebar() {
   const { t } = useTranslation()
-  const { screen, setScreen, sites, assistants, env, update, addSite, installFFC, ffcUpdate } = useApp()
+  const { screen, setScreen, sites, assistants, env, update, addSite, installFFC, ffcUpdate, sendFeedback } = useApp()
   const siteCount = sites.data?.sites?.length ?? 0
   const connected = assistants.data?.assistants?.filter((a) => a.status === "connected").length ?? 0
   const ffc = env.data?.ffc
@@ -41,7 +51,7 @@ export function AppSidebar() {
             <SidebarMenuButton
               size="lg"
               onClick={() => setScreen("sites")}
-              aria-label="Foxmayn Frappe Desktop, go to Sites"
+              aria-label={t("shell.sidebar.goToSites")}
             >
               <BrandLogo size={28} className="rounded-md" />
               <span className="flex min-w-0 flex-col leading-tight">
@@ -55,7 +65,7 @@ export function AppSidebar() {
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Manage</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("shell.sidebar.manage")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {nav.map((item) => (
@@ -66,14 +76,14 @@ export function AppSidebar() {
                     aria-current={screen === item.id ? "page" : undefined}
                   >
                     <item.icon />
-                    <span>{item.labelKey ? t(item.labelKey) : item.label}</span>
+                    <span>{t(item.labelKey)}</span>
                   </SidebarMenuButton>
                   {item.id === "sites" && siteCount > 0 && <SidebarMenuBadge>{siteCount}</SidebarMenuBadge>}
                   {item.id === "assistants" && connected > 0 && <SidebarMenuBadge>{connected}</SidebarMenuBadge>}
                   {item.id === "settings" && update?.available && (
                     <SidebarMenuBadge>
                       <span className="bg-primary size-2 rounded-full" aria-hidden="true" />
-                      <span className="sr-only">Update {update.latest} available</span>
+                      <span className="sr-only">{t("shell.sidebar.updateAvailable", { version: update.latest })}</span>
                     </SidebarMenuBadge>
                   )}
                 </SidebarMenuItem>
@@ -82,13 +92,13 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarGroup>
-          <SidebarGroupLabel>Quick actions</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("shell.sidebar.quickActions")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton onClick={addSite}>
                   <IconPlus />
-                  <span>Add a site</span>
+                  <span>{t("shell.sidebar.addSite")}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
@@ -99,26 +109,32 @@ export function AppSidebar() {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
+            <SidebarMenuButton onClick={sendFeedback} tooltip={t("shell.sidebar.feedbackTip")}>
+              <IconMessageReport />
+              <span>{t("shell.sidebar.feedback")}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
             {!ffc ? (
               <SidebarMenuSkeleton showIcon />
             ) : ffc.found && !ffc.error && ffcUpdate ? (
-              <SidebarMenuButton onClick={installFFC} tooltip={`Update ffc ${ffc.version} to ${ffcUpdate.latest}`}>
+              <SidebarMenuButton onClick={installFFC} tooltip={t("shell.sidebar.ffcUpdateTip", { current: ffc.version, latest: ffcUpdate.latest })}>
                 <IconArrowUpCircle />
-                <span className="truncate">ffc {ffcUpdate.latest} available</span>
+                <span className="truncate">{t("shell.sidebar.ffcAvailable", { version: ffcUpdate.latest })}</span>
               </SidebarMenuButton>
             ) : ffc.found && !ffc.error ? (
-              <SidebarMenuButton onClick={() => setScreen("settings")} tooltip={`ffc helper at ${ffc.path}`}>
+              <SidebarMenuButton onClick={() => setScreen("settings")} tooltip={t("shell.sidebar.ffcLocation", { path: ffc.path })}>
                 <IconCircleCheck />
-                <span className="truncate">ffc helper {ffc.version}</span>
+                <span className="truncate">{t("shell.sidebar.ffcVersion", { version: ffc.version })}</span>
               </SidebarMenuButton>
             ) : (
               <SidebarMenuButton
                 onClick={ffc.found ? () => setScreen("settings") : installFFC}
-                tooltip={ffc.found ? "ffc was found but does not answer" : "Install the ffc helper"}
+                tooltip={ffc.found ? t("shell.sidebar.ffcNoAnswerTip") : t("shell.sidebar.ffcInstallTip")}
                 className="text-destructive"
               >
                 <IconAlertTriangle />
-                <span className="truncate">{ffc.found ? "ffc helper needs attention" : "ffc helper missing"}</span>
+                <span className="truncate">{ffc.found ? t("shell.sidebar.ffcNeedsAttention") : t("shell.sidebar.ffcMissing")}</span>
               </SidebarMenuButton>
             )}
           </SidebarMenuItem>
