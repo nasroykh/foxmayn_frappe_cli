@@ -187,7 +187,8 @@
     },
     "search": {
       "label": "البحث في المحادثات",
-      "placeholder": "بحث (Ctrl+Shift+F)",
+      "placeholder": "بحث",
+      "tooltip": "البحث في المحادثات (Ctrl+Shift+F)",
       "clear": "مسح البحث",
       "filters": "عوامل تصفية البحث",
       "site": "الموقع",

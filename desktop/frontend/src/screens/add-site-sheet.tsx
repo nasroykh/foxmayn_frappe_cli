@@ -394,7 +394,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
               {method === "oauth" && (
                 <Collapsible open={advanced} onOpenChange={setAdvanced}>
                   <CollapsibleTrigger
-                    render={<Button variant="ghost" size="sm" className="text-muted-foreground -ml-2" />}
+                    render={<Button variant="ghost" size="sm" className="text-muted-foreground -ms-2" />}
                   >
                     <IconChevronDown
                       data-icon="inline-start"
@@ -720,7 +720,7 @@ function OAuthStep({
               : t("addSite.oauth.noReg.refused")}
           </AlertDescription>
         </Alert>
-        <ol className="text-muted-foreground flex list-decimal flex-col gap-3 pl-5 text-sm">
+        <ol className="text-muted-foreground flex list-decimal flex-col gap-3 ps-5 text-sm">
           <li>
             <Trans
               i18nKey="addSite.oauth.manual.step1"
@@ -786,14 +786,14 @@ function OAuthStep({
         </p>
       </div>
       {progress?.browserError && (
-        <Alert className="text-left">
+        <Alert className="text-start">
           <IconAlertTriangle />
           <AlertTitle>{t("addSite.oauth.browserFailed")}</AlertTitle>
           <AlertDescription>{t("addSite.oauth.copyLinkHint")}</AlertDescription>
         </Alert>
       )}
       {progress?.authURL && step === "browser" && (
-        <div className="flex w-full flex-col gap-2 text-left">
+        <div className="flex w-full flex-col gap-2 text-start">
           {progress.browserError ? (
             <CopyField value={progress.authURL} label={t("addSite.oauth.link")} copiedTitle={t("addSite.oauth.linkCopied")} />
           ) : (

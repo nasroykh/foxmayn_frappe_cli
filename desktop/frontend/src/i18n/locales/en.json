@@ -183,7 +183,8 @@
     },
     "search": {
       "label": "Search conversations",
-      "placeholder": "Search (Ctrl+Shift+F)",
+      "placeholder": "Search",
+      "tooltip": "Search conversations (Ctrl+Shift+F)",
       "clear": "Clear the search",
       "filters": "Search filters",
       "site": "Site",

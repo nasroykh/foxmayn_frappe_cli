@@ -312,7 +312,7 @@ function ChoiceButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="hover:bg-muted focus-visible:ring-ring/50 flex items-start gap-3 rounded-xl border p-3 text-left outline-none focus-visible:ring-3 disabled:opacity-50 [&_svg]:mt-0.5 [&_svg]:size-5 [&_svg]:shrink-0"
+      className="hover:bg-muted focus-visible:ring-ring/50 flex items-start gap-3 rounded-xl border p-3 text-start outline-none focus-visible:ring-3 disabled:opacity-50 [&_svg]:mt-0.5 [&_svg]:size-5 [&_svg]:shrink-0"
     >
       {icon}
       <span className="flex flex-col">

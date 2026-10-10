@@ -59,7 +59,7 @@ export function Details({
 export function LoadError({ title, error, onRetry }: { title: string; error: AppError; onRetry: () => void }) {
   const { t } = useTranslation()
   return (
-    <Alert variant="destructive" className="has-data-[slot=alert-action]:pr-28">
+    <Alert variant="destructive" className="has-data-[slot=alert-action]:pe-28">
       <IconAlertTriangle />
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription>
@@ -83,7 +83,7 @@ export function FFCMissingAlert() {
   const ffc = env.data?.ffc
   if (!ffc || (ffc.found && !ffc.error)) return null
   return (
-    <Alert className="has-data-[slot=alert-action]:pr-28">
+    <Alert className="has-data-[slot=alert-action]:pe-28">
       <IconAlertTriangle />
       <AlertTitle>{ffc.found ? t("page.ffcNoAnswer") : t("page.ffcMissing")}</AlertTitle>
       <AlertDescription>

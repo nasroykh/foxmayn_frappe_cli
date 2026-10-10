@@ -653,7 +653,7 @@ function AttachmentChips({
           {onRemove && (
             <button
               type="button"
-              className="hover:text-destructive -mr-1 shrink-0 rounded p-0.5"
+              className="hover:text-destructive -me-1 shrink-0 rounded p-0.5"
               aria-label={t("chat.composer.remove", { name: a.name })}
               onClick={() => onRemove(a)}
             >
@@ -672,7 +672,7 @@ function UserBubble({ text, attachments = [] }: { text: string; attachments?: St
     <div className="flex flex-col items-end gap-1">
       {attachments.length > 0 && <AttachmentChips items={attachments} label={t("chat.attachments.label")} />}
       {text && (
-        <p className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl px-3 py-2 text-sm break-words whitespace-pre-wrap">
+        <p dir="auto" className="bg-primary text-primary-foreground max-w-[85%] rounded-2xl px-3 py-2 text-sm break-words whitespace-pre-wrap">
           {text}
         </p>
       )}

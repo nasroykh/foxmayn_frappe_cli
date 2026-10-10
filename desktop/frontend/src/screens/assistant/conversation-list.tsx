@@ -90,7 +90,7 @@ export function ConversationList({
   const archivedCount = conversations.filter((c) => c.archived).length
 
   return (
-    <nav aria-label={t("chat.list.label")} className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r">
+    <nav aria-label={t("chat.list.label")} className="flex h-full min-h-0 w-60 shrink-0 flex-col border-e">
       <div className="flex items-center justify-between gap-1 p-3 pb-2">
         <h2 className="min-w-0 truncate text-sm font-semibold">{archive ? t("chat.list.archiveTitle") : t("chat.list.title")}</h2>
         <div className="flex items-center gap-1">
@@ -150,13 +150,13 @@ export function ConversationList({
                 onClick={() => onSelect(c.id)}
                 aria-current={c.id === selected ? "true" : undefined}
                 className={cn(
-                  "hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col rounded-lg px-2 py-1.5 pr-14 text-left text-sm outline-none focus-visible:ring-3",
+                  "hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col rounded-lg px-2 py-1.5 pe-14 text-start text-sm outline-none focus-visible:ring-3",
                   c.id === selected && "bg-muted",
                 )}
               >
                 <span className="flex items-center gap-1 font-medium">
                   {c.pinned && <IconPinFilled className="text-muted-foreground size-3 shrink-0" aria-label={t("chat.list.pinned")} />}
-                  <span className="truncate">{title}</span>
+                  <span dir="auto" className="truncate">{title}</span>
                 </span>
                 <span className="text-muted-foreground truncate text-xs">
                   {c.site}
@@ -170,7 +170,7 @@ export function ConversationList({
                       variant="ghost"
                       size="icon-xs"
                       aria-label={t("chat.list.moreLabel", { title })}
-                      className="absolute top-1.5 right-7 opacity-0 group-hover/conv:opacity-100 focus-visible:opacity-100 data-[popup-open]:opacity-100"
+                      className="absolute top-1.5 end-7 opacity-0 group-hover/conv:opacity-100 focus-visible:opacity-100 data-[popup-open]:opacity-100"
                     />
                   }
                 >
@@ -207,7 +207,7 @@ export function ConversationList({
                       variant="ghost"
                       size="icon-xs"
                       aria-label={t("chat.list.deleteLabel", { title })}
-                      className="absolute top-1.5 right-1 opacity-0 group-hover/conv:opacity-100 focus-visible:opacity-100"
+                      className="absolute top-1.5 end-1 opacity-0 group-hover/conv:opacity-100 focus-visible:opacity-100"
                       onClick={() => setDoomed(c)}
                     />
                   }

@@ -65,17 +65,17 @@ function Link({ href, children }: { href?: string; children?: React.ReactNode })
 const components: Components = {
   a: ({ href, children }) => <Link href={href}>{children}</Link>,
   img: ({ alt }) => (alt ? <span>{alt}</span> : null),
-  p: ({ children }) => <p className="leading-relaxed [&:not(:first-child)]:mt-2">{children}</p>,
-  h1: ({ children }) => <h3 className="font-heading mt-3 text-base font-semibold">{children}</h3>,
-  h2: ({ children }) => <h3 className="font-heading mt-3 text-base font-semibold">{children}</h3>,
-  h3: ({ children }) => <h4 className="mt-3 text-sm font-semibold">{children}</h4>,
-  h4: ({ children }) => <h4 className="mt-3 text-sm font-semibold">{children}</h4>,
-  h5: ({ children }) => <h5 className="mt-3 text-sm font-medium">{children}</h5>,
-  h6: ({ children }) => <h5 className="mt-3 text-sm font-medium">{children}</h5>,
-  ul: ({ children }) => <ul className="mt-2 list-disc pl-5">{children}</ul>,
-  ol: ({ children }) => <ol className="mt-2 list-decimal pl-5">{children}</ol>,
+  p: ({ children }) => <p dir="auto" className="leading-relaxed [&:not(:first-child)]:mt-2">{children}</p>,
+  h1: ({ children }) => <h3 dir="auto" className="font-heading mt-3 text-base font-semibold">{children}</h3>,
+  h2: ({ children }) => <h3 dir="auto" className="font-heading mt-3 text-base font-semibold">{children}</h3>,
+  h3: ({ children }) => <h4 dir="auto" className="mt-3 text-sm font-semibold">{children}</h4>,
+  h4: ({ children }) => <h4 dir="auto" className="mt-3 text-sm font-semibold">{children}</h4>,
+  h5: ({ children }) => <h5 dir="auto" className="mt-3 text-sm font-medium">{children}</h5>,
+  h6: ({ children }) => <h5 dir="auto" className="mt-3 text-sm font-medium">{children}</h5>,
+  ul: ({ children }) => <ul dir="auto" className="mt-2 list-disc ps-5">{children}</ul>,
+  ol: ({ children }) => <ol dir="auto" className="mt-2 list-decimal ps-5">{children}</ol>,
   blockquote: ({ children }) => (
-    <blockquote className="text-muted-foreground mt-2 border-l-2 pl-3">{children}</blockquote>
+    <blockquote dir="auto" className="text-muted-foreground mt-2 border-s-2 ps-3">{children}</blockquote>
   ),
   hr: () => <hr className="my-3" />,
   table: ({ children }) => (
@@ -83,8 +83,8 @@ const components: Components = {
       <table className="w-full border-collapse text-sm">{children}</table>
     </div>
   ),
-  th: ({ children }) => <th className="border px-2 py-1 text-left font-medium">{children}</th>,
-  td: ({ children }) => <td className="border px-2 py-1">{children}</td>,
+  th: ({ children }) => <th dir="auto" className="border px-2 py-1 text-start font-medium">{children}</th>,
+  td: ({ children }) => <td dir="auto" className="border px-2 py-1">{children}</td>,
   pre: ({ children }) => (
     <pre className="bg-muted mt-2 max-h-72 overflow-auto rounded-lg p-3 font-mono text-xs leading-relaxed">
       {children}
@@ -103,6 +103,9 @@ const components: Components = {
   ),
 }
 
+// Each block takes the direction of its own text (dir="auto"): a reply can mix
+// Arabic and English paragraphs, and an Arabic one often starts with a Latin
+// document name.
 export function ChatMarkdown({ text }: { text: string }) {
   return (
     <div className="min-w-0 text-sm break-words">

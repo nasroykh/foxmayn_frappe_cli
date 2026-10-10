@@ -127,14 +127,16 @@ export function ConversationSearch({
     <div className="flex flex-col gap-2 px-3 pb-2">
       <div className="flex items-center gap-1">
         <div className="relative min-w-0 flex-1">
-          <IconSearch className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2" aria-hidden />
+          <IconSearch className="text-muted-foreground pointer-events-none absolute top-1/2 start-2 size-4 -translate-y-1/2" aria-hidden />
           <Input
             ref={inputRef}
             type="search"
             role="searchbox"
             aria-label={t("chat.search.label")}
             placeholder={t("chat.search.placeholder")}
-            className="h-8 pr-7 pl-8"
+            title={t("chat.search.tooltip")}
+            aria-keyshortcuts="Control+Shift+F Meta+Shift+F"
+            className="h-8 pe-7 ps-8"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -149,7 +151,7 @@ export function ConversationSearch({
             <Button
               variant="ghost"
               size="icon-xs"
-              className="absolute top-1/2 right-1 -translate-y-1/2"
+              className="absolute top-1/2 end-1 -translate-y-1/2"
               aria-label={t("chat.search.clear")}
               onClick={clear}
             >
@@ -248,7 +250,7 @@ export function ConversationSearch({
               <button
                 type="button"
                 onClick={() => onOpen(h.convID)}
-                className="hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col rounded-lg px-2 py-1.5 text-left text-sm outline-none focus-visible:ring-3"
+                className="hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col rounded-lg px-2 py-1.5 text-start text-sm outline-none focus-visible:ring-3"
               >
                 <span className="truncate font-medium">{h.title || t("chat.list.untitled")}</span>
                 <span className="text-muted-foreground line-clamp-2 text-xs break-words">

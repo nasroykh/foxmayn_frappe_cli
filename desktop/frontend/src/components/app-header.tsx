@@ -62,7 +62,7 @@ export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
         </BreadcrumbList>
       </Breadcrumb>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ms-auto flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={onOpenPalette} className="text-muted-foreground">
           <IconSearch data-icon="inline-start" />
           {t("shell.header.search")}

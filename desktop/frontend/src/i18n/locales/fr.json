@@ -184,7 +184,8 @@
     },
     "search": {
       "label": "Rechercher dans les conversations",
-      "placeholder": "Rechercher (Ctrl+Shift+F)",
+      "placeholder": "Rechercher",
+      "tooltip": "Rechercher dans les conversations (Ctrl+Shift+F)",
       "clear": "Effacer la recherche",
       "filters": "Filtres de recherche",
       "site": "Site",

@@ -185,7 +185,7 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
           </FieldGroup>
 
           {previewError?.code === "ffc_missing" ? (
-            <Alert className="has-data-[slot=alert-action]:pr-28">
+            <Alert className="has-data-[slot=alert-action]:pe-28">
               <IconAlertTriangle />
               <AlertTitle>{tr("connect.installFirst")}</AlertTitle>
               <AlertDescription>{tr("connect.runsFfc", { name })}</AlertDescription>
