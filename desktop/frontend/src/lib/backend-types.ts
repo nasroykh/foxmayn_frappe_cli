@@ -144,7 +144,7 @@ export interface ChatMessage extends Omit<GeneratedChatMessage, "role" | "tools"
 }
 
 /** "text" for text, CSV, JSON and XLSX files, "image" for pictures. */
-export type AttachmentKind = "text" | "image"
+export type AttachmentKind = "text" | "image" | "document"
 
 /** A file attached to the next message (staged) or to a sent one. */
 export interface StagedAttachment extends Omit<GeneratedStagedAttachment, "kind"> {

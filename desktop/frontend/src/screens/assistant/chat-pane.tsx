@@ -4,6 +4,7 @@ import {
   IconFileText,
   IconPaperclip,
   IconPencil,
+  IconFileTypePdf,
   IconPhoto,
   IconPlayerPlay,
   IconPlayerStop,
@@ -824,6 +825,8 @@ function AttachmentChips({
         <li key={a.id} className="bg-muted text-foreground flex max-w-64 items-center gap-1 rounded-md border px-2 py-0.5 text-xs">
           {a.kind === "image" ? (
             <IconPhoto className="size-3.5 shrink-0" aria-hidden />
+          ) : a.kind === "document" ? (
+            <IconFileTypePdf className="size-3.5 shrink-0" aria-hidden />
           ) : (
             <IconFileText className="size-3.5 shrink-0" aria-hidden />
           )}

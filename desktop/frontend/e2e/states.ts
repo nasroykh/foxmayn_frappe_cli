@@ -72,6 +72,21 @@ export const states: State[] = [
       await page.locator("[data-slot=message-footer]").first().locator("..").hover()
     },
   },
+  {
+    name: "chat-attachments",
+    reach: async (page) => {
+      await newConversation(page)
+      await dialog(page).locator("button[type=submit], [data-slot=button]").last().click()
+      await expect(page.locator("#chat-input")).toBeVisible()
+      // The mock's samples, in order: a CSV, an XLSX, a PDF and a DOCX.
+      // The paperclip (the chips have buttons too, before it).
+      const clip = page.locator("form[data-file-drop-target] button:has(svg.tabler-icon-paperclip)")
+      for (let i = 1; i <= 4; i++) {
+        await clip.click()
+        await expect(page.locator("form[data-file-drop-target] ul li").nth(i - 1)).toBeVisible({ timeout: 5000 })
+      }
+    },
+  },
   { name: "connect-apps", reach: (page) => goTo(page, "apps") },
   {
     name: "connect-dialog",

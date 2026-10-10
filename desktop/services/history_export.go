@@ -287,9 +287,10 @@ func parseImport(data []byte) (store.ExportData, error) {
 		if err != nil || len(m.Parts) == 0 || m.Parts[0] != '[' {
 			return store.ExportData{}, badFile(fmt.Sprintf("Message %d could not be read.", i+1))
 		}
-		// The attachments are not in the file: an image becomes a note, so a
-		// later run never points at an attachment that is not there. Thinking
-		// is not kept: it is the model's, and a file cannot speak for it.
+		// The attachments are not in the file: an image or a PDF becomes a
+		// note, so a later run never points at an attachment that is not
+		// there. Thinking is not kept: it is the model's, and a file cannot
+		// speak for it.
 		kept := parts[:0]
 		for _, p := range parts {
 			switch v := p.(type) {
@@ -297,6 +298,8 @@ func parseImport(data []byte) (store.ExportData, error) {
 				continue
 			case llm.Image:
 				p = llm.Text{Text: "[image not included: " + clipRunes(v.MediaType, 40) + "]"}
+			case llm.Document:
+				p = llm.Text{Text: "[PDF not included: " + clipRunes(v.Name, 80) + "]"}
 			}
 			kept = append(kept, p)
 		}

@@ -578,3 +578,19 @@ func TestIDlessCallsAndResults(t *testing.T) {
 		t.Fatalf("calls %v outputs %v", calls, outs)
 	}
 }
+
+func TestPDFEncoding(t *testing.T) {
+	pdf := []byte("%PDF-1.7 fake")
+	req := hi()
+	req.Images = llmtest.Images{"d": pdf}
+	req.Messages = []llm.Message{{Role: llm.RoleUser, Parts: []llm.Part{llm.Document{AttachmentID: "d", MediaType: "application/pdf", Name: "f.pdf"}, llm.Text{Text: "sum it"}}}}
+	in := sentInput(t, req)
+	c, _ := in[0]["content"].([]any)
+	if len(c) != 2 {
+		t.Fatalf("content %v", in[0])
+	}
+	f := c[1].(map[string]any)
+	if f["type"] != "input_file" || f["filename"] != "f.pdf" || f["file_data"] != "data:application/pdf;base64,"+base64.StdEncoding.EncodeToString(pdf) {
+		t.Fatalf("file %v", f)
+	}
+}

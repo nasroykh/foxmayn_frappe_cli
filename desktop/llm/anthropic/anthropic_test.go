@@ -879,3 +879,22 @@ func TestRedirectNotFollowed(t *testing.T) {
 		t.Fatalf("headers %v", h)
 	}
 }
+
+func TestRequestEncodesPDF(t *testing.T) {
+	pdf := []byte("%PDF-1.7 fake")
+	msgs := sentMessages(t, llm.Request{
+		Images: llmtest.Images{"d": pdf},
+		Messages: []llm.Message{{Role: llm.RoleUser, Parts: []llm.Part{
+			llm.Document{AttachmentID: "d", MediaType: "application/pdf", Name: "f.pdf"},
+			llm.Text{Text: "sum it"},
+		}}},
+	})
+	c := msgs[0].Content
+	if len(c) != 2 || c[0]["type"] != "document" {
+		t.Fatalf("content %+v", c)
+	}
+	src, _ := c[0]["source"].(map[string]any)
+	if src["type"] != "base64" || src["media_type"] != "application/pdf" || src["data"] != base64.StdEncoding.EncodeToString(pdf) {
+		t.Fatalf("document source %+v", src)
+	}
+}

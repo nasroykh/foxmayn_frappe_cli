@@ -26,6 +26,8 @@ const DATA = new Set([
   // The read answer the mock gives (chat-message-actions) and its title.
   "What is TD-0001?", "Open ToDos", "Let me look that up. TD-0001 is a ToDo", "\"Call the supplier\"", "status Open",
   "assigned to you and due on 2026-10-12.",
+  // The mock's sample attachments (chat-attachments).
+  "stock.csv", "prices.xlsx", "invoice.pdf", "memo.docx",
 ])
 
 const PIECES = /\s*[·•|,:()\n]\s*/

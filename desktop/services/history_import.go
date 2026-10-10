@@ -50,6 +50,8 @@ func importedBlock(rows []store.Message) (llm.Text, error) {
 				lines = append(lines, fmt.Sprintf("[%s: %s]", kind, clipRunes(v.Text, importedResultLimit)))
 			case llm.Image:
 				lines = append(lines, "[image not included]")
+			case llm.Document:
+				lines = append(lines, "[PDF not included]")
 			}
 			// Thinking is not part of the record.
 		}

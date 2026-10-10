@@ -78,17 +78,22 @@ describe("composer attachments", () => {
     expect(within(sent).queryByRole("button")).toBeNull()
   }, 20000)
 
-  it("shows a refused file as a toast", async () => {
+  it("stages a PDF and a Word file, and shows a refused file as a toast", async () => {
     await backend.newConversation("acme-prod", "read", "anthropic", "")
     const add = vi.spyOn(toast, "add")
     show()
+    // The mock's samples go on from the test before: a PDF, a DOCX, then a refusal.
+    await attach()
+    await waitFor(() => expect(staged()?.textContent).toContain("invoice.pdf"))
+    await attach()
+    await waitFor(() => expect(staged()?.textContent).toContain("memo.docx"))
     await attach()
     await waitFor(() =>
       expect(add).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Not attached", description: expect.stringContaining("PDF files cannot be attached yet") }),
+        expect.objectContaining({ title: "Not attached", description: expect.stringContaining("cannot be attached") }),
       ),
     )
-    expect(staged()).toBeNull()
+    expect(staged()?.querySelectorAll("li")).toHaveLength(2)
   })
 
   it("stages a pasted image and refuses one over 5 MB", async () => {

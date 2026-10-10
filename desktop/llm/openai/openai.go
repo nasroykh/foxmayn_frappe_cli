@@ -348,8 +348,8 @@ func resultText(r llm.ToolResult) string {
 	return r.Text
 }
 
-// userMessage maps the text and images of a user message; ok is false when
-// it has neither.
+// userMessage maps the text, images and PDF files of a user message; ok is
+// false when it has none.
 func userMessage(ctx context.Context, images llm.ImageResolver, m llm.Message) (responses.ResponseInputItemUnionParam, bool, error) {
 	var text strings.Builder
 	var imgs responses.ResponseInputMessageContentListParam
@@ -367,6 +367,20 @@ func userMessage(ctx context.Context, images llm.ImageResolver, m llm.Message) (
 				ImageURL: param.NewOpt("data:" + p.MediaType + ";base64," + base64.StdEncoding.EncodeToString(b)),
 			}
 			imgs = append(imgs, responses.ResponseInputContentUnionParam{OfInputImage: &img})
+		case llm.Document:
+			b, err := llm.DocumentBytes(ctx, images, p)
+			if err != nil {
+				return responses.ResponseInputItemUnionParam{}, false, err
+			}
+			name := p.Name
+			if name == "" {
+				name = "document.pdf"
+			}
+			f := responses.ResponseInputFileParam{
+				Filename: param.NewOpt(name),
+				FileData: param.NewOpt("data:application/pdf;base64," + base64.StdEncoding.EncodeToString(b)),
+			}
+			imgs = append(imgs, responses.ResponseInputContentUnionParam{OfInputFile: &f})
 		}
 	}
 	if len(imgs) == 0 {
