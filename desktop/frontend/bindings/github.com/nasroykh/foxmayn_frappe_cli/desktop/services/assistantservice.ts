@@ -309,8 +309,9 @@ export function SetConversationMode(id: string, mode: string): $CancellablePromi
 /**
  * SetConversationProfile gives a conversation a profile ("" for none). When
  * the profile names a provider the conversation switches to it, and a site
- * set to local models only refuses a provider that is not local. It is
- * refused while a run is active.
+ * set to local models only refuses a provider that is not local. A profile
+ * also sets the conversation's mode switch to its own mode ("" keeps it). It
+ * is refused while a run is active.
  */
 export function SetConversationProfile(convID: string, profileID: string): $CancellablePromise<$models.Conversation> {
     return $Call.ByID(4043675533, convID, profileID);
