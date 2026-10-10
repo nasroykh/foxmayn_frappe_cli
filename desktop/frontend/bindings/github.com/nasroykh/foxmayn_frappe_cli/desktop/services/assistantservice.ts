@@ -79,6 +79,14 @@ export function DeleteConversation(id: string): $CancellablePromise<void> {
 }
 
 /**
+ * DeleteExchange removes a prompt and its answer from a conversation. It is
+ * refused while a run is active.
+ */
+export function DeleteExchange(convID: string, msgID: string): $CancellablePromise<void> {
+    return $Call.ByID(359838311, convID, msgID);
+}
+
+/**
  * DeleteProfile removes one of the user's profiles. Its conversations move to
  * the Explore preset (read only), so nothing gains rights. It is refused
  * while one of them has a run in progress.
@@ -243,6 +251,24 @@ export function RemoveAttachment(convID: string, id: string): $CancellablePromis
  */
 export function Rename(id: string, title: string): $CancellablePromise<void> {
     return $Call.ByID(2992165439, id, title);
+}
+
+/**
+ * Retry removes the last answer and runs the last prompt again. A prompt
+ * from an imported file is never run. It returns the new run's id.
+ */
+export function Retry(convID: string): $CancellablePromise<string> {
+    return $Call.ByID(1648865389, convID);
+}
+
+/**
+ * Rewind removes a prompt and everything after it, and gives its text and
+ * files back for the composer: editing a prompt is sending it again from
+ * there. A prompt from an imported file cannot be edited (its text is not the
+ * user's own). It is refused while a run is active.
+ */
+export function Rewind(convID: string, msgID: string): $CancellablePromise<$models.EditResult> {
+    return $Call.ByID(2206242282, convID, msgID);
 }
 
 /**

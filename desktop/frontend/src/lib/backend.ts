@@ -130,6 +130,12 @@ export const backend: Backend = {
   cancelRun: (runID) => AssistantService.Cancel(runID),
   answerApproval: (convID, approvalID, approve) => AssistantService.Answer(convID, approvalID, approve),
   continueRun: (runID) => AssistantService.Continue(runID),
+  deleteExchange: (convID, msgID) => AssistantService.DeleteExchange(convID, msgID),
+  retry: (convID) => AssistantService.Retry(convID),
+  rewind: async (convID, msgID) => {
+    const r = await AssistantService.Rewind(convID, msgID)
+    return { text: r.text, attachments: (r.attachments ?? []).map(staged) }
+  },
   pendingApprovals: async (convID) => ((await AssistantService.PendingApprovals(convID)) ?? []).map(approval),
   newConversation: (site, mode, providerID, model) => AssistantService.NewConversation(site, mode, providerID, model),
   listConversations: async () => (await AssistantService.ListConversations()) ?? [],

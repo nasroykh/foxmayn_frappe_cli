@@ -37,6 +37,7 @@ export type {
     Conversation,
     ConversationDetail,
     DiffField,
+    EditResult,
     Environment,
     Error,
     FFCInfo,

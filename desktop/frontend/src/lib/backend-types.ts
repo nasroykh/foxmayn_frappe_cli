@@ -151,6 +151,12 @@ export interface StagedAttachment extends Omit<GeneratedStagedAttachment, "kind"
   kind: AttachmentKind
 }
 
+/** A prompt given back for editing: its text and its files, staged again. */
+export interface EditResult {
+  text: string
+  attachments: StagedAttachment[]
+}
+
 /** What attaching files gave: the staged files and, one per refused file, why. */
 export interface AttachResult extends Omit<GeneratedAttachResult, "attachments" | "errors" | "cancelled"> {
   attachments: StagedAttachment[]
@@ -265,6 +271,12 @@ export interface Backend {
   answerApproval(convID: string, approvalID: string, approve: boolean): Promise<void>
   /** Resumes a run that ended "paused". */
   continueRun(runID: string): Promise<void>
+  /** Removes a prompt and its answer. Refused while a run is active. */
+  deleteExchange(convID: string, msgID: string): Promise<void>
+  /** Removes the last answer and runs the last prompt again; the new run's id. */
+  retry(convID: string): Promise<string>
+  /** Removes a prompt and what follows; its text and files come back for the composer. */
+  rewind(convID: string, msgID: string): Promise<EditResult>
   /** Open cards, to show again after a reload. */
   pendingApprovals(convID: string): Promise<ChatApproval[]>
   newConversation(site: string, mode: ConversationMode, providerID: string, model: string): Promise<Conversation>

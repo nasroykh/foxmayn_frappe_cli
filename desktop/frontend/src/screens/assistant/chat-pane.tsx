@@ -19,6 +19,16 @@ import { ChatMarkdown } from "@/components/chat/markdown"
 import { ToolRow } from "@/components/chat/tool-row"
 import { UsageLine, useCostText } from "@/components/chat/usage-line"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -43,7 +53,13 @@ import { hasUsage, mergeTotals, noUsage } from "@/lib/cost"
 import { appError, errorTitle, localizedMessage, type AppError } from "@/lib/errors"
 import { MODAL } from "@/lib/modal"
 import { chatReducer, initialState } from "@/screens/assistant/chat-reducer"
+import { MessageFooter } from "@/screens/assistant/message-footer"
 import { ProfilePicker } from "@/screens/assistant/profile-picker"
+
+/** A message from an imported file (its id says so): never edited or run again. */
+function isImported(id: string) {
+  return id.startsWith("imp_")
+}
 
 function notify(err: unknown) {
   const e = appError(err)
@@ -93,6 +109,9 @@ export function ChatPane({
   const [runUsage, setRunUsage] = React.useState<RunUsage[]>([])
   const [total, setTotal] = React.useState<UsageTotals>(noUsage)
   const [renaming, setRenaming] = React.useState<string | null>(null)
+  // A message action waiting for the user's yes (edit or delete).
+  const [confirming, setConfirming] = React.useState<{ kind: "edit" | "delete"; msg: ChatMessage } | null>(null)
+  const [acting, setActing] = React.useState(false)
   const costText = useCostText()
   const stateRef = React.useRef(state)
   stateRef.current = state
@@ -315,6 +334,69 @@ export function ChatPane({
     }
   }
 
+  // Edit: the prompt and what follows leave the conversation; its text and
+  // files go back to the composer.
+  async function editMessage(m: ChatMessage) {
+    setActing(true)
+    try {
+      const r = await backend.rewind(convID, m.id)
+      // Text not sent yet stays, after the message being edited.
+      setDraft((d) => (d.trim() ? `${r.text}\n\n${d}` : r.text))
+      setStaged(r.attachments)
+      await load()
+      onChangedRef.current()
+      requestAnimationFrame(() => {
+        const el = inputRef.current
+        if (!el) return
+        el.focus()
+        el.setSelectionRange(el.value.length, el.value.length)
+      })
+    } catch (err) {
+      notify(err)
+    } finally {
+      setActing(false)
+      setConfirming(null)
+    }
+  }
+
+  async function deleteMessage(m: ChatMessage) {
+    setActing(true)
+    try {
+      await backend.deleteExchange(convID, m.id)
+      await load()
+      onChangedRef.current()
+    } catch (err) {
+      notify(err)
+    } finally {
+      setActing(false)
+      setConfirming(null)
+    }
+  }
+
+  async function retry() {
+    if (active) return
+    reloadAfterStart.current = false
+    dispatch({ type: "sending", text: "" })
+    // The last answer goes from the screen; the run brings the new one.
+    setMessages((ms) => {
+      if (!ms) return ms
+      const last = ms.map((x) => x.role).lastIndexOf("user")
+      return last < 0 ? ms : ms.slice(0, last + 1)
+    })
+    try {
+      const runID = await backend.retry(convID)
+      dispatch({ type: "started", runID })
+      if (reloadAfterStart.current) {
+        reloadAfterStart.current = false
+        void load()
+      }
+    } catch (err) {
+      const e = appError(err)
+      void load()
+      dispatch({ type: "sendFailed", error: { code: e.code, message: e.message, detail: e.detail, key: e.key, args: e.args } })
+    }
+  }
+
   async function answer(approvalID: string, approve: boolean) {
     setAnswering((s) => new Set(s).add(approvalID))
     try {
@@ -372,6 +454,12 @@ export function ChatPane({
 
   const provider = providers.find((p) => p.id === conv.providerID)
   const usageOf = new Map(runUsage.map((u) => [u.msgID, u.usage]))
+  // Try again sits on the last message: the last answer, or a last prompt
+  // left without one (a failed or stopped run), when a prompt of the user's
+  // own (not imported) leads to it.
+  const lastPrompt = messages ? messages.map((x) => x.role).lastIndexOf("user") : -1
+  const lastAnswer =
+    messages && lastPrompt >= 0 && !isImported(messages[lastPrompt].id) ? messages.length - 1 : -1
   // The stored total plus the model turns of the run in progress (a reload resets those).
   const shownTotal = active ? mergeTotals(total, state.usage) : total
 
@@ -503,11 +591,24 @@ export function ChatPane({
               }}
             />
           )}
-          {messages?.map((m) => (
-            <React.Fragment key={m.id}>
+          {messages?.map((m, i) => (
+            <div key={m.id} className="group/msg flex flex-col gap-1">
               <MessageView m={m} />
-              {usageOf.has(m.id) && <UsageLine usage={usageOf.get(m.id)!} className="-mt-2" />}
-            </React.Fragment>
+              <MessageFooter
+                m={m}
+                usage={usageOf.get(m.id)}
+                busy={active || acting}
+                canRetry={i === lastAnswer && !active}
+                canEdit={!isImported(m.id)}
+                onEdit={() => {
+                  // Nothing after it: no answer is lost, so no question.
+                  if (i === messages.length - 1) void editMessage(m)
+                  else setConfirming({ kind: "edit", msg: m })
+                }}
+                onDelete={() => setConfirming({ kind: "delete", msg: m })}
+                onRetry={() => void retry()}
+              />
+            </div>
           ))}
           {state.pending && <UserBubble text={state.pending} />}
 
@@ -637,6 +738,31 @@ export function ChatPane({
           {t("chat.composer.hint")} {t("chat.composer.attachHint")}
         </p>
       </form>
+      <AlertDialog open={!!confirming} onOpenChange={(o) => !o && !acting && setConfirming(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirming?.kind === "edit" ? t("chat.message.editTitle") : t("chat.message.deleteTitle")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirming?.kind === "edit" ? t("chat.message.editBody") : t("chat.message.deleteBody")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={acting}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              variant={confirming?.kind === "delete" ? "destructive" : "default"}
+              disabled={acting}
+              onClick={() => {
+                if (!confirming) return
+                void (confirming.kind === "edit" ? editMessage(confirming.msg) : deleteMessage(confirming.msg))
+              }}
+            >
+              {confirming?.kind === "edit" ? t("chat.message.edit") : t("chat.message.delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }

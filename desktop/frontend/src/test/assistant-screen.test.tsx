@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import "@/i18n"
@@ -68,6 +68,45 @@ describe("Assistant screen with the mock backend", () => {
     await waitFor(() => expect(document.body.textContent).toContain("TD-0001"), { timeout: 5000 })
     await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy(), { timeout: 8000 })
   }, 15000)
+
+  it("edits, retries and deletes messages from their footers", async () => {
+    await backend.newConversation("acme-prod", "read", "anthropic", "")
+    show()
+    const idle = () => waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy(), { timeout: 8000 })
+    await send("What is TD-0001?")
+    await idle()
+    await send("And TD-0002?")
+    await idle()
+    const footers = () => Array.from(document.querySelectorAll("[data-slot=message-footer]"))
+    await waitFor(() => expect(footers().length).toBeGreaterThanOrEqual(4))
+    // Every message shows its time; only the last answer offers Try again.
+    expect(footers().every((f) => f.querySelector("time"))).toBe(true)
+    expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(1)
+
+    // Try again replaces the last answer and keeps both prompts.
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }))
+    await idle()
+    await waitFor(() => expect(screen.getAllByText("And TD-0002?").length).toBe(1))
+
+    // Edit the first prompt: a question (an answer would be lost), then the text is back in the box.
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0])
+    const ask = await screen.findByRole("alertdialog")
+    fireEvent.click(within(ask).getByRole("button", { name: "Edit" }))
+    const input = (await screen.findByLabelText("Message")) as HTMLTextAreaElement
+    await waitFor(() => expect(input.value).toBe("What is TD-0001?"))
+    await waitFor(() => expect(screen.queryByText("And TD-0002?")).toBeNull())
+
+    // Send it again, then delete it with its answer.
+    await send("What is TD-0001 now?")
+    await idle()
+    // The stored conversation (with footers) replaces the live view when the run ends.
+    await waitFor(() => expect(screen.queryAllByRole("button", { name: "Delete" }).length).toBe(1), { timeout: 8000 })
+    fireEvent.click(screen.getAllByRole("button", { name: "Delete" })[0])
+    const dialog = await screen.findByRole("alertdialog")
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }))
+    await waitFor(() => expect(screen.queryByText("What is TD-0001 now?")).toBeNull())
+    expect(document.querySelectorAll("[data-slot=message-footer]")).toHaveLength(0)
+  }, 30000)
 
   it("shows the approval card, takes Approve and removes the card", async () => {
     const c = await backend.newConversation("acme-prod", "ask", "anthropic", "")

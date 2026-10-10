@@ -424,6 +424,21 @@ export interface DiffField {
 }
 
 /**
+ * EditResult is what Rewind gives the composer back.
+ */
+export interface EditResult {
+    /**
+     * Text is the prompt's text.
+     */
+    "text": string;
+
+    /**
+     * Attachments are the prompt's files, staged again for the next message.
+     */
+    "attachments": StagedAttachment[] | null;
+}
+
+/**
  * Environment describes the machine the app runs on.
  */
 export interface Environment {

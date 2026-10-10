@@ -155,3 +155,51 @@ func TestSecureDelete(t *testing.T) {
 		t.Fatalf("secure_delete = %d, %v", v, err)
 	}
 }
+
+// DeleteMessages: one transaction, attachments deleted except the restaged
+// message's, and nothing deleted when an id is not the conversation's.
+func TestDeleteMessagesRestages(t *testing.T) {
+	s, _ := openTemp(t)
+	c := mustConv(t, s, "c")
+	other := mustConv(t, s, "other")
+	stage := func(name string) Attachment {
+		a, err := s.AddAttachment(Attachment{ConvID: c.ID, Name: name, Mime: "text/plain", SHA256: name, Text: name}, nil, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	a1 := stage("one.txt")
+	m1, err := s.AppendUserMessage(c.ID, "user", `[{"type":"text","text":"q1"}]`, []string{a1.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r1, _ := s.AppendMessage(c.ID, "assistant", `[{"type":"text","text":"a1"}]`)
+	a2 := stage("two.txt")
+	m2, err := s.AppendUserMessage(c.ID, "user", `[{"type":"text","text":"q2"}]`, []string{a2.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, _ := s.AppendMessage(other.ID, "user", `[{"type":"text","text":"x"}]`)
+
+	if err := s.DeleteMessages(c.ID, []string{m2.ID, o.ID}, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign id = %v", err)
+	}
+	if msgs, _ := s.ListMessages(c.ID); len(msgs) != 3 {
+		t.Fatalf("rolled back: %d messages", len(msgs))
+	}
+	// m1 is restaged, r1 and m2 go with m2's attachment.
+	if err := s.DeleteMessages(c.ID, []string{m1.ID, r1.ID, m2.ID}, m1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if msgs, _ := s.ListMessages(c.ID); len(msgs) != 0 {
+		t.Fatalf("left %d messages", len(msgs))
+	}
+	staged, err := s.StagedAttachments(c.ID)
+	if err != nil || len(staged) != 1 || staged[0].ID != a1.ID {
+		t.Fatalf("staged = %+v, %v", staged, err)
+	}
+	if _, err := s.AttachmentData(c.ID, a2.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("deleted attachment still there: %v", err)
+	}
+}
