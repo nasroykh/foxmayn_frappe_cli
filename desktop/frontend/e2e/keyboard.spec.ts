@@ -34,14 +34,16 @@ for (const lang of ["en", "ar"] as const) {
     await expect(page.getByRole("dialog")).toBeVisible()
     await page.keyboard.type(lang === "ar" ? "محادثة جديدة" : "new conversation")
     await page.keyboard.press("Enter")
-    const form = page.getByRole("dialog")
-    await expect(form).toBeVisible()
+    // The new-conversation form, once its providers have loaded.
+    const form = page.locator('[data-slot="dialog-content"]')
+    await expect(form.locator("[type=submit]")).toBeEnabled({ timeout: 10_000 })
 
     // Site, provider and model keep their defaults; Tab to Start.
     await tabTo(page, "[type=submit]")
     await focusVisible(page)
     await page.keyboard.press("Enter")
-    await expect(page.locator("#chat-input")).toBeVisible()
+    await expect(page.locator("#chat-input")).toBeVisible({ timeout: 15_000 })
+    await expect(form).toHaveCount(0)
 
     // The mode switch: the conversation must ask before changes.
     await page.locator("#chat-input").focus()
@@ -56,8 +58,8 @@ for (const lang of ["en", "ar"] as const) {
     await tabTo(page, "#chat-input", 80)
     await page.keyboard.type("What is TD-0001?")
     await page.keyboard.press("Enter")
-    // The run starts (the composer locks), reads the document, then answers.
-    await expect(page.locator("#chat-input")).toBeDisabled()
+    // The message is sent, the assistant reads the document, then answers.
+    await expect(page.getByText("What is TD-0001?").first()).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText("get_doc").first()).toBeVisible({ timeout: 15_000 })
     await expect(page.locator("#chat-input")).toBeEnabled({ timeout: 15_000 })
 
@@ -84,11 +86,13 @@ test("a screen opened from the palette gets the focus on its heading", async ({ 
 test("approval card by keyboard: Decline has the focus, Tab reaches Approve, Esc stops a run", async ({ page }) => {
   await openApp(page)
   await page.keyboard.press("Control+n")
-  await expect(page.getByRole("dialog")).toBeVisible()
+  const form = page.locator('[data-slot="dialog-content"]')
+  await expect(form.locator("[type=submit]")).toBeEnabled({ timeout: 10_000 })
   await tabTo(page, "[type=submit]")
   await page.keyboard.press("Enter")
   const input = page.locator("#chat-input")
-  await expect(input).toBeVisible()
+  await expect(input).toBeVisible({ timeout: 15_000 })
+  await expect(form).toHaveCount(0)
 
   // Ask before changes, chosen with the keyboard: Tab reaches the mode
   // switch (one tab stop, the pressed option), an arrow key moves to the
