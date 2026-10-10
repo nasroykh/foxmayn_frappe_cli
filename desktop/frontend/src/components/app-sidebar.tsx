@@ -1,5 +1,15 @@
 import { useTranslation } from "react-i18next"
-import { IconAlertTriangle, IconArrowUpCircle, IconCircleCheck, IconPlus, IconMessageChatbot, IconRobot, IconSettings, IconWorld } from "@tabler/icons-react"
+import {
+  IconAlertTriangle,
+  IconArrowUpCircle,
+  IconCircleCheck,
+  IconMessageChatbot,
+  IconMessageReport,
+  IconPlus,
+  IconRobot,
+  IconSettings,
+  IconWorld,
+} from "@tabler/icons-react"
 
 import { useApp, type Screen } from "@/app/app-context"
 import { BrandLogo } from "@/components/brand-logo"
@@ -28,7 +38,7 @@ const nav: { id: Screen; labelKey: string; icon: typeof IconWorld }[] = [
 
 export function AppSidebar() {
   const { t } = useTranslation()
-  const { screen, setScreen, sites, assistants, env, update, addSite, installFFC, ffcUpdate } = useApp()
+  const { screen, setScreen, sites, assistants, env, update, addSite, installFFC, ffcUpdate, sendFeedback } = useApp()
   const siteCount = sites.data?.sites?.length ?? 0
   const connected = assistants.data?.assistants?.filter((a) => a.status === "connected").length ?? 0
   const ffc = env.data?.ffc
@@ -98,6 +108,12 @@ export function AppSidebar() {
 
       <SidebarFooter>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={sendFeedback} tooltip={t("shell.sidebar.feedbackTip")}>
+              <IconMessageReport />
+              <span>{t("shell.sidebar.feedback")}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             {!ffc ? (
               <SidebarMenuSkeleton showIcon />

@@ -75,7 +75,8 @@ export function ConversationSearch({
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "f" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
+      // e.code: the physical F key, whatever the keyboard layout.
+      if (e.code === "KeyF" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         inputRef.current?.focus()
         inputRef.current?.select()
@@ -242,6 +243,9 @@ export function ConversationSearch({
               ? t("chat.search.searching")
               : t("chat.search.count", { count: hits?.length ?? 0 })}
         </div>
+      )}
+      {active && !busy && !error && hits?.length === 0 && (
+        <p className="text-muted-foreground text-xs">{filtered ? t("chat.search.noneFiltered") : t("chat.search.none")}</p>
       )}
       {active && hits && hits.length > 0 && (
         <ul aria-label={t("chat.search.results")} className={cn("flex flex-col gap-0.5", busy && "opacity-60")}>

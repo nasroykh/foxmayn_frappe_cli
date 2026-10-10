@@ -179,7 +179,8 @@
       "unarchive": "Move out of the archive",
       "notKept": "not kept",
       "showArchive_one": "Show the archive ({{count}})",
-      "showArchive_other": "Show the archive ({{count}})"
+      "showArchive_other": "Show the archive ({{count}})",
+      "emptyHint": "Start one with New, or press {{mod}}+N."
     },
     "search": {
       "label": "Search conversations",
@@ -197,7 +198,9 @@
       "searching": "Searching…",
       "results": "Search results",
       "count_one": "{{count}} found",
-      "count_other": "{{count}} found"
+      "count_other": "{{count}} found",
+      "none": "Nothing matches. Try other words.",
+      "noneFiltered": "Nothing matches. Try other words or clear the filters."
     },
     "history": {
       "import": "Import a conversation",
@@ -276,6 +279,40 @@
     "announce": {
       "approval": "Waiting for your approval",
       "finished": "Reply finished"
+    },
+    "starters": {
+      "title": "Try asking",
+      "hint": "A prompt only fills the message box. Edit it, then press Enter.",
+      "explore": {
+        "p1": "Which apps and versions are installed on this site?",
+        "p2": "Show the 10 most recent Sales Invoices with their customer, total and status.",
+        "p3": "What fields does the Customer DocType have, and which are required?",
+        "p4": "How many open ToDos are there, grouped by who they are assigned to?"
+      },
+      "accounts": {
+        "p1": "Which Sales Invoices are overdue? Sort them by outstanding amount.",
+        "p2": "Show the unpaid Purchase Invoices due in the next 14 days.",
+        "p3": "Prepare a draft Payment Entry for the oldest unpaid Sales Invoice.",
+        "p4": "Summarise this month's sales by customer."
+      },
+      "site-admin": {
+        "p1": "Give me a quick health check of this site.",
+        "p2": "Is the scheduler running, and did any scheduled job fail today?",
+        "p3": "Show the latest entries of the Error Log and what they have in common.",
+        "p4": "Are any background jobs stuck in the queue?"
+      },
+      "data-entry": {
+        "p1": "Create a Customer named … in the customer group … and the territory …",
+        "p2": "Add a ToDo for me: … due on …",
+        "p3": "Change the phone number of the Contact … to …",
+        "p4": "Which fields of the Item DocType must I fill in to create one?"
+      },
+      "local-model": {
+        "p1": "How many Customers are there?",
+        "p2": "Show the five newest Items.",
+        "p3": "What is the status of Sales Invoice …?",
+        "p4": "List the DocTypes of the Selling module."
+      }
     }
   },
   "onboarding": {
@@ -841,7 +878,9 @@
       "ffcNoAnswerTip": "ffc was found but does not answer",
       "ffcInstallTip": "Install the ffc helper",
       "ffcNeedsAttention": "ffc helper needs attention",
-      "ffcMissing": "ffc helper missing"
+      "ffcMissing": "ffc helper missing",
+      "feedback": "Send feedback",
+      "feedbackTip": "Opens a short form on GitHub in your browser"
     },
     "update": {
       "availableTitle": "Foxmayn Frappe Desktop {{version}} is available",
@@ -865,7 +904,10 @@
     "installFfc": "Install the ffc helper",
     "checkConnection": "Check a connection",
     "connected": "{{name}} is connected",
-    "notAsExpected": "{{name}} did not answer as expected"
+    "notAsExpected": "{{name}} did not answer as expected",
+    "newConversation": "New conversation",
+    "shortcuts": "Keyboard shortcuts",
+    "feedback": "Send feedback"
   },
   "theme": {
     "title": "Theme",
@@ -926,5 +968,18 @@
     "suggestions": "Suggestions",
     "carousel": "carousel",
     "slide": "slide"
+  },
+  "shortcuts": {
+    "title": "Keyboard shortcuts",
+    "body": "On macOS, use ⌘ where it says Ctrl.",
+    "palette": "Open the command palette",
+    "newChat": "New conversation",
+    "settings": "Open Settings",
+    "help": "Show these shortcuts",
+    "search": "Search conversations",
+    "sidebar": "Show or hide the sidebar",
+    "send": "Send the message",
+    "newLine": "New line in the message",
+    "stop": "Stop the assistant"
   }
 }

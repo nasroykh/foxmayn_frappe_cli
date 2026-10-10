@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next"
 import { IconDeviceDesktop, IconMoon, IconSearch, IconSun } from "@tabler/icons-react"
 
-import { useApp } from "@/app/app-context"
+import { useApp, useOptionalApp } from "@/app/app-context"
 import { useTheme, type Theme } from "@/app/theme"
 import {
   Breadcrumb,
@@ -28,8 +28,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 
 export function useModKey() {
-  const { env } = useApp()
-  const mac = env.data ? env.data.os === "darwin" : /Mac/i.test(navigator.platform)
+  const env = useOptionalApp()?.env
+  const mac = env?.data ? env.data.os === "darwin" : /Mac/i.test(navigator.platform)
   return mac ? "⌘" : "Ctrl"
 }
 

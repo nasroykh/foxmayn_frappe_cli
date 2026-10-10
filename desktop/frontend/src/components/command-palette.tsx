@@ -1,6 +1,9 @@
 import {
   IconDeviceDesktop,
   IconDownload,
+  IconKeyboard,
+  IconMessagePlus,
+  IconMessageReport,
   IconLanguage,
   IconMoon,
   IconPlugConnected,
@@ -33,7 +36,8 @@ import { appError, errorTitle, localizedMessage } from "@/lib/errors"
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { t } = useTranslation()
-  const { setScreen, addSite, connectAssistant, installFFC, sites, env, checkSite } = useApp()
+  const { setScreen, addSite, connectAssistant, installFFC, sites, env, checkSite, newConversation, openShortcuts, sendFeedback } =
+    useApp()
   const { setTheme } = useTheme()
 
   const run = (fn: () => void) => () => {
@@ -90,6 +94,10 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
           </CommandGroup>
           <CommandSeparator />
           <CommandGroup heading={t("palette.actions")}>
+            <CommandItem value={`new conversation chat ${t("palette.newConversation")}`} onSelect={run(newConversation)}>
+              <IconMessagePlus />
+              {t("palette.newConversation")}
+            </CommandItem>
             <CommandItem value={`add a site ${t("palette.addSite")}`} onSelect={run(addSite)}>
               <IconPlus />
               {t("palette.addSite")}
@@ -104,6 +112,14 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                 {t("palette.installFfc")}
               </CommandItem>
             )}
+            <CommandItem value={`keyboard shortcuts ${t("palette.shortcuts")}`} onSelect={run(openShortcuts)}>
+              <IconKeyboard />
+              {t("palette.shortcuts")}
+            </CommandItem>
+            <CommandItem value={`send feedback report a problem ${t("palette.feedback")}`} onSelect={run(sendFeedback)}>
+              <IconMessageReport />
+              {t("palette.feedback")}
+            </CommandItem>
           </CommandGroup>
           {list.length > 0 && (
             <>

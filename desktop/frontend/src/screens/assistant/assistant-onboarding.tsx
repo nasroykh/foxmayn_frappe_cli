@@ -120,10 +120,10 @@ export function AssistantOnboarding({
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-5 p-6">
       <div className="flex flex-col gap-1">
-        <h1 className="font-heading flex items-center gap-2 text-xl font-semibold tracking-tight">
+        <h2 className="font-heading flex items-center gap-2 text-xl font-semibold tracking-tight">
           <IconSparkles className="size-5" aria-hidden="true" />
           {t("onboarding.title")}
-        </h1>
+        </h2>
         <p className="text-muted-foreground text-sm">{t("onboarding.intro")}</p>
       </div>
       {back}

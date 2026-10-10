@@ -180,7 +180,8 @@
       "notKept": "non conservée",
       "showArchive_one": "Afficher les archives ({{count}})",
       "showArchive_many": "Afficher les archives ({{count}})",
-      "showArchive_other": "Afficher les archives ({{count}})"
+      "showArchive_other": "Afficher les archives ({{count}})",
+      "emptyHint": "Commencez-en une avec Nouvelle, ou appuyez sur {{mod}}+N."
     },
     "search": {
       "label": "Rechercher dans les conversations",
@@ -199,7 +200,9 @@
       "results": "Résultats de la recherche",
       "count_one": "{{count}} résultat",
       "count_many": "{{count}} résultats",
-      "count_other": "{{count}} résultats"
+      "count_other": "{{count}} résultats",
+      "none": "Aucun résultat. Essayez d’autres mots.",
+      "noneFiltered": "Aucun résultat. Essayez d’autres mots ou effacez les filtres."
     },
     "history": {
       "import": "Importer une conversation",
@@ -278,6 +281,40 @@
     "announce": {
       "approval": "En attente de votre approbation",
       "finished": "Réponse terminée"
+    },
+    "starters": {
+      "title": "Essayez de demander",
+      "hint": "Une suggestion remplit seulement la zone de message. Modifiez-la, puis appuyez sur Entrée.",
+      "explore": {
+        "p1": "Quelles applications et quelles versions sont installées sur ce site ?",
+        "p2": "Affiche les 10 dernières Sales Invoices avec leur client, leur total et leur statut.",
+        "p3": "Quels champs a le DocType Customer, et lesquels sont obligatoires ?",
+        "p4": "Combien y a-t-il de ToDos ouverts, regroupés par personne assignée ?"
+      },
+      "accounts": {
+        "p1": "Quelles Sales Invoices sont en retard ? Trie-les par montant restant dû.",
+        "p2": "Affiche les Purchase Invoices impayées à échéance dans les 14 prochains jours.",
+        "p3": "Prépare un brouillon de Payment Entry pour la plus ancienne Sales Invoice impayée.",
+        "p4": "Résume les ventes de ce mois par client."
+      },
+      "site-admin": {
+        "p1": "Fais un rapide bilan de santé de ce site.",
+        "p2": "Le planificateur tourne-t-il, et une tâche planifiée a-t-elle échoué aujourd’hui ?",
+        "p3": "Affiche les dernières entrées de l’Error Log et ce qu’elles ont en commun.",
+        "p4": "Des tâches d’arrière-plan sont-elles bloquées dans la file ?"
+      },
+      "data-entry": {
+        "p1": "Crée un Customer nommé … dans le groupe de clients … et le territoire …",
+        "p2": "Ajoute un ToDo pour moi : … à faire pour le …",
+        "p3": "Change le numéro de téléphone du Contact … en …",
+        "p4": "Quels champs du DocType Item dois-je remplir pour en créer un ?"
+      },
+      "local-model": {
+        "p1": "Combien y a-t-il de Customers ?",
+        "p2": "Affiche les cinq Items les plus récents.",
+        "p3": "Quel est le statut de la Sales Invoice … ?",
+        "p4": "Liste les DocTypes du module Selling."
+      }
     }
   },
   "onboarding": {
@@ -846,7 +883,9 @@
       "ffcNoAnswerTip": "ffc a été trouvé mais ne répond pas",
       "ffcInstallTip": "Installer l’outil ffc",
       "ffcNeedsAttention": "L’outil ffc requiert votre attention",
-      "ffcMissing": "Outil ffc manquant"
+      "ffcMissing": "Outil ffc manquant",
+      "feedback": "Envoyer un avis",
+      "feedbackTip": "Ouvre un court formulaire sur GitHub dans votre navigateur"
     },
     "update": {
       "availableTitle": "Foxmayn Frappe Desktop {{version}} est disponible",
@@ -870,7 +909,10 @@
     "installFfc": "Installer l’outil ffc",
     "checkConnection": "Vérifier une connexion",
     "connected": "{{name}} est connecté",
-    "notAsExpected": "{{name}} n’a pas répondu comme prévu"
+    "notAsExpected": "{{name}} n’a pas répondu comme prévu",
+    "newConversation": "Nouvelle conversation",
+    "shortcuts": "Raccourcis clavier",
+    "feedback": "Envoyer un avis"
   },
   "theme": {
     "title": "Thème",
@@ -931,5 +973,18 @@
     "suggestions": "Suggestions",
     "carousel": "carrousel",
     "slide": "diapositive"
+  },
+  "shortcuts": {
+    "title": "Raccourcis clavier",
+    "body": "Sur macOS, utilisez ⌘ à la place de Ctrl.",
+    "palette": "Ouvrir la palette de commandes",
+    "newChat": "Nouvelle conversation",
+    "settings": "Ouvrir les Paramètres",
+    "help": "Afficher ces raccourcis",
+    "search": "Rechercher dans les conversations",
+    "sidebar": "Afficher ou masquer la barre latérale",
+    "send": "Envoyer le message",
+    "newLine": "Nouvelle ligne dans le message",
+    "stop": "Arrêter l’Assistant"
   }
 }

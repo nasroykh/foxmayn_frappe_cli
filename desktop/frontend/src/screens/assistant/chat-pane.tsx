@@ -487,7 +487,20 @@ export function ChatPane({
           )}
           {messages === null && !loadError && <Skeleton className="h-16 w-2/3" />}
           {messages?.length === 0 && !state.pending && (
-            <p className="text-muted-foreground text-sm">{t("chat.emptyConversation")}</p>
+            <StarterPrompts
+              profileID={conv.profileID}
+              disabled={active}
+              onPick={(text) => {
+                setDraft(text)
+                // After the render that puts the text in: caret at its end.
+                requestAnimationFrame(() => {
+                  const el = inputRef.current
+                  if (!el) return
+                  el.focus()
+                  el.setSelectionRange(text.length, text.length)
+                })
+              }}
+            />
           )}
           {messages?.map((m) => (
             <React.Fragment key={m.id}>
@@ -624,6 +637,46 @@ export function ChatPane({
         </p>
       </form>
     </section>
+  )
+}
+
+// Starter prompts per built-in profile; user profiles and conversations
+// without one get Explore's.
+// i18n keys: chat.starters.explore chat.starters.accounts chat.starters.site-admin
+// chat.starters.data-entry chat.starters.local-model (each p1 to p4)
+const STARTER_SETS = new Set(["explore", "accounts", "site-admin", "data-entry", "local-model"])
+const STARTER_KEYS = ["p1", "p2", "p3", "p4"] as const
+
+/** An empty conversation: what it is for and four prompts that fill the composer (never send). */
+function StarterPrompts({ profileID, disabled, onPick }: { profileID: string; disabled: boolean; onPick: (text: string) => void }) {
+  const { t } = useTranslation()
+  const set = STARTER_SETS.has(profileID) ? profileID : "explore"
+  const headingID = React.useId()
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-muted-foreground text-sm">{t("chat.emptyConversation")}</p>
+      <h2 id={headingID} className="text-sm font-medium">
+        {t("chat.starters.title")}
+      </h2>
+      <ul className="grid gap-2 sm:grid-cols-2" aria-labelledby={headingID}>
+        {STARTER_KEYS.map((k) => {
+          const text = t(`chat.starters.${set}.${k}`)
+          return (
+            <li key={k}>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => onPick(text)}
+                className="hover:bg-muted focus-visible:ring-ring/50 h-full w-full rounded-lg border px-3 py-2 text-start text-sm outline-none focus-visible:ring-3 disabled:opacity-50"
+              >
+                <span dir="auto">{text}</span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+      <p className="text-muted-foreground text-xs">{t("chat.starters.hint")}</p>
+    </div>
   )
 }
 
