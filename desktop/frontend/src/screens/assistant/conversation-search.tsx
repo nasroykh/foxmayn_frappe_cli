@@ -11,6 +11,7 @@ import { intlLocale } from "@/i18n"
 import { backend } from "@/lib/backend"
 import type { Profile, SearchFilter, SearchHit } from "@/lib/backend-types"
 import { appError, type AppError } from "@/lib/errors"
+import { modalOpen } from "@/lib/modal"
 import { profileName } from "@/screens/assistant/profile-picker"
 
 const SEARCH_DELAY_MS = 250
@@ -80,7 +81,7 @@ export function ConversationSearch({
         e.code === "KeyF" &&
         e.shiftKey &&
         (e.ctrlKey || e.metaKey) &&
-        !document.querySelector('[role="dialog"], [role="alertdialog"]')
+        !modalOpen()
       ) {
         e.preventDefault()
         inputRef.current?.focus()

@@ -88,6 +88,36 @@ describe("app shortcuts", () => {
     expect(state()).toBe("collapsed")
   }, 15000)
 
+  it("keeps working while a toast is shown (Base UI marks toasts role=dialog)", async () => {
+    renderApp()
+    await screen.findAllByText("Sites")
+    const toastLike = document.createElement("div")
+    toastLike.setAttribute("role", "dialog")
+    toastLike.setAttribute("data-slot", "toast")
+    document.body.append(toastLike)
+    try {
+      fireEvent.keyDown(window, { key: "/", code: "Slash", ctrlKey: true })
+      expect(await screen.findByRole("dialog", { name: "Keyboard shortcuts" })).toBeTruthy()
+    } finally {
+      toastLike.remove()
+    }
+  }, 15000)
+
+  it("does not count a dialog that is closing (data-closed) as open", async () => {
+    const { modalOpen } = await import("@/lib/modal")
+    const d = document.createElement("div")
+    d.setAttribute("role", "dialog")
+    d.setAttribute("data-closed", "")
+    document.body.append(d)
+    try {
+      expect(modalOpen()).toBe(false)
+      d.removeAttribute("data-closed")
+      expect(modalOpen()).toBe(true)
+    } finally {
+      d.remove()
+    }
+  })
+
   it("ignores Ctrl+N and Ctrl+, while a dialog is open", async () => {
     renderApp()
     await screen.findAllByText("Sites")

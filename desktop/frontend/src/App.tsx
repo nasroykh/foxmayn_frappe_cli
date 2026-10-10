@@ -6,6 +6,7 @@ import { AppHeader } from "@/components/app-header"
 import { AppSidebar } from "@/components/app-sidebar"
 import { CommandPalette } from "@/components/command-palette"
 import { ShortcutsDialog } from "@/components/shortcuts-dialog"
+import { modalOpen } from "@/lib/modal"
 import { InstallFFCDialog } from "@/components/install-ffc-dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
@@ -94,7 +95,7 @@ function Shell() {
         return
       }
       // The others wait while a dialog or sheet is open (the palette closes first).
-      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return
+      if (modalOpen()) return
       if (e.code === "KeyN" && !e.shiftKey) {
         e.preventDefault()
         newConversation()
@@ -132,7 +133,7 @@ function Shell() {
       const inset = document.querySelector('[data-slot="sidebar-inset"]')
       const active = document.activeElement
       const lost = !active || active === document.body || !inset?.contains(active) || active.tagName === "H1"
-      if (lost && !document.querySelector('[role="dialog"], [role="alertdialog"]')) focusHeading()
+      if (lost && !modalOpen()) focusHeading()
     }, 350)
     return () => {
       cancelAnimationFrame(frame)

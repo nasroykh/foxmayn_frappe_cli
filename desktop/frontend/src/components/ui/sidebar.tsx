@@ -23,6 +23,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { modalOpen } from "@/lib/modal"
 import { IconLayoutSidebar } from "@tabler/icons-react"
 import { useTranslation } from "react-i18next"
 
@@ -104,7 +105,7 @@ function SidebarProvider({
         !event.shiftKey &&
         !event.altKey &&
         // Not behind an open dialog or sheet.
-        !document.querySelector('[role="dialog"], [role="alertdialog"]')
+        !modalOpen()
       ) {
         event.preventDefault()
         toggleSidebar()

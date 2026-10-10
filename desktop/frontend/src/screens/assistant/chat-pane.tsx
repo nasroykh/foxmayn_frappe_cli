@@ -41,6 +41,7 @@ import type {
 } from "@/lib/backend-types"
 import { hasUsage, mergeTotals, noUsage } from "@/lib/cost"
 import { appError, errorTitle, localizedMessage, type AppError } from "@/lib/errors"
+import { MODAL } from "@/lib/modal"
 import { chatReducer, initialState } from "@/screens/assistant/chat-reducer"
 import { ProfilePicker } from "@/screens/assistant/profile-picker"
 
@@ -61,7 +62,7 @@ function readDataURL(file: Blob): Promise<string> {
   })
 }
 
-const OVERLAYS = '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]'
+const OVERLAYS = `${MODAL},[role="menu"],[role="listbox"]`
 
 /** Esc belongs to an open dialog, menu or list first. */
 function escapeIsTaken(e: KeyboardEvent) {
