@@ -1439,6 +1439,8 @@ export const backend: Backend = {
       c.conv.model = p.model || findProvider(p.providerID).defaultModel
     }
     c.conv.profileID = profileID
+    // As the service: a profile sets the mode switch to its own mode.
+    if (p) c.conv.mode = p.mode
     return { ...c.conv }
   },
   async getSiteSettings(site) {

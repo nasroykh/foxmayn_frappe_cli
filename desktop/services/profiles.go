@@ -436,8 +436,9 @@ func (a *AssistantService) DeleteProfile(id string) error {
 
 // SetConversationProfile gives a conversation a profile ("" for none). When
 // the profile names a provider the conversation switches to it, and a site
-// set to local models only refuses a provider that is not local. It is
-// refused while a run is active.
+// set to local models only refuses a provider that is not local. A profile
+// also sets the conversation's mode switch to its own mode ("" keeps it). It
+// is refused while a run is active.
 func (a *AssistantService) SetConversationProfile(convID, profileID string) (Conversation, error) {
 	r, st, done, err := a.enter()
 	if err != nil {
@@ -475,6 +476,14 @@ func (a *AssistantService) SetConversationProfile(convID, profileID string) (Con
 		}
 		if err := st.SetConversationProfile(convID, profileID); err != nil {
 			return wrapStoreErr(err)
+		}
+		// Taking a profile sets the conversation's switch to the profile's
+		// mode, so a profile that may change things needs no extra click (each
+		// change is still approved in the app). "No profile" keeps the switch.
+		if profileID != "" && prof.Mode != conv.Mode {
+			if err := st.SetConversationMode(convID, prof.Mode); err != nil {
+				return wrapStoreErr(err)
+			}
 		}
 		// A profile that keeps no history makes the conversation ephemeral.
 		if err := st.SetEphemeral(convID, !prof.KeepHistory); err != nil {

@@ -16,7 +16,7 @@ import { ModelPicker } from "@/screens/assistant/provider-parts"
 
 /**
  * Site, provider and model (and, with chooseProfile, a profile) for a new
- * conversation. It starts in "Read only".
+ * conversation. It starts in "Read only", or in the chosen profile's mode.
  */
 export function NewConversationForm({
   sites,

@@ -106,7 +106,7 @@ Click **New conversation** (or press Ctrl+N) and pick the site, a profile (optio
 
 ### Profiles
 
-A profile sets what the assistant is for in a conversation: which tools it gets, its mode, a step limit and its instructions. The assistant is told the profile's name and whether it may change anything. Pick one in the profile picker when you start a conversation; a conversation can change it later. A profile can only narrow what the site's [policy](../mcp/safety.md#per-site-policy) allows, never widen it: anything the site refuses stays refused.
+A profile sets what the assistant is for in a conversation: which tools it gets, its mode, a step limit and its instructions. The assistant is told the profile's name and whether it may change anything. Picking a profile sets the conversation's switch to the profile's mode (Read only, or Ask before changes); No profile leaves the switch as it is. Pick one in the profile picker when you start a conversation; a conversation can change it later. A profile can only narrow what the site's [policy](../mcp/safety.md#per-site-policy) allows, never widen it: anything the site refuses stays refused.
 
 Five built-in presets:
 
