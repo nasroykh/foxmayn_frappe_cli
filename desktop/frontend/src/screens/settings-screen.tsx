@@ -18,6 +18,7 @@ import { useApp } from "@/app/app-context"
 import { useTheme, type Theme } from "@/app/theme"
 import { BrandLogo } from "@/components/brand-logo"
 import { CopyField } from "@/components/copy-field"
+import { LanguageSwitcher } from "@/components/language-switcher"
 import { PageHeader } from "@/components/page"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -86,11 +87,20 @@ export function SettingsScreen() {
 }
 
 function GeneralTab() {
+  const { t } = useTranslation()
   const { theme, setTheme } = useTheme()
   const { env } = useApp()
   return (
     <div className="flex max-w-2xl flex-col gap-6">
       <FieldGroup>
+        <Field orientation="horizontal">
+          <FieldContent>
+            <FieldTitle>{t("language.label")}</FieldTitle>
+            <FieldDescription>{t("language.description")}</FieldDescription>
+          </FieldContent>
+          <LanguageSwitcher />
+        </Field>
+        <Separator />
         <Field orientation="horizontal">
           <FieldContent>
             <FieldTitle>Theme</FieldTitle>

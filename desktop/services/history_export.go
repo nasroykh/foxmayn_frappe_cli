@@ -448,7 +448,7 @@ func (a *AssistantService) ExportConversation(convID, format string) (string, er
 	if format == "md" {
 		filter, pattern, name = "Markdown", "*.md", fileSlug(title)+".md"
 	}
-	path, err := dlg.SaveFileDialog("Export conversation", name, filter, pattern)
+	path, err := dlg.SaveFileDialog(dialogT("exportTitle"), name, filter, pattern)
 	if err != nil {
 		return "", newError(CodeFailed, "The file dialog failed.", err)
 	}
@@ -536,7 +536,7 @@ func (a *AssistantService) ImportConversation() (ImportResult, error) {
 	if err != nil {
 		return ImportResult{}, err
 	}
-	path, err := dlg.OpenFileDialog("Import conversation", "Conversation (JSON)", "*.json")
+	path, err := dlg.OpenFileDialog(dialogT("importTitle"), dialogT("importFilter"), "*.json")
 	if err != nil {
 		return ImportResult{}, newError(CodeFailed, "The file dialog failed.", err)
 	}

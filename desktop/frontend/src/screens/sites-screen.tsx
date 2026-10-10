@@ -45,7 +45,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Site } from "@/lib/backend-types"
-import { appError, errorTitle } from "@/lib/errors"
+import { appError, errorTitle, localizedMessage } from "@/lib/errors"
 import { authLabel, hostOf, initials, timeAgo } from "@/lib/labels"
 import { RemoveSiteDialog, RenameSiteDialog, SiteURLDialog } from "@/screens/site-dialogs"
 import { WSLAlert } from "@/screens/wsl-alert"
@@ -141,7 +141,7 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
       if (!res) return
       toast.add({
         title: res.ok ? `${site.name} is connected` : `${site.name} did not accept the saved sign-in`,
-        description: res.message,
+        description: localizedMessage(res),
         type: res.ok ? "success" : "error",
       })
     } catch (err) {
@@ -348,7 +348,7 @@ function SiteCard({ site }: { site: Site }) {
         <Alert variant="destructive">
           <IconAlertTriangle />
           <AlertTitle>Last check failed</AlertTitle>
-          <AlertDescription>{check.message}</AlertDescription>
+          <AlertDescription>{localizedMessage(check)}</AlertDescription>
         </Alert>
       )}
     </div>

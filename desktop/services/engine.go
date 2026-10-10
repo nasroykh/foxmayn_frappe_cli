@@ -269,7 +269,7 @@ func (e *Engine) build(es *engineServer) {
 			es.srvClosed, late = true, srv
 		}
 	case err != nil:
-		es.err = siteError("Starting the assistant engine", err)
+		es.err = siteError(stepEngine, err)
 	default:
 		es.srv = srv
 	}

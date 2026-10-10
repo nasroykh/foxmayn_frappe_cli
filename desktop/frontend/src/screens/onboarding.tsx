@@ -2,6 +2,7 @@ import { IconArrowRight, IconInfoCircle, IconRobot, IconWorld } from "@tabler/ic
 import * as React from "react"
 
 import { BrandLogo } from "@/components/brand-logo"
+import { LanguageSwitcher } from "@/components/language-switcher"
 import { FFCMissingAlert } from "@/components/page"
 import { Button } from "@/components/ui/button"
 import {
@@ -87,6 +88,7 @@ export function Onboarding({ onDone }: { onDone: (addSite: boolean) => void }) {
       </div>
 
       <div className="flex w-full max-w-md flex-col gap-4">
+        {index === 0 && <LanguageSwitcher className="self-center" />}
         {last && <FFCMissingAlert />}
         <div className="flex items-center justify-center gap-2">
           <Button variant="ghost" onClick={() => onDone(false)}>

@@ -334,6 +334,12 @@ export interface CheckResult {
     "message": string;
     "code"?: string;
     "checkedAt": string;
+
+    /**
+     * Key and Args translate Message, as on Error.
+     */
+    "key"?: string;
+    "args"?: { [_ in string]?: string } | null;
 }
 
 /**
@@ -468,6 +474,15 @@ export interface Error {
      * OAuth Client.
      */
     "redirectURI"?: string;
+
+    /**
+     * Key names the message in the page's catalogs (errors.<Key>), so the
+     * page shows it in its language; Args fill its {{placeholders}}. Message
+     * is the English text of the same key (errorKeys), so a page without the
+     * key, logs and Error() still read it.
+     */
+    "key"?: string;
+    "args"?: { [_ in string]?: string } | null;
 }
 
 /**

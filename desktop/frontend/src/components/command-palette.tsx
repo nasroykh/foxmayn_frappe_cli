@@ -1,6 +1,7 @@
 import {
   IconDeviceDesktop,
   IconDownload,
+  IconLanguage,
   IconMoon,
   IconPlugConnected,
   IconPlus,
@@ -27,7 +28,8 @@ import {
   CommandSeparator,
 } from "@/components/ui/command"
 import { toast } from "@/components/ui/toast"
-import { appError, errorTitle } from "@/lib/errors"
+import { LANGUAGES, setLanguage } from "@/i18n"
+import { appError, errorTitle, localizedMessage } from "@/lib/errors"
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { t } = useTranslation()
@@ -46,7 +48,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       if (!res) return
       toast.add({
         title: res.ok ? `${name} is connected` : `${name} did not answer as expected`,
-        description: res.message,
+        description: localizedMessage(res),
         type: res.ok ? "success" : "error",
       })
     } catch (err) {
@@ -116,6 +118,19 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
               </CommandGroup>
             </>
           )}
+          <CommandSeparator />
+          <CommandGroup heading={t("language.label")}>
+            {LANGUAGES.map((l) => (
+              <CommandItem
+                key={l.code}
+                value={`language ${l.code} ${l.name} ${t(`language.names.${l.code}`)}`}
+                onSelect={run(() => setLanguage(l.code))}
+              >
+                <IconLanguage />
+                <span lang={l.code}>{l.name}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
           <CommandSeparator />
           <CommandGroup heading="Theme">
             <CommandItem value="theme light" onSelect={run(() => setTheme("light"))}>

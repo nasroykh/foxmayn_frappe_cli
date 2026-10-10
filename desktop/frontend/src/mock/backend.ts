@@ -744,6 +744,12 @@ export const backend: Backend = {
     // No native window in the browser preview.
   },
 
+  async setLanguage(lang) {
+    // No native dialogs in the browser preview.
+    const base = lang.toLowerCase().split(/[-_]/)[0]
+    return base === "fr" || base === "ar" ? base : "en"
+  },
+
   async listSites(): Promise<SiteList> {
     await wait(400)
     if (params.get("fail") === "sites")
@@ -889,8 +895,8 @@ export const backend: Backend = {
     const checkedAt = new Date().toISOString()
     const result: CheckResult =
       s.name === "acme-staging"
-        ? { ok: false, user: "", message: "The site did not accept the saved API key.", code: "auth", checkedAt }
-        : { ok: true, user: s.user, message: `Connected as ${s.user}.`, checkedAt }
+        ? { ok: false, user: "", message: "The site did not accept these sign-in details.", code: "auth", key: "site.refused", checkedAt }
+        : { ok: true, user: s.user, message: "Connected", key: "site.connected", checkedAt }
     sites = sites.map((x) => (x.name === name ? { ...x, lastCheck: result } : x))
     return result
   },

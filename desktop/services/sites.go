@@ -63,6 +63,19 @@ type CheckResult struct {
 	Message   string    `json:"message"`
 	Code      string    `json:"code,omitempty"`
 	CheckedAt time.Time `json:"checkedAt"`
+	// Key and Args translate Message, as on Error.
+	Key  string            `json:"key,omitempty"`
+	Args map[string]string `json:"args,omitempty"`
+}
+
+// setError takes the code, message and key of e.
+func (r *CheckResult) setError(e *Error) {
+	r.Code, r.Message, r.Key, r.Args = e.Code, e.Message, e.Key, e.Args
+}
+
+// setKeyed sets the code and the message of key (errorKeys).
+func (r *CheckResult) setKeyed(code, key string) {
+	r.setError(keyed(code, key, nil))
 }
 
 // Validation is the check of a name and URL as typed in step 1 of the Add
@@ -355,7 +368,7 @@ func (s *SitesService) AddWithAPIKey(ctx context.Context, req APIKeyRequest) (Ad
 	}
 	user, err := s.verify(ctx, site)
 	if err != nil {
-		return AddedSite{}, siteError("Checking the API key", err)
+		return AddedSite{}, siteError(stepAPIKey, err)
 	}
 	added := AddedSite{Name: name, URL: siteURL, Auth: AuthAPIKey, User: text.Sanitize(user), Replaced: exists}
 	return added, s.save(name, site, &added)
@@ -378,7 +391,7 @@ func (s *SitesService) AddWithPassword(ctx context.Context, req PasswordRequest)
 		return AddedSite{}, invalid("password", "Enter your password.")
 	}
 	if _, err := s.verify(ctx, site); err != nil {
-		return AddedSite{}, siteError("Signing in", err)
+		return AddedSite{}, siteError(stepSignIn, err)
 	}
 	added := AddedSite{Name: name, URL: siteURL, Auth: AuthPassword, User: text.Sanitize(site.Username), Replaced: exists}
 	return added, s.save(name, site, &added)
@@ -410,16 +423,15 @@ func (s *SitesService) Check(ctx context.Context, name string) (CheckResult, err
 	if site.IsOAuth() && site.IsTokenExpired() {
 		if site, err = s.refreshToken(ctx, site); err != nil {
 			if ctx.Err() != nil {
-				return CheckResult{}, siteError("Checking the connection", ctx.Err())
+				return CheckResult{}, siteError(stepCheck, ctx.Err())
 			}
 			if signInExpired(err) {
-				res.Code = CodeAuth
-				res.Message = "Your sign-in has expired. Sign in again to keep using this site."
+				res.setKeyed(CodeAuth, "site.signInExpired")
 			} else {
 				// The network, the site or the config lock: trying again may work.
 				var e *Error
-				if errors.As(siteError("Renewing the sign-in", err), &e) {
-					res.Code, res.Message = e.Code, e.Message
+				if errors.As(siteError(stepRenew, err), &e) {
+					res.setError(e)
 				}
 			}
 			s.remember(name, res)
@@ -429,17 +441,18 @@ func (s *SitesService) Check(ctx context.Context, name string) (CheckResult, err
 	user, err := s.verify(ctx, site)
 	if err != nil {
 		if ctx.Err() != nil {
-			return CheckResult{}, siteError("Checking the connection", ctx.Err())
+			return CheckResult{}, siteError(stepCheck, ctx.Err())
 		}
 		var e *Error
-		if errors.As(siteError("Checking the connection", err), &e) {
-			res.Code, res.Message = e.Code, e.Message
+		if errors.As(siteError(stepCheck, err), &e) {
+			res.setError(e)
 			if e.Code == CodeAuth && site.IsOAuth() {
-				res.Message = "The site no longer accepts this sign-in. Sign in again."
+				res.setKeyed(CodeAuth, "site.signInRejected")
 			}
 		}
 	} else {
-		res.OK, res.User, res.Message = true, text.Sanitize(user), "Connected"
+		res.OK, res.User = true, text.Sanitize(user)
+		res.setKeyed("", "site.connected")
 	}
 	s.remember(name, res)
 	return res, nil
@@ -551,7 +564,7 @@ func (s *SitesService) ChangeURL(ctx context.Context, name, rawURL string) (stri
 	}
 	site.URL = newURL
 	if _, err := s.verify(ctx, site); err != nil {
-		return "", siteError("Checking the new address", err)
+		return "", siteError(stepNewURL, err)
 	}
 	if err := s.store.SetURL(name, newURL); err != nil {
 		return "", newError(CodeFailed, "The new address could not be saved.", err)

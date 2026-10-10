@@ -97,6 +97,7 @@ export const backend: Backend = {
   openConfigFolder: () => AppService.OpenConfigFolder(),
   openFFCFolder: () => AppService.OpenFFCFolder(),
   setWindowTheme: (dark) => AppService.SetWindowTheme(dark),
+  setLanguage: (lang) => AppService.SetLanguage(lang),
 
   listSites: () => SitesService.List(),
   validate: (name, url) => SitesService.Validate(name, url),

@@ -11,6 +11,15 @@
     "retry": "Try again",
     "save": "Save"
   },
+  "language": {
+    "label": "Language",
+    "description": "The language of the app. Site data stays as the site has it.",
+    "names": {
+      "en": "English",
+      "fr": "French",
+      "ar": "Arabic"
+    }
+  },
   "settings": {
     "assistantTab": "Assistant"
   },
@@ -334,5 +343,36 @@
     "localOnlyHelp": "Conversations on this site may use only a model server on this computer (Ollama, LM Studio or a local address). Ollama cloud models (names ending in cloud) are refused: they run on ollama.com.",
     "localOnlyFrom": "Set under the site's earlier name \"{{site}}\". Turn it off here to clear it.",
     "saved": "Site settings saved"
+  },
+  "errors": {
+    "title": {
+      "auth": "The site refused the sign-in",
+      "network": "Could not reach the site",
+      "ffcMissing": "The ffc helper is not installed",
+      "unavailable": "Not available",
+      "failed": "Something went wrong"
+    },
+    "site": {
+      "refused": "The site did not accept these sign-in details.",
+      "unreachable": "The site could not be reached. Check the address and your internet connection.",
+      "status": "The site answered with an error ({{status}}).",
+      "engineCancelled": "Starting the assistant engine was cancelled.",
+      "engineFailed": "Starting the assistant engine failed.",
+      "oauthSetupCancelled": "Setting up the sign-in was cancelled.",
+      "oauthSetupFailed": "Setting up the sign-in failed.",
+      "signInCancelled": "Signing in was cancelled.",
+      "signInFailed": "Signing in failed.",
+      "apiKeyCancelled": "Checking the API key was cancelled.",
+      "apiKeyFailed": "Checking the API key failed.",
+      "checkCancelled": "Checking the connection was cancelled.",
+      "checkFailed": "Checking the connection failed.",
+      "renewCancelled": "Renewing the sign-in was cancelled.",
+      "renewFailed": "Renewing the sign-in failed.",
+      "newURLCancelled": "Checking the new address was cancelled.",
+      "newURLFailed": "Checking the new address failed.",
+      "connected": "Connected",
+      "signInExpired": "Your sign-in has expired. Sign in again to keep using this site.",
+      "signInRejected": "The site no longer accepts this sign-in. Sign in again."
+    }
   }
 }

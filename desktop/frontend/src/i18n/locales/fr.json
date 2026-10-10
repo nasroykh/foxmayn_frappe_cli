@@ -1,0 +1,42 @@
+{
+  "language": {
+    "label": "Langue",
+    "description": "La langue de l’application. Les données des sites restent telles que le site les fournit.",
+    "names": {
+      "en": "Anglais",
+      "fr": "Français",
+      "ar": "Arabe"
+    }
+  },
+  "errors": {
+    "title": {
+      "auth": "Le site a refusé la connexion",
+      "network": "Impossible de joindre le site",
+      "ffcMissing": "L’outil ffc n’est pas installé",
+      "unavailable": "Non disponible",
+      "failed": "Une erreur s’est produite"
+    },
+    "site": {
+      "refused": "Le site n’a pas accepté ces identifiants.",
+      "unreachable": "Impossible de joindre le site. Vérifiez l’adresse et votre connexion internet.",
+      "status": "Le site a répondu par une erreur ({{status}}).",
+      "engineCancelled": "Le démarrage du moteur de l’assistant a été annulé.",
+      "engineFailed": "Le démarrage du moteur de l’assistant a échoué.",
+      "oauthSetupCancelled": "La préparation de la connexion a été annulée.",
+      "oauthSetupFailed": "La préparation de la connexion a échoué.",
+      "signInCancelled": "La connexion a été annulée.",
+      "signInFailed": "La connexion a échoué.",
+      "apiKeyCancelled": "La vérification de la clé d’API a été annulée.",
+      "apiKeyFailed": "La vérification de la clé d’API a échoué.",
+      "checkCancelled": "La vérification de la connexion a été annulée.",
+      "checkFailed": "La vérification de la connexion a échoué.",
+      "renewCancelled": "Le renouvellement de la connexion a été annulé.",
+      "renewFailed": "Le renouvellement de la connexion a échoué.",
+      "newURLCancelled": "La vérification de la nouvelle adresse a été annulée.",
+      "newURLFailed": "La vérification de la nouvelle adresse a échoué.",
+      "connected": "Connecté",
+      "signInExpired": "Votre connexion a expiré. Reconnectez-vous pour continuer à utiliser ce site.",
+      "signInRejected": "Le site n’accepte plus cette connexion. Reconnectez-vous."
+    }
+  }
+}
