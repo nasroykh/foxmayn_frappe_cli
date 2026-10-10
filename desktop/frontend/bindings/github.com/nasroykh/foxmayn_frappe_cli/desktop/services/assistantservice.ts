@@ -278,7 +278,8 @@ export function SaveSiteSettings(s: $models.SiteSettings): $CancellablePromise<$
 }
 
 /**
- * Search finds messages by their words, best match first, in the
+ * Search finds conversations by their title or messages (one hit each,
+ * titles first, then the best matching message), in the
  * conversations that are not archived (or only in the archived ones). limit
  * is the most hits returned: 0 means 50, at most 200.
  */

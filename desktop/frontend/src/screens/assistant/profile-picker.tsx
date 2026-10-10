@@ -44,6 +44,32 @@ export function useProfiles() {
   return { presets, own, error, reload }
 }
 
+/** The options of a profile select: none, the presets, the user's own. */
+export function ProfileOptions({ presets, own }: { presets: Profile[]; own: Profile[] }) {
+  const { t } = useTranslation()
+  return (
+    <>
+      <NativeSelectOption value="">{t("profile.picker.none")}</NativeSelectOption>
+      <NativeSelectOptGroup label={t("profile.picker.presets")}>
+        {presets.map((p) => (
+          <NativeSelectOption key={p.id} value={p.id}>
+            {profileName(t, p)}
+          </NativeSelectOption>
+        ))}
+      </NativeSelectOptGroup>
+      {own.length > 0 && (
+        <NativeSelectOptGroup label={t("profile.picker.own")}>
+          {own.map((p) => (
+            <NativeSelectOption key={p.id} value={p.id}>
+              {p.name}
+            </NativeSelectOption>
+          ))}
+        </NativeSelectOptGroup>
+      )}
+    </>
+  )
+}
+
 /** Picks the conversation's profile. A profile can only narrow what the site allows. */
 export function ProfilePicker({
   conv,
@@ -88,23 +114,7 @@ export function ProfilePicker({
           disabled={disabled || busy}
           onChange={(e) => void change(e.target.value)}
         >
-          <NativeSelectOption value="">{t("profile.picker.none")}</NativeSelectOption>
-          <NativeSelectOptGroup label={t("profile.picker.presets")}>
-            {presets.map((p) => (
-              <NativeSelectOption key={p.id} value={p.id}>
-                {profileName(t, p)}
-              </NativeSelectOption>
-            ))}
-          </NativeSelectOptGroup>
-          {(own?.length ?? 0) > 0 && (
-            <NativeSelectOptGroup label={t("profile.picker.own")}>
-              {own!.map((p) => (
-                <NativeSelectOption key={p.id} value={p.id}>
-                  {p.name}
-                </NativeSelectOption>
-              ))}
-            </NativeSelectOptGroup>
-          )}
+          <ProfileOptions presets={presets} own={own ?? []} />
           {conv.profileID !== "" && !current && own && (
             <NativeSelectOption value={conv.profileID}>{t("profile.picker.missing")}</NativeSelectOption>
           )}

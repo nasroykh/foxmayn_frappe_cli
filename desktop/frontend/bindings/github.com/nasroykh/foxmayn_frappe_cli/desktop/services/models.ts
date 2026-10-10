@@ -531,9 +531,16 @@ export interface FFCUpdate {
     /**
      * Latest is the newest ffc release ("" when none was found or the
      * installed ffc is not updatable: not a release build, or a file the app
-     * must not replace).
+     * must not replace; CheckFFCUpdate also compares those).
      */
     "latest": string;
+
+    /**
+     * Manager and Command are set by CheckFFCUpdate when a package manager
+     * installed ffc: the update is that manager's command, never InstallFFC.
+     */
+    "manager"?: string;
+    "command"?: string;
 }
 
 /**
@@ -817,8 +824,9 @@ export interface SearchFilter {
     "profileID": string;
 
     /**
-     * From and To are dates ("2026-10-09", local time); a conversation is
-     * found when it was last updated on or between them.
+     * From and To are dates ("2026-10-09", local time): a message matches
+     * when it was written on or between them, a title when the conversation
+     * was last updated then.
      */
     "from": string;
     "to": string;
@@ -830,7 +838,8 @@ export interface SearchFilter {
 }
 
 /**
- * SearchHit is one message that matches a search.
+ * SearchHit is one conversation that matches a search: its best matching
+ * message, or its title alone (MsgID and Snippet empty).
  */
 export interface SearchHit {
     "convID": string;

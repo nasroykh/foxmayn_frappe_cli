@@ -86,15 +86,17 @@ func dialogPath(path string, err error) (string, error) {
 type SearchFilter struct {
 	Site      string `json:"site"`
 	ProfileID string `json:"profileID"`
-	// From and To are dates ("2026-10-09", local time); a conversation is
-	// found when it was last updated on or between them.
+	// From and To are dates ("2026-10-09", local time): a message matches
+	// when it was written on or between them, a title when the conversation
+	// was last updated then.
 	From string `json:"from"`
 	To   string `json:"to"`
 	// Archived searches the archive instead of the other conversations.
 	Archived bool `json:"archived"`
 }
 
-// SearchHit is one message that matches a search.
+// SearchHit is one conversation that matches a search: its best matching
+// message, or its title alone (MsgID and Snippet empty).
 type SearchHit struct {
 	ConvID string `json:"convID"`
 	Title  string `json:"title"`
@@ -120,7 +122,8 @@ func parseDay(field, s string, endOfDay bool) (time.Time, error) {
 	return t, nil
 }
 
-// Search finds messages by their words, best match first, in the
+// Search finds conversations by their title or messages (one hit each,
+// titles first, then the best matching message), in the
 // conversations that are not archived (or only in the archived ones). limit
 // is the most hits returned: 0 means 50, at most 200.
 func (a *AssistantService) Search(query string, filter SearchFilter, limit int) ([]SearchHit, error) {

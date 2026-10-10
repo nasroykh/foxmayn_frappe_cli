@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Conversation is one chat thread bound to a site, write mode and model.
@@ -516,11 +518,17 @@ var ErrBadQuery = errors.New("store: invalid search query")
 
 // ftsQuery turns user text into an FTS5 query: every whitespace-separated
 // token becomes a quoted string (so "SINV-0001", "a.b" or "it's" are literal
-// phrases) and all tokens must match.
+// phrases) and all tokens must match. A token that ends in a letter or digit
+// also matches longer words ("invoi" finds "invoices"), so results follow
+// the typing.
 func ftsQuery(text string) string {
 	fields := strings.Fields(text)
 	for i, f := range fields {
-		fields[i] = `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
+		q := `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
+		if r, _ := utf8.DecodeLastRuneInString(f); unicode.IsLetter(r) || unicode.IsDigit(r) {
+			q += "*"
+		}
+		fields[i] = q
 	}
 	return strings.Join(fields, " ")
 }

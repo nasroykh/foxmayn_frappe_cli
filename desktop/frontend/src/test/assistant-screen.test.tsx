@@ -37,6 +37,26 @@ async function send(text: string) {
 }
 
 describe("Assistant screen with the mock backend", () => {
+  it("opens the conversation it just created, with the profile chosen", async () => {
+    await backend.newConversation("acme-prod", "read", "anthropic", "")
+    show()
+    fireEvent.click(await screen.findByRole("button", { name: "New" }))
+    // The chat header has a profile picker too: take the dialog's by id.
+    await waitFor(() => expect(document.getElementById("newconv-profile")).toBeTruthy())
+    const profile = document.getElementById("newconv-profile") as HTMLSelectElement
+    await waitFor(() => expect(profile.options.length).toBeGreaterThan(1))
+    fireEvent.change(document.getElementById("newconv-site")!, { target: { value: "acme-staging" } })
+    fireEvent.change(profile, { target: { value: "accounts" } })
+    fireEvent.click(screen.getByRole("button", { name: "Start" }))
+    // The new conversation is the one on screen and the current one in the list.
+    await waitFor(() => expect(document.querySelector("section > header")?.textContent).toContain("acme-staging"))
+    const current = document.querySelector('nav li [aria-current="true"]')
+    expect(current?.textContent).toContain("acme-staging")
+    const c = (await backend.listConversations()).find((x) => x.site === "acme-staging")
+    expect(c?.profileID).toBe("accounts")
+  })
+
+
   it("streams a read answer with a tool row, then shows the stored conversation", async () => {
     await backend.newConversation("acme-prod", "read", "anthropic", "")
     show()

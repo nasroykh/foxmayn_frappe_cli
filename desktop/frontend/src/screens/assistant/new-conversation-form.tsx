@@ -10,9 +10,14 @@ import { Spinner } from "@/components/ui/spinner"
 import { backend } from "@/lib/backend"
 import type { Conversation, ProviderInfo, Site } from "@/lib/backend-types"
 import { appError, type AppError } from "@/lib/errors"
+import { toast } from "@/components/ui/toast"
+import { ProfileOptions, useProfiles } from "@/screens/assistant/profile-picker"
 import { ModelPicker } from "@/screens/assistant/provider-parts"
 
-/** Site, provider and model for a new conversation. It starts in "Read only". */
+/**
+ * Site, provider and model (and, with chooseProfile, a profile) for a new
+ * conversation. It starts in "Read only".
+ */
 export function NewConversationForm({
   sites,
   defaultSite,
@@ -20,6 +25,7 @@ export function NewConversationForm({
   providerID: initialProvider,
   model: initialModel,
   submitLabel,
+  chooseProfile = false,
   onCreated,
 }: {
   sites: Site[]
@@ -28,6 +34,8 @@ export function NewConversationForm({
   providerID?: string
   model?: string
   submitLabel?: string
+  /** Offers a profile; the conversation takes it right after it is created. */
+  chooseProfile?: boolean
   onCreated: (c: Conversation) => void
 }) {
   const { t } = useTranslation()
@@ -42,13 +50,36 @@ export function NewConversationForm({
   )
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<AppError | null>(null)
+  const profiles = useProfiles()
+  const [profileID, setProfileID] = React.useState("")
+
+  // A profile with its own provider and model shows them, since taking the
+  // profile switches the conversation to them.
+  function pickProfile(id: string) {
+    setProfileID(id)
+    const p = [...(profiles.presets ?? []), ...(profiles.own ?? [])].find((x) => x.id === id)
+    if (p?.providerID && providers.some((x) => x.id === p.providerID)) {
+      setProviderID(p.providerID)
+      setModel(p.model || providers.find((x) => x.id === p.providerID)?.defaultModel || "")
+    }
+  }
 
   async function create(e: React.FormEvent) {
     e.preventDefault()
     setBusy(true)
     setError(null)
     try {
-      onCreated(await backend.newConversation(site, "read", providerID, model))
+      let c = await backend.newConversation(site, "read", providerID, model)
+      if (chooseProfile && profileID) {
+        try {
+          c = await backend.setConversationProfile(c.id, profileID)
+        } catch (err) {
+          // The conversation exists: open it and say why it has no profile.
+          const e = appError(err)
+          toast.add({ title: t("chat.new.profileFailed"), description: e.message, type: "error" })
+        }
+      }
+      onCreated(c)
     } catch (err) {
       setError(appError(err))
       setBusy(false)
@@ -68,6 +99,14 @@ export function NewConversationForm({
             ))}
           </NativeSelect>
         </Field>
+        {chooseProfile && profiles.presets && (
+          <Field>
+            <FieldLabel htmlFor="newconv-profile">{t("chat.new.profile")}</FieldLabel>
+            <NativeSelect id="newconv-profile" className="w-full" value={profileID} onChange={(e) => pickProfile(e.target.value)}>
+              <ProfileOptions presets={profiles.presets} own={profiles.own ?? []} />
+            </NativeSelect>
+          </Field>
+        )}
         {providers.length > 1 && (
           <Field>
             <FieldLabel htmlFor="newconv-provider">{t("chat.new.provider")}</FieldLabel>

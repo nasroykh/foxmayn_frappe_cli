@@ -216,6 +216,8 @@ export interface Backend {
   installFFC(): Cancellable<FFCInfo>
   openWebsite(url: string): Promise<void>
   checkForUpdate(): Promise<UpdateInfo>
+  /** The ffc helper tab's check: also compares a package manager's copy. */
+  checkFFCUpdate(): Promise<FFCUpdate>
   openConfigFolder(): Promise<void>
   openFFCFolder(): Promise<void>
   setWindowTheme(dark: boolean): Promise<void>

@@ -105,12 +105,19 @@
       "noAnswerManager": "Running it failed ({{error}}). Reinstalling it with {{manager}} usually fixes this.",
       "noAnswer": "Running it failed ({{error}}). Installing it again usually fixes this.",
       "updateBody": "Updating replaces the ffc above, where it is. Restart your connected apps afterwards so they use the new version.",
-      "autoCheck": "The app looks for a newer ffc once a day; Check for updates in About looks right away. You can also run <code>{{command}}</code> in a terminal.",
+      "autoCheck": "The app looks for a newer ffc once a day; Check for updates looks right away. You can also run <code>{{command}}</code> in a terminal.",
       "installHere": "Install it here, or run this in a terminal yourself:",
       "updateTo": "Update to {{version}}",
       "installAgain": "Install again",
       "install": "Install ffc",
-      "lookAgain": "Look again"
+      "lookAgain": "Look again",
+      "checkUpdates": "Check for updates",
+      "upToDate": "ffc {{version}} is the newest release",
+      "notCompared": "This ffc is not a release build, so it cannot be compared with the releases.",
+      "updateWithManager": "It was installed with {{manager}}, so update it there: run this in a terminal.",
+      "updateWithCommand": "The app does not replace this copy of ffc. Update it by running this in a terminal:",
+      "updateCommand": "Update command",
+      "noRelease": "No ffc release was found on GitHub. Try again later."
     },
     "update": {
       "availableTitle": "Version {{version}} is available",
@@ -196,7 +203,9 @@
       "notKept": "not kept",
       "showArchive_one": "Show the archive ({{count}})",
       "showArchive_other": "Show the archive ({{count}})",
-      "emptyHint": "Start one with New, or press {{mod}}+N."
+      "emptyHint": "Start one with New, or press {{mod}}+N.",
+      "emptyFiltered": "No conversation matches these filters.",
+      "resize": "Resize the conversation list"
     },
     "search": {
       "label": "Search conversations",
@@ -229,11 +238,13 @@
     },
     "new": {
       "title": "New conversation",
-      "body": "Choose the site and the model. You can allow changes later.",
+      "body": "Choose the site, a profile and the model. You can allow changes later.",
       "site": "Site",
       "provider": "Provider",
       "model": "Model",
-      "start": "Start"
+      "start": "Start",
+      "profile": "Profile",
+      "profileFailed": "The conversation started without its profile"
     },
     "mode": {
       "label": "What the assistant may do",

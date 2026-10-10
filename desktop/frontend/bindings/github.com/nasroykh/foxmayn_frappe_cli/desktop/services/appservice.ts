@@ -16,6 +16,17 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * CheckFFCUpdate compares the installed ffc with the newest ffc release,
+ * for the ffc helper tab's own button. Unlike CheckForUpdate it also compares
+ * an ffc the app would not replace (a package manager's copy: Manager and
+ * Command say how to update it). Nothing is fetched when no working release
+ * build of ffc is installed. It sends no credentials; cancelling ctx stops it.
+ */
+export function CheckFFCUpdate(): $CancellablePromise<$models.FFCUpdate> {
+    return $Call.ByID(3564869038);
+}
+
+/**
  * CheckForUpdate asks GitHub for the newest desktop release (tag
  * desktop-v<semver>, not a draft) and compares it with this app's version.
  * A prerelease counts only while the running version is 0.x or itself a

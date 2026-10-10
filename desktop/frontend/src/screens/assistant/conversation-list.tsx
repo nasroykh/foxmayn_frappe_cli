@@ -33,10 +33,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useDirection } from "@/components/ui/direction"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Conversation, ExportFormat } from "@/lib/backend-types"
-import { ConversationSearch } from "@/screens/assistant/conversation-search"
+import { ConversationSearch, passes, type ListFilter } from "@/screens/assistant/conversation-search"
 import { useProfiles } from "@/screens/assistant/profile-picker"
+import { LIST_WIDTH, useListWidth } from "@/screens/assistant/use-list-width"
 
 /**
  * The conversations, pinned first and then newest first, with search,
@@ -74,6 +76,9 @@ export function ConversationList({
   const [busy, setBusy] = React.useState(false)
   const [archive, setArchive] = React.useState(false)
   const [searching, setSearching] = React.useState(false)
+  const [width, setWidth] = useListWidth()
+  const [filter, setFilter] = React.useState<ListFilter>({ site: "", profileID: "", from: "", to: "" })
+  const filtered = !!(filter.site || filter.profileID || filter.from || filter.to)
 
   async function confirm() {
     if (!doomed) return
@@ -86,13 +91,14 @@ export function ConversationList({
     }
   }
 
-  const shown = conversations.filter((c) => !!c.archived === archive)
+  const shown = conversations.filter((c) => !!c.archived === archive && passes(c, filter))
   // Pinned first; the order of the rest (newest first) is kept.
   const ordered = [...shown].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned))
   const archivedCount = conversations.filter((c) => c.archived).length
 
   return (
-    <nav aria-label={t("chat.list.label")} className="flex h-full min-h-0 w-60 shrink-0 flex-col border-e">
+    <nav aria-label={t("chat.list.label")} className="relative flex h-full min-h-0 shrink-0 flex-col border-e" style={{ width }}>
+      <ResizeHandle width={width} onWidth={setWidth} />
       <div className="flex items-center justify-between gap-1 p-3 pb-2">
         <h2 className="min-w-0 truncate text-sm font-semibold">{archive ? t("chat.list.archiveTitle") : t("chat.list.title")}</h2>
         <div className="flex items-center gap-1">
@@ -138,12 +144,19 @@ export function ConversationList({
           onSelect(id)
         }}
         onActive={setSearching}
+        onFilter={setFilter}
       />
       <ul className={cn("flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2", searching && "hidden")}>
         {ordered.length === 0 && (
           <li className="text-muted-foreground flex flex-col gap-1 px-2 py-1 text-sm">
-            <span>{archive ? t("chat.list.emptyArchive") : t("chat.list.empty")}</span>
-            {!archive && <span className="text-xs">{t("chat.list.emptyHint", { mod })}</span>}
+            {filtered ? (
+              <span>{t("chat.list.emptyFiltered")}</span>
+            ) : (
+              <>
+                <span>{archive ? t("chat.list.emptyArchive") : t("chat.list.empty")}</span>
+                {!archive && <span className="text-xs">{t("chat.list.emptyHint", { mod })}</span>}
+              </>
+            )}
           </li>
         )}
         {ordered.map((c) => {
@@ -251,5 +264,55 @@ export function ConversationList({
         </AlertDialogContent>
       </AlertDialog>
     </nav>
+  )
+}
+
+/**
+ * The list's end edge: drag it, or focus it and use the arrow keys, to
+ * change the width (Home and End go to the narrowest and widest); a double
+ * click gives the default back.
+ */
+function ResizeHandle({ width, onWidth }: { width: number; onWidth: (w: number, keep?: boolean) => void }) {
+  const { t } = useTranslation()
+  const rtl = useDirection() === "rtl"
+  const drag = React.useRef<{ x: number; w: number } | null>(null)
+  // Growing means moving away from the list: right in LTR, left in RTL.
+  const grow = (dx: number) => (rtl ? -dx : dx)
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={t("chat.list.resize")}
+      aria-valuemin={LIST_WIDTH.min}
+      aria-valuemax={LIST_WIDTH.max}
+      aria-valuenow={width}
+      tabIndex={0}
+      className="hover:bg-border focus-visible:bg-ring/50 absolute inset-y-0 -end-1 z-10 w-2 cursor-col-resize touch-none outline-none"
+      onPointerDown={(e) => {
+        if (e.button !== 0) return
+        e.preventDefault()
+        e.currentTarget.setPointerCapture(e.pointerId)
+        drag.current = { x: e.clientX, w: width }
+      }}
+      onPointerMove={(e) => {
+        if (drag.current) onWidth(drag.current.w + grow(e.clientX - drag.current.x), false)
+      }}
+      onPointerUp={() => {
+        if (drag.current) onWidth(width)
+        drag.current = null
+      }}
+      onPointerCancel={() => (drag.current = null)}
+      onDoubleClick={() => onWidth(LIST_WIDTH.initial)}
+      onKeyDown={(e) => {
+        const step = e.key === "ArrowRight" ? LIST_WIDTH.step : e.key === "ArrowLeft" ? -LIST_WIDTH.step : 0
+        if (step) {
+          e.preventDefault()
+          onWidth(width + grow(step))
+        } else if (e.key === "Home" || e.key === "End") {
+          e.preventDefault()
+          onWidth(e.key === "Home" ? LIST_WIDTH.min : LIST_WIDTH.max)
+        }
+      }}
+    />
   )
 }

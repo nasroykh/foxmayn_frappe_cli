@@ -58,13 +58,31 @@ export function AssistantScreen() {
     }
   }, [])
 
+  // Each load (and each adopt) gets a number; an answer that is no longer
+  // the latest is dropped, so a load started before a conversation was
+  // created cannot remove it from the list again.
+  const loads = React.useRef(0)
   const reloadConversations = React.useCallback(async () => {
+    const n = ++loads.current
     try {
-      setConversations(await backend.listConversations())
+      const list = await backend.listConversations()
+      if (n === loads.current) setConversations(list)
     } catch (err) {
       setError(appError(err))
     }
   }, [])
+
+  // Opens a conversation that may not be in the list yet: it goes into the
+  // list first, so the effect below does not see an unknown id and fall back
+  // to the newest conversation before the reload answers.
+  const adopt = React.useCallback(
+    (c: Conversation) => {
+      loads.current++
+      setConversations((prev) => [c, ...(prev ?? []).filter((x) => x.id !== c.id)])
+      select(c.id)
+    },
+    [select],
+  )
 
   const reload = React.useCallback(() => {
     setError(null)
@@ -130,8 +148,8 @@ export function AssistantScreen() {
     try {
       const res = await backend.importConversation()
       if (res.cancelled) return
+      adopt(res.conversation)
       await reloadConversations()
-      select(res.conversation.id)
       toast.add({ title: t("chat.history.imported"), description: t("chat.history.importedHint"), type: "success" })
     } catch (err) {
       const e = appError(err)
@@ -164,7 +182,7 @@ export function AssistantScreen() {
           providers={providers}
           onProvidersChanged={() => void reloadProviders()}
           onDone={(c) => {
-            select(c.id)
+            adopt(c)
             setOnboarding(false)
             void reloadConversations()
             void reloadProviders()
@@ -240,9 +258,10 @@ export function AssistantScreen() {
             sites={siteList}
             defaultSite={sites.data?.defaultSite}
             providers={good}
+            chooseProfile
             onCreated={(c) => {
               setNewOpen(false)
-              select(c.id)
+              adopt(c)
               void reloadConversations()
             }}
           />

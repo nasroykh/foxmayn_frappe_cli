@@ -356,3 +356,48 @@ func TestCheckForUpdateFFC(t *testing.T) {
 		t.Errorf("no ffc release: %+v, %v", got.FFC, err)
 	}
 }
+
+// The ffc tab's own check also compares an ffc the app does not replace,
+// and names a package manager's command for its copy.
+func TestCheckFFCUpdate(t *testing.T) {
+	list := listJSON(`[{"tag_name":"desktop-v9.0.0"},{"tag_name":"v1.12.1"}]`)
+	got, err := ffcService(t, "0.1.0", "1.12.0", list).CheckFFCUpdate(context.Background())
+	if err != nil || !got.Available || got.Latest != "1.12.1" || got.Current != "1.12.0" || got.Manager != "" {
+		t.Errorf("plain: %+v, %v", got, err)
+	}
+	if got, err := ffcService(t, "0.1.0", "1.12.1", list).CheckFFCUpdate(context.Background()); err != nil || got.Available || got.Latest != "1.12.1" {
+		t.Errorf("up to date: %+v, %v", got, err)
+	}
+
+	// Homebrew's copy: compared, with brew's command.
+	s := ffcService(t, "0.1.0", "1.12.0", list)
+	s.ffc.resolve = func(string) (string, error) { return "/opt/homebrew/Caskroom/ffc/1.12.0/ffc", nil }
+	got, err = s.CheckFFCUpdate(context.Background())
+	if err != nil || !got.Available || got.Latest != "1.12.1" || got.Manager == "" || !strings.Contains(got.Command, "brew") {
+		t.Errorf("managed: %+v, %v", got, err)
+	}
+	// CheckForUpdate still leaves it to the manager.
+	if all, err := s.CheckForUpdate(context.Background()); err != nil || all.FFC.Available {
+		t.Errorf("managed in CheckForUpdate: %+v, %v", all.FFC, err)
+	}
+
+	// No release build installed: nothing is fetched.
+	var hits atomic.Int32
+	count := func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`[{"tag_name":"v9.0.0"}]`))
+	}
+	if got, err := ffcService(t, "0.1.0", "dev", count).CheckFFCUpdate(context.Background()); err != nil || got.Available || got.Latest != "" || hits.Load() != 0 {
+		t.Errorf("dev ffc: %+v, %v, %d requests", got, err, hits.Load())
+	}
+	missing := updateService(t, "0.1.0", count)
+	if got, err := missing.CheckFFCUpdate(context.Background()); err != nil || got.Current != "" || hits.Load() != 0 {
+		t.Errorf("no ffc: %+v, %v, %d requests", got, err, hits.Load())
+	}
+
+	// A failed fetch is an error, with the installed version still named.
+	fail := func(w http.ResponseWriter, r *http.Request) { http.Error(w, "down", http.StatusBadGateway) }
+	if got, err := ffcService(t, "0.1.0", "1.12.0", fail).CheckFFCUpdate(context.Background()); err == nil || got.Current != "1.12.0" {
+		t.Errorf("fetch failure: %+v, %v", got, err)
+	}
+}

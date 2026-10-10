@@ -16,6 +16,25 @@ import { profileName } from "@/screens/assistant/profile-picker"
 
 const SEARCH_DELAY_MS = 250
 
+/** The filters, which also narrow the conversation list when nothing is typed. */
+export interface ListFilter {
+  site: string
+  profileID: string
+  /** YYYY-MM-DD, local days, both inclusive; "" for no bound. */
+  from: string
+  to: string
+}
+
+/** Whether a conversation passes the filters (dates against its last update). */
+export function passes(c: { site: string; profileID: string; updated: string }, f: ListFilter): boolean {
+  if (f.site && c.site !== f.site) return false
+  if (f.profileID && c.profileID !== f.profileID) return false
+  const at = new Date(c.updated).getTime()
+  if (f.from && at < new Date(`${f.from}T00:00:00`).getTime()) return false
+  if (f.to && at > new Date(`${f.to}T23:59:59.999`).getTime()) return false
+  return true
+}
+
 /** Wraps the words of the query that appear in the snippet in <mark>. */
 export function Highlighted({ text, query }: { text: string; query: string }) {
   const words = Array.from(new Set(query.split(/\s+/).filter(Boolean)))
@@ -39,8 +58,9 @@ export function Highlighted({ text, query }: { text: string; query: string }) {
 
 /**
  * The search box over the conversations, with filters (site, profile, dates).
- * With some text typed it shows the matching messages; choosing one opens its
- * conversation. Ctrl+Shift+F (Cmd+Shift+F) focuses the box.
+ * With some text typed it shows the matching conversations (by title or by
+ * their best matching message); choosing one opens it. Without text the
+ * filters narrow the list itself (onFilter). Ctrl+Shift+F (Cmd+Shift+F) focuses the box.
  */
 export function ConversationSearch({
   archived,
@@ -48,6 +68,7 @@ export function ConversationSearch({
   profiles,
   onOpen,
   onActive,
+  onFilter,
 }: {
   /** Search the archive instead of the other conversations. */
   archived: boolean
@@ -56,6 +77,8 @@ export function ConversationSearch({
   onOpen: (convID: string) => void
   /** Tells the list whether results are on screen (it hides the conversations). */
   onActive: (active: boolean) => void
+  /** Reports the filters, so the list can apply them when nothing is typed. */
+  onFilter: (f: ListFilter) => void
 }) {
   const { t } = useTranslation()
   const inputRef = React.useRef<HTMLInputElement>(null)
@@ -73,6 +96,7 @@ export function ConversationSearch({
   const filtered = !!(site || profileID || from || to)
   const active = text !== ""
   React.useEffect(() => onActive(active), [active, onActive])
+  React.useEffect(() => onFilter({ site, profileID, from, to }), [site, profileID, from, to, onFilter])
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -256,16 +280,20 @@ export function ConversationSearch({
       {active && hits && hits.length > 0 && (
         <ul aria-label={t("chat.search.results")} className={cn("flex flex-col gap-0.5", busy && "opacity-60")}>
           {hits.map((h) => (
-            <li key={h.msgID}>
+            <li key={h.convID}>
               <button
                 type="button"
                 onClick={() => onOpen(h.convID)}
                 className="hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col rounded-lg px-2 py-1.5 text-start text-sm outline-none focus-visible:ring-3"
               >
-                <span className="truncate font-medium">{h.title || t("chat.list.untitled")}</span>
-                <span className="text-muted-foreground line-clamp-2 text-xs break-words">
-                  <Highlighted text={h.snippet} query={text} />
+                <span dir="auto" className="truncate font-medium">
+                  {h.title ? <Highlighted text={h.title} query={text} /> : t("chat.list.untitled")}
                 </span>
+                {h.snippet && (
+                  <span dir="auto" className="text-muted-foreground line-clamp-2 text-xs break-words">
+                    <Highlighted text={h.snippet} query={text} />
+                  </span>
+                )}
                 <span className="text-muted-foreground truncate text-xs">
                   {h.site} · {new Date(h.updated).toLocaleDateString(intlLocale())}
                 </span>

@@ -136,7 +136,8 @@ func (s *Store) OptimizeSearch() error {
 type SearchFilter struct {
 	Site      string
 	ProfileID string
-	// From and To bound the conversation's updated time (both inclusive).
+	// From and To bound the time of the matching message (both inclusive);
+	// for a conversation found by its title, its last update.
 	From time.Time
 	To   time.Time
 	// Archived searches the archived conversations instead of the others.
@@ -145,7 +146,8 @@ type SearchFilter struct {
 	Limit int
 }
 
-// SearchHit is one message that matches a search.
+// SearchHit is one conversation that matches a search: its best matching
+// message, or (MsgID "") its title alone.
 type SearchHit struct {
 	ConvID  string
 	Title   string
@@ -156,9 +158,11 @@ type SearchHit struct {
 	Pinned  bool
 }
 
-// SearchConversations returns the messages whose indexed text contains every
-// word of query, best match first, with a snippet of the match. Ephemeral
-// conversations are not searched.
+// SearchConversations returns one hit per conversation whose title or
+// messages contain every word of query (the last letters of a word may be
+// missing, see ftsQuery). Conversations whose title matches come first, most
+// recently updated first; then the others by their best message (bm25),
+// with a snippet of it. Ephemeral conversations are not searched.
 func (s *Store) SearchConversations(query string, f SearchFilter) ([]SearchHit, error) {
 	q := ftsQuery(query)
 	if q == "" {
@@ -171,49 +175,112 @@ func (s *Store) SearchConversations(query string, f SearchFilter) ([]SearchHit, 
 	if limit > 200 {
 		limit = 200
 	}
-	where := []string{"messages_fts MATCH ?", "c.ephemeral=0", "c.archived=?"}
-	args := []any{q, f.Archived}
-	if f.Site != "" {
-		where = append(where, "c.site=?")
-		args = append(args, f.Site)
+	// The filters shared by both parts; dates apply to timeCol.
+	conds := func(timeCol string) ([]string, []any) {
+		where := []string{"c.ephemeral=0", "c.archived=?"}
+		args := []any{f.Archived}
+		if f.Site != "" {
+			where = append(where, "c.site=?")
+			args = append(args, f.Site)
+		}
+		if f.ProfileID != "" {
+			where = append(where, "c.profile_id=?")
+			args = append(args, f.ProfileID)
+		}
+		if !f.From.IsZero() {
+			where = append(where, timeCol+">=?")
+			args = append(args, f.From.UnixMilli())
+		}
+		if !f.To.IsZero() {
+			where = append(where, timeCol+"<=?")
+			args = append(args, f.To.UnixMilli())
+		}
+		return where, args
 	}
-	if f.ProfileID != "" {
-		where = append(where, "c.profile_id=?")
-		args = append(args, f.ProfileID)
+
+	// Titles: every word appears in the title. LIKE folds ASCII case only.
+	titleWhere, titleArgs := conds("c.updated")
+	for _, w := range strings.Fields(query) {
+		titleWhere = append(titleWhere, `c.title LIKE ? ESCAPE '\'`)
+		titleArgs = append(titleArgs, "%"+likeEscape(w)+"%")
 	}
-	if !f.From.IsZero() {
-		where = append(where, "c.updated>=?")
-		args = append(args, f.From.UnixMilli())
-	}
-	if !f.To.IsZero() {
-		where = append(where, "c.updated<=?")
-		args = append(args, f.To.UnixMilli())
-	}
-	args = append(args, limit)
-	rows, err := s.db.Query(`SELECT m.conv_id,c.title,c.site,m.id,snippet(messages_fts,0,'','','…',16),c.updated,c.pinned
-		FROM messages_fts JOIN messages m ON m.n=messages_fts.rowid
-		JOIN conversations c ON c.id=m.conv_id
-		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY bm25(messages_fts), c.updated DESC, m.conv_id, m.seq LIMIT ?`, args...)
+	msgWhere, msgArgs := conds("m.created")
+	args := append(append(append([]any{q}, msgArgs...), titleArgs...), limit)
+	// bm25 cannot run inside a window function: raw holds it, hits keeps
+	// each conversation's best message. snippet() is the costly part (it
+	// reads the whole text), so it runs afterwards, only for the hits kept.
+	rows, err := s.db.Query(`WITH raw AS MATERIALIZED (
+			SELECT m.conv_id AS conv_id, m.n AS n, m.id AS msg_id, m.seq AS seq, bm25(messages_fts) AS rank
+			FROM messages_fts JOIN messages m ON m.n=messages_fts.rowid
+			JOIN conversations c ON c.id=m.conv_id
+			WHERE messages_fts MATCH ? AND `+strings.Join(msgWhere, " AND ")+`
+		), hits AS (
+			SELECT conv_id, n, msg_id, rank AS score,
+				ROW_NUMBER() OVER (PARTITION BY conv_id ORDER BY rank, seq DESC) AS rn
+			FROM raw
+		), titles AS (
+			SELECT c.id AS conv_id FROM conversations c WHERE `+strings.Join(titleWhere, " AND ")+`
+		)
+		SELECT c.id, c.title, c.site, COALESCE(h.msg_id,''), COALESCE(h.n,0), c.updated, c.pinned
+		FROM conversations c
+		LEFT JOIN hits h ON h.conv_id=c.id AND h.rn=1
+		LEFT JOIN titles t ON t.conv_id=c.id
+		WHERE h.conv_id IS NOT NULL OR t.conv_id IS NOT NULL
+		ORDER BY t.conv_id IS NULL, CASE WHEN t.conv_id IS NULL THEN h.score END, c.updated DESC, c.id
+		LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrBadQuery, err)
 	}
-	defer rows.Close()
 	var out []SearchHit
+	var rowids []any
+	at := map[int64]int{}
 	for rows.Next() {
 		var h SearchHit
-		var up int64
-		if err := rows.Scan(&h.ConvID, &h.Title, &h.Site, &h.MsgID, &h.Snippet, &up, &h.Pinned); err != nil {
+		var up, n int64
+		if err := rows.Scan(&h.ConvID, &h.Title, &h.Site, &h.MsgID, &n, &up, &h.Pinned); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("%w: %v", ErrBadQuery, err)
 		}
-		h.Snippet = strings.Join(strings.Fields(h.Snippet), " ")
 		h.Updated = ms(up)
+		if h.MsgID != "" {
+			at[n] = len(out)
+			rowids = append(rowids, n)
+		}
 		out = append(out, h)
 	}
-	if err := rows.Err(); err != nil {
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrBadQuery, err)
+	}
+	if len(rowids) == 0 {
+		return out, nil
+	}
+	snips, err := s.db.Query(`SELECT rowid, snippet(messages_fts,0,'','','…',16) FROM messages_fts
+		WHERE messages_fts MATCH ? AND rowid IN (?`+strings.Repeat(",?", len(rowids)-1)+`)`, append([]any{q}, rowids...)...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrBadQuery, err)
+	}
+	defer snips.Close()
+	for snips.Next() {
+		var n int64
+		var snip string
+		if err := snips.Scan(&n, &snip); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrBadQuery, err)
+		}
+		if i, ok := at[n]; ok {
+			out[i].Snippet = strings.Join(strings.Fields(snip), " ")
+		}
+	}
+	if err := snips.Err(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrBadQuery, err)
 	}
 	return out, nil
+}
+
+// likeEscape makes s literal in a LIKE pattern with ESCAPE '\'.
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 // ExportData is a conversation with everything that belongs to it, or the

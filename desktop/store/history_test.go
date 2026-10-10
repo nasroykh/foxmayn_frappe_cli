@@ -76,7 +76,11 @@ func TestSearchConversationsFilters(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		addMsg(t, s, c.ID, "user", text)
+		m := addMsg(t, s, c.ID, "user", text)
+		// Dates filter on the matching message's time.
+		if _, err := s.db.Exec(`UPDATE messages SET created=? WHERE id=?`, updated.UnixMilli(), m.ID); err != nil {
+			t.Fatal(err)
+		}
 		setUpdated(t, s, c.ID, updated.UnixMilli())
 		return c
 	}
@@ -431,5 +435,50 @@ func TestImportedMessagesAreMarkedAndSearchCanBeOptimized(t *testing.T) {
 	}
 	if err := s.OptimizeSearch(); err != nil {
 		t.Error(err)
+	}
+}
+
+// Search: one hit per conversation, partial words, titles first.
+func TestSearchConversationsGroupsPrefixAndTitles(t *testing.T) {
+	s, _ := openTemp(t)
+	mk := func(title string, texts ...string) Conversation {
+		c, err := s.InsertConversation(Conversation{Title: title, Site: "prod", Mode: "read", ProviderID: "p", Model: "m"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, x := range texts {
+			addMsg(t, s, c.ID, "user", x)
+		}
+		return c
+	}
+	many := mk("Stock check", "invoice one", "invoice two", "the invoice invoice invoice")
+	titled := mk("Overdue invoices 100%_off", "nothing about it here")
+	other := mk("misc", "unrelated")
+
+	hits, err := s.SearchConversations("invoi", SearchFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 2 || hits[0].ConvID != titled.ID || hits[1].ConvID != many.ID {
+		t.Fatalf("hits: %+v", hits)
+	}
+	if hits[0].MsgID != "" || hits[1].MsgID == "" || !strings.Contains(hits[1].Snippet, "invoice invoice") {
+		t.Errorf("best message not picked: %+v", hits)
+	}
+	// LIKE wildcards in the query are literal.
+	if hits, _ := s.SearchConversations("100%_off", SearchFilter{}); len(hits) != 1 || hits[0].ConvID != titled.ID {
+		t.Errorf("literal title: %+v", hits)
+	}
+	if hits, _ := s.SearchConversations("0%", SearchFilter{}); len(hits) != 1 {
+		t.Errorf("percent in title: %+v", hits)
+	}
+	if hits, _ := s.SearchConversations("o_e", SearchFilter{}); len(hits) != 0 {
+		t.Errorf("underscore is not a wildcard: %+v", hits)
+	}
+	if hits, _ := s.SearchConversations("unrel", SearchFilter{}); len(hits) != 1 || hits[0].ConvID != other.ID {
+		t.Errorf("prefix: %+v", hits)
+	}
+	if hits, _ := s.SearchConversations("invoi", SearchFilter{Limit: 1}); len(hits) != 1 || hits[0].ConvID != titled.ID {
+		t.Errorf("limit: %+v", hits)
 	}
 }
