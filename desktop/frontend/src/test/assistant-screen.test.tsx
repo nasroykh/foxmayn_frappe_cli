@@ -54,6 +54,8 @@ describe("Assistant screen with the mock backend", () => {
     expect(current?.textContent).toContain("acme-staging")
     const c = (await backend.listConversations()).find((x) => x.site === "acme-staging")
     expect(c?.profileID).toBe("accounts")
+    // Accounts helper may change things: the switch is on Ask before changes.
+    expect(c?.mode).toBe("ask")
   })
 
 

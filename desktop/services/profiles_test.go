@@ -787,3 +787,31 @@ func setIdleAfter(e *Engine, d time.Duration) {
 	e.idleAfter = d
 	e.mu.Unlock()
 }
+
+// Taking a profile sets the conversation's switch to the profile's mode;
+// "no profile" keeps the switch as it is.
+func TestSetConversationProfileSetsMode(t *testing.T) {
+	g := newAssistantRig(t)
+	c := g.conv(t, ModeRead)
+	mode := func() string {
+		t.Helper()
+		list, _ := g.a.ListConversations()
+		for _, x := range list {
+			if x.ID == c.ID {
+				return x.Mode
+			}
+		}
+		t.Fatal("conversation gone")
+		return ""
+	}
+	got, err := g.a.SetConversationProfile(c.ID, PresetAccounts)
+	if err != nil || got.Mode != ModeAsk || mode() != ModeAsk {
+		t.Fatalf("ask profile: %+v %v (stored %s)", got, err, mode())
+	}
+	if _, err := g.a.SetConversationProfile(c.ID, ""); err != nil || mode() != ModeAsk {
+		t.Fatalf("no profile changed the switch: %v %s", err, mode())
+	}
+	if got, err := g.a.SetConversationProfile(c.ID, PresetExplore); err != nil || got.Mode != ModeRead || mode() != ModeRead {
+		t.Fatalf("read profile: %+v %v", got, err)
+	}
+}
