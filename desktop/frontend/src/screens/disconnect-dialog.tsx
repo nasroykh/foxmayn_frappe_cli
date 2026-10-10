@@ -23,6 +23,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import { backend } from "@/lib/backend"
 import type { Assistant, Preview } from "@/lib/backend-types"
+import { appHint } from "@/lib/labels"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
 
 export function DisconnectDialog({ assistant, onClose }: { assistant: Assistant | null; onClose: () => void }) {
@@ -56,7 +57,7 @@ export function DisconnectDialog({ assistant, onClose }: { assistant: Assistant 
       await reloadAssistants()
       toast.add(
         res.changed
-          ? { title: t("disconnect.done", { name: kept.name }), description: res.hint, type: "success" }
+          ? { title: t("disconnect.done", { name: kept.name }), description: appHint(kept.id, "disconnect", res.hint), type: "success" }
           : { title: t("disconnect.wasNot", { name: kept.name }), description: t("disconnect.nothing"), type: "info" },
       )
       onClose()

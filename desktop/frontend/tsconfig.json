@@ -27,5 +27,5 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src", "bindings"],
+  "include": ["src", "bindings", "e2e", "playwright.config.ts"],
 }

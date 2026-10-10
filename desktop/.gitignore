@@ -9,3 +9,7 @@ build/ios/xcode/overlay.json
 build/ios/xcode/gen/
 build/android/overlay.json
 build/android/gen/
+# Playwright (frontend/e2e): the mock build and the run output
+frontend/dist-mock
+frontend/test-results
+frontend/playwright-report

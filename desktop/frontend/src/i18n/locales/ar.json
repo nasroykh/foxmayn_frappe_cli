@@ -30,7 +30,23 @@
     "settingsUnreadable": "تعذرت قراءة إعداداته",
     "update": "تحديث",
     "connect": "ربط",
-    "disconnect": "فصل"
+    "disconnect": "فصل",
+    "hint": {
+      "connect": {
+        "claude-code": "افتح جلسة Claude Code جديدة (أو شغّل ‎/mcp) لاستخدامه.",
+        "claude-desktop": "أغلق Claude Desktop تمامًا (بما في ذلك من علبة النظام أو شريط القوائم)، ثم شغّله من جديد.",
+        "cursor": "أعد تشغيل Cursor لتحميله.",
+        "vscode": "أعد تحميل VS Code، أو شغّل «MCP: List Servers» من لوحة الأوامر، لتشغيله.",
+        "codex": "افتح جلسة Codex جديدة لاستخدامه."
+      },
+      "disconnect": {
+        "claude-code": "افتح جلسة Claude Code جديدة (أو شغّل ‎/mcp) ليسري التغيير.",
+        "claude-desktop": "أغلق Claude Desktop تمامًا (بما في ذلك من علبة النظام أو شريط القوائم)، ثم شغّله من جديد.",
+        "cursor": "أعد تشغيل Cursor لإزالة الخادم.",
+        "vscode": "أعد تحميل VS Code لإيقاف الخادم.",
+        "codex": "افتح جلسة Codex جديدة ليسري التغيير."
+      }
+    }
   },
   "common": {
     "cancel": "إلغاء",

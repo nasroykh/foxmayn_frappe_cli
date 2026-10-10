@@ -230,16 +230,33 @@ const clients: { id: string; name: string; detected: boolean; path: string }[] =
 
 function hint(id: string) {
   switch (id) {
+    // internal/mcpinstall's hints.
     case "claude-desktop":
-      return "Quit Claude Desktop completely and open it again to load the change."
+      return "Fully quit Claude Desktop (also from the tray or menu bar) and start it again."
     case "claude-code":
-      return "Start a new Claude Code session to load the change."
+      return "Start a new Claude Code session (or run /mcp) to use it."
     case "cursor":
-      return "Cursor picks the change up on its own; reload the window if the tools do not show."
+      return "Restart Cursor to load it."
     case "vscode":
-      return "Reload the VS Code window to load the change."
+      return "Reload VS Code, or run 'MCP: List Servers' from the command palette, to start it."
     default:
-      return "Restart Codex to load the change."
+      return "Start a new Codex session to use it."
+  }
+}
+
+// internal/mcpinstall's removeHints.
+function removeHint(id: string) {
+  switch (id) {
+    case "claude-desktop":
+      return "Fully quit Claude Desktop (also from the tray or menu bar) and start it again."
+    case "claude-code":
+      return "Start a new Claude Code session (or run /mcp) for the change to take effect."
+    case "cursor":
+      return "Restart Cursor to drop the server."
+    case "vscode":
+      return "Reload VS Code to stop the server."
+    default:
+      return "Start a new Codex session for the change to take effect."
   }
 }
 
@@ -1056,7 +1073,7 @@ export const backend: Backend = {
       commands: c.id === "claude-code" ? ["claude mcp remove --scope user frappe"] : null,
       server: null,
       canApply: true,
-      hint: hint(c.id),
+      hint: removeHint(c.id),
     }
   },
   async disconnect(client): Promise<ApplyResult> {
@@ -1070,7 +1087,7 @@ export const backend: Backend = {
     }
     const { [c.id]: _gone, ...rest } = connections
     connections = rest
-    return { changed: true, backup: "", hint: hint(c.id) }
+    return { changed: true, backup: "", hint: removeHint(c.id) }
   },
 
   async sendMessage(convID, text, attachmentIDs = []) {

@@ -30,7 +30,23 @@
     "settingsUnreadable": "Impossible de lire ses paramètres",
     "update": "Mettre à jour",
     "connect": "Connecter",
-    "disconnect": "Déconnecter"
+    "disconnect": "Déconnecter",
+    "hint": {
+      "connect": {
+        "claude-code": "Ouvrez une nouvelle session Claude Code (ou lancez /mcp) pour l’utiliser.",
+        "claude-desktop": "Quittez complètement Claude Desktop (y compris depuis la zone de notification ou la barre des menus), puis relancez-le.",
+        "cursor": "Redémarrez Cursor pour le charger.",
+        "vscode": "Rechargez VS Code, ou lancez « MCP: List Servers » depuis la palette de commandes, pour le démarrer.",
+        "codex": "Ouvrez une nouvelle session Codex pour l’utiliser."
+      },
+      "disconnect": {
+        "claude-code": "Ouvrez une nouvelle session Claude Code (ou lancez /mcp) pour appliquer la modification.",
+        "claude-desktop": "Quittez complètement Claude Desktop (y compris depuis la zone de notification ou la barre des menus), puis relancez-le.",
+        "cursor": "Redémarrez Cursor pour retirer le serveur.",
+        "vscode": "Rechargez VS Code pour arrêter le serveur.",
+        "codex": "Ouvrez une nouvelle session Codex pour appliquer la modification."
+      }
+    }
   },
   "common": {
     "cancel": "Annuler",

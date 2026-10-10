@@ -190,7 +190,7 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
   ]
 
   return (
-    <Item variant="outline" className="bg-card">
+    <Item variant="outline" role="listitem" className="bg-card">
       <ContextMenu>
         <ContextMenuTrigger render={<div className="flex min-w-0 flex-1 items-center gap-2.5" />}>
           <ItemMedia>

@@ -133,7 +133,9 @@ function AssistantCard({
   const hasEntry = a.status === "connected" || a.status === "different"
 
   return (
-    <Card className={cn(!a.detected && "opacity-70")}>
+    // Not installed: a dashed outline instead of fading the card (faded text
+    // falls under 4.5:1).
+    <Card className={cn(!a.detected && "bg-muted/30 ring-0 border border-dashed border-foreground/20")}>
       <CardHeader>
         <CardTitle>{a.name}</CardTitle>
         <CardDescription>

@@ -25,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { backend } from "@/lib/backend"
 import type { Preview } from "@/lib/backend-types"
+import { appHint } from "@/lib/labels"
 import { appError, errorTitle, localizedMessage, type AppError } from "@/lib/errors"
 
 const FOLLOW = "__default__"
@@ -104,7 +105,7 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
       await reloadAssistants()
       toast.add({
         title: tr("connect.connectedTitle", { name }),
-        description: [res.hint, res.backup ? tr("connect.backedUp") : ""]
+        description: [appHint(client, "connect", res.hint), res.backup ? tr("connect.backedUp") : ""]
           .filter(Boolean)
           .join(" "),
         type: "success",
@@ -210,7 +211,7 @@ export function ConnectDialog({ target, onClose }: { target: ConnectTarget | nul
                 <Alert>
                   <IconInfoCircle />
                   <AlertTitle>{summary}</AlertTitle>
-                  <AlertDescription>{preview.hint}</AlertDescription>
+                  <AlertDescription>{appHint(client, "connect", preview.hint)}</AlertDescription>
                 </Alert>
               ) : (
                 <Alert variant="destructive">

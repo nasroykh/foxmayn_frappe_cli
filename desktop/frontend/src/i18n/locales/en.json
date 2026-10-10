@@ -30,7 +30,23 @@
     "settingsUnreadable": "Its settings could not be read",
     "update": "Update",
     "connect": "Connect",
-    "disconnect": "Disconnect"
+    "disconnect": "Disconnect",
+    "hint": {
+      "connect": {
+        "claude-code": "Start a new Claude Code session (or run /mcp) to use it.",
+        "claude-desktop": "Fully quit Claude Desktop (also from the tray or menu bar) and start it again.",
+        "cursor": "Restart Cursor to load it.",
+        "vscode": "Reload VS Code, or run 'MCP: List Servers' from the command palette, to start it.",
+        "codex": "Start a new Codex session to use it."
+      },
+      "disconnect": {
+        "claude-code": "Start a new Claude Code session (or run /mcp) for the change to take effect.",
+        "claude-desktop": "Fully quit Claude Desktop (also from the tray or menu bar) and start it again.",
+        "cursor": "Restart Cursor to drop the server.",
+        "vscode": "Reload VS Code to stop the server.",
+        "codex": "Start a new Codex session for the change to take effect."
+      }
+    }
   },
   "common": {
     "cancel": "Cancel",
