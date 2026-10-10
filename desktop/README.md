@@ -27,6 +27,7 @@ Stored tokens and secrets never go back to the web view: the Go services return 
 - `llm/`: the provider interface and message types; `llm/anthropic`, `llm/openai` (OpenAI Responses), `llm/gemini` (Gemini over `net/http`), `llm/openaicompat` (OpenRouter, Ollama, LM Studio, custom URL), `llm/prices` (the embedded, dated price table) and `llm/llmtest` (a scripted fake provider for tests).
 - `store/`: the SQLite store behind the Assistant (conversations, messages, runs, tool calls, usage and cost, providers, profiles, site settings, search index; no secrets).
 - `frontend/src/screens/assistant/` and `src/components/chat/`: the chat screen, onboarding, provider settings, approval card, Markdown (no raw HTML or images).
+- `frontend/src/i18n/`: i18next with `locales/en.json` (source), `fr.json`, `ar.json`; `index.ts` detects and switches the language and sets the direction (`public/theme-init.js` does it before the first paint). `frontend/e2e/`: Playwright and axe on the mock build (`npm run e2e`; set `PLAYWRIGHT_CHROMIUM` to use a local Chromium).
 - `frontend/src/screens/`: sites, add-site sheet, Connect apps (`connect-apps-screen.tsx`, screen id `assistants`), settings, onboarding. UI components are shadcn/ui on Base UI (`frontend/src/components/ui`).
 
 ## Requirements

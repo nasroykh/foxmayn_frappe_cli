@@ -4,7 +4,25 @@ Add your sites, chat with the Assistant, connect AI apps, install the ffc helper
 
 Not an official Frappe product; not affiliated with Frappe Technologies.
 
-The app has four screens in the sidebar: **Sites**, **Assistant**, **Connect apps** and **Settings**. Press Ctrl+K (Cmd+K on macOS) for the command palette: go to a screen, add a site, check a connection or switch the theme.
+The app has four screens in the sidebar: **Sites**, **Assistant**, **Connect apps** and **Settings**. Press Ctrl+K (Cmd+K on macOS) for the command palette: go to a screen, start a conversation, add a site, check a connection, or switch the language or the theme. **Send feedback**, at the bottom of the sidebar and in the palette, opens a short form on GitHub with the app version, your system and the app's language filled in (it needs a GitHub account).
+
+## Language and keyboard
+
+The app speaks English, French (Français) and Arabic (العربية). The first start follows your system's language when it is one of these, else English; choose another in Settings > General, in the command palette or on the first welcome page, and the app remembers it. The file dialogs the app opens follow it too. Arabic lays the app out right to left, with Latin digits; code, file paths, commands and field changes stay left to right, and text from your sites and your own messages keep their own direction. Site data (DocType names, documents, values) is shown as the site has it, in any language.
+
+The assistant's instructions to the model stay in English, with one line asking it to reply in the language you write in.
+
+| Shortcut (Cmd on macOS) | Does |
+| --- | --- |
+| Ctrl+K | Command palette |
+| Ctrl+N | New conversation |
+| Ctrl+, | Settings |
+| Ctrl+/ | The list of shortcuts |
+| Ctrl+Shift+F | Search conversations |
+| Ctrl+B | Show or hide the sidebar |
+| Enter, Shift+Enter, Esc | Send, new line, stop the assistant |
+
+Letters are read from the key's place on the keyboard, so the shortcuts work with an Arabic or another non-Latin layout; `,` and `/` also work where a layout puts them elsewhere (AZERTY, QWERTZ). They wait while a dialog is open, and are off on the welcome pages. Moving to another screen puts the keyboard focus on its title, and every control shows a focus ring.
 
 ## First run
 
@@ -84,7 +102,7 @@ A pasted key is checked against the provider before it is saved. You can change 
 
 ### Ask a question
 
-Click **New conversation** and pick the site, the provider and the model. Enter sends your message, Shift+Enter adds a line. Answers stream in, and each tool the assistant uses shows as a row (what it looked at, and whether it worked). The model sees your messages and the data its tools return, and that data goes to the provider you chose. With a local model it stays on this computer.
+Click **New conversation** (or press Ctrl+N) and pick the site, the provider and the model. An empty conversation suggests four questions that suit its profile; picking one only fills the message box, so you can edit it first. Enter sends your message, Shift+Enter adds a line. Answers stream in, and each tool the assistant uses shows as a row (what it looked at, and whether it worked). The model sees your messages and the data its tools return, and that data goes to the provider you chose. With a local model it stays on this computer.
 
 ### Profiles
 
@@ -223,7 +241,7 @@ The app finds an existing ffc on PATH or where the install scripts put it. When 
 
 | Tab | Contents |
 | --- | --- |
-| General | **Theme** (Light, Dark, System). **Settings file**: the path of `config.yaml`, with **Open folder**. |
+| General | **Language** (English, Français, العربية). **Theme** (Light, Dark, System). **Settings file**: the path of `config.yaml`, with **Open folder**. |
 | ffc helper | Installed version and path, **Install ffc** / **Update to X** / **Install again**, **Look again**, **Open folder**. |
 | About | Version, **Check for updates**, **Source code**, **Report a problem**. |
 
