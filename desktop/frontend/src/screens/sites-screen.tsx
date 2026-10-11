@@ -8,6 +8,7 @@ import {
   IconPlugConnected,
   IconPlus,
   IconRefresh,
+  IconShieldCheck,
   IconStar,
   IconTrash,
   IconWorld,
@@ -48,11 +49,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { Site } from "@/lib/backend-types"
 import { appError, errorTitle, localizedMessage } from "@/lib/errors"
 import { authLabel, hostOf, initials, timeAgo } from "@/lib/labels"
+import { SafetySheet } from "@/screens/safety-sheet"
 import { RemoveSiteDialog, RenameSiteDialog, SiteURLDialog } from "@/screens/site-dialogs"
 import { WSLAlert } from "@/screens/wsl-alert"
 import { backend } from "@/lib/backend"
 
-type Pending = { kind: "rename" | "url" | "remove"; site: Site } | null
+type Pending = { kind: "rename" | "url" | "remove" | "safety"; site: Site } | null
 
 export function SitesScreen() {
   const { t } = useTranslation()
@@ -109,6 +111,7 @@ export function SitesScreen() {
 
       <RenameSiteDialog site={pending?.kind === "rename" ? pending.site : null} onClose={() => setPending(null)} />
       <SiteURLDialog site={pending?.kind === "url" ? pending.site : null} onClose={() => setPending(null)} />
+      <SafetySheet site={pending?.kind === "safety" ? pending.site : null} onClose={() => setPending(null)} />
       <RemoveSiteDialog site={pending?.kind === "remove" ? pending.site : null} onClose={() => setPending(null)} />
     </div>
   )
@@ -132,7 +135,7 @@ function SitesSkeleton() {
   )
 }
 
-function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "url" | "remove") => void }) {
+function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "url" | "remove" | "safety") => void }) {
   const { t } = useTranslation()
   const { checking, checkSite, connectAssistant, reloadSites } = useApp()
   const busy = checking.has(site.name)
@@ -178,6 +181,7 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
       icon: IconPlugConnected,
       run: () => connectAssistant(undefined, site.name),
     },
+    { id: "safety", label: t("sites.action.safety"), icon: IconShieldCheck, run: () => onAction("safety") },
   ]
   const edits = [
     { id: "rename", label: t("sites.action.rename"), icon: IconPencil, run: () => onAction("rename") },

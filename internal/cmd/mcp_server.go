@@ -311,6 +311,33 @@ func cleanMCPOptions(o *mcpOptions, cli bool, given func(opt string) bool) error
 // that a runaway filter can be killed, and the child is os.Executable()
 // started again: any main that embeds the MCP server (the desktop app) must
 // call this first, before it starts anything else, or the child would start
+// SensitiveDoctype reports whether MCP refuses writes to dt unless a site's
+// allow_doctypes lists it (matched as the policy matches it, ignoring case).
+// A policy editor uses it to tell that adding dt to allow_doctypes opens
+// access even where the list narrows otherwise.
+func SensitiveDoctype(dt string) bool {
+	return contains(sensitiveDoctypes, strings.TrimSpace(dt), true)
+}
+
+// UnlocksDeniedMethod reports whether an allow_methods entry lets call_method
+// reach a method MCP refuses by default: the entry names one, falls under a
+// wildcard of the deny list, or is a wildcard that covers one.
+func UnlocksDeniedMethod(entry string) bool {
+	entry = strings.TrimSpace(entry)
+	if anyMatch(deniedMethods, methodNames(entry)) {
+		return true
+	}
+	if p, ok := strings.CutSuffix(entry, "*"); ok {
+		for _, d := range deniedMethods {
+			dp, wild := strings.CutSuffix(d, "*")
+			if strings.HasPrefix(dp, p) || wild && strings.HasPrefix(p, dp) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // the application instead of running the filter.
 func RunJQChildIfRequested() {
 	if os.Getenv(jqChildEnv) == jqChildOn {

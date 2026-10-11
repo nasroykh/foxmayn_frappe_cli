@@ -59,10 +59,27 @@ export function Check(name: string): $CancellablePromise<$models.CheckResult> {
 }
 
 /**
+ * GetPolicy returns a site's safety rules. Rules the screen cannot show
+ * faithfully (a list entry that is blank or repeated, as only a hand edit
+ * writes) are refused: saving over them would change them unseen.
+ */
+export function GetPolicy(name: string): $CancellablePromise<$models.SitePolicy> {
+    return $Call.ByID(4068193021, name);
+}
+
+/**
  * List returns the configured sites.
  */
 export function List(): $CancellablePromise<$models.SiteList> {
     return $Call.ByID(3146350181);
+}
+
+/**
+ * PreviewPolicy checks a policy and says what saving it would open and
+ * narrow compared with the site's current rules.
+ */
+export function PreviewPolicy(name: string, p: $models.SitePolicy): $CancellablePromise<$models.PolicyPreview> {
+    return $Call.ByID(3224852341, name, p);
 }
 
 /**
@@ -88,6 +105,17 @@ export function Rename(oldName: string, newName: string): $CancellablePromise<vo
  */
 export function ReopenSignInPage(): $CancellablePromise<void> {
     return $Call.ByID(1612784637);
+}
+
+/**
+ * SavePolicy replaces a site's safety rules. base is the policy the screen
+ * showed: when the file changed since (another window, ffc, an editor), the
+ * save is refused so nothing is overwritten unseen. A change that opens
+ * access asks first in a native dialog; declining saves nothing. It returns
+ * the rules as stored.
+ */
+export function SavePolicy(name: string, base: $models.SitePolicy, p: $models.SitePolicy): $CancellablePromise<$models.SitePolicy> {
+    return $Call.ByID(3659342630, name, base, p);
 }
 
 /**

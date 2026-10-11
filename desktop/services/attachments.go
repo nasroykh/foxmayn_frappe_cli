@@ -8,7 +8,6 @@ import (
 	"html"
 	"path/filepath"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -81,9 +80,6 @@ var (
 // ConfirmDroppedFiles asks "Attach dropped files?" with each file's name and
 // folder. false means the person cancelled or closed the dialog.
 func (h *WailsHost) ConfirmDroppedFiles(paths []string) (bool, error) {
-	if h.App == nil {
-		return false, errors.New("the app is not running")
-	}
 	var b strings.Builder
 	b.WriteString(dialogT("dropBody") + "\n")
 	for _, p := range paths {
@@ -91,28 +87,8 @@ func (h *WailsHost) ConfirmDroppedFiles(paths []string) (bool, error) {
 		// sentence, and an Arabic name whole inside an English one.
 		fmt.Fprintf(&b, "\n%s\n    %s", isolate(dialogText(filepath.Base(p))), fmt.Sprintf(dialogT("dropIn"), isolate(dialogText(filepath.Dir(p)))))
 	}
-	d := h.App.Dialog.Question().SetTitle(dialogT("dropTitle")).SetMessage(b.String())
-	if w := h.App.Window.Current(); w != nil {
-		d.AttachToWindow(w)
-	}
-	// Show does not wait for the answer on every OS (macOS shows the alert
-	// asynchronously, Linux runs the button callbacks in goroutines), so the
-	// answer comes through a channel. A dialog closed without a button, or
-	// left open past dropConfirmWait, counts as Cancel.
-	answer := make(chan bool, 2)
-	d.AddButton(dialogT("dropAttach")).SetAsDefault().OnClick(func() { answer <- true })
-	d.AddButton(dialogT("dropCancel")).SetAsCancel().OnClick(func() { answer <- false })
-	d.Show()
-	select {
-	case ok := <-answer:
-		return ok, nil
-	case <-time.After(dropConfirmWait):
-		return false, nil
-	}
+	return h.askQuestion(dialogT("dropTitle"), b.String(), dialogT("dropAttach"), dialogT("dropCancel"), true)
 }
-
-// dropConfirmWait bounds the wait for an answer to the drop dialog.
-const dropConfirmWait = 10 * time.Minute
 
 // isolate wraps s in FIRST STRONG ISOLATE ... POP DIRECTIONAL ISOLATE.
 func isolate(s string) string { return "\u2068" + s + "\u2069" }

@@ -63,6 +63,17 @@ Each site's menu has:
 | **Rename…** | Changes the site's name. Apps pinned to the old name stop working until you reconnect them. |
 | **Change address…** | Moves the site to a new address after checking the saved credentials against it. Not available for browser sign-in sites: remove and add them again. |
 | **Remove…** | Removes the site. For a browser sign-in site, the app first revokes its token on the site (best effort, 10 seconds). |
+| **Safety rules** | What the Assistant and the connected apps may do on the site (below). |
+
+### Safety rules
+
+A site's safety rules are its ffc [per-site policy](../mcp/safety.md#per-site-policy): they apply to everything that uses ffc on the site, the Assistant in this app and the apps connected through ffc alike, and a profile can only narrow them. Choose:
+
+- **Read only**: look things up only; nothing can be created, changed or deleted.
+- **Ask before risky changes** (the default): changes are allowed; deleting, cancelling, sharing and similar actions ask first when the app can.
+- **Custom**: the read-only switch, when to ask (always, when the app can ask, never), and the lists: only these document types, document types to refuse, only these tools, only these server methods, server methods to refuse.
+
+The rules are saved in the ffc config file (its comments and other settings are kept). A change that opens access asks you to confirm it in a system dialog first, listing what it opens: read only turned off, fewer questions, a limit lifted or widened, an entry no longer refused, a sensitive document type made writable (users, roles, scripts, settings…), a server method refused by default made callable, or server methods callable again. A change that only narrows access is saved at once. If the rules were changed elsewhere (another window, ffc, an editor) since you opened them, the save is refused and they are shown again.
 
 ## Connect apps
 

@@ -52,6 +52,8 @@ import type {
   KeyStatus,
   OpenRouterAuth,
   Preview,
+  PolicyChange,
+  PolicyPreview,
   Profile,
   ProviderInfo,
   RetentionDays,
@@ -61,6 +63,7 @@ import type {
   SignInProgress,
   Site,
   SiteList,
+  SitePolicy,
   SiteSettings,
   ToolStatus,
   UsageTotals,
@@ -135,6 +138,63 @@ let sites: StoredSite[] = configExists
       },
     ]
   : []
+
+// ---- Safety rules: the per-site ffc policy ----
+const noPolicy: SitePolicy = { readOnly: false, confirm: "", allowTools: [], allowDoctypes: [], denyDoctypes: [], allowMethods: [], denyMethods: [] }
+const policies = new Map<string, SitePolicy>([
+  ["acme-prod", { ...noPolicy, denyDoctypes: ["User"] }],
+  ["local-bench", { ...noPolicy, readOnly: true }],
+])
+const clonePolicy = (p: SitePolicy): SitePolicy => ({
+  ...p,
+  allowTools: [...p.allowTools],
+  allowDoctypes: [...p.allowDoctypes],
+  denyDoctypes: [...p.denyDoctypes],
+  allowMethods: [...p.allowMethods],
+  denyMethods: [...p.denyMethods],
+})
+const policyOf = (name: string): SitePolicy => clonePolicy(policies.get(name) ?? noPolicy)
+const uniqSorted = (l: string[]) => [...new Set(l.map((x) => x.trim()).filter(Boolean))].sort()
+function cleanPolicy(p: SitePolicy): SitePolicy {
+  return {
+    readOnly: p.readOnly,
+    confirm: (p.confirm as string) === "if-supported" ? "" : p.confirm,
+    allowTools: uniqSorted(p.allowTools),
+    allowDoctypes: uniqSorted(p.allowDoctypes),
+    denyDoctypes: uniqSorted(p.denyDoctypes),
+    allowMethods: uniqSorted(p.allowMethods),
+    denyMethods: uniqSorted(p.denyMethods),
+  }
+}
+/** The kinds of the opening changes (and the narrowing ones the screen never shows), as the service. */
+function comparePolicies(o: SitePolicy, n: SitePolicy): PolicyPreview {
+  const opens: PolicyChange[] = []
+  const narrows: PolicyChange[] = []
+  if (o.readOnly && !n.readOnly) opens.push({ kind: "readOnlyOff", values: [] })
+  if (!o.readOnly && n.readOnly) narrows.push({ kind: "readOnlyOn", values: [] })
+  const rank = (c: string) => (c === "never" ? 0 : c === "always" ? 2 : 1)
+  const name = (c: string) => c || "if-supported"
+  if (rank(n.confirm) < rank(o.confirm)) opens.push({ kind: "confirmLooser", values: [name(o.confirm), name(n.confirm)] })
+  else if (rank(n.confirm) > rank(o.confirm)) narrows.push({ kind: "confirmStricter", values: [name(o.confirm), name(n.confirm)] })
+  const minus = (a: string[], b: string[]) => a.filter((x) => !b.includes(x))
+  const allow = (a: string[], b: string[], added: string, lifted: string, set: string, removed: string) => {
+    if (!a.length && !b.length) return
+    if (!a.length) return void narrows.push({ kind: set, values: b })
+    if (!b.length) return void opens.push({ kind: lifted, values: a })
+    if (minus(b, a).length) opens.push({ kind: added, values: minus(b, a) })
+    if (minus(a, b).length) narrows.push({ kind: removed, values: minus(a, b) })
+  }
+  const deny = (a: string[], b: string[], removed: string, added: string) => {
+    if (minus(a, b).length) opens.push({ kind: removed, values: minus(a, b) })
+    if (minus(b, a).length) narrows.push({ kind: added, values: minus(b, a) })
+  }
+  allow(o.allowTools, n.allowTools, "allowToolsAdded", "allowToolsLifted", "allowToolsSet", "allowToolsRemoved")
+  allow(o.allowDoctypes, n.allowDoctypes, "allowDoctypesAdded", "allowDoctypesLifted", "allowDoctypesSet", "allowDoctypesRemoved")
+  deny(o.denyDoctypes, n.denyDoctypes, "denyDoctypesRemoved", "denyDoctypesAdded")
+  allow(o.allowMethods, n.allowMethods, "allowMethodsAdded", "allowMethodsLifted", "allowMethodsSet", "allowMethodsRemoved")
+  deny(o.denyMethods, n.denyMethods, "denyMethodsRemoved", "denyMethodsAdded")
+  return { opens, narrows }
+}
 
 let ffc: FFCInfo =
   params.get("ffc") === "missing"
@@ -988,6 +1048,30 @@ export const backend: Backend = {
     }
     changed()
     return { revoked: s.auth === "oauth", wasDefault, newDefault }
+  },
+
+  async getPolicy(name) {
+    find(name)
+    await wait(150)
+    return clonePolicy(policyOf(name))
+  },
+  async previewPolicy(name, p) {
+    find(name)
+    await wait(100)
+    return comparePolicies(policyOf(name), cleanPolicy(p))
+  },
+  async savePolicy(name, base, p) {
+    find(name)
+    await wait(300)
+    const next = cleanPolicy(p)
+    const cur = policyOf(name)
+    if (JSON.stringify(cleanPolicy(base)) !== JSON.stringify(cur))
+      fail("invalid", "These rules were changed somewhere else since you opened them. Open them again.", { key: "policy.changed" })
+    // The real app asks in a native dialog before it opens access; ?policy=decline plays a "No".
+    if (comparePolicies(cur, next).opens.length > 0 && params.get("policy") === "decline")
+      fail("cancelled", "Nothing was changed.", { key: "policy.declined" })
+    policies.set(name, next)
+    return clonePolicy(next)
   },
 
   async listAssistants(): Promise<AssistantList> {

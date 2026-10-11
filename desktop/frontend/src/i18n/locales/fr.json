@@ -689,6 +689,19 @@
       "claudeNotFound": "La commande claude est introuvable. Installez d’abord Claude Code, ou exécutez vous-même les commandes ci-dessous.",
       "claudeBatch": "La commande claude est un script Windows que l’app n’exécute pas. Exécutez vous-même les commandes ci-dessous.",
       "readOnly": "Le fichier de paramètres de l’app est en lecture seule."
+    },
+    "policy": {
+      "confirm": "Choisissez quand demander : toujours, quand l’app peut demander, ou jamais.",
+      "tooMany": "Cette liste est trop longue.",
+      "badEntry": "Cette entrée n’est pas valide : {{entry}}.",
+      "changed": "Ces règles ont été modifiées ailleurs depuis leur ouverture. Ouvrez-les à nouveau.",
+      "cannotAsk": "Cette modification ouvre l’accès, et l’app ne peut pas vous demander de la confirmer ici.",
+      "askFailed": "La confirmation n’a pas pu s’afficher.",
+      "declined": "Rien n’a été modifié.",
+      "saveFailed": "Les règles n’ont pas pu être enregistrées.",
+      "handEdited": "Ces règles ont été modifiées à la main d’une façon que cet écran ne peut pas afficher (une entrée vide). Corrigez-les dans le fichier de configuration.",
+      "busy": "Une autre modification des règles de sécurité attend votre réponse.",
+      "anchors": "Ces règles partagent des parties avec d’autres entrées du fichier de configuration (ancres YAML ou clés de fusion). Modifiez-les dans le fichier."
     }
   },
   "auth": {
@@ -731,7 +744,8 @@
       "connect": "Connecter une app",
       "rename": "Renommer…",
       "changeAddress": "Changer l’adresse…",
-      "remove": "Supprimer…"
+      "remove": "Supprimer…",
+      "safety": "Règles de sécurité"
     },
     "card": {
       "signIn": "Connexion",
@@ -1117,5 +1131,63 @@
     "send": "Envoyer le message",
     "newLine": "Nouvelle ligne dans le message",
     "stop": "Arrêter l’Assistant"
+  },
+  "safety": {
+    "title": "Règles de sécurité de {{site}}",
+    "description": "Ces règles s’appliquent à tout ce qui utilise ffc sur ce site : l’Assistant de cette app et les apps connectées (Claude Desktop, Cursor…). Ce qu’elles refusent reste refusé, quel que soit le profil.",
+    "choice": "Quel niveau de prudence ?",
+    "read": {
+      "title": "Lecture seule",
+      "description": "Consulter uniquement. Rien ne peut être créé, modifié ou supprimé."
+    },
+    "ask": {
+      "title": "Demander avant les changements risqués",
+      "description": "Les changements sont permis ; supprimer, annuler, partager et les actions du même genre demandent d’abord une confirmation quand l’app le peut."
+    },
+    "custom": {
+      "title": "Personnalisé",
+      "description": "Définissez vous-même les listes."
+    },
+    "advanced": "Avancé",
+    "readOnly": {
+      "title": "Lecture seule",
+      "hint": "Activée, rien ne peut être créé, modifié ou supprimé."
+    },
+    "confirm": {
+      "label": "Quand demander avant un changement risqué",
+      "always": "Toujours (refuser si l’app ne peut pas demander)",
+      "default": "Quand l’app peut demander (par défaut)",
+      "never": "Jamais (ne rien demander)"
+    },
+    "list": {
+      "allowDoctypes": "Uniquement ces types de documents (DocTypes)",
+      "denyDoctypes": "Types de documents à refuser",
+      "allowTools": "Uniquement ces outils",
+      "allowMethods": "Uniquement ces méthodes serveur",
+      "denyMethods": "Méthodes serveur à refuser",
+      "hint": "Séparez les entrées par des virgules ou des retours à la ligne. Laissez vide pour ne rien limiter."
+    },
+    "opensTitle": "Cela ouvre l’accès",
+    "willConfirm": "On vous demandera de confirmer.",
+    "opens": {
+      "readOnlyOff": "La lecture seule est désactivée.",
+      "confirmLooser": "Les changements risqués demandent moins souvent confirmation.",
+      "allowToolsAdded": "Plus d’outils autorisés :",
+      "allowToolsLifted": "Les outils ne sont plus limités à une liste.",
+      "allowDoctypesAdded": "Plus de types de documents autorisés :",
+      "allowDoctypesLifted": "Les types de documents ne sont plus limités à une liste.",
+      "denyDoctypesRemoved": "Plus refusés :",
+      "allowMethodsAdded": "Plus de méthodes serveur autorisées :",
+      "allowMethodsLifted": "Les méthodes serveur ne sont plus limitées à une liste.",
+      "denyMethodsRemoved": "Méthodes serveur qui ne sont plus refusées :",
+      "sensitiveDoctypesUnlocked": "Des types de documents sensibles peuvent maintenant être modifiés :",
+      "deniedMethodsUnlocked": "Des méthodes serveur normalement refusées sont maintenant autorisées :",
+      "serverMethodsEnabled": "Les méthodes serveur personnalisées peuvent de nouveau être appelées.",
+      "generic": "Autre chose est ouvert."
+    },
+    "saved": "Règles de sécurité enregistrées",
+    "declined": "Rien n’a été modifié.",
+    "reloaded": "Les règles affichées sont maintenant les règles actuelles. Vérifiez-les, puis enregistrez de nouveau.",
+    "loadFailed": "Impossible de charger les règles de sécurité"
   }
 }
