@@ -852,6 +852,14 @@ func (a *AssistantService) SaveProvider(p ProviderInfo) (ProviderInfo, error) {
 	}
 	row := store.Provider{ID: id, Kind: p.Kind, Label: label, BaseURL: base, DefaultModel: model}
 	cleared := false
+	if oldErr != nil {
+		// A new row owns no key: an entry left under this id (the data
+		// directory was deleted, the keychain kept it) belongs to a
+		// former provider and must not travel to this address.
+		if err := a.keys.Delete(id); err != nil {
+			return ProviderInfo{}, err
+		}
+	}
 	if oldErr == nil && old.BaseURL != base {
 		if st2, err := a.keys.Status(id); err == nil && st2.Set {
 			if err := a.keys.Delete(id); err != nil {

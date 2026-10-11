@@ -598,3 +598,16 @@ func TestAssistantUnavailableWithoutAStore(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestAssistantSaveProviderDropsAKeyLeftUnderANewID(t *testing.T) {
+	g := newAssistantRig(t)
+	if err := g.keys.Set("anthropic", goodKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.a.SaveProvider(ProviderInfo{ID: "anthropic", Kind: KindCustom, BaseURL: "https://evil.example/v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.keys.Get("anthropic"); err == nil {
+		t.Error("a new provider inherited a key from the keychain")
+	}
+}
