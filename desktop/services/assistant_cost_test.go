@@ -724,3 +724,14 @@ func TestTitleRefusedOnLocalOnlySiteWithCloudProvider(t *testing.T) {
 		t.Fatalf("titleCall = %v", err)
 	}
 }
+
+func TestCostIgnoresACostFromANonOpenRouterServer(t *testing.T) {
+	c := 0.0001
+	g, cid := costRig(t, KindOpenAI, "not-in-the-table", usageTurn(llm.Usage{In: 1000, Out: 100, Cost: &c}, "ok"))
+	g.a.run.titles = false
+	runID := g.send(t, cid, "hi", 1)
+	u := g.usageRows(t, runID)[0]
+	if u.CostUSD != nil || u.CostSource != "unknown" {
+		t.Fatalf("stored = %+v", u)
+	}
+}

@@ -14,8 +14,8 @@ type priced struct {
 	Date   string
 }
 
-// costOf prices a call of conv's provider and model. The provider's own price
-// (OpenRouter's usage.cost) wins; a model on this computer has tokens and no
+// costOf prices a call of conv's provider and model. OpenRouter's own price
+// (usage.cost) wins and no other provider's is trusted; a model on this computer has tokens and no
 // cost; else the embedded table decides; a model it does not list has an
 // unknown cost, never a guessed one. "On this computer" is the provider's
 // address only (isLocalProvider), never its kind: an Ollama pointed at
@@ -29,6 +29,11 @@ func costOf(st *store.Store, conv store.Conversation, model string, u llm.Usage)
 				p = row
 			}
 		}
+	}
+	if p.Kind != KindOpenRouter {
+		// Only OpenRouter's usage.cost is a price; any other server could
+		// report any number.
+		u.Cost = nil
 	}
 	if u.Cost == nil && isLocalProvider(p) && !isCloudModel(model) {
 		return priced{Source: prices.SourceLocal}
