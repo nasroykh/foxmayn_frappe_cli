@@ -1,0 +1,7 @@
+# Text files are stored with LF and checked out with LF everywhere, so a
+# Windows checkout with core.autocrlf does not show line-ending-only diffs
+# (generated Wails bindings, go.mod). PowerShell and batch scripts keep CRLF.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
