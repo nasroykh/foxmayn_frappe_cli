@@ -123,7 +123,9 @@ func runIDFrom(ctx context.Context) string {
 
 // ToolClass is what the server's rules say about a call before it is made.
 type ToolClass struct {
-	Action  string `json:"action"`  // "read", "write" or "method" (call_method)
+	// Action is "read", "write" or "method" (call_method). run_report is a
+	// write when it may start a prepared report (preparedMayStart).
+	Action  string `json:"action"`
 	Confirm bool   `json:"confirm"` // the call destroys, cancels or merges documents, or widens access
 	Mode    string `json:"mode"`    // the site's confirm mode: never, if-supported or always
 	// WillAsk is true when ffc itself is certain to put the question to the
@@ -209,6 +211,9 @@ func (s *MCPServer) Classify(tool string, args map[string]any) (cls ToolClass, e
 		return cls, nil
 	}
 	cls.Site, cls.Mode = p.site.Name, p.policy.confirmMode()
+	if tool == "run_report" && preparedMayStart(wire, p.policy) {
+		cls.Action = "write"
+	}
 	if err := p.policy.check(tool, p.scope); err != nil {
 		cls.Denied = err.Error()
 	}
