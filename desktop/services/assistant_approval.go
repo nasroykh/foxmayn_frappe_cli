@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -317,21 +319,82 @@ func diffFields(doc, data map[string]any) []DiffField {
 		if sameValue(ov, nv) {
 			continue
 		}
-		out = append(out, DiffField{Field: k, Old: ov, New: nv})
+		// The card shows reveal()ed copies; the call's args stay as sent.
+		out = append(out, DiffField{Field: revealString(k), Old: reveal(ov), New: reveal(nv)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Field < out[j].Field })
 	return out
 }
 
+// reveal returns v for display with every control, format and invisible
+// character of its strings escaped (\u202e), so a model-chosen value cannot
+// show differently from what is written. v itself is not changed.
+func reveal(v any) any {
+	switch t := v.(type) {
+	case string:
+		return revealString(t)
+	case map[string]any:
+		m := make(map[string]any, len(t))
+		for k, x := range t {
+			m[revealString(k)] = reveal(x)
+		}
+		return m
+	case []any:
+		l := make([]any, len(t))
+		for i, x := range t {
+			l[i] = reveal(x)
+		}
+		return l
+	}
+	return v
+}
+
+// revealString escapes the runes that can hide or reorder text: controls
+// (except newline and tab), format characters (bidi, zero-width), line and
+// paragraph separators and every space but the plain one.
+func revealString(s string) string {
+	hidden := func(r rune) bool {
+		switch {
+		case r == '\n' || r == '\t' || r == ' ':
+			return false
+		case r == utf8.RuneError:
+			return true
+		}
+		return unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp, unicode.Zs)
+	}
+	if !strings.ContainsFunc(s, hidden) && utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	for i, r := range s {
+		if r == utf8.RuneError {
+			if _, n := utf8.DecodeRuneInString(s[i:]); n == 1 {
+				fmt.Fprintf(&b, "\\x%02x", s[i])
+				continue
+			}
+		}
+		switch {
+		case !hidden(r):
+			b.WriteRune(r)
+		case r > 0xffff:
+			fmt.Fprintf(&b, "\\U%08x", r)
+		default:
+			fmt.Fprintf(&b, "\\u%04x", r)
+		}
+	}
+	return b.String()
+}
+
 // sameValue is DeepEqual after the differences Frappe hides: a flag as true or
-// 1, a number as 5 or "5".
+// 1, a number as 5 or "5". a is the stored value and b the new one. Frappe
+// returns Int, Float, Currency and Check as numbers and Data as strings, so
+// the loose comparison applies only when the stored value is a bool or a
+// number: a Data "0123" changed to 123 is a change (Frappe stores "123").
 func sameValue(a, b any) bool {
 	if reflect.DeepEqual(a, b) {
 		return true
 	}
-	// Two strings are never compared as numbers ("0123" is not "123"): at
-	// least one side must be a bool or a JSON number.
-	if !isFlagOrNumber(a) && !isFlagOrNumber(b) {
+	if !isFlagOrNumber(a) {
 		return false
 	}
 	x, okx := asNumber(a)
