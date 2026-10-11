@@ -99,6 +99,22 @@ var dialogStrings = map[string]map[string]string{
 		LangFrench:  "Ouvrir l’accès",
 		LangArabic:  "توسيع الوصول",
 	},
+	"removeRulesTitle": {
+		LangEnglish: "Remove this site and its safety rules?",
+		LangFrench:  "Supprimer ce site et ses règles de sécurité ?",
+		LangArabic:  "إزالة هذا الموقع وقواعد الأمان الخاصة به؟",
+	},
+	// %s is the site name.
+	"removeRulesBody": {
+		LangEnglish: "%s has safety rules. Removing the site deletes them too: added again, it starts with no rules.\n\nIf you did not just press Remove site in the app, do not remove it.",
+		LangFrench:  "%s a des règles de sécurité. Supprimer le site les supprime aussi : ajouté à nouveau, il repart sans règles.\n\nSi vous n’avez pas appuyé à l’instant sur Supprimer le site dans l’app, ne le supprimez pas.",
+		LangArabic:  "لدى %s قواعد أمان. إزالة الموقع تحذفها أيضًا: إذا أُضيف من جديد فسيبدأ دون قواعد.\n\nإذا لم تضغط للتو على إزالة الموقع في التطبيق، فلا تُزله.",
+	},
+	"removeRulesApply": {
+		LangEnglish: "Remove site",
+		LangFrench:  "Supprimer le site",
+		LangArabic:  "إزالة الموقع",
+	},
 	"policyReadOnlyOff": {
 		LangEnglish: "Read only is turned off: changes become possible.",
 		LangFrench:  "La lecture seule est désactivée : les modifications deviennent possibles.",

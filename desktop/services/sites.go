@@ -575,13 +575,34 @@ func (s *SitesService) ChangeURL(ctx context.Context, name, rawURL string) (stri
 	return newURL, nil
 }
 
-// Remove deletes a site. An OAuth site's token is revoked on the server
-// first, at most revokeTimeout, before the config lock is taken; a failed
+// Remove deletes a site. A site with safety rules is removed only after a
+// native confirmation (No is the default; declined is cancelled,
+// policy.declined): its rules go with it, and a site added again under that
+// name starts with none. An OAuth site's token is then revoked on the server,
+// at most revokeTimeout, before the config lock is taken; a failed
 // revocation is reported but does not stop the removal (as in the CLI).
 func (s *SitesService) Remove(ctx context.Context, name string) (RemoveResult, error) {
 	site, _, err := s.lookup(name)
 	if err != nil {
 		return RemoveResult{}, err
+	}
+	if !policyOf(site.MCP).equal(SitePolicy{}) {
+		// Held until the site is gone, so no rules are saved meanwhile.
+		if !policyMu.TryLock() {
+			return RemoveResult{}, keyed(CodeUnavailable, "policy.busy", nil)
+		}
+		defer policyMu.Unlock()
+		c, ok := s.host.(PolicyConfirmer)
+		if !ok {
+			return RemoveResult{}, keyed(CodeUnavailable, "policy.cannotAskRemove", nil)
+		}
+		yes, err := c.ConfirmRemoveRules(name)
+		if err != nil {
+			return RemoveResult{}, keyed(CodeFailed, "policy.askFailed", err)
+		}
+		if !yes {
+			return RemoveResult{}, keyed(CodeCancelled, "policy.declined", nil)
+		}
 	}
 	var res RemoveResult
 	if site.RefreshToken != "" || site.AccessToken != "" {

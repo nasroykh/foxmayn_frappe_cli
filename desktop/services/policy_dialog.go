@@ -112,3 +112,10 @@ func policyText(s string) string {
 func (h *WailsHost) ConfirmPolicyChange(site string, opens []PolicyChange) (bool, error) {
 	return h.askQuestion(dialogT("policyTitle"), policyChangeText(site, opens), dialogT("policyApply"), dialogT("dropCancel"), false)
 }
+
+// ConfirmRemoveRules asks "Remove this site and its safety rules?". Cancel
+// (No on Windows) is the default; false means the person declined or closed
+// the dialog.
+func (h *WailsHost) ConfirmRemoveRules(site string) (bool, error) {
+	return h.askQuestion(dialogT("removeRulesTitle"), fmt.Sprintf(dialogT("removeRulesBody"), isolate(policyText(site))), dialogT("removeRulesApply"), dialogT("dropCancel"), false)
+}

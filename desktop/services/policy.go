@@ -85,10 +85,12 @@ const (
 )
 
 // PolicyConfirmer asks the person, in a native dialog the web view cannot
-// click, whether a change that opens access to a site may be saved. A host
-// without it cannot loosen a site's rules.
+// click, whether a change that opens access to a site may be saved, and
+// whether a site may be removed with its rules. A host without it cannot
+// loosen a site's rules or remove a site that has some.
 type PolicyConfirmer interface {
 	ConfirmPolicyChange(site string, opens []PolicyChange) (bool, error)
+	ConfirmRemoveRules(site string) (bool, error)
 }
 
 // toolNamePattern is the shape of an ffc tool name.

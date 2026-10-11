@@ -291,6 +291,7 @@ export interface Backend {
   setDefault(name: string): Promise<void>
   rename(oldName: string, newName: string): Promise<void>
   changeURL(name: string, url: string): Promise<string>
+  /** A site with safety rules asks in a native dialog first; declined is cancelled (policy.declined). */
   remove(name: string): Promise<RemoveResult>
   getPolicy(name: string): Promise<SitePolicy>
   /** What saving would open (needs a native confirmation) and narrow. */

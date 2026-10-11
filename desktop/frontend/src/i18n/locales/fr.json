@@ -698,6 +698,7 @@
       "badEntry": "Cette entrée n’est pas valide : {{entry}}.",
       "changed": "Ces règles ont été modifiées ailleurs depuis leur ouverture. Ouvrez-les à nouveau.",
       "cannotAsk": "Cette modification ouvre l’accès, et l’app ne peut pas vous demander de la confirmer ici.",
+      "cannotAskRemove": "Ce site a des règles de sécurité, et l’app ne peut pas vous demander ici de confirmer leur suppression.",
       "askFailed": "La confirmation n’a pas pu s’afficher.",
       "declined": "Rien n’a été modifié.",
       "saveFailed": "Les règles n’ont pas pu être enregistrées.",
