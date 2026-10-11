@@ -1,6 +1,7 @@
 package attach
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/csv"
 	"errors"
@@ -12,17 +13,20 @@ import (
 
 // xlsxText turns every sheet of a workbook into CSV, each under a
 // "Sheet: <name>" line. The workbook is unzipped in memory under
-// xlsxUnzipLimit; a workbook past that, or past the sheet, row, column, cell
-// or text caps, is refused rather than cut, so the model never takes part of
-// a sheet for all of it.
+// xlsxUnzipLimit in all and xlsxPartLimit per part; a workbook past those,
+// or past the sheet, row, column, cell or text caps, is refused rather than
+// cut, so the model never takes part of a sheet for all of it.
 func xlsxText(name string, data []byte) (string, error) {
+	if err := xlsxSizes(name, data); err != nil {
+		return "", err
+	}
 	f, err := excelize.OpenReader(bytes.NewReader(data), excelize.Options{
 		UnzipSizeLimit:    xlsxUnzipLimit,
-		UnzipXMLSizeLimit: xlsxUnzipLimit,
+		UnzipXMLSizeLimit: xlsxPartLimit,
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "unzip size") {
-			return "", refuse("%s unpacks to more than 64 MB and was not read.", name)
+			return "", refuse("%s unpacks to more than %d MB and was not read.", name, xlsxUnzipLimit>>20)
 		}
 		if errors.Is(err, excelize.ErrWorkbookFileFormat) || errors.Is(err, excelize.ErrWorkbookPassword) {
 			return "", refuse("%s is password protected or not an XLSX workbook.", name)
@@ -99,6 +103,27 @@ func xlsxText(name string, data []byte) (string, error) {
 		return "", tooBig()
 	}
 	return text, nil
+}
+
+// xlsxSizes refuses a workbook whose parts declare more than xlsxPartLimit
+// each or xlsxUnzipLimit in all, before excelize unzips anything.
+func xlsxSizes(name string, data []byte) error {
+	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		// excelize tells a password-protected workbook from a broken one.
+		return nil
+	}
+	var total uint64
+	for _, e := range z.File {
+		if e.UncompressedSize64 > xlsxPartLimit {
+			return refuse("%s has a part that unpacks to more than %d MB and was not read.", name, xlsxPartLimit>>20)
+		}
+		total += e.UncompressedSize64
+		if total > xlsxUnzipLimit {
+			return refuse("%s unpacks to more than %d MB and was not read.", name, xlsxUnzipLimit>>20)
+		}
+	}
+	return nil
 }
 
 // csvLine writes one CSV record, LF-terminated.

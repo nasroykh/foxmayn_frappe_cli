@@ -233,7 +233,7 @@ func TestParseXLSXRowCap(t *testing.T) {
 }
 
 // TestParseXLSXZipBomb crafts a small file whose one entry unpacks to more
-// than the unzip limit: refused from the declared size, before unpacking.
+// than the part limit: refused from the declared size, before unpacking.
 func TestParseXLSXZipBomb(t *testing.T) {
 	var b bytes.Buffer
 	zw := zip.NewWriter(&b)
@@ -254,7 +254,31 @@ func TestParseXLSXZipBomb(t *testing.T) {
 		t.Fatalf("the bomb is %d bytes, more than the file limit", b.Len())
 	}
 	_, err = Parse("bomb.xlsx", b.Bytes())
-	refusal(t, err, "unpacks to more than 64 MB")
+	refusal(t, err, "has a part that unpacks to more than 8 MB")
+}
+
+// TestParseXLSXTotalLimit spreads 18 MB over three parts under the part
+// limit: refused from the declared sizes in all.
+func TestParseXLSXTotalLimit(t *testing.T) {
+	var b bytes.Buffer
+	zw := zip.NewWriter(&b)
+	chunk := make([]byte, 1<<20)
+	for _, part := range []string{"xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml", "xl/sharedStrings.xml"} {
+		w, err := zw.Create(part)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 6; i++ {
+			if _, err := w.Write(chunk); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Parse("parts.xlsx", b.Bytes())
+	refusal(t, err, "unpacks to more than 16 MB")
 }
 
 // TestParseXLSXLyingZip crafts an entry that declares a tiny size but holds
