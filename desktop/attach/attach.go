@@ -47,10 +47,15 @@ const (
 	MaxImagePixels = 40_000_000
 
 	// The XLSX caps. A workbook is unzipped in memory only up to
-	// xlsxUnzipLimit bytes in all (a zip bomb is refused before it is
-	// unzipped, from the sizes its entries declare; archive/zip refuses an
-	// entry that holds more than it declares).
-	xlsxUnzipLimit = 64 << 20
+	// xlsxUnzipLimit bytes in all and xlsxPartLimit per part (a zip bomb is
+	// refused before it is unzipped, from the sizes its entries declare;
+	// archive/zip refuses an entry that holds more than it declares). excelize
+	// keeps a parsed shared string at about 20 times its XML size, so a
+	// workbook of one-letter strings at the old 64 MB limit took 1.4 GB:
+	// 8 MB per part keeps that under 200 MB, and a workbook that fits
+	// MaxTextChars needs far less.
+	xlsxUnzipLimit = 16 << 20
+	xlsxPartLimit  = 8 << 20
 	xlsxMaxSheets  = 50
 	xlsxMaxRows    = 50_000
 	xlsxMaxCells   = 500_000
