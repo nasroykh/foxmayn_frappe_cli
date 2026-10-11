@@ -18,6 +18,11 @@ const KNOWN_TOOLS = new Set([
   "erp_payment", "erp_item", "erp_stock", "erp_party",
 ])
 
+/** The plain label of an ffc tool, or the generic one for a tool this app does not know. */
+export function toolLabel(t: (key: string) => string, tool: string): string {
+  return KNOWN_TOOLS.has(tool) ? t(`chat.tool.names.${tool}`) : t("chat.tool.generic")
+}
+
 /** One tool call, as a compact row with a plain label; the raw name and summary open on demand. */
 export function ToolRow({
   tool,
@@ -47,7 +52,7 @@ export function ToolRow({
     "ffc-approved": t("chat.tool.approved"),
     "ffc-declined": t("chat.tool.declined"),
   }
-  const label = KNOWN_TOOLS.has(tool) ? t(`chat.tool.names.${tool}`) : t("chat.tool.generic")
+  const label = toolLabel(t, tool)
   const icon =
     status === "running" ? (
       <Spinner className="size-3.5" />

@@ -1,3 +1,4 @@
+import { useOptionalApp } from "@/app/app-context"
 import {
   IconAlertTriangle,
   IconCheck,
@@ -101,6 +102,7 @@ export function ChatPane({
   onChanged: () => void
 }) {
   const { t } = useTranslation()
+  const app = useOptionalApp()
   const convID = conv.id
   const [state, dispatch] = React.useReducer(chatReducer, convID, initialState)
   const [messages, setMessages] = React.useState<ChatMessage[] | null>(null)
@@ -460,6 +462,7 @@ export function ChatPane({
 
   const provider = providers.find((p) => p.id === conv.providerID)
   const usageOf = new Map(runUsage.map((u) => [u.msgID, u.usage]))
+  const runOf = new Map(runUsage.map((u) => [u.msgID, u.runID]))
   // Try again sits on the last message: the last answer, or a last prompt
   // left without one (a failed or stopped run), when a prompt of the user's
   // own (not imported) leads to it.
@@ -608,6 +611,7 @@ export function ChatPane({
               <MessageFooter
                 m={m}
                 usage={usageOf.get(m.id)}
+                onActivity={app && runOf.get(m.id) ? () => app.openActivity(runOf.get(m.id)) : undefined}
                 busy={active || acting}
                 canRetry={i === lastAnswer && !active}
                 canEdit={!isImported(m.id)}

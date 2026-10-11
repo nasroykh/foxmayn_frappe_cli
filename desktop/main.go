@@ -38,6 +38,7 @@ func main() {
 			application.NewService(services.NewSitesService(host, configPath)),
 			application.NewService(services.NewAssistantsService(configPath, ffc)),
 			application.NewService(assistant),
+			application.NewService(services.NewActivityService(configPath)),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

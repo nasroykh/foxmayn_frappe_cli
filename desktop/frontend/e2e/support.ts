@@ -24,8 +24,8 @@ export async function openApp(page: Page, opts: { lang?: Lang | "pseudo"; theme?
 }
 
 /** The sidebar's screen buttons, in order (the brand button is first). */
-export async function goTo(page: Page, screen: "sites" | "assistant" | "apps" | "settings") {
-  const i = { sites: 1, assistant: 2, apps: 3, settings: 4 }[screen]
+export async function goTo(page: Page, screen: "sites" | "assistant" | "apps" | "activity" | "settings") {
+  const i = { sites: 1, assistant: 2, apps: 3, activity: 4, settings: 5 }[screen]
   const button = page.locator('[data-sidebar="menu-button"]').nth(i)
   await button.click()
   // The screen's heading names what the sidebar button says.

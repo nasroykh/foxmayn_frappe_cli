@@ -55,7 +55,7 @@ export const states: State[] = [
   {
     name: "add-site",
     reach: async (page) => {
-      await page.locator('[data-sidebar="menu-button"]').nth(5).click()
+      await page.locator('[data-sidebar="menu-button"]').nth(6).click()
       await expect(dialog(page)).toBeVisible()
     },
   },
@@ -135,6 +135,31 @@ export const states: State[] = [
       await dialog(page).locator("button[type=submit], [data-slot=button]").last().click()
       await page.locator("section > header button[aria-haspopup=menu]").click()
       await expect(page.getByRole("menu")).toBeVisible()
+    },
+  },
+  {
+    name: "activity",
+    reach: async (page) => {
+      await goTo(page, "activity")
+      await expect(page.locator("main ul[aria-label] li").first()).toBeVisible({ timeout: 5000 })
+    },
+  },
+  {
+    name: "activity-details",
+    reach: async (page) => {
+      await goTo(page, "activity")
+      // The third row: a refused call, with arguments and an error text.
+      await page.locator("main ul[aria-label] li button").nth(2).click()
+      await expect(dialog(page)).toBeVisible()
+      await expect(dialog(page).locator("pre")).toBeVisible()
+    },
+  },
+  {
+    name: "activity-empty",
+    query: "activity=none",
+    reach: async (page) => {
+      await goTo(page, "activity")
+      await expect(page.locator("main [data-slot=empty]")).toBeVisible({ timeout: 5000 })
     },
   },
   { name: "settings-general", reach: (page) => goTo(page, "settings") },

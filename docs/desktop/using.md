@@ -179,6 +179,12 @@ The assistant goes through the same checks as any connected app, from the site's
 
 Every tool call is written to ffc's [audit log](../mcp/safety.md#audit-log) (`mcp-audit.jsonl` next to the config file) with the client name `foxmayn-desktop` and a `run_id`, which is the same for all the calls of one question. A change you approved through ffc's own confirmation shows `confirm_pending` followed by the result. A change you decline on an app card never reaches ffc, so it has no line.
 
+## Activity
+
+The **Activity** screen lists that audit log, newest first: every tool call made through ffc on your sites, by the Assistant in this app ("This app's Assistant") and by the connected apps (Claude Desktop, Cursor and the others, named as they name themselves). Each row shows when, the app, the site, what was done, the document types and names, the result and how long it took. Results are **Done**, **Failed**, **Refused by the safety rules**, **Invalid request**, **Waited for a confirmation** and **Declined**. Filter by site, app, result and period; **Load more** goes further back. Open a row for every field, including the arguments as ffc logged them (documents and field values are reduced to their names and sizes, and secrets are cut out before they are written).
+
+From an Assistant answer, **See activity** opens the screen filtered to that answer's run. The screen only reads: it cannot change or clear the log, which ffc rotates at 10 MiB (the older half, `mcp-audit.jsonl.1`, is read too). A line that cannot be read is skipped and counted.
+
 ### Cost
 
 Each run shows its tokens (in, out, cached) and a cost, and the conversation shows a total. A cost comes from, in this order:

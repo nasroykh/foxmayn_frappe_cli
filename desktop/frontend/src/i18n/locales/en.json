@@ -1,7 +1,8 @@
 {
   "nav": {
     "connectApps": "Connect apps",
-    "assistant": "Assistant"
+    "assistant": "Assistant",
+    "activity": "Activity"
   },
   "connectApps": {
     "title": "Connect apps",
@@ -407,7 +408,8 @@
       "editTitle": "Edit this message?",
       "editBody": "Everything after it is removed from the conversation, later messages and their files included, and the message goes back to the box below so you can change it and send it again.",
       "deleteTitle": "Delete this message and its answer?",
-      "deleteBody": "They are removed from this conversation. What they cost still counts in the conversation's total."
+      "deleteBody": "They are removed from this conversation. What they cost still counts in the conversation's total.",
+      "activity": "See activity"
     },
     "noConversationShortcut": "Or press {{mod}}+N."
   },
@@ -697,6 +699,10 @@
       "handEdited": "These rules were edited by hand in a way this screen cannot show (a blank entry). Fix them in the config file.",
       "busy": "Another change to the safety rules is waiting for your answer.",
       "anchors": "These rules share parts with other entries of the config file (YAML anchors or merge keys). Edit them in the file."
+    },
+    "activity": {
+      "limit": "Ask for 1 to 200 entries from a position of 0 or more.",
+      "readFailed": "The activity log could not be read."
     }
   },
   "auth": {
@@ -1184,5 +1190,87 @@
     "declined": "Nothing was changed.",
     "reloaded": "The rules shown are now the current ones. Check them, then save again.",
     "loadFailed": "Could not load the safety rules"
+  },
+  "activity": {
+    "title": "Activity",
+    "description": "What the Assistant and the connected apps did on your sites through ffc, newest first.",
+    "listLabel": "Tool calls",
+    "filters": {
+      "label": "Filters",
+      "site": "Site",
+      "anySite": "All sites",
+      "app": "App",
+      "anyApp": "All apps",
+      "result": "Result",
+      "anyResult": "Any result",
+      "when": "When",
+      "clear": "Clear filters",
+      "runOnly": "Only one Assistant run"
+    },
+    "range": {
+      "any": "Any time",
+      "today": "Today",
+      "week": "Last 7 days",
+      "month": "Last 30 days"
+    },
+    "app": {
+      "desktop": "This app's Assistant"
+    },
+    "status": {
+      "ok": "Done",
+      "error": "Failed",
+      "denied": "Refused by the safety rules",
+      "invalid": "Invalid request",
+      "confirm_pending": "Waited for a confirmation",
+      "declined": "Declined"
+    },
+    "confirm": {
+      "confirmed": "Confirmed",
+      "declined": "Declined",
+      "unsupported": "The app could not ask",
+      "never": "Not asked"
+    },
+    "docs": {
+      "count_one": "{{count}} document",
+      "count_other": "{{count}} documents"
+    },
+    "duration": {
+      "ms": "{{value}} ms",
+      "s": "{{value}} s"
+    },
+    "showing": "Showing {{shown}} of {{total}}",
+    "loadMore": "Load more",
+    "skipped_one": "{{count}} line could not be read.",
+    "skipped_other": "{{count}} lines could not be read.",
+    "empty": {
+      "title": "No activity yet",
+      "description": "Calls appear here after the Assistant or a connected app uses one of your sites.",
+      "noMatch": "Nothing matches these filters."
+    },
+    "loadFailed": "Could not read the activity log",
+    "details": {
+      "title": "Tool call",
+      "tool": "Tool",
+      "when": "When",
+      "app": "App",
+      "site": "Site",
+      "result": "Result",
+      "confirmation": "Confirmation",
+      "duration": "Duration",
+      "method": "Method",
+      "run": "Run",
+      "via": "Opened through",
+      "doctypes": "Document types",
+      "documents": "Documents",
+      "more_one": "and {{count}} more",
+      "more_other": "and {{count}} more",
+      "error": "Error",
+      "args": "Arguments",
+      "noArgs": "No arguments were recorded."
+    },
+    "ago": {
+      "minutes": "{{value}} min ago",
+      "hours": "{{value}} h ago"
+    }
   }
 }

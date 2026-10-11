@@ -21,6 +21,76 @@ export interface APIKeyRequest {
 }
 
 /**
+ * ActivityEntry is one tool call.
+ */
+export interface ActivityEntry {
+    "time": string;
+    "site": string;
+    "client": string;
+    "tool": string;
+    "runID": string;
+    "via": string;
+    "doctypes": string[] | null;
+    "names": string[] | null;
+    "namesTotal": number;
+    "method": string;
+
+    /**
+     * Args are the arguments as ffc logged them, as indented JSON ("" when
+     * none).
+     */
+    "args": string;
+    "status": string;
+    "confirm": string;
+    "error": string;
+    "durationMS": number;
+}
+
+/**
+ * ActivityPage is one page of matching entries, newest first, with the
+ * values the filters can take (from the whole log, not only this page).
+ */
+export interface ActivityPage {
+    "entries": ActivityEntry[] | null;
+
+    /**
+     * Total is how many entries match.
+     */
+    "total": number;
+
+    /**
+     * Skipped counts lines that could not be read (damaged or too long).
+     */
+    "skipped": number;
+    "sites": string[] | null;
+    "clients": string[] | null;
+    "tools": string[] | null;
+    "statuses": string[] | null;
+
+    /**
+     * Exists is false when there is no log yet (no MCP call ever made).
+     */
+    "exists": boolean;
+}
+
+/**
+ * ActivityQuery filters the log. Empty fields match everything; Since and
+ * Until bound the time (zero: open). Offset skips that many matching
+ * entries, newest first; Limit is 1 to activityMaxLimit (0: the default).
+ */
+export interface ActivityQuery {
+    "site": string;
+    "client": string;
+    "tool": string;
+    "status": string;
+    "runID": string;
+    "since": string;
+    "until": string;
+    "offset": number;
+    "limit": number;
+}
+
+/**
  * AddedSite is the site an Add call saved.
  */
 export interface AddedSite {
