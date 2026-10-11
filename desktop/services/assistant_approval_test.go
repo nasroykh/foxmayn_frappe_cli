@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -268,6 +269,34 @@ func TestApprovalUpdateDocShowsDiffAndPinsModified(t *testing.T) {
 	}
 	if n != 2 {
 		t.Errorf("%d audit lines, want get_doc and update_doc", n)
+	}
+}
+
+func TestApprovalRestoreDocNamesTarget(t *testing.T) {
+	g := newLoopRig(t,
+		toolTurn(call("c1", "restore_doc", `{"deleted_document":"DD-1"}`)),
+		textTurn("done"),
+	)
+	g.fake.Add("Deleted Document", map[string]interface{}{
+		"name": "DD-1", "deleted_doctype": "Sales Invoice", "deleted_name": "SINV-0001", "restored": 0,
+		"data": `{"doctype":"Sales Invoice","name":"SINV-0001"}`,
+	})
+	cid := g.conv(t, "ask")
+	if _, err := g.r.start(cid, "restore"); err != nil {
+		t.Fatal(err)
+	}
+	card := g.waitApproval(t, 1)
+	if !slices.Contains(card.Doctypes, "Sales Invoice") || !slices.Contains(card.Doctypes, "Deleted Document") {
+		t.Errorf("doctypes = %v", card.Doctypes)
+	}
+	if !slices.Contains(card.Names, "SINV-0001") || !slices.Contains(card.Names, "DD-1") {
+		t.Errorf("names = %v", card.Names)
+	}
+	if err := g.r.answer(cid, card.ApprovalID, false); err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunDone {
+		t.Fatalf("done = %+v", d)
 	}
 }
 
