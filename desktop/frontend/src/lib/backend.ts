@@ -17,7 +17,9 @@ import type {
   ConversationDetail,
   OpenRouterAuth,
   Profile,
+  PolicyPreview,
   PromptPreview,
+  SitePolicy,
   StagedAttachment,
   Toolset,
 } from "@/lib/backend-types"
@@ -89,6 +91,18 @@ function preview(p: wire.PromptPreview): PromptPreview {
   return { ...p, mode: p.mode === "ask" ? "ask" : "read", tools: p.tools ?? [] }
 }
 
+function policy(p: wire.SitePolicy): SitePolicy {
+  return {
+    ...p,
+    confirm: p.confirm === "always" || p.confirm === "never" ? p.confirm : "",
+    allowTools: p.allowTools ?? [],
+    allowDoctypes: p.allowDoctypes ?? [],
+    denyDoctypes: p.denyDoctypes ?? [],
+    allowMethods: p.allowMethods ?? [],
+    denyMethods: p.denyMethods ?? [],
+  }
+}
+
 export const backend: Backend = {
   environment: () => AppService.Environment(),
   refreshFFC: () => AppService.RefreshFFC(),
@@ -113,6 +127,13 @@ export const backend: Backend = {
   rename: (oldName, newName) => SitesService.Rename(oldName, newName),
   changeURL: (name, url) => SitesService.ChangeURL(name, url),
   remove: (name) => SitesService.Remove(name),
+  getPolicy: async (name) => policy(await SitesService.GetPolicy(name)),
+  previewPolicy: async (name, p): Promise<PolicyPreview> => {
+    const r = await SitesService.PreviewPolicy(name, p)
+    const changes = (l: wire.PolicyChange[] | null) => (l ?? []).map((c) => ({ ...c, values: c.values ?? [] }))
+    return { opens: changes(r.opens), narrows: changes(r.narrows) }
+  },
+  savePolicy: async (name, base, p) => policy(await SitesService.SavePolicy(name, base, p)),
 
   listAssistants: () => AssistantsService.List(),
   preview: (req) => AssistantsService.Preview(req),

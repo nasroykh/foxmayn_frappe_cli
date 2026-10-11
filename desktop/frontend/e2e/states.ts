@@ -20,6 +20,14 @@ async function newConversation(page: Page) {
   await expect(dialog(page)).toBeVisible()
 }
 
+/** The first site's (acme-prod) menu, then its Safety rules action; waits for the loaded policy. */
+async function openSafety(page: Page) {
+  await page.locator("main [role=listitem]").first().locator("button:has(svg.tabler-icon-dots)").click()
+  await page.locator("[role=menuitem]:has(svg.tabler-icon-shield-check)").click()
+  await expect(dialog(page)).toBeVisible()
+  await expect(page.locator("#safety-ask")).toBeVisible({ timeout: 5000 })
+}
+
 export const states: State[] = [
   { name: "sites" },
   {
@@ -28,6 +36,20 @@ export const states: State[] = [
       // The first site's check button (the refresh icon), then its toast.
       await page.locator("main [role=listitem] button:has(svg.tabler-icon-refresh)").first().click()
       await expect(page.locator('[data-slot="toast"]').first()).toBeVisible({ timeout: 8000 })
+    },
+  },
+  {
+    name: "safety-rules",
+    reach: async (page) => {
+      await openSafety(page)
+    },
+  },
+  {
+    name: "safety-custom",
+    reach: async (page) => {
+      await openSafety(page)
+      await page.locator("label[for=safety-custom]").click()
+      await expect(page.getByTestId("safety-advanced")).toBeVisible()
     },
   },
   {

@@ -684,6 +684,19 @@
       "claudeNotFound": "The claude command was not found. Install Claude Code first, or run the commands below yourself.",
       "claudeBatch": "The claude command is a Windows script the app does not run. Run the commands below yourself.",
       "readOnly": "The app's settings file is read-only."
+    },
+    "policy": {
+      "confirm": "Choose when to ask: always, when the app can ask, or never.",
+      "tooMany": "That list is too long.",
+      "badEntry": "This entry is not valid: {{entry}}.",
+      "changed": "These rules were changed somewhere else since you opened them. Open them again.",
+      "cannotAsk": "This change opens access, and the app cannot ask you to confirm it here.",
+      "askFailed": "The confirmation could not be shown.",
+      "declined": "Nothing was changed.",
+      "saveFailed": "The rules could not be saved.",
+      "handEdited": "These rules were edited by hand in a way this screen cannot show (a blank entry). Fix them in the config file.",
+      "busy": "Another change to the safety rules is waiting for your answer.",
+      "anchors": "These rules share parts with other entries of the config file (YAML anchors or merge keys). Edit them in the file."
     }
   },
   "auth": {
@@ -726,7 +739,8 @@
       "connect": "Connect an app",
       "rename": "Rename…",
       "changeAddress": "Change address…",
-      "remove": "Remove…"
+      "remove": "Remove…",
+      "safety": "Safety rules"
     },
     "card": {
       "signIn": "Sign-in",
@@ -1112,5 +1126,63 @@
     "send": "Send the message",
     "newLine": "New line in the message",
     "stop": "Stop the assistant"
+  },
+  "safety": {
+    "title": "Safety rules for {{site}}",
+    "description": "These rules apply to everything that uses ffc on this site: the Assistant in this app and the connected apps (Claude Desktop, Cursor…). Anything they refuse stays refused, whatever a profile says.",
+    "choice": "How careful should it be?",
+    "read": {
+      "title": "Read only",
+      "description": "Look things up only. Nothing can be created, changed or deleted."
+    },
+    "ask": {
+      "title": "Ask before risky changes",
+      "description": "Changes are allowed; deleting, cancelling, sharing and similar actions ask first when the app can."
+    },
+    "custom": {
+      "title": "Custom",
+      "description": "Set the lists yourself."
+    },
+    "advanced": "Advanced",
+    "readOnly": {
+      "title": "Read only",
+      "hint": "When on, nothing can be created, changed or deleted."
+    },
+    "confirm": {
+      "label": "When to ask before risky changes",
+      "always": "Always (refuse when the app cannot ask)",
+      "default": "When the app can ask (default)",
+      "never": "Never (ask nothing)"
+    },
+    "list": {
+      "allowDoctypes": "Only these document types (DocTypes)",
+      "denyDoctypes": "Document types to refuse",
+      "allowTools": "Only these tools",
+      "allowMethods": "Only these server methods",
+      "denyMethods": "Server methods to refuse",
+      "hint": "Separate entries with commas or new lines. Leave empty for no limit."
+    },
+    "opensTitle": "This opens access",
+    "willConfirm": "You will be asked to confirm.",
+    "opens": {
+      "readOnlyOff": "Read only is turned off.",
+      "confirmLooser": "Risky changes ask less often.",
+      "allowToolsAdded": "More tools allowed:",
+      "allowToolsLifted": "Tools are no longer limited to a list.",
+      "allowDoctypesAdded": "More document types allowed:",
+      "allowDoctypesLifted": "Document types are no longer limited to a list.",
+      "denyDoctypesRemoved": "No longer refused:",
+      "allowMethodsAdded": "More server methods allowed:",
+      "allowMethodsLifted": "Server methods are no longer limited to a list.",
+      "denyMethodsRemoved": "Server methods no longer refused:",
+      "sensitiveDoctypesUnlocked": "Sensitive document types can now be changed:",
+      "deniedMethodsUnlocked": "Server methods that are normally refused are now allowed:",
+      "serverMethodsEnabled": "Custom server methods can be called again.",
+      "generic": "Something else is opened."
+    },
+    "saved": "Safety rules saved",
+    "declined": "Nothing was changed.",
+    "reloaded": "The rules shown are now the current ones. Check them, then save again.",
+    "loadFailed": "Could not load the safety rules"
   }
 }

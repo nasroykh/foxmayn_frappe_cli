@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -423,5 +424,88 @@ sites:
 	}
 	if ActiveFormat != FormatUS || ActiveDateFormat != FormatUSDate {
 		t.Fatalf("Load must still set formats: %q, %q", ActiveFormat, ActiveDateFormat)
+	}
+}
+
+func TestSetSiteMCPRoundTripsAndKeepsComments(t *testing.T) {
+	path := writeTemp(t, `# my sites
+default_site: a
+sites:
+  a: # production
+    url: https://a.example
+    api_key: k
+    api_secret: s
+    mcp:
+      read_only: true
+  b:
+    url: https://b.example
+`)
+	want := &MCPPolicy{
+		AllowDoctypes: []string{"Customer", "Sales Invoice"},
+		DenyDoctypes:  []string{"User"},
+		AllowMethods:  []string{"frappe.client.get_count"},
+		DenyMethods:   []string{"frappe.desk.form.save.savedocs"},
+		AllowTools:    []string{"get_doc", "list_docs"},
+		Confirm:       ConfirmAlways,
+	}
+	if err := Edit(path, func(f *File) error { return f.SetSiteMCP("a", want) }); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	for _, s := range []string{"# my sites", "# production", "api_secret: s"} {
+		if !strings.Contains(string(raw), s) {
+			t.Errorf("lost %q:\n%s", s, raw)
+		}
+	}
+	site, err := Load("a", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(site.MCP, want) {
+		t.Fatalf("read back %+v, want %+v", site.MCP, want)
+	}
+
+	// An empty policy removes the key; the other site is untouched.
+	if err := Edit(path, func(f *File) error { return f.SetSiteMCP("a", &MCPPolicy{}) }); err != nil {
+		t.Fatal(err)
+	}
+	if site, _ = Load("a", path); site.MCP != nil {
+		t.Fatalf("empty policy kept: %+v", site.MCP)
+	}
+	if err := Edit(path, func(f *File) error { return f.SetSiteMCP("missing", want) }); err == nil {
+		t.Fatal("a missing site was accepted")
+	}
+	if err := Edit(path, func(f *File) error { return f.SetSiteMCP("b", &MCPPolicy{AllowTools: []string{}, ReadOnly: true}) }); err == nil {
+		t.Fatal("an empty allow list was accepted")
+	}
+}
+
+func TestSetSiteMCPRefusesAnchorsAndMerges(t *testing.T) {
+	for name, content := range map[string]string{
+		"anchor": "sites:\n  a:\n    url: https://a\n    mcp: &strict\n      read_only: true\n  b:\n    url: https://b\n    mcp: *strict\n",
+		"alias":  "sites:\n  a:\n    url: https://a\n    mcp:\n      deny_doctypes: &dd [User]\n  b:\n    url: https://b\n    mcp:\n      deny_doctypes: *dd\n",
+		"merge":  "base: &base\n  url: https://a\n  mcp:\n    read_only: true\nsites:\n  a:\n    <<: *base\n",
+	} {
+		path := writeTemp(t, content)
+		site := "a"
+		if name == "alias" {
+			site = "b"
+		}
+		err := Edit(path, func(f *File) error { return f.SetSiteMCP(site, &MCPPolicy{Confirm: ConfirmAlways}) })
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+		if raw, _ := os.ReadFile(path); string(raw) != content {
+			t.Errorf("%s: file changed:\n%s", name, raw)
+		}
+	}
+}
+
+func TestMCPPolicyRefusesEmptyEntries(t *testing.T) {
+	for _, list := range []string{"[~]", "[\"\"]", "[\" \"]", "\n      -\n"} {
+		path := writeTemp(t, "sites:\n  a:\n    url: https://a\n    mcp:\n      allow_doctypes: "+list+"\n")
+		if _, err := Load("a", path); err == nil || !strings.Contains(err.Error(), "empty entry") {
+			t.Errorf("allow_doctypes: %s: %v", list, err)
+		}
 	}
 }

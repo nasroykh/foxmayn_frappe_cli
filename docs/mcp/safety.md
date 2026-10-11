@@ -15,7 +15,7 @@ Only read tools are exposed: no create, update, delete, bulk, lifecycle, workflo
 
 ## Per-site policy
 
-Each site can carry an `mcp` block in `config.yaml`:
+Each site can carry an `mcp` block in `config.yaml`. Foxmayn Frappe Desktop edits it under Sites > site menu > **Safety rules** ([desktop guide](../desktop/using.md#safety-rules)):
 
 ```yaml
 sites:
@@ -55,6 +55,8 @@ How DocType rules reach other tools:
 - `get_doc_context` empties the parts that come from DocTypes you do not allow (comments, versions, files, assignments, shares, linked DocTypes, timeline entries) and names them in `hidden_by_policy`.
 - With any `allow_doctypes` or `deny_doctypes` rule, queries in `list_docs`, `count_docs`, `aggregate` and `call_method` may not reach another table: filter fields must be plain field names, and fields or `order_by` may not contain `.` or a backtick.
 - The collaboration tools are also checked against the DocType they write: Comment, ToDo, Tag Link/Tag, DocShare.
+
+An `allow_*` list with a blank or null entry (`allow_doctypes: [~]`, `[""]`, a bare `-`) is a config error: such an entry used to read as no limit at all. A deny list may still hold one.
 
 ## Built-in protections
 

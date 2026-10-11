@@ -83,6 +83,119 @@ var dialogStrings = map[string]map[string]string{
 		LangFrench:  "Annuler",
 		LangArabic:  "إلغاء",
 	},
+	"policyTitle": {
+		LangEnglish: "Open access to this site?",
+		LangFrench:  "Ouvrir l’accès à ce site ?",
+		LangArabic:  "توسيع الوصول إلى هذا الموقع؟",
+	},
+	// %s is the site name.
+	"policyBody": {
+		LangEnglish: "These changes let the Assistant and the connected apps do more on %s:",
+		LangFrench:  "Ces modifications permettent à l’Assistant et aux apps connectées d’en faire plus sur %s :",
+		LangArabic:  "تسمح هذه التغييرات للمساعد وللتطبيقات المرتبطة بفعل المزيد على %s:",
+	},
+	"policyApply": {
+		LangEnglish: "Open access",
+		LangFrench:  "Ouvrir l’accès",
+		LangArabic:  "توسيع الوصول",
+	},
+	"policyReadOnlyOff": {
+		LangEnglish: "Read only is turned off: changes become possible.",
+		LangFrench:  "La lecture seule est désactivée : les modifications deviennent possibles.",
+		LangArabic:  "أُوقف وضع القراءة فقط: يصبح التغيير ممكنًا.",
+	},
+	// The two %s are confirm modes (policyConfirm-*).
+	"policyConfirmLooser": {
+		LangEnglish: "Asking before risky changes goes from “%s” to “%s”.",
+		LangFrench:  "La demande avant les modifications à risque passe de « %s » à « %s ».",
+		LangArabic:  "يتغيّر طلب التأكيد قبل التغييرات الحساسة من «%s» إلى «%s».",
+	},
+	"policyConfirm-always": {
+		LangEnglish: "always",
+		LangFrench:  "toujours",
+		LangArabic:  "دائمًا",
+	},
+	"policyConfirm-if-supported": {
+		LangEnglish: "when the app can ask",
+		LangFrench:  "quand l’app peut demander",
+		LangArabic:  "عندما يستطيع التطبيق",
+	},
+	"policyConfirm-never": {
+		LangEnglish: "never",
+		LangFrench:  "jamais",
+		LangArabic:  "أبدًا",
+	},
+	"policyAllowToolsAdded": {
+		LangEnglish: "Tools allowed in addition:",
+		LangFrench:  "Outils autorisés en plus :",
+		LangArabic:  "أدوات مسموح بها إضافةً:",
+	},
+	"policyAllowToolsLifted": {
+		LangEnglish: "No limit on tools any more. It was limited to:",
+		LangFrench:  "Plus de limite sur les outils. La liste était :",
+		LangArabic:  "لا حدّ على الأدوات بعد الآن. كانت مقتصرة على:",
+	},
+	"policyAllowDoctypesAdded": {
+		LangEnglish: "Document types allowed in addition:",
+		LangFrench:  "Types de document autorisés en plus :",
+		LangArabic:  "أنواع مستندات مسموح بها إضافةً:",
+	},
+	"policyAllowDoctypesLifted": {
+		LangEnglish: "No limit on document types any more. It was limited to:",
+		LangFrench:  "Plus de limite sur les types de document. La liste était :",
+		LangArabic:  "لا حدّ على أنواع المستندات بعد الآن. كانت مقتصرة على:",
+	},
+	"policyDenyDoctypesRemoved": {
+		LangEnglish: "Document types no longer refused:",
+		LangFrench:  "Types de document qui ne sont plus refusés :",
+		LangArabic:  "أنواع مستندات لم تعد مرفوضة:",
+	},
+	"policyAllowMethodsAdded": {
+		LangEnglish: "Server methods allowed in addition:",
+		LangFrench:  "Méthodes serveur autorisées en plus :",
+		LangArabic:  "دوال خادم مسموح بها إضافةً:",
+	},
+	"policyAllowMethodsLifted": {
+		LangEnglish: "No limit on server methods any more. It was limited to:",
+		LangFrench:  "Plus de limite sur les méthodes serveur. La liste était :",
+		LangArabic:  "لا حدّ على دوال الخادم بعد الآن. كانت مقتصرة على:",
+	},
+	"policyDenyMethodsRemoved": {
+		LangEnglish: "Server methods no longer refused:",
+		LangFrench:  "Méthodes serveur qui ne sont plus refusées :",
+		LangArabic:  "دوال خادم لم تعد مرفوضة:",
+	},
+	"policySensitiveUnlocked": {
+		LangEnglish: "Sensitive document types become writable (users, roles, scripts, settings…):",
+		LangFrench:  "Des types de document sensibles deviennent modifiables (utilisateurs, rôles, scripts, paramètres…) :",
+		LangArabic:  "تصبح أنواع مستندات حساسة قابلة للتعديل (المستخدمون والأدوار والسكربتات والإعدادات…):",
+	},
+	"policyDeniedUnlocked": {
+		LangEnglish: "Server methods refused by default become callable (running code, keys, apps):",
+		LangFrench:  "Des méthodes serveur refusées par défaut deviennent appelables (exécution de code, clés, apps) :",
+		LangArabic:  "تصبح دوال خادم مرفوضة افتراضيًا قابلة للاستدعاء (تشغيل شيفرة، مفاتيح، تطبيقات):",
+	},
+	"policyMethodsEnabled": {
+		LangEnglish: "Calling server methods becomes possible again.",
+		LangFrench:  "L’appel de méthodes serveur redevient possible.",
+		LangArabic:  "يصبح استدعاء دوال الخادم ممكنًا من جديد.",
+	},
+	"policyWarning": {
+		LangEnglish: "If you did not just press Save on the Safety rules screen, do not open access.",
+		LangFrench:  "Si vous ne venez pas d’enregistrer dans l’écran Règles de sécurité, n’ouvrez pas l’accès.",
+		LangArabic:  "إذا لم تضغط للتو على «حفظ» في شاشة قواعد الأمان، فلا توسّع الوصول.",
+	},
+	"policyOther": {
+		LangEnglish: "Another change that opens access:",
+		LangFrench:  "Une autre modification qui ouvre l’accès :",
+		LangArabic:  "تغيير آخر يوسّع الوصول:",
+	},
+	// %d is how many more entries.
+	"policyMore": {
+		LangEnglish: "and %d more",
+		LangFrench:  "et %d de plus",
+		LangArabic:  "و%d أخرى",
+	},
 	"exportTitle": {
 		LangEnglish: "Export conversation",
 		LangFrench:  "Exporter la conversation",

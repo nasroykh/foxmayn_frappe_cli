@@ -639,6 +639,25 @@ export interface PasswordRequest {
 }
 
 /**
+ * PolicyChange is one difference between two policies. Kind is one of the
+ * policyChange* kinds; Values lists the entries concerned (for confirm, the
+ * old mode then the new one).
+ */
+export interface PolicyChange {
+    "kind": string;
+    "values": string[] | null;
+}
+
+/**
+ * PolicyPreview splits the differences of a change into what it opens and
+ * what it narrows.
+ */
+export interface PolicyPreview {
+    "opens": PolicyChange[] | null;
+    "narrows": PolicyChange[] | null;
+}
+
+/**
  * Preview is what connecting (or disconnecting) would change.
  */
 export interface Preview {
@@ -937,6 +956,21 @@ export interface SiteList {
     "configExists": boolean;
     "defaultSite": string;
     "sites": Site[] | null;
+}
+
+/**
+ * SitePolicy is a site's MCP policy as the Safety screen edits it. Empty
+ * lists mean no limit (allow) or nothing refused (deny); an empty Confirm is
+ * ffc's default, if-supported.
+ */
+export interface SitePolicy {
+    "readOnly": boolean;
+    "confirm": string;
+    "allowTools": string[] | null;
+    "allowDoctypes": string[] | null;
+    "denyDoctypes": string[] | null;
+    "allowMethods": string[] | null;
+    "denyMethods": string[] | null;
 }
 
 /**

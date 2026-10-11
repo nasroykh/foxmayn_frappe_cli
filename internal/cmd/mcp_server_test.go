@@ -196,3 +196,28 @@ func TestRunJQChildIfRequestedReturnsWithoutEnv(t *testing.T) {
 	t.Setenv(jqChildEnv, "")
 	RunJQChildIfRequested() // would exit the test binary if it ran the child
 }
+
+func TestPolicyEditorHelpers(t *testing.T) {
+	for _, dt := range []string{"User", "user", " Server Script ", "deleted document"} {
+		if !SensitiveDoctype(dt) {
+			t.Errorf("%q not sensitive", dt)
+		}
+	}
+	if SensitiveDoctype("ToDo") {
+		t.Error("ToDo sensitive")
+	}
+	for _, m := range []string{
+		"frappe.desk.doctype.system_console.system_console.execute_code",
+		"frappe.*", "*", "frappe.integrations.*", "frappe.integrations.frappe_providers.install",
+		"frappe.core.doctype.deleted_document.deleted_document.*",
+	} {
+		if !UnlocksDeniedMethod(m) {
+			t.Errorf("%q does not unlock", m)
+		}
+	}
+	for _, m := range []string{"frappe.client.get_count", "erpnext.*", "frappe.client.*"} {
+		if UnlocksDeniedMethod(m) {
+			t.Errorf("%q unlocks", m)
+		}
+	}
+}

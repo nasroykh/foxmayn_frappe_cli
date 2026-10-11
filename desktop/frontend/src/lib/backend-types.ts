@@ -34,6 +34,8 @@ import type {
   Model,
   OpenRouterAuth as GeneratedOpenRouterAuth,
   PasswordRequest,
+  PolicyChange as GeneratedPolicyChange,
+  PolicyPreview as GeneratedPolicyPreview,
   Preview,
   Profile as GeneratedProfile,
   PromptPreview as GeneratedPromptPreview,
@@ -45,6 +47,7 @@ import type {
   SignInProgress,
   Site,
   SiteList,
+  SitePolicy as GeneratedSitePolicy,
   SiteSettings,
   StagedAttachment as GeneratedStagedAttachment,
   UpdateInfo,
@@ -94,6 +97,28 @@ export type {
   UsageTotals,
   Validation,
   WSLInfo,
+}
+
+// ---- Safety rules ----
+
+/** A site's safety rules; the generated type allows null lists (Go's nil slices). */
+export type PolicyConfirm = "" | "always" | "never"
+export interface SitePolicy
+  extends Omit<GeneratedSitePolicy, "confirm" | "allowTools" | "allowDoctypes" | "denyDoctypes" | "allowMethods" | "denyMethods"> {
+  /** "" is ffc's default, ask when the app can. */
+  confirm: PolicyConfirm
+  allowTools: string[]
+  allowDoctypes: string[]
+  denyDoctypes: string[]
+  allowMethods: string[]
+  denyMethods: string[]
+}
+export interface PolicyChange extends Omit<GeneratedPolicyChange, "values"> {
+  values: string[]
+}
+export interface PolicyPreview extends Omit<GeneratedPolicyPreview, "opens" | "narrows"> {
+  opens: PolicyChange[]
+  narrows: PolicyChange[]
 }
 
 // ---- The assistant ----
@@ -242,6 +267,11 @@ export interface Backend {
   rename(oldName: string, newName: string): Promise<void>
   changeURL(name: string, url: string): Promise<string>
   remove(name: string): Promise<RemoveResult>
+  getPolicy(name: string): Promise<SitePolicy>
+  /** What saving would open (needs a native confirmation) and narrow. */
+  previewPolicy(name: string, p: SitePolicy): Promise<PolicyPreview>
+  /** base is the policy the screen loaded: a stale one is refused (invalid, policy.changed); a declined confirmation is cancelled (policy.declined). */
+  savePolicy(name: string, base: SitePolicy, p: SitePolicy): Promise<SitePolicy>
 
   listAssistants(): Promise<AssistantList>
   preview(req: ConnectRequest): Promise<Preview>

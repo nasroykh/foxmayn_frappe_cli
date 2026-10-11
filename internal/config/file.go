@@ -241,6 +241,52 @@ func (f *File) SetSiteURL(name, url string) error {
 	return nil
 }
 
+// SetSiteMCP replaces the MCP policy of an existing site, leaving its other
+// keys (and comments) untouched. A nil or empty policy removes the mcp key:
+// the site then has no policy of its own.
+func (f *File) SetSiteMCP(name string, p *MCPPolicy) error {
+	site := mapValue(mapValue(f.root, "sites"), name)
+	if site == nil || site.Kind != yaml.MappingNode {
+		return fmt.Errorf("site %q not found in config", name)
+	}
+	// Anchors, aliases and merge keys tie this policy to other entries:
+	// replacing the node would leave another site's alias dangling (the file
+	// no longer loads) or let a merged-in policy apply again unseen.
+	if old := mapValue(site, "mcp"); old != nil && usesAnchors(old) || mapValue(site, "<<") != nil {
+		return fmt.Errorf("the mcp policy of %q uses YAML anchors, aliases or merge keys; edit it in the config file", name)
+	}
+	if p == nil || p.empty() {
+		deleteKey(site, "mcp")
+		return nil
+	}
+	for _, l := range [][]string{p.AllowTools, p.AllowDoctypes, p.AllowMethods} {
+		if l != nil && len(l) == 0 {
+			// Read back, an empty allow list is refused (it would mean no limit).
+			return fmt.Errorf("an empty allow list cannot be stored; leave it out for no limit")
+		}
+	}
+	var node yaml.Node
+	if err := node.Encode(p); err != nil {
+		return fmt.Errorf("encoding the mcp policy of %q: %w", name, err)
+	}
+	setNode(site, "mcp", &node)
+	return nil
+}
+
+// usesAnchors reports whether n or any node under it is an alias or carries
+// an anchor.
+func usesAnchors(n *yaml.Node) bool {
+	if n.Kind == yaml.AliasNode || n.Anchor != "" {
+		return true
+	}
+	for _, c := range n.Content {
+		if usesAnchors(c) {
+			return true
+		}
+	}
+	return false
+}
+
 // SetSiteTokens stores refreshed OAuth tokens on an existing site, leaving its
 // other keys (and comments) untouched.
 func (f *File) SetSiteTokens(name, accessToken, refreshToken string, expiry int64) error {

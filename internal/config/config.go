@@ -60,6 +60,11 @@ type MCPPolicy struct {
 	Confirm string `yaml:"confirm,omitempty"`
 }
 
+// empty reports whether the policy sets nothing.
+func (p *MCPPolicy) empty() bool {
+	return !p.ReadOnly && p.Confirm == "" && len(p.AllowTools)+len(p.AllowDoctypes)+len(p.DenyDoctypes)+len(p.AllowMethods)+len(p.DenyMethods) == 0
+}
+
 // MCP confirmation modes (MCPPolicy.Confirm).
 const (
 	ConfirmNever       = "never"        // never ask
@@ -85,6 +90,15 @@ func (p *MCPPolicy) UnmarshalYAML(node *yaml.Node) error {
 		}
 		if strings.HasPrefix(k.Value, "allow_") && ((v.Kind == yaml.SequenceNode && len(v.Content) == 0) || v.Tag == "!!null") {
 			return fmt.Errorf("line %d: mcp.%s is empty; list at least one entry, or remove the key for no limit", k.Line, k.Value)
+		}
+		if strings.HasPrefix(k.Value, "allow_") {
+			// A null or blank entry decodes to "" and is trimmed away: an
+			// allow list of only that would read as no limit at all.
+			for _, item := range v.Content {
+				if item = resolveAlias(item); item.Tag == "!!null" || strings.TrimSpace(item.Value) == "" {
+					return fmt.Errorf("line %d: mcp.%s has an empty entry", item.Line, k.Value)
+				}
+			}
 		}
 		if k.Value == "confirm" {
 			switch strings.TrimSpace(v.Value) {
