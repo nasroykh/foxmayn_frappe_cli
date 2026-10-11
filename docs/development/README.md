@@ -53,7 +53,7 @@ desktop/                 Foxmayn Frappe Desktop (separate Go module; see desktop
 skills/                  agent skills for ffc users and contributors
 ```
 
-`CLAUDE.md` at the repository root holds the detailed architecture notes, conventions and Frappe behaviour the code relies on. Read it before larger changes.
+`CLAUDE.md` at the repository root holds the architecture rules, conventions and Frappe behaviour the code relies on, and `docs/development/internals/` the detail per subsystem. Read them before larger changes.
 
 ## Conventions
 
@@ -87,3 +87,4 @@ New flags named `doctype` and `fields` get shell completion automatically.
 - [Testing](testing.md)
 - [Releasing](releasing.md)
 - [Desktop app development](desktop.md)
+- [Desktop clean-machine test](desktop-clean-machine.md)
