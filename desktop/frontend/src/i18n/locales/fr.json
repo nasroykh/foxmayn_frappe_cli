@@ -699,6 +699,7 @@
       "changed": "Ces règles ont été modifiées ailleurs depuis leur ouverture. Ouvrez-les à nouveau.",
       "cannotAsk": "Cette modification ouvre l’accès, et l’app ne peut pas vous demander de la confirmer ici.",
       "cannotAskRemove": "Ce site a des règles de sécurité, et l’app ne peut pas vous demander ici de confirmer leur suppression.",
+      "cannotAskSite": "L’app ne peut pas vous demander de confirmer cette modification ici.",
       "askFailed": "La confirmation n’a pas pu s’afficher.",
       "declined": "Rien n’a été modifié.",
       "saveFailed": "Les règles n’ont pas pu être enregistrées.",

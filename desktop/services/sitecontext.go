@@ -237,11 +237,26 @@ func (a *AssistantService) GetSiteSettings(site string) (SiteSettings, error) {
 
 // SaveSiteSettings saves a site's instructions and its local-only switch. The
 // address is taken from the ffc config, never from the caller. Turning
-// local-only off also turns it off in settings saved under an earlier name
+// local-only off is confirmed natively first (declined is cancelled,
+// policy.declined), and also turns it off in settings saved under an earlier name
 // of the site (same address, no longer in the ffc config), which would
 // otherwise keep it on. Another configured site with the same address keeps
 // its own setting.
 func (a *AssistantService) SaveSiteSettings(s SiteSettings) (SiteSettings, error) {
+	if !s.LocalOnly {
+		// Turning Local models only off lets the site's data reach cloud
+		// models: asked natively, outside enter so the dialog never holds
+		// up shutdown.
+		cur, err := a.GetSiteSettings(s.Site)
+		if err != nil {
+			return SiteSettings{}, err
+		}
+		if cur.LocalOnly {
+			if err := confirmSite(a.host, func(c SiteConfirmer) (bool, error) { return c.ConfirmLocalOnlyOff(s.Site) }); err != nil {
+				return SiteSettings{}, err
+			}
+		}
+	}
 	_, st, done, err := a.enter()
 	if err != nil {
 		return SiteSettings{}, err

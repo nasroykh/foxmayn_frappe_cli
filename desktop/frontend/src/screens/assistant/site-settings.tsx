@@ -50,7 +50,10 @@ export function SiteAssistantSettings() {
       setSS(await backend.saveSiteSettings(ss))
       toast.add({ title: t("siteSettings.saved"), type: "success" })
     } catch (err) {
-      setError(appError(err))
+      const e = appError(err)
+      setError(e)
+      // Declined in the native dialog: show what is still saved.
+      if (e.key === "policy.declined") setSS(await backend.getSiteSettings(ss.site).catch(() => ss))
     } finally {
       setSaving(false)
     }

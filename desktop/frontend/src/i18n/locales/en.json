@@ -694,6 +694,7 @@
       "changed": "These rules were changed somewhere else since you opened them. Open them again.",
       "cannotAsk": "This change opens access, and the app cannot ask you to confirm it here.",
       "cannotAskRemove": "This site has safety rules, and the app cannot ask you to confirm removing them here.",
+      "cannotAskSite": "The app cannot ask you to confirm this change here.",
       "askFailed": "The confirmation could not be shown.",
       "declined": "Nothing was changed.",
       "saveFailed": "The rules could not be saved.",

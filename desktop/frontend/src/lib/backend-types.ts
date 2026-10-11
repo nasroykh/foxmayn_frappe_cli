@@ -282,6 +282,7 @@ export interface Backend {
 
   listSites(): Promise<SiteList>
   validate(name: string, url: string): Promise<Validation>
+  /** The add* methods ask in a native dialog before replacing an existing site; declined is cancelled (policy.declined). */
   addWithAPIKey(req: APIKeyRequest): Promise<AddedSite>
   addWithPassword(req: PasswordRequest): Promise<AddedSite>
   signInWithBrowser(req: BrowserSignInRequest): Promise<AddedSite>
@@ -290,6 +291,7 @@ export interface Backend {
   check(name: string): Promise<CheckResult>
   setDefault(name: string): Promise<void>
   rename(oldName: string, newName: string): Promise<void>
+  /** Asks in a native dialog before the saved sign-in is sent to a new address; declined is cancelled (policy.declined). */
   changeURL(name: string, url: string): Promise<string>
   /** A site with safety rules asks in a native dialog first; declined is cancelled (policy.declined). */
   remove(name: string): Promise<RemoveResult>
@@ -373,6 +375,7 @@ export interface Backend {
   /** "" for none. Refused while a run is active, and for a cloud provider on a local-only site. */
   setConversationProfile(convID: string, profileID: string): Promise<Conversation>
   getSiteSettings(site: string): Promise<SiteSettings>
+  /** Turning localOnly off asks in a native dialog first; declined is cancelled (policy.declined). */
   saveSiteSettings(s: SiteSettings): Promise<SiteSettings>
   /** Opens an engine session (may sign in) but calls no tool. */
   promptPreview(convID: string): Promise<PromptPreview>
