@@ -319,8 +319,36 @@ func nameMessage(name string, err error) string {
 	return "This name can't be used: " + text.Sanitize(err.Error())
 }
 
+// SiteConfirmer asks the person, in a native dialog the web view cannot
+// click, before a change that sends a site's saved sign-in to an address or
+// lets its data reach a cloud model: changing its address, replacing it, or
+// turning off Local models only. A host without it refuses those changes.
+type SiteConfirmer interface {
+	ConfirmNewAddress(site, oldURL, newURL string) (bool, error)
+	ConfirmReplaceSite(site, newURL string) (bool, error)
+	ConfirmLocalOnlyOff(site string) (bool, error)
+}
+
+// confirmSite asks through the host's SiteConfirmer. Declined is cancelled
+// (policy.declined); a host that cannot ask refuses (policy.cannotAskSite).
+func confirmSite(host Host, ask func(SiteConfirmer) (bool, error)) error {
+	c, ok := host.(SiteConfirmer)
+	if !ok {
+		return keyed(CodeUnavailable, "policy.cannotAskSite", nil)
+	}
+	yes, err := ask(c)
+	if err != nil {
+		return keyed(CodeFailed, "policy.askFailed", err)
+	}
+	if !yes {
+		return keyed(CodeCancelled, "policy.declined", nil)
+	}
+	return nil
+}
+
 // prepare validates a request's name and URL and refuses an existing name
-// unless replace is set.
+// unless replace is set. Replacing a site deletes its saved sign-in, so it
+// is confirmed natively first.
 func (s *SitesService) prepare(name, rawURL string, replace bool) (string, string, bool, error) {
 	v := s.Validate(name, rawURL)
 	switch {
@@ -331,6 +359,12 @@ func (s *SitesService) prepare(name, rawURL string, replace bool) (string, strin
 	case v.Exists && !replace:
 		return "", "", false, &Error{Code: CodeExists, Field: "name",
 			Message: fmt.Sprintf("You already have a site called %q. Pick another name, or choose to replace it.", v.Name)}
+	}
+	if v.Exists {
+		err := confirmSite(s.host, func(c SiteConfirmer) (bool, error) { return c.ConfirmReplaceSite(v.Name, v.URL) })
+		if err != nil {
+			return "", "", false, err
+		}
 	}
 	return v.Name, v.URL, v.Exists, nil
 }
@@ -548,8 +582,10 @@ func (s *SitesService) Rename(oldName, newName string) error {
 }
 
 // ChangeURL points a site at a new address after checking its stored
-// credentials there. OAuth sites are refused: their OAuth client and tokens
-// belong to the old server, so they sign in again instead (as in the CLI).
+// credentials there. The check sends them to the new address, so it is
+// confirmed natively first (declined is cancelled, policy.declined). OAuth
+// sites are refused: their OAuth client and tokens belong to the old server,
+// so they sign in again instead (as in the CLI).
 func (s *SitesService) ChangeURL(ctx context.Context, name, rawURL string) (string, error) {
 	site, _, err := s.lookup(name)
 	if err != nil {
@@ -561,6 +597,12 @@ func (s *SitesService) ChangeURL(ctx context.Context, name, rawURL string) (stri
 	newURL, err := sitesetup.NormalizeURL(rawURL)
 	if err != nil {
 		return "", invalid("url", "This doesn't look like a web address: "+text.Sanitize(err.Error()))
+	}
+	if newURL != site.URL {
+		old := site.URL
+		if err := confirmSite(s.host, func(c SiteConfirmer) (bool, error) { return c.ConfirmNewAddress(name, old, newURL) }); err != nil {
+			return "", err
+		}
 	}
 	site.URL = newURL
 	if _, err := s.verify(ctx, site); err != nil {

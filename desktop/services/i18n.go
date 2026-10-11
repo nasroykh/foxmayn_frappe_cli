@@ -227,6 +227,54 @@ var dialogStrings = map[string]map[string]string{
 		LangFrench:  "Conversation (JSON)",
 		LangArabic:  "محادثة (JSON)",
 	},
+	"newAddressTitle": {
+		LangEnglish: "Send this site's sign-in to a new address?",
+		LangFrench:  "Envoyer la connexion de ce site à une nouvelle adresse ?",
+		LangArabic:  "إرسال بيانات دخول هذا الموقع إلى عنوان جديد؟",
+	},
+	// The three %s are the site name, the new address and the old one.
+	"newAddressBody": {
+		LangEnglish: "%s will use this address:\n\n%s\n\ninstead of %s. Its saved API key or password is sent there to check it.\n\nIf you did not just change this site's address in the app, do not continue.",
+		LangFrench:  "%s utilisera cette adresse :\n\n%s\n\nau lieu de %s. Sa clé d’API ou son mot de passe enregistré y est envoyé pour le vérifier.\n\nSi vous n’avez pas changé à l’instant l’adresse de ce site dans l’app, ne continuez pas.",
+		LangArabic:  "سيستخدم %s هذا العنوان:\n\n%s\n\nبدلًا من %s. يُرسَل إليه مفتاح API أو كلمة المرور المحفوظة للتحقق منها.\n\nإذا لم تغيّر للتو عنوان هذا الموقع في التطبيق، فلا تتابع.",
+	},
+	"newAddressApply": {
+		LangEnglish: "Change address",
+		LangFrench:  "Changer l’adresse",
+		LangArabic:  "تغيير العنوان",
+	},
+	"replaceSiteTitle": {
+		LangEnglish: "Replace this site?",
+		LangFrench:  "Remplacer ce site ?",
+		LangArabic:  "استبدال هذا الموقع؟",
+	},
+	// The two %s are the site name and the new address.
+	"replaceSiteBody": {
+		LangEnglish: "%s already exists. Replacing it deletes its saved sign-in and points it at %s.\n\nIf you did not just choose to replace this site in the app, do not continue.",
+		LangFrench:  "%s existe déjà. Le remplacer supprime sa connexion enregistrée et le dirige vers %s.\n\nSi vous n’avez pas choisi à l’instant de remplacer ce site dans l’app, ne continuez pas.",
+		LangArabic:  "%s موجود بالفعل. استبداله يحذف بيانات الدخول المحفوظة ويوجّهه إلى %s.\n\nإذا لم تختر للتو استبدال هذا الموقع في التطبيق، فلا تتابع.",
+	},
+	"replaceSiteApply": {
+		LangEnglish: "Replace site",
+		LangFrench:  "Remplacer le site",
+		LangArabic:  "استبدال الموقع",
+	},
+	"localOffTitle": {
+		LangEnglish: "Let cloud models read this site?",
+		LangFrench:  "Laisser les modèles en ligne lire ce site ?",
+		LangArabic:  "السماح للنماذج السحابية بقراءة هذا الموقع؟",
+	},
+	// %s is the site name.
+	"localOffBody": {
+		LangEnglish: "%s uses only models on this computer. Turning that off lets its conversations send the site's data to online model providers.\n\nIf you did not just turn off Local models only in the app, do not continue.",
+		LangFrench:  "%s n’utilise que des modèles sur cet ordinateur. Désactiver ce réglage permet à ses conversations d’envoyer les données du site aux fournisseurs de modèles en ligne.\n\nSi vous n’avez pas désactivé à l’instant Modèles locaux uniquement dans l’app, ne continuez pas.",
+		LangArabic:  "يستخدم %s النماذج الموجودة على هذا الحاسوب فقط. إيقاف ذلك يتيح لمحادثاته إرسال بيانات الموقع إلى مزوّدي النماذج عبر الإنترنت.\n\nإذا لم توقف للتو خيار النماذج المحلية فقط في التطبيق، فلا تتابع.",
+	},
+	"localOffApply": {
+		LangEnglish: "Turn off",
+		LangFrench:  "Désactiver",
+		LangArabic:  "إيقاف",
+	},
 }
 
 // dialogT is the dialog string key in the current language.

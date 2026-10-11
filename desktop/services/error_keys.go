@@ -63,6 +63,7 @@ var errorKeys = map[string]string{
 	"policy.changed":         "These rules were changed somewhere else since you opened them. Open them again.",
 	"policy.cannotAsk":       "This change opens access, and the app cannot ask you to confirm it here.",
 	"policy.cannotAskRemove": "This site has safety rules, and the app cannot ask you to confirm removing them here.",
+	"policy.cannotAskSite":   "The app cannot ask you to confirm this change here.",
 	"policy.askFailed":       "The confirmation could not be shown.",
 	"policy.declined":        "Nothing was changed.",
 	"policy.saveFailed":      "The rules could not be saved.",

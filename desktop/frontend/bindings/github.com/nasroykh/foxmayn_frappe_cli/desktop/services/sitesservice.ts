@@ -42,8 +42,10 @@ export function CancelSignIn(): $CancellablePromise<void> {
 
 /**
  * ChangeURL points a site at a new address after checking its stored
- * credentials there. OAuth sites are refused: their OAuth client and tokens
- * belong to the old server, so they sign in again instead (as in the CLI).
+ * credentials there. The check sends them to the new address, so it is
+ * confirmed natively first (declined is cancelled, policy.declined). OAuth
+ * sites are refused: their OAuth client and tokens belong to the old server,
+ * so they sign in again instead (as in the CLI).
  */
 export function ChangeURL(name: string, rawURL: string): $CancellablePromise<string> {
     return $Call.ByID(3021472746, name, rawURL);

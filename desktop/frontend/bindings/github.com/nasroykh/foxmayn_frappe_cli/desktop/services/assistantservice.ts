@@ -294,7 +294,8 @@ export function SaveProvider(p: $models.ProviderInfo): $CancellablePromise<$mode
 /**
  * SaveSiteSettings saves a site's instructions and its local-only switch. The
  * address is taken from the ffc config, never from the caller. Turning
- * local-only off also turns it off in settings saved under an earlier name
+ * local-only off is confirmed natively first (declined is cancelled,
+ * policy.declined), and also turns it off in settings saved under an earlier name
  * of the site (same address, no longer in the ffc config), which would
  * otherwise keep it on. Another configured site with the same address keeps
  * its own setting.

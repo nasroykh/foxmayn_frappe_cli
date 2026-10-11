@@ -106,6 +106,27 @@ func policyText(s string) string {
 	return dialogText(text.Sanitize(s))
 }
 
+// ConfirmNewAddress asks "Send this site's sign-in to a new address?" with
+// both addresses. Cancel (No on Windows) is the default.
+func (h *WailsHost) ConfirmNewAddress(site, oldURL, newURL string) (bool, error) {
+	body := fmt.Sprintf(dialogT("newAddressBody"), isolate(policyText(site)), isolate(policyText(newURL)), isolate(policyText(oldURL)))
+	return h.askQuestion(dialogT("newAddressTitle"), body, dialogT("newAddressApply"), dialogT("dropCancel"), false)
+}
+
+// ConfirmReplaceSite asks "Replace this site?" with the new address. Cancel
+// (No on Windows) is the default.
+func (h *WailsHost) ConfirmReplaceSite(site, newURL string) (bool, error) {
+	body := fmt.Sprintf(dialogT("replaceSiteBody"), isolate(policyText(site)), isolate(policyText(newURL)))
+	return h.askQuestion(dialogT("replaceSiteTitle"), body, dialogT("replaceSiteApply"), dialogT("dropCancel"), false)
+}
+
+// ConfirmLocalOnlyOff asks "Let cloud models read this site?". Cancel (No on
+// Windows) is the default.
+func (h *WailsHost) ConfirmLocalOnlyOff(site string) (bool, error) {
+	body := fmt.Sprintf(dialogT("localOffBody"), isolate(policyText(site)))
+	return h.askQuestion(dialogT("localOffTitle"), body, dialogT("localOffApply"), dialogT("dropCancel"), false)
+}
+
 // ConfirmPolicyChange asks "Open access to this site?" with each change that
 // opens access. Cancel (No on Windows) is the default; false means the
 // person declined or closed the dialog.
