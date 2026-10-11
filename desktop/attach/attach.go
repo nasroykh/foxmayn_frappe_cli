@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -132,13 +133,30 @@ func IsImageMime(mime string) bool {
 	return ok
 }
 
+// localVolume reports whether path may be opened. On Windows that is a
+// drive-letter volume ("X:") only; elsewhere the volume name is empty and
+// every path passes.
+func localVolume(path string) bool {
+	vol := filepath.VolumeName(path)
+	if runtime.GOOS != "windows" {
+		return vol == ""
+	}
+	if len(vol) != 2 || vol[1] != ':' {
+		return false
+	}
+	c := vol[0] | 0x20
+	return c >= 'a' && c <= 'z'
+}
+
 // ReadFile reads the file at path and checks it (see Parse). Only a regular
 // file of at most MaxFileBytes is read.
 func ReadFile(path string) (File, error) {
 	name := cleanName(path)
-	// A UNC share or a \\.\ or \\?\ device path can reach a network host
-	// or a device: refused before anything touches it.
-	if vol := filepath.VolumeName(path); strings.HasPrefix(vol, `\\`) || strings.HasPrefix(vol, "//") {
+	// On Windows only a drive-letter volume is accepted. A UNC share, a
+	// \\.\ or \\?\ device path and an NT path (\??\UNC\host\share) can reach
+	// a network host or a device, and no volume means a relative path: all
+	// refused before anything touches them.
+	if !localVolume(path) {
 		return File{}, refuse("%s is on a network or device path and cannot be attached.", name)
 	}
 	// Anything that is not a regular file (directory, FIFO, device) is refused

@@ -78,16 +78,24 @@ var (
 )
 
 // ConfirmDroppedFiles asks "Attach dropped files?" with each file's name and
-// folder. false means the person cancelled or closed the dialog.
+// folder. The paths come from the web view, so Cancel is the default button:
+// Enter must not attach a forged path. false means the person cancelled or
+// closed the dialog.
 func (h *WailsHost) ConfirmDroppedFiles(paths []string) (bool, error) {
+	return h.askQuestion(dialogT("dropTitle"), dropConfirmText(paths), dialogT("dropAttach"), dialogT("dropCancel"), false)
+}
+
+// dropConfirmText is the dialog body. Names and folders lose control, bidi and
+// invisible characters (a name with U+202E would display reversed).
+func dropConfirmText(paths []string) string {
 	var b strings.Builder
 	b.WriteString(dialogT("dropBody") + "\n")
 	for _, p := range paths {
 		// First-strong isolates keep a Latin path whole inside an Arabic
 		// sentence, and an Arabic name whole inside an English one.
-		fmt.Fprintf(&b, "\n%s\n    %s", isolate(dialogText(filepath.Base(p))), fmt.Sprintf(dialogT("dropIn"), isolate(dialogText(filepath.Dir(p)))))
+		fmt.Fprintf(&b, "\n%s\n    %s", isolate(policyText(filepath.Base(p))), fmt.Sprintf(dialogT("dropIn"), isolate(policyText(filepath.Dir(p)))))
 	}
-	return h.askQuestion(dialogT("dropTitle"), b.String(), dialogT("dropAttach"), dialogT("dropCancel"), true)
+	return b.String()
 }
 
 // isolate wraps s in FIRST STRONG ISOLATE ... POP DIRECTIONAL ISOLATE.
