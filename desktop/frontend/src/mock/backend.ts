@@ -20,10 +20,13 @@
 //   ?disconnect=unavailable  Disconnect answers "not available yet"
 //   ?providers=none|nokey    no AI provider yet / one without a key
 //   ?local=ollama     DetectLocal finds Ollama
+//   ?activity=none    the Activity screen finds no audit log yet
 // The assistant's scripts (what to type to get a read answer, an approval
 // card with a diff, ffc's own card, an error, a pause) are described above
 // the assistant section below.
 import type {
+  ActivityEntry,
+  ActivityPage,
   AddedSite,
   ApplyResult,
   Assistant,
@@ -753,6 +756,75 @@ function checkLocalOnly(site: string, providerID: string, model = "") {
     )
   }
 }
+
+
+// The Activity screen's audit log: newest first, spread over the last weeks.
+// Times are relative to now so "Today" and "Last 7 days" always have rows.
+const activityLog: ActivityEntry[] = (() => {
+  type Row = [
+    minutesAgo: number,
+    site: string,
+    client: string,
+    tool: string,
+    status: string,
+    doctypes: string[],
+    names: string[],
+    extra?: Partial<ActivityEntry>,
+  ]
+  const rows: Row[] = [
+    [4, "acme-prod", "foxmayn-desktop", "get_doc", "ok", ["ToDo"], ["TD-0001"], { runID: "run-7f3a" }],
+    [6, "acme-prod", "foxmayn-desktop", "list_docs", "ok", ["ToDo"], [], { runID: "run-7f3a" }],
+    [9, "acme-prod", "foxmayn-desktop", "update_doc", "declined", ["ToDo"], ["TD-0001"], { runID: "run-7f3a", confirm: "declined", args: '{\n  "data": {\n    "status": "Closed"\n  },\n  "if_unmodified": "2026-10-09 10:12:03.412"\n}' }],
+    [25, "acme-staging", "claude-ai", "list_docs", "ok", ["Sales Invoice"], []],
+    [41, "acme-staging", "claude-ai", "get_doc", "ok", ["Sales Invoice"], ["SINV-00042"]],
+    [58, "acme-prod", "cursor-vscode", "get_schema", "ok", ["Customer"], []],
+    [95, "acme-prod", "claude-ai", "delete_doc", "denied", ["Sales Invoice"], ["SINV-00007"], { error: "This site's safety rules do not allow deleting documents.", args: '{\n  "doctype": "Sales Invoice",\n  "name": "SINV-00007"\n}' }],
+    [130, "local-bench", "cursor-vscode", "ping", "ok", [], []],
+    [190, "acme-prod", "claude-ai", "bulk_update", "confirm_pending", ["Item"], ["ITM-001", "ITM-002", "ITM-003"], { namesTotal: 12, confirm: "confirmed" }],
+    [191, "acme-prod", "claude-ai", "bulk_update", "ok", ["Item"], ["ITM-001", "ITM-002", "ITM-003"], { namesTotal: 12, confirm: "confirmed", durationMS: 2480, args: '{\n  "doctype": "Item",\n  "updates": "[12 items]"\n}' }],
+    [260, "acme-prod", "foxmayn-desktop", "create_doc", "ok", ["ToDo"], ["TD-0044"], { runID: "run-52bc" }],
+    [262, "acme-prod", "foxmayn-desktop", "run_report", "error", [], [], { runID: "run-52bc", error: "The report \"Stock Ledger\" needs a warehouse filter.", args: '{\n  "report_name": "Stock Ledger",\n  "filters": {}\n}' }],
+    [400, "local-bench", "foxmayn-desktop", "count_docs", "ok", ["User"], [], { runID: "run-19de" }],
+    [520, "acme-prod", "claude-ai", "call_method", "denied", [], [], { method: "frappe.client.set_value", error: "That method is not allowed on this site." }],
+    [1500, "acme-staging", "foxmayn-desktop", "list_doctypes", "ok", [], [], { runID: "run-d04c" }],
+    [1520, "acme-staging", "foxmayn-desktop", "search", "ok", [], [], { runID: "run-d04c" }],
+    [1700, "acme-prod", "cursor-vscode", "list_docs", "invalid", ["Customer"], [], { error: "The field \"customer_nam\" does not exist on Customer." }],
+    [2900, "acme-prod", "claude-ai", "submit_doc", "ok", ["Sales Invoice"], ["SINV-00041"], { confirm: "confirmed" }],
+    [3300, "acme-prod", "claude-ai", "cancel_doc", "declined", ["Sales Invoice"], ["SINV-00039"], { confirm: "declined" }],
+    [4400, "local-bench", "cursor-vscode", "get_doc", "ok", ["Item"], ["ITM-001"]],
+    [5600, "acme-staging", "claude-ai", "whoami", "ok", [], []],
+    [7200, "acme-prod", "foxmayn-desktop", "get_doc", "ok", ["Customer"], ["Acme Corp"], { runID: "run-a8c1" }],
+    [7210, "acme-prod", "foxmayn-desktop", "add_comment", "ok", ["Customer"], ["Acme Corp"], { runID: "run-a8c1" }],
+    [9800, "acme-prod", "claude-ai", "aggregate", "ok", ["Sales Invoice"], []],
+    [11500, "acme-staging", "cursor-vscode", "update_doc", "error", ["Item"], ["ITM-009"], { error: "The document was changed on the server since it was read." }],
+    [14400, "acme-prod", "claude-ai", "list_reports", "ok", [], []],
+    [20000, "acme-prod", "foxmayn-desktop", "site_health", "ok", [], [], { runID: "run-3e90" }],
+    [26000, "local-bench", "claude-ai", "get_schema", "ok", ["ToDo"], []],
+    [31000, "acme-prod", "cursor-vscode", "some_future_tool", "ok", [], []],
+    [38000, "acme-staging", "claude-ai", "list_docs", "ok", ["Purchase Order"], []],
+    [41000, "acme-prod", "foxmayn-desktop", "list_docs", "ok", ["ToDo"], [], { runID: "run-0b77" }],
+    [43000, "acme-prod", "claude-ai", "get_doc", "error", ["Customer"], ["Nobody Ltd"], { error: "Customer Nobody Ltd was not found." }],
+  ]
+  const now = Date.now()
+  return rows.map(([min, site, client, tool, status, doctypes, names, extra]) => ({
+    time: new Date(now - min * 60_000).toISOString(),
+    site,
+    client,
+    tool,
+    runID: "",
+    via: "",
+    doctypes,
+    names,
+    namesTotal: names.length,
+    method: "",
+    args: "",
+    status,
+    confirm: "",
+    error: "",
+    durationMS: 40 + ((min * 37) % 600),
+    ...extra,
+  }))
+})()
 
 export const backend: Backend = {
   async environment(): Promise<Environment> {
@@ -1695,6 +1767,38 @@ export const backend: Backend = {
   onSignInProgress: (cb) => on(signInListeners, cb),
   onInstallerLog: (cb) => on(installListeners, cb),
 
+  async queryActivity(q): Promise<ActivityPage> {
+    await wait(150)
+    if (params.get("fail") === "activity") fail("failed", "Could not read the activity log.")
+    const none = params.get("activity") === "none"
+    const log = none ? [] : activityLog
+    const facet = (f: (e: ActivityEntry) => string) => [...new Set(log.map(f).filter(Boolean))].sort()
+    // Go's zero time is "0001-01-01T00:00:00Z": no bound.
+    const bound = (v: string, none: number) => (!v || v.startsWith("0001-") ? none : Date.parse(v))
+    const since = bound(q.since, 0)
+    const until = bound(q.until, Infinity)
+    const hit = log.filter(
+      (e) =>
+        (!q.site || e.site === q.site) &&
+        (!q.client || e.client === q.client) &&
+        (!q.tool || e.tool === q.tool) &&
+        (!q.status || e.status === q.status) &&
+        (!q.runID || e.runID === q.runID) &&
+        Date.parse(e.time) >= since &&
+        Date.parse(e.time) < until,
+    )
+    const limit = q.limit || 50
+    return {
+      entries: hit.slice(q.offset, q.offset + limit).map((e) => ({ ...e })),
+      total: hit.length,
+      skipped: none ? 0 : 2,
+      sites: facet((e) => e.site),
+      clients: facet((e) => e.client),
+      tools: facet((e) => e.tool),
+      statuses: facet((e) => e.status),
+      exists: !none,
+    }
+  },
   async copyText(text) {
     try {
       await navigator.clipboard.writeText(text)

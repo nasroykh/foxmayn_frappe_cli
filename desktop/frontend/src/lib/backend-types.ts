@@ -2,6 +2,9 @@
 // calls the Wails bindings; in `vite --mode mock` the alias in vite.config.ts
 // swaps it for src/mock/backend.ts, which never reaches a production build.
 import type {
+  ActivityEntry as GeneratedActivityEntry,
+  ActivityPage as GeneratedActivityPage,
+  ActivityQuery,
   AddedSite,
   APIKeyRequest,
   ApplyResult,
@@ -238,6 +241,28 @@ export interface OpenRouterAuth extends Omit<GeneratedOpenRouterAuth, "status"> 
   status: OpenRouterAuthStatus
 }
 
+/** The result of a tool call, as ffc's audit log records it. */
+export type ActivityStatus = "ok" | "error" | "denied" | "invalid" | "confirm_pending" | "declined"
+
+/** One tool call by the Assistant or a connected app. */
+export interface ActivityEntry extends Omit<GeneratedActivityEntry, "doctypes" | "names"> {
+  /** Not always one of ActivityStatus: a newer ffc may log another. */
+  status: string
+  doctypes: string[]
+  names: string[]
+}
+
+/** A page of the audit log, newest first, with the values the filters can take. */
+export interface ActivityPage extends Omit<GeneratedActivityPage, "entries" | "sites" | "clients" | "tools" | "statuses"> {
+  entries: ActivityEntry[]
+  sites: string[]
+  clients: string[]
+  tools: string[]
+  statuses: string[]
+}
+
+export type { ActivityQuery }
+
 /** A promise the caller can cancel (the Go side sees its context end). */
 export type Cancellable<T> = Promise<T> & { cancel(): void }
 
@@ -380,6 +405,9 @@ export interface Backend {
   onConfigChanged(cb: (ev: ConfigChanged) => void): () => void
   onSignInProgress(cb: (ev: SignInProgress) => void): () => void
   onInstallerLog(cb: (line: string) => void): () => void
+
+  /** ffc's audit log of tool calls, newest first. Read only; limit 1 to 200 (0 is 50). */
+  queryActivity(q: ActivityQuery): Promise<ActivityPage>
 
   copyText(text: string): Promise<void>
 }

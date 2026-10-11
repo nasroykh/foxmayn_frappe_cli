@@ -1,4 +1,5 @@
 import {
+  IconActivity,
   IconDeviceDesktop,
   IconDownload,
   IconKeyboard,
@@ -86,6 +87,10 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             <CommandItem value={`connect apps ${t("nav.connectApps")}`} onSelect={run(() => setScreen("assistants"))}>
               <IconRobot />
               {t("nav.connectApps")}
+            </CommandItem>
+            <CommandItem value={`activity log history ${t("nav.activity")}`} onSelect={run(() => setScreen("activity"))}>
+              <IconActivity />
+              {t("nav.activity")}
             </CommandItem>
             <CommandItem value={`settings ${t("shell.nav.settings")}`} onSelect={run(() => setScreen("settings"))}>
               <IconSettings />

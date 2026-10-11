@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next"
 import {
+  IconActivity,
   IconAlertTriangle,
   IconArrowUpCircle,
   IconCircleCheck,
@@ -33,6 +34,7 @@ const nav: { id: Screen; labelKey: string; icon: typeof IconWorld }[] = [
   { id: "assistant", labelKey: "nav.assistant", icon: IconMessageChatbot },
   // The screen id stays "assistants"; the label is "Connect apps". The chat is "assistant".
   { id: "assistants", labelKey: "nav.connectApps", icon: IconRobot },
+  { id: "activity", labelKey: "nav.activity", icon: IconActivity },
   { id: "settings", labelKey: "shell.nav.settings", icon: IconSettings },
 ]
 

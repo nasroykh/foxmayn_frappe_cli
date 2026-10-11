@@ -2,6 +2,7 @@
 import { Clipboard, Events } from "@wailsio/runtime"
 
 import {
+  ActivityService,
   AppService,
   AssistantService,
   AssistantsService,
@@ -9,6 +10,7 @@ import {
 } from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services"
 import type * as wire from "../../bindings/github.com/nasroykh/foxmayn_frappe_cli/desktop/services/models"
 import type {
+  ActivityPage,
   AttachmentKind,
   Backend,
   Cancellable,
@@ -213,6 +215,18 @@ export const backend: Backend = {
   onConfigChanged: (cb) => Events.On("config:changed", (ev) => cb(ev.data)),
   onSignInProgress: (cb) => Events.On("signin:progress", (ev) => cb(ev.data)),
   onInstallerLog: (cb) => Events.On("installer:log", (ev) => cb(ev.data.line)),
+
+  queryActivity: async (q): Promise<ActivityPage> => {
+    const r = await ActivityService.Query(q)
+    return {
+      ...r,
+      entries: (r.entries ?? []).map((e) => ({ ...e, doctypes: e.doctypes ?? [], names: e.names ?? [] })),
+      sites: r.sites ?? [],
+      clients: r.clients ?? [],
+      tools: r.tools ?? [],
+      statuses: r.statuses ?? [],
+    }
+  },
 
   copyText: (text) => Clipboard.SetText(text),
 }

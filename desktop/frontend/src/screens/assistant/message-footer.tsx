@@ -1,4 +1,4 @@
-import { IconCheck, IconCopy, IconPencil, IconRefresh, IconTrash } from "@tabler/icons-react"
+import { IconActivity, IconCheck, IconCopy, IconPencil, IconRefresh, IconTrash } from "@tabler/icons-react"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "cn"
@@ -45,6 +45,7 @@ export function MessageFooter({
   onEdit,
   onDelete,
   onRetry,
+  onActivity,
 }: {
   m: ChatMessage
   usage?: UsageTotals
@@ -57,6 +58,8 @@ export function MessageFooter({
   onEdit: () => void
   onDelete: () => void
   onRetry: () => void
+  /** Opens Activity filtered to the run that wrote this message; absent when it has none. */
+  onActivity?: () => void
 }) {
   const { t } = useTranslation()
   const [copied, setCopied] = React.useState(false)
@@ -92,6 +95,11 @@ export function MessageFooter({
         {user && (
           <Action label={t("chat.message.delete")} onClick={onDelete} disabled={busy}>
             <IconTrash />
+          </Action>
+        )}
+        {!user && onActivity && (
+          <Action label={t("chat.message.activity")} onClick={onActivity}>
+            <IconActivity />
           </Action>
         )}
         {canRetry && (

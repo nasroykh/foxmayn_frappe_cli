@@ -22,7 +22,7 @@ beforeEach(async () => {
   for (const c of await backend.listConversations()) await backend.deleteConversation(c.id)
 })
 
-const actions = { addSite: () => {}, connectAssistant: () => {}, installFFC: () => {}, newConversation: () => {}, takeNewConversation: () => {}, openShortcuts: () => {} }
+const actions = { addSite: () => {}, connectAssistant: () => {}, installFFC: () => {}, newConversation: () => {}, takeNewConversation: () => {}, openShortcuts: () => {}, openActivity: () => {}, takeActivityFilter: () => {} }
 
 function show() {
   return render(

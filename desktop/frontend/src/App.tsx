@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { AddSiteSheet } from "@/screens/add-site-sheet"
 import { AssistantScreen } from "@/screens/assistant/assistant-screen"
+import { ActivityScreen } from "@/screens/activity-screen"
 import { AssistantsScreen } from "@/screens/connect-apps-screen"
 import { ConnectDialog, type ConnectTarget } from "@/screens/connect-dialog"
 import { Onboarding } from "@/screens/onboarding"
@@ -43,6 +44,7 @@ export default function App() {
   const [installOpen, setInstallOpen] = React.useState(false)
   const [shortcutsOpen, setShortcutsOpen] = React.useState(false)
   const [newConversationPending, setNewConversationPending] = React.useState(false)
+  const [pendingActivityFilter, setPendingActivityFilter] = React.useState<{ runID: string } | null>(null)
 
   const actions = React.useMemo<AppActions>(
     () => ({
@@ -58,12 +60,23 @@ export default function App() {
       },
       takeNewConversation: () => setNewConversationPending(false),
       openShortcuts: () => setShortcutsOpen(true),
+      openActivity: (runID?: string) => {
+        setPendingActivityFilter(runID ? { runID } : null)
+        setScreen("activity")
+      },
+      takeActivityFilter: () => setPendingActivityFilter(null),
     }),
     [],
   )
 
   return (
-    <AppProvider actions={actions} screen={screen} setScreen={setScreen} newConversationPending={newConversationPending}>
+    <AppProvider
+      actions={actions}
+      screen={screen}
+      setScreen={setScreen}
+      newConversationPending={newConversationPending}
+      pendingActivityFilter={pendingActivityFilter}
+    >
       <Shell />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <AddSiteSheet open={addSiteOpen} onOpenChange={setAddSiteOpen} />
@@ -169,6 +182,7 @@ function Shell() {
             <div className="mx-auto w-full max-w-5xl p-6">
               {screen === "sites" && <SitesScreen />}
               {screen === "assistants" && <AssistantsScreen />}
+              {screen === "activity" && <ActivityScreen />}
               {screen === "settings" && <SettingsScreen />}
             </div>
           </ScrollArea>

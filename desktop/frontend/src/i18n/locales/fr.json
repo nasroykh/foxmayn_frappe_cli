@@ -1,7 +1,8 @@
 {
   "nav": {
     "connectApps": "Connecter des apps",
-    "assistant": "Assistant"
+    "assistant": "Assistant",
+    "activity": "Activité"
   },
   "connectApps": {
     "title": "Connecter des apps",
@@ -409,7 +410,8 @@
       "editTitle": "Modifier ce message ?",
       "editBody": "Tout ce qui le suit est retiré de la conversation, y compris les messages suivants et leurs fichiers, et le message revient dans la zone ci-dessous pour que vous puissiez le changer et l’envoyer à nouveau.",
       "deleteTitle": "Supprimer ce message et sa réponse ?",
-      "deleteBody": "Ils sont retirés de cette conversation. Ce qu’ils ont coûté reste compté dans le total de la conversation."
+      "deleteBody": "Ils sont retirés de cette conversation. Ce qu’ils ont coûté reste compté dans le total de la conversation.",
+      "activity": "Voir l’activité"
     },
     "noConversationShortcut": "Ou appuyez sur {{mod}}+N."
   },
@@ -702,6 +704,10 @@
       "handEdited": "Ces règles ont été modifiées à la main d’une façon que cet écran ne peut pas afficher (une entrée vide). Corrigez-les dans le fichier de configuration.",
       "busy": "Une autre modification des règles de sécurité attend votre réponse.",
       "anchors": "Ces règles partagent des parties avec d’autres entrées du fichier de configuration (ancres YAML ou clés de fusion). Modifiez-les dans le fichier."
+    },
+    "activity": {
+      "limit": "Demandez de 1 à 200 entrées à partir d’une position de 0 ou plus.",
+      "readFailed": "Le journal d’activité n’a pas pu être lu."
     }
   },
   "auth": {
@@ -1189,5 +1195,90 @@
     "declined": "Rien n’a été modifié.",
     "reloaded": "Les règles affichées sont maintenant les règles actuelles. Vérifiez-les, puis enregistrez de nouveau.",
     "loadFailed": "Impossible de charger les règles de sécurité"
+  },
+  "activity": {
+    "title": "Activité",
+    "description": "Ce que l’Assistant et les apps connectées ont fait sur vos sites via ffc, du plus récent au plus ancien.",
+    "listLabel": "Appels d’outils",
+    "filters": {
+      "label": "Filtres",
+      "site": "Site",
+      "anySite": "Tous les sites",
+      "app": "App",
+      "anyApp": "Toutes les apps",
+      "result": "Résultat",
+      "anyResult": "Tout résultat",
+      "when": "Période",
+      "clear": "Effacer les filtres",
+      "runOnly": "Une seule exécution de l’Assistant"
+    },
+    "range": {
+      "any": "Toute période",
+      "today": "Aujourd’hui",
+      "week": "7 derniers jours",
+      "month": "30 derniers jours"
+    },
+    "app": {
+      "desktop": "L’Assistant de cette app"
+    },
+    "status": {
+      "ok": "Terminé",
+      "error": "Échec",
+      "denied": "Refusé par les règles de sécurité",
+      "invalid": "Requête invalide",
+      "confirm_pending": "En attente d’une confirmation",
+      "declined": "Refusé"
+    },
+    "confirm": {
+      "confirmed": "Confirmé",
+      "declined": "Refusé",
+      "unsupported": "L’app ne pouvait pas demander",
+      "never": "Non demandé"
+    },
+    "docs": {
+      "count_one": "{{count}} document",
+      "count_many": "{{count}} documents",
+      "count_other": "{{count}} documents"
+    },
+    "duration": {
+      "ms": "{{value}} ms",
+      "s": "{{value}} s"
+    },
+    "showing": "Affichage de {{shown}} sur {{total}}",
+    "loadMore": "Afficher plus",
+    "skipped_one": "{{count}} ligne n’a pas pu être lue.",
+    "skipped_many": "{{count}} lignes n’ont pas pu être lues.",
+    "skipped_other": "{{count}} lignes n’ont pas pu être lues.",
+    "empty": {
+      "title": "Aucune activité pour l’instant",
+      "description": "Les appels apparaissent ici dès que l’Assistant ou une app connectée utilise l’un de vos sites.",
+      "noMatch": "Aucun résultat ne correspond à ces filtres."
+    },
+    "loadFailed": "Impossible de lire le journal d’activité",
+    "details": {
+      "title": "Appel d’outil",
+      "tool": "Outil",
+      "when": "Quand",
+      "app": "App",
+      "site": "Site",
+      "result": "Résultat",
+      "confirmation": "Confirmation",
+      "duration": "Durée",
+      "method": "Méthode",
+      "run": "Exécution",
+      "via": "Ouvert via",
+      "doctypes": "Types de documents",
+      "documents": "Documents",
+      "more_one": "et {{count}} autre",
+      "more_many": "et {{count}} autres",
+      "more_other": "et {{count}} autres",
+      "error": "Erreur",
+      "args": "Arguments",
+      "noArgs": "Aucun argument n’a été enregistré."
+    },
+    "ago": {
+      "minutes": "il y a {{value}} min",
+      "hours": "il y a {{value}} h"
+    }
   }
 }

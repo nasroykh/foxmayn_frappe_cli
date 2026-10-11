@@ -57,7 +57,7 @@ function markUpdateChecked() {
   }
 }
 
-export type Screen = "sites" | "assistant" | "assistants" | "settings"
+export type Screen = "sites" | "assistant" | "assistants" | "activity" | "settings"
 
 /** A value loaded from the backend: null until the first answer. */
 export interface Loaded<T> {
@@ -126,6 +126,12 @@ interface AppContextValue {
   takeNewConversation: () => void
   /** Opens the keyboard shortcuts sheet. */
   openShortcuts: () => void
+  /** Goes to Activity, filtered to one Assistant run when runID is given. */
+  openActivity: (runID?: string) => void
+  /** A run filter was asked for and Activity has not taken it yet. */
+  pendingActivityFilter: { runID: string } | null
+  /** Activity took the filter. */
+  takeActivityFilter: () => void
   /** Opens the feedback issue form in the browser. */
   sendFeedback: () => void
 }
@@ -139,6 +145,8 @@ export interface AppActions {
   newConversation: () => void
   takeNewConversation: () => void
   openShortcuts: () => void
+  openActivity: (runID?: string) => void
+  takeActivityFilter: () => void
 }
 
 export function AppProvider({
@@ -147,12 +155,14 @@ export function AppProvider({
   screen,
   setScreen,
   newConversationPending = false,
+  pendingActivityFilter = null,
 }: {
   children: React.ReactNode
   actions: AppActions
   screen: Screen
   setScreen: (s: Screen) => void
   newConversationPending?: boolean
+  pendingActivityFilter?: { runID: string } | null
 }) {
   const [env, reloadEnv] = useLoader(backend.environment)
   const [sites, reloadSites] = useLoader(backend.listSites)
@@ -287,6 +297,7 @@ export function AppProvider({
       screen,
       setScreen,
       newConversationPending,
+      pendingActivityFilter,
       sendFeedback,
       ...actions,
     }),
@@ -307,6 +318,7 @@ export function AppProvider({
       screen,
       setScreen,
       newConversationPending,
+      pendingActivityFilter,
       sendFeedback,
       actions,
     ],
