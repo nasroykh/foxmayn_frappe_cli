@@ -86,6 +86,8 @@ The app shares its settings with the CLI. Uninstalling the app does not remove:
 
 - `~/.config/ffc/config.yaml` (your sites and credentials) and the other files in `~/.config/ffc`;
 - the `ffc` binary, if the app installed it (`%LOCALAPPDATA%\Programs\ffc` on Windows, `~/.local/bin/ffc` on macOS);
+- the conversation store, `assistant.db` in `%APPDATA%\Foxmayn Frappe Desktop` (Windows) or `~/Library/Application Support/Foxmayn Frappe Desktop` (macOS);
+- model provider keys in Windows Credential Manager or the macOS keychain (service "Foxmayn Frappe Desktop"). Remove the providers in the app first to delete them;
 - app entries you connected. Disconnect them in the app first, or later with `ffc mcp uninstall --client <client>`.
 
 To remove everything, see [Installation: uninstall](../getting-started/installation.md#uninstall).
