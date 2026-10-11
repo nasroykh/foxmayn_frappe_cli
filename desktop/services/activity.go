@@ -97,6 +97,13 @@ const (
 	// activityMaxField bounds a text field of an entry.
 	activityMaxField = 1000
 	activityMaxList  = 50
+	// activityMaxDepth bounds how deeply nested arguments are indented;
+	// indenting n levels costs about n² bytes, so a line of brackets would
+	// otherwise grow a thousandfold.
+	activityMaxDepth = 32
+	// activityMaxFacet bounds the values listed per filter (site, client,
+	// tool, status); any process of the user can write the log.
+	activityMaxFacet = 200
 )
 
 // auditLine is a line of mcp-audit.jsonl (internal/cmd/mcp_audit.go).
@@ -142,17 +149,24 @@ func (s *ActivityService) Query(q ActivityQuery) (ActivityPage, error) {
 		page.Skipped += skipped
 		lines = append(lines, got...)
 	}
-	facet := func(list *[]string, v string) {
-		if v != "" && !slices.Contains(*list, v) {
-			*list = append(*list, v)
+	seen := [4]map[string]bool{{}, {}, {}, {}}
+	facet := func(i int, list *[]string, v string) {
+		if v == "" {
+			return
 		}
+		v = field(v)
+		if seen[i][v] || len(*list) >= activityMaxFacet {
+			return
+		}
+		seen[i][v] = true
+		*list = append(*list, v)
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
 		l := lines[i]
-		facet(&page.Sites, l.Site)
-		facet(&page.Clients, l.Client)
-		facet(&page.Tools, l.Tool)
-		facet(&page.Statuses, l.Status)
+		facet(0, &page.Sites, l.Site)
+		facet(1, &page.Clients, l.Client)
+		facet(2, &page.Tools, l.Tool)
+		facet(3, &page.Statuses, l.Status)
 		if !q.matches(l) {
 			continue
 		}
@@ -272,7 +286,9 @@ func entryOf(l auditLine) ActivityEntry {
 		Error: field(l.Error), NamesTotal: l.NamesTotal, DurationMS: l.DurationMS,
 		Doctypes: fieldList(l.Doctypes), Names: fieldList(l.Names),
 	}
-	if len(l.Args) > 0 && string(l.Args) != "null" {
+	if tooDeep(l.Args) {
+		e.Args = "…"
+	} else if len(l.Args) > 0 && string(l.Args) != "null" {
 		var v any
 		if json.Unmarshal(l.Args, &v) == nil {
 			if b, err := json.MarshalIndent(sanitizeJSON(v), "", "  "); err == nil {
@@ -288,6 +304,31 @@ func entryOf(l auditLine) ActivityEntry {
 		}
 	}
 	return e
+}
+
+// tooDeep reports whether raw JSON nests deeper than activityMaxDepth.
+func tooDeep(raw []byte) bool {
+	depth, inStr := 0, false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		switch {
+		case inStr:
+			if c == '\\' {
+				i++
+			} else if c == '"' {
+				inStr = false
+			}
+		case c == '"':
+			inStr = true
+		case c == '[' || c == '{':
+			if depth++; depth > activityMaxDepth {
+				return true
+			}
+		case c == ']' || c == '}':
+			depth--
+		}
+	}
+	return false
 }
 
 func field(s string) string {

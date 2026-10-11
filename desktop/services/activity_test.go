@@ -107,3 +107,63 @@ func TestActivityBigFile(t *testing.T) {
 		t.Fatalf("total %d of %d, skipped %d", p.Total, n, p.Skipped)
 	}
 }
+
+func TestActivityDeepArgs(t *testing.T) {
+	const depth = 9000
+	deep := strings.Repeat("[", depth) + strings.Repeat("]", depth)
+	one := fmt.Sprintf(`{"time":"2026-10-11T09:00:00Z","site":"s","tool":"t","status":"ok","args":%s}`+"\n", deep)
+	s := activityLog(t, strings.Repeat(one, 200), "")
+	start := time.Now()
+	p, err := s.Query(ActivityQuery{Limit: 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("took %v", d)
+	}
+	if len(p.Entries) != 200 || len(p.Entries[0].Args) > activityMaxArgs+8 {
+		t.Fatalf("entries %d, args %d bytes", len(p.Entries), len(p.Entries[0].Args))
+	}
+	ok := entryOf(auditLine{Args: []byte(`{"a":["]",{"b":1}]}`)})
+	if !strings.Contains(ok.Args, `"b": 1`) {
+		t.Fatalf("normal args lost: %q", ok.Args)
+	}
+}
+
+func TestActivityFacets(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < activityMaxFacet*3; i++ {
+		b.WriteString(line("2026-10-11T09:00:00Z", fmt.Sprintf("site-%d", i), "c", "t", "ok", ""))
+		b.WriteString(line("2026-10-11T09:00:00Z", "dup", "c", "t", "ok", ""))
+	}
+	long := strings.Repeat("x", activityMaxField+500)
+	b.WriteString(line("2026-10-11T09:00:00Z", "a\u202eb", long, "t", "ok", ""))
+	s := activityLog(t, b.String(), "")
+	p, err := s.Query(ActivityQuery{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Sites) > activityMaxFacet {
+		t.Fatalf("%d sites", len(p.Sites))
+	}
+	n := 0
+	for _, v := range p.Sites {
+		if v == "dup" {
+			n++
+		}
+		if strings.ContainsRune(v, 0x202e) {
+			t.Fatalf("unsanitized %q", v)
+		}
+	}
+	if n != 1 {
+		t.Fatalf("dup listed %d times", n)
+	}
+	if len(p.Clients) != 2 {
+		t.Fatalf("clients %d", len(p.Clients))
+	}
+	for _, v := range p.Clients {
+		if len([]rune(v)) > activityMaxField+1 {
+			t.Fatalf("client not cut: %d runes", len([]rune(v)))
+		}
+	}
+}
