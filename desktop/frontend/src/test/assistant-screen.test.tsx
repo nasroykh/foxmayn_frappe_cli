@@ -36,6 +36,13 @@ async function send(text: string) {
   fireEvent.keyDown(input, { key: "Enter" })
 }
 
+
+/** Opens the chat header's More menu and picks Rename. */
+async function renameFromMenu() {
+  fireEvent.click(screen.getByRole("button", { name: "More" }))
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }))
+}
+
 describe("Assistant screen with the mock backend", () => {
   it("opens the conversation it just created, with the profile chosen", async () => {
     await backend.newConversation("acme-prod", "read", "anthropic", "")
@@ -64,7 +71,7 @@ describe("Assistant screen with the mock backend", () => {
     show()
     await send("What is TD-0001?")
     await waitFor(() => expect(screen.getAllByText("What is TD-0001?").length).toBeGreaterThan(0))
-    await waitFor(() => expect(screen.getByText("get_doc")).toBeTruthy(), { timeout: 5000 })
+    await waitFor(() => expect(screen.getByText("Read a document")).toBeTruthy(), { timeout: 5000 })
     await waitFor(() => expect(document.body.textContent).toContain("TD-0001"), { timeout: 5000 })
     await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy(), { timeout: 8000 })
   }, 15000)
@@ -119,7 +126,7 @@ describe("Assistant screen with the mock backend", () => {
     expect(screen.getByText("The assistant wants to make a change")).toBeTruthy()
     expect(screen.getByLabelText("Field changes").textContent).toContain("description")
     // Mode cannot change while the run waits.
-    expect(screen.getByRole("group", { name: "What the assistant may do" }).querySelector("button")?.hasAttribute("disabled")).toBe(true)
+    expect((screen.getByRole("switch", { name: "Ask before changes" }) as HTMLButtonElement).hasAttribute("data-disabled")).toBe(true)
     fireEvent.click(screen.getByRole("button", { name: "Approve" }))
     await waitFor(() => expect(screen.queryByRole("button", { name: "Decline" })).toBeNull(), { timeout: 5000 })
     await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy(), { timeout: 8000 })
@@ -135,7 +142,7 @@ describe("Assistant screen with the mock backend", () => {
     // The model's title replaces the first words of the message.
     await waitFor(() => expect(chatTitle()).toBe("Open ToDos"), { timeout: 8000 })
     // The user's name stays.
-    fireEvent.click(screen.getByRole("button", { name: "Rename this conversation" }))
+    await renameFromMenu()
     const field = screen.getByLabelText("Conversation name") as HTMLInputElement
     fireEvent.change(field, { target: { value: "My todos" } })
     fireEvent.click(screen.getByRole("button", { name: "Save name" }))
@@ -149,7 +156,7 @@ describe("Assistant screen with the mock backend", () => {
     show()
     await send("What is TD-0001?")
     await waitFor(() => expect(chatTitle()).toBe("Open ToDos"), { timeout: 12000 })
-    fireEvent.click(screen.getByRole("button", { name: "Rename this conversation" }))
+    await renameFromMenu()
     fireEvent.click(screen.getByRole("button", { name: "Save name" }))
     await waitFor(() => expect(rename).toHaveBeenCalledWith(expect.any(String), "Open ToDos"))
     rename.mockRestore()

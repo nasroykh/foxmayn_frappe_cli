@@ -5,7 +5,7 @@
   },
   "connectApps": {
     "title": "Connecter des apps",
-    "description": "Connectez les apps d’IA de cet ordinateur à vos sites Frappe. Chacune reçoit dans ses paramètres une entrée « frappe » qui exécute ffc.",
+    "description": "Permettez aux apps d’IA de cet ordinateur, comme Claude et Cursor, d’utiliser vos sites Frappe.",
     "lookAgain": "Vérifier à nouveau",
     "addSiteFirst": "Ajoutez d’abord un site",
     "noSites": "Les apps fonctionnent avec les sites que vous ajoutez ici. Ajoutez-en un, puis revenez pour connecter.",
@@ -14,7 +14,7 @@
     "loading": "Chargement des apps",
     "status": {
       "connected": "Connectée",
-      "different": "Autres paramètres",
+      "different": "Configurée autrement",
       "notConnected": "Non connectée",
       "error": "Problème"
     },
@@ -46,7 +46,8 @@
         "vscode": "Rechargez VS Code pour arrêter le serveur.",
         "codex": "Ouvrez une nouvelle session Codex pour appliquer la modification."
       }
-    }
+    },
+    "connectAnyway": "Connecter quand même"
   },
   "common": {
     "cancel": "Annuler",
@@ -81,7 +82,7 @@
   },
   "settings": {
     "assistantTab": "Assistant",
-    "description": "L’apparence de l’app, l’emplacement de ses fichiers et ce qu’elle est.",
+    "description": "Langue, thème, Assistant, outil ffc et informations sur l’app.",
     "generalTab": "Général",
     "ffcTab": "Outil ffc",
     "aboutTab": "À propos",
@@ -97,7 +98,7 @@
       "installed": "Installé",
       "notWorking": "Ne fonctionne pas",
       "notInstalled": "Non installé",
-      "description": "Le programme que vos apps connectées exécutent pour atteindre vos sites. Cette app le trouve dans votre PATH ou là où les installateurs de ffc le placent, et peut installer la dernière version pour vous ; elle n’en fournit jamais sa propre copie.",
+      "description": "Le petit programme que vos apps connectées utilisent pour accéder à vos sites. Cette app le trouve sur cet ordinateur et peut installer la dernière version pour vous.",
       "version": "Version",
       "unknown": "Inconnue",
       "location": "Emplacement de ffc",
@@ -105,7 +106,7 @@
       "noAnswerManager": "Son exécution a échoué ({{error}}). Le réinstaller avec {{manager}} règle généralement le problème.",
       "noAnswer": "Son exécution a échoué ({{error}}). Le réinstaller règle généralement le problème.",
       "updateBody": "La mise à jour remplace le ffc ci-dessus, à son emplacement. Redémarrez ensuite vos apps connectées pour qu’elles utilisent la nouvelle version.",
-      "autoCheck": "L’app recherche une version plus récente de ffc une fois par jour ; Rechercher des mises à jour le fait tout de suite. Vous pouvez aussi exécuter <code>{{command}}</code> dans un terminal.",
+      "autoCheck": "L’app recherche chaque jour une version plus récente de ffc. Le bouton « Rechercher des mises à jour » le fait tout de suite. Vous pouvez aussi exécuter <code>{{command}}</code> dans un terminal.",
       "installHere": "Installez-le ici, ou exécutez vous-même ceci dans un terminal :",
       "updateTo": "Mettre à jour vers {{version}}",
       "installAgain": "Réinstaller",
@@ -167,12 +168,12 @@
     "header": {
       "site": "Site : {{site}}",
       "rename": "Renommer",
-      "renameLabel": "Renommer cette conversation",
       "renameField": "Nom de la conversation",
       "renameSave": "Enregistrer le nom",
       "renameCancel": "Annuler le renommage",
       "total": "Total : {{usage}}",
-      "totalHelp": "Tous les appels au modèle de cette conversation, y compris celui qui lui donne son nom."
+      "totalHelp": "Tous les appels au modèle de cette conversation, y compris celui qui lui donne son nom.",
+      "more": "Plus"
     },
     "usage": {
       "tokens": "{{input}} en entrée · {{output}} en sortie",
@@ -185,10 +186,8 @@
       "label": "Conversations",
       "title": "Conversations",
       "new": "Nouvelle",
-      "empty": "Aucune conversation pour l’instant.",
       "untitled": "Nouvelle conversation",
       "delete": "Supprimer",
-      "deleteLabel": "Supprimer la conversation {{title}}",
       "deleteTitle": "Supprimer cette conversation ?",
       "deleteBody": "« {{title}} » et ses messages sont supprimés de cet ordinateur. Cette action est irréversible.",
       "archiveTitle": "Archives",
@@ -204,9 +203,9 @@
       "showArchive_one": "Afficher les archives ({{count}})",
       "showArchive_many": "Afficher les archives ({{count}})",
       "showArchive_other": "Afficher les archives ({{count}})",
-      "emptyHint": "Commencez-en une avec Nouvelle, ou appuyez sur {{mod}}+N.",
       "emptyFiltered": "Aucune conversation ne correspond à ces filtres.",
-      "resize": "Redimensionner la liste des conversations"
+      "resize": "Redimensionner la liste des conversations",
+      "more": "Autres actions sur les conversations"
     },
     "search": {
       "label": "Rechercher dans les conversations",
@@ -263,13 +262,16 @@
       "sendLabel": "Envoyer le message",
       "stop": "Arrêter",
       "stopLabel": "Arrêter l’Assistant",
-      "hint": "Enter envoie, Shift+Enter ajoute une ligne. Esc arrête l’Assistant.",
       "attachLabel": "Joindre des fichiers (texte, CSV, JSON, XLSX ou images)",
       "attachHint": "Vous pouvez aussi déposer des fichiers ici ou coller une image.",
       "attachFailed": "Non joint",
       "pasteTooBig": "L’image collée dépasse 5 Mo.",
       "staged": "Fichiers pour le prochain message",
-      "remove": "Retirer {{name}}"
+      "remove": "Retirer {{name}}",
+      "hintSend": "pour envoyer",
+      "hintNewLine": "pour une nouvelle ligne",
+      "keyEnter": "Entrée",
+      "keyShift": "Maj"
     },
     "attachments": {
       "label": "Fichiers joints"
@@ -284,9 +286,12 @@
       "names": "Documents",
       "noChanges": "Aucun champ modifié",
       "diffLabel": "Champs modifiés",
-      "args": "Requête exacte",
+      "args": "Détails techniques",
       "approve": "Approuver",
-      "decline": "Refuser"
+      "decline": "Refuser",
+      "field": "Champ",
+      "before": "Avant",
+      "after": "Après"
     },
     "tool": {
       "running": "En cours",
@@ -295,7 +300,60 @@
       "stopped": "Arrêté",
       "approved": "Approuvé",
       "declined": "Refusé",
-      "cancelled": "Sans réponse"
+      "cancelled": "Sans réponse",
+      "names": {
+        "list_sites": "Sites listés",
+        "ping": "Connexion vérifiée",
+        "get_doc": "Document lu",
+        "list_docs": "Documents listés",
+        "count_docs": "Documents comptés",
+        "get_schema": "Type de document consulté",
+        "list_doctypes": "Types de documents listés",
+        "list_reports": "Rapports listés",
+        "run_report": "Rapport exécuté",
+        "search": "Recherche effectuée",
+        "get_doc_context": "Historique d’un document lu",
+        "create_doc": "Document créé",
+        "update_doc": "Document modifié",
+        "delete_doc": "Document supprimé",
+        "bulk_create": "Plusieurs documents créés",
+        "bulk_update": "Plusieurs documents modifiés",
+        "bulk_delete": "Plusieurs documents supprimés",
+        "call_method": "Action du serveur exécutée",
+        "whoami": "Utilisateur connecté vérifié",
+        "check_permission": "Autorisation vérifiée",
+        "aggregate": "Documents totalisés",
+        "submit_doc": "Document validé",
+        "cancel_doc": "Document annulé",
+        "bulk_submit": "Plusieurs documents validés",
+        "bulk_cancel": "Plusieurs documents annulés",
+        "amend_doc": "Document modifié par amendement",
+        "copy_doc": "Document dupliqué",
+        "rename_doc": "Document renommé",
+        "apply_workflow": "Action de workflow appliquée",
+        "restore_doc": "Document supprimé restauré",
+        "get_transitions": "Étapes du workflow consultées",
+        "add_comment": "Commentaire ajouté",
+        "assign_to": "Document assigné",
+        "remove_assignment": "Assignation retirée",
+        "add_tag": "Étiquettes ajoutées",
+        "remove_tag": "Étiquettes retirées",
+        "share_doc": "Document partagé",
+        "unshare_doc": "Partage retiré",
+        "site_health": "Santé du site vérifiée",
+        "list_jobs": "Tâches d’arrière-plan listées",
+        "list_errors": "Erreurs listées",
+        "scheduler_status": "Planificateur vérifié",
+        "list_attachments": "Pièces jointes listées",
+        "attach_file": "Fichier joint",
+        "get_print_html": "Version imprimable préparée",
+        "erp_map": "Document suivant préparé",
+        "erp_payment": "Paiement préparé",
+        "erp_item": "Article consulté",
+        "erp_stock": "Stock consulté",
+        "erp_party": "Client ou fournisseur consulté"
+      },
+      "generic": "Outil utilisé"
     },
     "error": {
       "title": "L’Assistant s’est arrêté"
@@ -311,36 +369,35 @@
     },
     "starters": {
       "title": "Essayez de demander",
-      "hint": "Une suggestion remplit seulement la zone de message. Modifiez-la, puis appuyez sur Entrée.",
       "explore": {
-        "p1": "Quelles applications et quelles versions sont installées sur ce site ?",
-        "p2": "Affiche les 10 dernières Sales Invoices avec leur client, leur total et leur statut.",
-        "p3": "Quels champs a le DocType Customer, et lesquels sont obligatoires ?",
-        "p4": "Combien y a-t-il de ToDos ouverts, regroupés par personne assignée ?"
+        "p1": "Quelles applications sont installées sur ce site, et dans quelles versions ?",
+        "p2": "Affichez les 10 dernières factures de vente avec le client, le total et le statut.",
+        "p3": "Quelles informations conserve-t-on pour un client, et lesquelles sont obligatoires ?",
+        "p4": "Combien de tâches ouvertes y a-t-il pour chaque personne ?"
       },
       "accounts": {
-        "p1": "Quelles Sales Invoices sont en retard ? Trie-les par montant restant dû.",
-        "p2": "Affiche les Purchase Invoices impayées à échéance dans les 14 prochains jours.",
-        "p3": "Prépare un brouillon de Payment Entry pour la plus ancienne Sales Invoice impayée.",
-        "p4": "Résume les ventes de ce mois par client."
+        "p1": "Quelles factures de vente sont en retard ? Placez le plus gros impayé en premier.",
+        "p2": "Affichez les factures fournisseur encore impayées à échéance dans les 14 prochains jours.",
+        "p3": "Préparez un brouillon de paiement pour la plus ancienne facture de vente impayée.",
+        "p4": "Résumez les ventes de ce mois par client."
       },
       "site-admin": {
-        "p1": "Fais un rapide bilan de santé de ce site.",
-        "p2": "Le planificateur tourne-t-il, et une tâche planifiée a-t-elle échoué aujourd’hui ?",
-        "p3": "Affiche les dernières entrées de l’Error Log et ce qu’elles ont en commun.",
-        "p4": "Des tâches d’arrière-plan sont-elles bloquées dans la file ?"
+        "p1": "Faites un rapide bilan de santé de ce site.",
+        "p2": "Les tâches planifiées s’exécutent-elles, et l’une d’elles a-t-elle échoué aujourd’hui ?",
+        "p3": "Affichez les dernières erreurs enregistrées sur le site et ce qu’elles ont en commun.",
+        "p4": "Des tâches d’arrière-plan sont-elles bloquées en attente ?"
       },
       "data-entry": {
-        "p1": "Crée un Customer nommé … dans le groupe de clients … et le territoire …",
-        "p2": "Ajoute un ToDo pour moi : … à faire pour le …",
-        "p3": "Change le numéro de téléphone du Contact … en …",
-        "p4": "Quels champs du DocType Item dois-je remplir pour en créer un ?"
+        "p1": "Créez un client nommé … dans le groupe de clients … et le territoire …",
+        "p2": "Ajoutez une tâche pour moi : … à faire pour le …",
+        "p3": "Changez le numéro de téléphone du contact … en …",
+        "p4": "Quels champs dois-je remplir pour créer un article ?"
       },
       "local-model": {
-        "p1": "Combien y a-t-il de Customers ?",
-        "p2": "Affiche les cinq Items les plus récents.",
-        "p3": "Quel est le statut de la Sales Invoice … ?",
-        "p4": "Liste les DocTypes du module Selling."
+        "p1": "Combien y a-t-il de clients ?",
+        "p2": "Affichez les cinq articles les plus récents.",
+        "p3": "Quel est le statut de la facture de vente … ?",
+        "p4": "Listez les types de documents du module Ventes."
       }
     },
     "message": {
@@ -353,11 +410,12 @@
       "editBody": "Tout ce qui le suit est retiré de la conversation, y compris les messages suivants et leurs fichiers, et le message revient dans la zone ci-dessous pour que vous puissiez le changer et l’envoyer à nouveau.",
       "deleteTitle": "Supprimer ce message et sa réponse ?",
       "deleteBody": "Ils sont retirés de cette conversation. Ce qu’ils ont coûté reste compté dans le total de la conversation."
-    }
+    },
+    "noConversationShortcut": "Ou appuyez sur {{mod}}+N."
   },
   "onboarding": {
     "title": "Configurer l’Assistant",
-    "intro": "Choisissez le modèle utilisé par l’Assistant. Votre clé reste dans le trousseau de cet ordinateur.",
+    "intro": "Choisissez le modèle utilisé par l’Assistant. Votre clé reste dans le coffre sécurisé des identifiants de cet ordinateur.",
     "back": "Retour",
     "next": "Suivant",
     "chooseLabel": "Choisir un fournisseur",
@@ -380,7 +438,7 @@
   },
   "provider": {
     "title": "Fournisseurs de l’Assistant",
-    "intro": "Là où tournent les modèles de l’Assistant. Les clés sont conservées dans le trousseau de cet ordinateur, jamais dans le fichier de paramètres.",
+    "intro": "Les services d’IA utilisés par l’Assistant. Les clés sont conservées dans le coffre sécurisé des identifiants de cet ordinateur, jamais dans le fichier de paramètres.",
     "add": "Ajouter un fournisseur",
     "addAndKey": "Ajouter et saisir la clé",
     "addTitle": "Ajouter un fournisseur",
@@ -393,7 +451,7 @@
     "detectFound": "{{name}} trouvé à {{url}}.",
     "none": "Aucun fournisseur pour l’instant.",
     "needsKey": "Clé requise",
-    "defaultModelIs": "Modèle par défaut : {{model}}",
+    "defaultModelIs": "Modèle par défaut : <model>{{model}}</model>",
     "noDefaultModel": "Aucun modèle par défaut",
     "defaultModel": "Modèle par défaut",
     "editTitle": "Modifier le fournisseur",
@@ -407,7 +465,7 @@
     "rekey": "Remplacer la clé",
     "rekeyLabel": "Remplacer la clé de {{name}}",
     "keyDialogTitle": "Clé pour {{name}}",
-    "keyDialogBody": "Collez la clé. Elle est vérifiée, puis enregistrée dans le trousseau.",
+    "keyDialogBody": "Collez la clé. Elle est vérifiée, puis enregistrée dans le coffre sécurisé des identifiants de cet ordinateur.",
     "delete": "Supprimer",
     "deleteLabel": "Supprimer {{name}}",
     "deleteTitle": "Supprimer ce fournisseur ?",
@@ -421,7 +479,7 @@
       "rejected": "La clé n’a pas été acceptée",
       "empty": "Collez la clé d’API.",
       "saved": "Enregistrée",
-      "savedEnds": "Enregistrée, se termine par ••••{{last4}}",
+      "savedEnds": "Enregistrée, se termine par <end>••••{{last4}}</end>",
       "notSet": "Aucune clé enregistrée"
     },
     "models": {
@@ -433,7 +491,7 @@
     "keyCleared": "L’adresse a changé : la clé enregistrée a donc été supprimée. Saisissez-la à nouveau.",
     "openrouter": {
       "signIn": "Se connecter avec OpenRouter",
-      "hint": "Ouvre OpenRouter dans votre navigateur pour créer une clé pour cette app. La clé est enregistrée dans le trousseau de cet ordinateur.",
+      "hint": "Ouvre OpenRouter dans votre navigateur pour créer une clé pour cette app. La clé est enregistrée dans le coffre sécurisé des identifiants de cet ordinateur.",
       "browser": "Continuez dans votre navigateur…",
       "exchanging": "Obtention de la clé…",
       "verifying": "Vérification de la clé…",
@@ -458,7 +516,6 @@
     "summary_one": "Outils : {{toolsets}} · jusqu’à {{count}} étape",
     "summary_many": "Outils : {{toolsets}} · jusqu’à {{count}} étapes",
     "summary_other": "Outils : {{toolsets}} · jusqu’à {{count}} étapes",
-    "defaultToolsets": "par défaut",
     "new": "Nouveau profil",
     "newTitle": "Nouveau profil",
     "editTitle": "Modifier le profil",
@@ -472,13 +529,12 @@
     "delete": "Supprimer le profil",
     "deleteTitle": "Supprimer {{name}} ?",
     "deleteBody": "Les conversations qui utilisent ce profil passent à Explorer (lecture seule).",
-    "modeHelp": "Le plus strict entre ce réglage et celui de la conversation s’applique.",
-    "toolsetsHelp": "Si rien n’est coché, les ensembles d’outils par défaut s’appliquent (core et lifecycle).",
+    "toolsetsHelp": "Les documents et rapports sont toujours inclus.",
     "callMethodHelp": "Permet à l’Assistant d’appeler des méthodes du serveur, seulement si la conversation demande avant de modifier et si le site l’autorise.",
     "keepHistoryHelp": "Désactivé : les conversations avec ce profil ne sont pas conservées et sont supprimées au prochain démarrage de l’app.",
     "field": {
       "name": "Nom",
-      "toolsets": "Ensembles d’outils",
+      "toolsets": "Ce que l’Assistant peut utiliser",
       "denyTools": "Outils à masquer",
       "allowTools": "Uniquement ces outils",
       "allowDoctypes": "Uniquement ces DocTypes",
@@ -513,6 +569,38 @@
       },
       "local-model": {
         "name": "Modèle local"
+      }
+    },
+    "modeRead": "Consulte vos données et ne modifie jamais rien.",
+    "modeAsk": "Peut proposer des modifications ; chacune attend votre accord.",
+    "instructionsPlaceholder": "Par exemple : Réponds avec des tableaux courts. Notre exercice commence en janvier.",
+    "advanced": "Paramètres avancés",
+    "advancedHelp": "Pour des limites plus fines. Indiquez les noms exacts des outils, DocTypes ou méthodes, séparés par des virgules.",
+    "stepLimitHelp": "Nombre d’appels d’outils qu’une réponse peut faire avant de s’arrêter et de vous demander de continuer.",
+    "toolset": {
+      "core": {
+        "title": "Documents et rapports",
+        "description": "Chercher, lire, créer et modifier des documents ; lancer des rapports."
+      },
+      "lifecycle": {
+        "title": "Valider, annuler et amender",
+        "description": "Valider, annuler, amender, renommer et restaurer des documents ; workflows."
+      },
+      "collab": {
+        "title": "Commentaires et affectations",
+        "description": "Commenter, affecter, étiqueter et partager des documents."
+      },
+      "admin": {
+        "title": "Santé du site",
+        "description": "Tâches en arrière-plan, erreurs et planificateur (System Manager)."
+      },
+      "files": {
+        "title": "Fichiers et impression",
+        "description": "Pièces jointes et formats d’impression."
+      },
+      "erp": {
+        "title": "Outils ERPNext",
+        "description": "Prix et stock des articles, infos tiers, créer un document à partir d’un autre, paiements."
       }
     }
   },
@@ -627,7 +715,7 @@
     "notEncryptedHint": "Cette adresse utilise http:// : les identifiants de connexion circulent sans chiffrement.",
     "connectedAs": "Connecté en tant que {{user}}",
     "lastCheckFailed": "Échec de la dernière vérification",
-    "check": "Vérifier",
+    "check": "Tester la connexion",
     "checking": "Vérification…",
     "more": "Plus d’actions",
     "moreFor": "Plus d’actions pour {{name}}",
@@ -638,7 +726,7 @@
       "nowDefaultHint": "Les apps qui suivent le site par défaut l’utilisent."
     },
     "action": {
-      "check": "Vérifier la connexion",
+      "check": "Tester la connexion",
       "makeDefault": "Définir par défaut",
       "connect": "Connecter une app",
       "rename": "Renommer…",
@@ -896,7 +984,7 @@
   },
   "page": {
     "ffcNoAnswer": "L’outil ffc ne répond pas",
-    "ffcMissing": "Encore une chose : installez l’outil ffc",
+    "ffcMissing": "Dernière étape : installez l’outil ffc",
     "reinstallWith": "ffc a été trouvé mais n’a pas démarré. Le réinstaller avec {{manager}} règle généralement le problème.",
     "reinstall": "ffc a été trouvé mais n’a pas démarré. Le réinstaller règle généralement le problème.",
     "needed": "Les apps connectées utilisent ffc, un petit programme de Foxmayn, pour atteindre vos sites. Vous pouvez ajouter des sites et utiliser l’Assistant sans lui, mais les apps connectées en ont besoin.",
@@ -915,7 +1003,7 @@
     },
     "sidebar": {
       "goToSites": "Foxmayn Frappe Desktop, aller aux Sites",
-      "manage": "Gérer",
+      "manage": "Menu",
       "quickActions": "Actions rapides",
       "addSite": "Ajouter un site",
       "updateAvailable": "Mise à jour {{version}} disponible",
@@ -950,7 +1038,7 @@
     "addSite": "Ajouter un site",
     "connectApp": "Connecter une app",
     "installFfc": "Installer l’outil ffc",
-    "checkConnection": "Vérifier une connexion",
+    "checkConnection": "Tester la connexion d’un site",
     "connected": "{{name}} est connecté",
     "notAsExpected": "{{name}} n’a pas répondu comme prévu",
     "newConversation": "Nouvelle conversation",

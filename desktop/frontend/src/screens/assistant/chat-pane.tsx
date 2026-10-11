@@ -3,6 +3,8 @@ import {
   IconCheck,
   IconFileText,
   IconPaperclip,
+  IconDots,
+  IconFileDescription,
   IconPencil,
   IconFileTypePdf,
   IconPhoto,
@@ -31,11 +33,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { intlLocale } from "@/i18n"
 import { backend } from "@/lib/backend"
@@ -55,7 +58,7 @@ import { appError, errorTitle, localizedMessage, type AppError } from "@/lib/err
 import { MODAL } from "@/lib/modal"
 import { chatReducer, initialState } from "@/screens/assistant/chat-reducer"
 import { MessageFooter } from "@/screens/assistant/message-footer"
-import { ProfilePicker } from "@/screens/assistant/profile-picker"
+import { ProfilePicker, PromptPreviewDialog } from "@/screens/assistant/profile-picker"
 
 /** A message from an imported file (its id says so): never edited or run again. */
 function isImported(id: string) {
@@ -105,11 +108,13 @@ export function ChatPane({
   const [mode, setMode] = React.useState<ConversationMode>(conv.mode === "ask" ? "ask" : "read")
   const [answering, setAnswering] = React.useState<ReadonlySet<string>>(new Set())
   const [draft, setDraft] = React.useState("")
+  const [focused, setFocused] = React.useState(false)
   const [staged, setStaged] = React.useState<StagedAttachment[]>([])
   const [attaching, setAttaching] = React.useState(false)
   const [runUsage, setRunUsage] = React.useState<RunUsage[]>([])
   const [total, setTotal] = React.useState<UsageTotals>(noUsage)
   const [renaming, setRenaming] = React.useState<string | null>(null)
+  const [previewOpen, setPreviewOpen] = React.useState(false)
   // A message action waiting for the user's yes (edit or delete).
   const [confirming, setConfirming] = React.useState<{ kind: "edit" | "delete"; msg: ChatMessage } | null>(null)
   const [acting, setActing] = React.useState(false)
@@ -466,22 +471,13 @@ export function ChatPane({
 
   return (
     <section aria-label={conv.title || t("chat.title")} className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2">
-        <div className="flex min-w-0 flex-1 flex-col">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-2">
+        {/* The title keeps at least 14rem: the controls wrap to a second line before it is cut. */}
+        <div className="flex min-w-0 grow basis-56 flex-col">
           {renaming === null ? (
-            <div className="flex min-w-0 items-center gap-1">
-              <h2 className="truncate text-sm font-semibold">{conv.title || t("chat.list.untitled")}</h2>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t("chat.header.renameLabel")}
-                title={t("chat.header.rename")}
-                onClick={() => setRenaming(conv.title)}
-              >
-                <IconPencil />
-              </Button>
-            </div>
+            <h2 className="truncate text-sm font-semibold" title={conv.title || undefined}>
+              {conv.title || t("chat.list.untitled")}
+            </h2>
           ) : (
             <form
               className="flex items-center gap-1"
@@ -540,25 +536,39 @@ export function ChatPane({
             )}
           </p>
         </div>
-        <ProfilePicker conv={conv} disabled={active} onChanged={() => onChanged()} />
-        <Tooltip>
-          <TooltipTrigger render={<span tabIndex={active ? 0 : -1} className="inline-flex" />}>
-            <ToggleGroup
-              variant="outline"
-              size="sm"
-              value={[mode]}
-              disabled={active}
-              onValueChange={(v: string[]) => v[0] && v[0] !== mode && void changeMode(v[0] as ConversationMode)}
-              aria-label={t("chat.mode.label")}
-            >
-              <ToggleGroupItem value="read">{t("chat.mode.read")}</ToggleGroupItem>
-              <ToggleGroupItem value="ask">{t("chat.mode.ask")}</ToggleGroupItem>
-            </ToggleGroup>
-          </TooltipTrigger>
-          <TooltipContent className="max-w-64">
-            {active ? t("chat.mode.locked") : mode === "read" ? t("chat.mode.readHelp") : t("chat.mode.askHelp")}
-          </TooltipContent>
-        </Tooltip>
+        <div className="flex shrink-0 items-center gap-3">
+          <ProfilePicker conv={conv} disabled={active} onChanged={() => onChanged()} />
+          <Tooltip>
+            <TooltipTrigger render={<label htmlFor="chat-mode" className="flex items-center gap-2 text-sm whitespace-nowrap" />}>
+              <Switch
+                id="chat-mode"
+                checked={mode === "ask"}
+                disabled={active}
+                onCheckedChange={(on) => void changeMode(on ? "ask" : "read")}
+              />
+              {t("chat.mode.ask")}
+            </TooltipTrigger>
+            <TooltipContent className="max-w-64">
+              {active ? t("chat.mode.locked") : mode === "read" ? t("chat.mode.readHelp") : t("chat.mode.askHelp")}
+            </TooltipContent>
+          </Tooltip>
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t("chat.header.more")} />}>
+              <IconDots />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setRenaming(conv.title)}>
+                <IconPencil />
+                {t("chat.header.rename")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setPreviewOpen(true)}>
+                <IconFileDescription />
+                {t("prompt.open")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <PromptPreviewDialog convID={conv.id} open={previewOpen} onOpenChange={setPreviewOpen} />
+        </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -686,17 +696,25 @@ export function ChatPane({
           </div>
         )}
         <div className="mx-auto flex max-w-3xl items-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            disabled={active || attaching}
-            onClick={() => void pickFiles()}
-            aria-label={t("chat.composer.attachLabel")}
-            title={t("chat.composer.attachLabel")}
-          >
-            <IconPaperclip />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  disabled={active || attaching}
+                  onClick={() => void pickFiles()}
+                  aria-label={t("chat.composer.attachLabel")}
+                />
+              }
+            >
+              <IconPaperclip />
+            </TooltipTrigger>
+            <TooltipContent className="max-w-64">
+              {t("chat.composer.attachLabel")} {t("chat.composer.attachHint")}
+            </TooltipContent>
+          </Tooltip>
           <label htmlFor="chat-input" className="sr-only">
             {t("chat.composer.label")}
           </label>
@@ -709,6 +727,8 @@ export function ChatPane({
             placeholder={t("chat.composer.placeholder")}
             onChange={(e) => setDraft(e.target.value)}
             onPaste={onPaste}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
@@ -735,8 +755,22 @@ export function ChatPane({
             </Button>
           )}
         </div>
-        <p className="text-muted-foreground mx-auto mt-1 max-w-3xl text-xs">
-          {t("chat.composer.hint")} {t("chat.composer.attachHint")}
+        <p
+          className={cn("text-muted-foreground mx-auto mt-1 flex max-w-3xl items-center gap-1.5 text-xs", !focused && draft && "invisible")}
+        >
+          <span className="flex items-center gap-1">
+            <kbd dir="ltr" className="bg-muted rounded px-1 font-sans">
+              {t("chat.composer.keyEnter")}
+            </kbd>
+            {t("chat.composer.hintSend")}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span className="flex items-center gap-1">
+            <kbd dir="ltr" className="bg-muted rounded px-1 font-sans">
+              {t("chat.composer.keyShift")}+{t("chat.composer.keyEnter")}
+            </kbd>
+            {t("chat.composer.hintNewLine")}
+          </span>
         </p>
       </form>
       <AlertDialog open={!!confirming} onOpenChange={(o) => !o && !acting && setConfirming(null)}>
@@ -803,7 +837,6 @@ function StarterPrompts({ profileID, disabled, onPick }: { profileID: string; di
           )
         })}
       </ul>
-      <p className="text-muted-foreground text-xs">{t("chat.starters.hint")}</p>
     </div>
   )
 }
@@ -820,7 +853,7 @@ function AttachmentChips({
 }) {
   const { t } = useTranslation()
   return (
-    <ul aria-label={label} className="flex flex-wrap justify-end gap-1.5">
+    <ul aria-label={label} className="flex flex-wrap justify-start gap-1.5">
       {items.map((a) => (
         <li key={a.id} className="bg-muted text-foreground flex max-w-64 items-center gap-1 rounded-md border px-2 py-0.5 text-xs">
           {a.kind === "image" ? (

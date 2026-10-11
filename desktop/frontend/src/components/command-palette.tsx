@@ -52,7 +52,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       if (!res) return
       toast.add({
         title: res.ok ? t("palette.connected", { name }) : t("palette.notAsExpected", { name }),
-        description: localizedMessage(res),
+        description: res.ok ? (res.user ? t("sites.connectedAs", { user: res.user }) : undefined) : localizedMessage(res),
         type: res.ok ? "success" : "error",
       })
     } catch (err) {

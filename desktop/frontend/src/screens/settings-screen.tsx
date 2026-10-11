@@ -14,7 +14,7 @@ import {
 import * as React from "react"
 import { Trans, useTranslation } from "react-i18next"
 
-import { useApp } from "@/app/app-context"
+import { markUpdateCardShown, useApp } from "@/app/app-context"
 import { useTheme, type Theme } from "@/app/theme"
 import { BrandLogo } from "@/components/brand-logo"
 import { CopyField } from "@/components/copy-field"
@@ -172,6 +172,7 @@ function FFCTab() {
   const current = React.useRef(checkedFor)
   current.current = checkedFor
   React.useEffect(() => setChecked(null), [checkedFor])
+  React.useEffect(() => markUpdateCardShown("ffc"), [])
 
   async function checkFFC() {
     const asked = checkedFor
@@ -202,6 +203,8 @@ function FFCTab() {
   if (!env.data || !ffc) return <Skeleton className="h-48 max-w-2xl rounded-xl" />
 
   const ok = ffc.found && !ffc.error
+  // The check's result card already names the update command: say it once.
+  const commandShown = checked?.kind === "done" && checked.info.available && !!(checked.info.command || !ffc.updatable)
   return (
     <div className="flex max-w-2xl flex-col gap-6">
       <Card>
@@ -261,18 +264,21 @@ function FFCTab() {
                   </Alert>
                 )
               )}
-              <p className="text-muted-foreground text-sm">
-                <Trans
-                  i18nKey="settings.ffc.autoCheck"
-                  values={{ command: ffc.upgradeCommand || "ffc update" }}
-                  components={{ code: <code className="bg-muted rounded px-1 py-0.5 font-mono text-xs" /> }}
-                />
-              </p>
+              {!commandShown && (
+                <p className="text-muted-foreground text-sm">
+                  <Trans
+                    i18nKey="settings.ffc.autoCheck"
+                    values={{ command: ffc.upgradeCommand || "ffc update" }}
+                    components={{ code: <code dir="ltr" className="bg-muted rounded px-1 py-0.5 font-mono text-xs" /> }}
+                  />
+                </p>
+              )}
             </>
           ) : (
             <div className="flex flex-col gap-2">
               <p className="text-muted-foreground text-sm">{t("settings.ffc.installHere")}</p>
               <CopyField
+                wrap
                 value={env.data.installCommand}
                 label={t("settings.installCommand")}
                 copiedTitle={t("shell.update.commandCopied")}
@@ -280,7 +286,7 @@ function FFCTab() {
             </div>
           )}
         </CardContent>
-        <CardFooter className="gap-2">
+        <CardFooter className="flex-wrap gap-2">
           {ok && ffcUpdate ? (
             <Button onClick={installFFC}>
               <IconArrowUpCircle data-icon="inline-start" />
@@ -300,7 +306,7 @@ function FFCTab() {
               {t("settings.ffc.checkUpdates")}
             </Button>
           )}
-          <Button variant="outline" onClick={refresh} disabled={refreshing}>
+          <Button variant="ghost" onClick={refresh} disabled={refreshing}>
             {refreshing ? <Spinner data-icon="inline-start" /> : <IconRefresh data-icon="inline-start" />}
             {t("settings.ffc.lookAgain")}
           </Button>
@@ -361,7 +367,7 @@ function FFCCheckResult({ result, updatable, onUpdate }: { result: FFCCheck; upd
         {command ? (
           <>
             <span>{u.manager ? t("settings.ffc.updateWithManager", { manager: u.manager }) : t("settings.ffc.updateWithCommand")}</span>
-            <CopyField value={command} label={t("settings.ffc.updateCommand")} copiedTitle={t("shell.update.commandCopied")} />
+            <CopyField wrap value={command} label={t("settings.ffc.updateCommand")} copiedTitle={t("shell.update.commandCopied")} />
           </>
         ) : (
           <span>{t("settings.ffc.updateBody")}</span>
@@ -410,6 +416,7 @@ function UpdateResult({ result }: { result: UpdateOutcome }) {
                 {youHave} {t("settings.update.easiestWay", { terminal })}
               </span>
               <CopyField
+                wrap
                 value={result.info.installCommand}
                 label={t("settings.installCommand")}
                 copiedTitle={t("shell.update.commandCopied")}
@@ -459,6 +466,11 @@ function AboutTab() {
   const { env, update, checkingUpdate, checkUpdate, ffcUpdate, installFFC } = useApp()
   // What the button found; before any click, what the startup check found.
   const [clicked, setClicked] = React.useState<UpdateOutcome | null>(null)
+  // This tab shows both update cards, so the startup toasts would repeat them.
+  React.useEffect(() => {
+    const done = [markUpdateCardShown("app"), markUpdateCardShown("ffc")]
+    return () => done.forEach((f) => f())
+  }, [])
   const result: UpdateOutcome | null =
     clicked ?? (update?.available ? { kind: "available", info: update } : null)
 

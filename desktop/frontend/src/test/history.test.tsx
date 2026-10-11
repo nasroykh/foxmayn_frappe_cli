@@ -143,7 +143,8 @@ describe("search box", () => {
 
   it("searches the archive when the archive is shown", async () => {
     list({ conversations: [conv("c1"), conv("c2", { archived: true })] })
-    fireEvent.click(screen.getByRole("button", { name: /Show the archive/ }))
+    fireEvent.click(screen.getByRole("button", { name: "More conversation actions" }))
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Show the archive/ }))
     await type("overdue")
     await waitFor(() => expect(b.search).toHaveBeenLastCalledWith("overdue", expect.objectContaining({ archived: true }), 50), {
       timeout: 2000,
@@ -251,7 +252,8 @@ describe("pin and archive", () => {
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Archive" }))
     await waitFor(() => expect(p.onArchive).toHaveBeenCalledWith(expect.objectContaining({ id: "c1" }), true))
 
-    fireEvent.click(screen.getByRole("button", { name: /Show the archive/ }))
+    fireEvent.click(screen.getByRole("button", { name: "More conversation actions" }))
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Show the archive/ }))
     expect(screen.getByText("Conversation c2")).toBeTruthy()
     expect(screen.queryByText("Conversation c1")).toBeNull()
     const back = await openMenu("Conversation c2")
@@ -271,7 +273,8 @@ describe("pin and archive", () => {
     menu = await openMenu("Conversation c2")
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Export as JSON" }))
     await waitFor(() => expect(q.onExport).toHaveBeenCalledWith(expect.objectContaining({ id: "c2" }), "json"))
-    fireEvent.click(screen.getByRole("button", { name: "Import a conversation" }))
+    fireEvent.click(screen.getByRole("button", { name: "More conversation actions" }))
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Import a conversation" }))
     expect(q.onImport).toHaveBeenCalled()
   })
 })

@@ -161,7 +161,7 @@ describe("empty conversation", () => {
       fireEvent.click(b)
       expect(input.value).toBe(b.textContent)
     }
-    expect(input.value).toBe("How many open ToDos are there, grouped by who they are assigned to?")
+    expect(input.value).toBe("How many open tasks are there for each person?")
     // Nothing was sent.
     await new Promise((r) => setTimeout(r, 200))
     expect(send).not.toHaveBeenCalled()

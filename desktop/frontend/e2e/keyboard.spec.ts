@@ -60,7 +60,7 @@ for (const lang of ["en", "ar"] as const) {
     await page.keyboard.press("Enter")
     // The message is sent, the assistant reads the document, then answers.
     await expect(page.getByText("What is TD-0001?").first()).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByText("get_doc").first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(lang === "ar" ? "قراءة مستند" : "Read a document").first()).toBeVisible({ timeout: 15_000 })
     await expect(page.locator("#chat-input")).toBeEnabled({ timeout: 15_000 })
 
     // Ctrl+N: another conversation, from anywhere.
@@ -95,15 +95,12 @@ test("approval card by keyboard: Decline has the focus, Tab reaches Approve, Esc
   await expect(form).toHaveCount(0)
 
   // Ask before changes, chosen with the keyboard: Tab reaches the mode
-  // switch (one tab stop, the pressed option), an arrow key moves to the
-  // other option, Space presses it.
-  const ask = page.locator("section > header [data-slot=toggle-group-item]").nth(1)
-  await tabTo(page, "section > header [data-slot=toggle-group-item]", 80)
+  // switch, Space turns it on.
+  const ask = page.locator("section > header [data-slot=switch]")
+  await tabTo(page, "section > header [data-slot=switch]", 80)
   await focusVisible(page)
-  await page.keyboard.press("ArrowRight")
-  await expect(ask).toBeFocused()
   await page.keyboard.press("Space")
-  await expect(ask).toHaveAttribute("aria-pressed", "true")
+  await expect(ask).toHaveAttribute("aria-checked", "true")
 
   await input.focus()
   await page.keyboard.type("update the todo")

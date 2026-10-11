@@ -264,7 +264,7 @@ export function ConversationSearch({
         </div>
       )}
 
-      {active && (
+      {active && (error || busy || (hits?.length ?? 0) > 0) && (
         <div aria-live="polite" className="text-muted-foreground flex items-center gap-1.5 text-xs">
           {busy && <Spinner className="size-3" />}
           {error

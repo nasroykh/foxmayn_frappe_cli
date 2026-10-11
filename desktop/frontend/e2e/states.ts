@@ -25,8 +25,8 @@ export const states: State[] = [
   {
     name: "sites-checked",
     reach: async (page) => {
-      // The first site's check button (the globe-check icon), then its toast.
-      await page.locator("main [role=listitem] button:has(svg.tabler-icon-world-check)").first().click()
+      // The first site's check button (the refresh icon), then its toast.
+      await page.locator("main [role=listitem] button:has(svg.tabler-icon-refresh)").first().click()
       await expect(page.locator('[data-slot="toast"]').first()).toBeVisible({ timeout: 8000 })
     },
   },
@@ -52,9 +52,9 @@ export const states: State[] = [
     reach: async (page) => {
       await newConversation(page)
       await dialog(page).locator("button[type=submit], [data-slot=button]").last().click()
-      // Ask before changes: the second option of the mode switch in the chat header.
-      await page.locator("section > header [data-slot=toggle-group-item]").nth(1).click()
-      await expect(page.locator("section > header [data-slot=toggle-group-item]").nth(1)).toHaveAttribute("aria-pressed", "true")
+      // Ask before changes: the mode switch in the chat header.
+      await page.locator("section > header [data-slot=switch]").click()
+      await expect(page.locator("section > header [data-slot=switch]")).toHaveAttribute("aria-checked", "true")
       await page.locator("#chat-input").fill("update the todo")
       await page.locator("#chat-input").press("Enter")
       await expect(page.locator("[data-slot=approval-card]").first()).toBeVisible({ timeout: 10_000 })
@@ -92,8 +92,27 @@ export const states: State[] = [
     name: "connect-dialog",
     reach: async (page) => {
       await goTo(page, "apps")
-      await page.locator("main [data-slot=card] [data-slot=card-footer] button").first().click()
+      await page.locator("main [data-slot=card] [data-slot=card-footer] button:has(svg.tabler-icon-plug-connected)").first().click()
       await expect(dialog(page)).toBeVisible()
+    },
+  },
+  {
+    name: "profile-editor",
+    reach: async (page) => {
+      await goTo(page, "settings")
+      await page.getByRole("tab").nth(1).click()
+      await page.locator("#profiles-title").scrollIntoViewIfNeeded()
+      await page.locator("section[aria-labelledby=profiles-title] > div button").first().click()
+      await expect(dialog(page)).toBeVisible()
+    },
+  },
+  {
+    name: "chat-more-menu",
+    reach: async (page) => {
+      await newConversation(page)
+      await dialog(page).locator("button[type=submit], [data-slot=button]").last().click()
+      await page.locator("section > header button[aria-haspopup=menu]").click()
+      await expect(page.getByRole("menu")).toBeVisible()
     },
   },
   { name: "settings-general", reach: (page) => goTo(page, "settings") },
@@ -136,7 +155,7 @@ export const states: State[] = [
       await expect(page.locator("#chat-input")).toBeVisible()
       await page.getByRole("searchbox").fill("acme")
       // The count line says the search is done (results or none).
-      await expect(page.locator("nav [aria-live=polite]")).not.toHaveText(/…|\.\.\./, { timeout: 5000 })
+      await expect(page.locator("nav [aria-live=polite]").filter({ hasText: /…|\.\.\./ })).toHaveCount(0, { timeout: 5000 })
       await page.waitForTimeout(300)
     },
   },

@@ -2,6 +2,7 @@ import { IconCheck, IconCopy } from "@tabler/icons-react"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 
+import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { toast } from "@/components/ui/toast"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -25,11 +26,14 @@ export function CopyField({
   label,
   copiedTitle,
   mono = true,
+  wrap = false,
 }: {
   value: string
   label: string
   copiedTitle?: string
   mono?: boolean
+  /** Show the value as wrapped text (a long command) instead of a one-line input. */
+  wrap?: boolean
 }) {
   const { t } = useTranslation()
   const [done, setDone] = React.useState(false)
@@ -38,6 +42,29 @@ export function CopyField({
     const timer = setTimeout(() => setDone(false), 1500)
     return () => clearTimeout(timer)
   }, [done])
+
+  if (wrap) {
+    return (
+      <div role="group" aria-label={label} className="bg-muted/50 flex items-start gap-2 rounded-lg border p-2">
+        <code
+          dir="ltr"
+          className="min-w-0 flex-1 text-start font-mono text-xs break-all select-all"
+        >
+          {value}
+        </code>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          onClick={async () => setDone(await copy(value, copiedTitle))}
+        >
+          {done ? <IconCheck data-icon="inline-start" /> : <IconCopy data-icon="inline-start" />}
+          {t("common.copy")}
+        </Button>
+      </div>
+    )
+  }
 
   return (
     <InputGroup>

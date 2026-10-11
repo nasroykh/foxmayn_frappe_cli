@@ -3,7 +3,7 @@
 // that say what a provider needs.
 import { IconAlertTriangle, IconCircleCheck, IconExternalLink } from "@tabler/icons-react"
 import * as React from "react"
-import { useTranslation } from "react-i18next"
+import { Trans, useTranslation } from "react-i18next"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { CopyField } from "@/components/copy-field"
@@ -37,7 +37,15 @@ export function SavedLine({ status }: { status: KeyStatus }) {
   return (
     <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
       <IconCircleCheck className="size-3.5" aria-hidden="true" />
-      {status.last4 ? t("provider.key.savedEnds", { last4: status.last4 }) : t("provider.key.saved")}
+      {status.last4 ? (
+        <Trans
+          i18nKey="provider.key.savedEnds"
+          values={{ last4: status.last4 }}
+          components={{ end: <bdi dir="ltr" className="font-mono" /> }}
+        />
+      ) : (
+        t("provider.key.saved")
+      )}
     </p>
   )
 }

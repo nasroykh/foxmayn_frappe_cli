@@ -97,9 +97,14 @@ describe("assistant onboarding", () => {
     const input = await toKeyStep()
     fireEvent.change(input, { target: { value: "mock-key-WXYZ-0123" } })
     fireEvent.click(screen.getByRole("button", { name: "Save key" }))
-    expect(await screen.findByText("Saved, ends in ••••0123")).toBeTruthy()
+    expect(await screen.findByText(savedLine("Saved, ends in ••••0123"))).toBeTruthy()
     expect(input.value).toBe("")
     expect(document.body.textContent).not.toContain("mock-key")
     await waitFor(() => expect(screen.getByRole("button", { name: "Next" }).hasAttribute("disabled")).toBe(false))
   })
 })
+
+/** The "Saved, ends in" line: the end of the key sits in its own element. */
+function savedLine(text: string) {
+  return (_: string, el: Element | null) => el?.tagName === "P" && el.textContent === text
+}

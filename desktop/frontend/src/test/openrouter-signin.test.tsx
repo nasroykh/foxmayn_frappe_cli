@@ -175,7 +175,7 @@ describe("Sign in with OpenRouter", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Sign in with OpenRouter" }))
     b.listProviders.mockResolvedValue([signedIn])
     call.resolve(signedIn)
-    expect(await screen.findByText("Saved, ends in ••••c0de")).toBeTruthy()
+    expect(await screen.findByText(savedLine("Saved, ends in ••••c0de"))).toBeTruthy()
     await waitFor(() => expect(screen.queryByRole("button", { name: "Sign in with OpenRouter" })).toBeNull())
   })
 
@@ -200,3 +200,8 @@ describe("Sign in with OpenRouter", () => {
     expect(b.setKey).not.toHaveBeenCalled()
   })
 })
+
+/** The "Saved, ends in" line: the end of the key sits in its own element. */
+function savedLine(text: string) {
+  return (_: string, el: Element | null) => el?.tagName === "P" && el.textContent === text
+}

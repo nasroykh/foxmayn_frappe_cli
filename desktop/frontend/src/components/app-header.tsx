@@ -66,7 +66,7 @@ export function AppHeader({ onOpenPalette }: { onOpenPalette: () => void }) {
         <Button variant="outline" size="sm" onClick={onOpenPalette} className="text-muted-foreground">
           <IconSearch data-icon="inline-start" />
           {t("shell.header.search")}
-          <KbdGroup>
+          <KbdGroup dir="ltr">
             <Kbd>{mod}</Kbd>
             <Kbd>K</Kbd>
           </KbdGroup>

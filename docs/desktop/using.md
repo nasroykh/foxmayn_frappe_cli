@@ -118,7 +118,7 @@ Five built-in presets:
 | **Data entry** | Creating and updating documents. Asks before changes; `delete_doc` and `bulk_delete` are hidden. |
 | **Local model** | Small models on this computer. Read only, core tools, 15 steps per run. |
 
-Presets cannot be changed. **Duplicate** one in Settings > Assistant > Profiles to edit the copy, or make a **New profile**. A profile has: mode, tool sets (none checked means core and lifecycle), tools to hide or the only tools allowed, DocTypes and methods to allow or refuse, whether server methods may be called, a step limit (1 to 100) and instructions. Deleting a profile moves its conversations to Explore.
+Presets cannot be changed. **Duplicate** one in Settings > Assistant > Profiles to edit the copy, or make a **New profile**. The editor asks for a name, what the assistant may do (Read only, or Ask before changes), what it works with, and instructions. "What it works with" names the tool sets in words: Documents and reports (always on), Submit, cancel and amend, Comments and assignments, Site health, Files and printing, and ERPNext helpers. **Advanced settings** hold the rest: tools to hide or the only tools allowed, DocTypes and methods to allow or refuse, whether server methods may be called, Keep history and the step limit (1 to 100); they open by themselves when the profile already sets one. Deleting a profile moves its conversations to Explore.
 
 - **Mode.** The stricter of the profile's mode and the conversation's switch applies. A profile set to read only shows a **Read only by profile** badge, and the switch cannot lift it.
 - **Server methods** (`call_method`) are offered only when the profile allows them, the conversation asks before changes and the site's policy serves them.
@@ -145,13 +145,13 @@ Each conversation has a mode:
 | **Read only** (default) | Look at data. The tools that create, change or delete are not given to it at all. |
 | **Ask before changes** | It may propose changes. Each one waits for your answer. |
 
-You can switch the mode of a conversation while you chat.
+You can switch the mode of a conversation while you chat: the **Ask before changes** switch in the conversation's header (off means read only). **Rename** and **Show what the model gets** are in the header's **⋯** menu.
 
 ### Approval cards
 
 In **Ask before changes**, a change stops at a card that says **Approval needed**:
 
-- **App card.** For creating or changing a document (and other writes ffc does not ask about itself). It shows the exact request: tool, site, DocTypes, document names and the arguments. For an update it also shows the field changes, computed from the document as it is now. If the document changed on the site before you approved, the update is refused instead of overwriting it.
+- **App card.** For creating or changing a document (and other writes ffc does not ask about itself). It shows the tool, site, DocTypes and document names, and the exact request under **Technical details** (open from the start unless the card is an update). For an update it shows a table of the fields that change, with each value before and after, computed from the document as it is now. If the document changed on the site before you approved, the update is refused instead of overwriting it.
 - **ffc's own confirmation.** For deleting and cancelling, ffc asks itself, and its question is the card. There is exactly one card, not two.
 
 **Approve** runs the change. **Decline** is safe: nothing is changed and the assistant is told you declined. Closing a card by stopping the run also declines it.
@@ -180,7 +180,7 @@ When any call of a conversation is unknown, its total reads **at least** the sum
 
 ### Titles and renaming
 
-After the first completed run, the app asks the conversation's own model for a one-line title (one extra call, no tools, through the same provider and the same local-only rule). If that fails, the first words of your message stay as the title. Rename a conversation with **Rename** in its header: a name you give is never replaced by an automatic title.
+After the first completed run, the app asks the conversation's own model for a one-line title (one extra call, no tools, through the same provider and the same local-only rule). If that fails, the first words of your message stay as the title. Rename a conversation with **Rename** in its header's **⋯** menu: a name you give is never replaced by an automatic title.
 
 ### Chat history
 
@@ -191,7 +191,7 @@ Conversations are stored on this computer only, in `assistant.db` (a SQLite file
 | Windows | `%AppData%\Foxmayn Frappe Desktop\assistant.db` |
 | macOS | `~/Library/Application Support/Foxmayn Frappe Desktop/assistant.db` |
 
-Delete a conversation from the list to remove it. Provider names and addresses are stored there too, never keys.
+Delete a conversation from its menu (**⋯** on the conversation in the list, or the Delete key on it) to remove it. Provider names and addresses are stored there too, never keys.
 
 Each message shows its time, and each answer its tokens and cost, when the pointer is over it or the focus is inside it (Tab reaches its buttons):
 
@@ -204,7 +204,7 @@ None of them is available while the assistant is answering. What removed message
 
 - **Search.** The box above the list (Ctrl+Shift+F, Cmd+Shift+F on macOS) searches the conversation titles and messages as you type ("invoi" finds "invoices"), one result per conversation with its best matching message highlighted. The filters (site, profile, date) narrow the list itself when nothing is typed; with text, a date filter applies to the matching message. It can search the archive instead of the other conversations.
 - **List width.** Drag the list's edge, or focus it and use the arrow keys, to make it wider or narrower; a double click gives the default width back.
-- **Pin and archive.** **Pin to the top** keeps a conversation first in the list. **Archive** moves it out of the list without deleting it; **Move out of the archive** brings it back.
+- **Pin and archive.** **Pin to the top** keeps a conversation first in the list. **Archive** moves it out of the list without deleting it; **Show the archive** in the **⋯** menu above the list opens it, and **Move out of the archive** brings one back.
 - **Retention.** Settings > Assistant > History: keep conversations **Forever** (the default), or delete those with no message for **90** or **30 days**. The sweep runs when the app starts and once a day, archived conversations included, and asks you to confirm the change first. Pinned conversations and ones being answered are always kept.
 - **Not kept.** Turn off **Keep history** in a profile, and its conversations are marked "not kept" and removed the next time the app starts.
 
@@ -212,7 +212,7 @@ None of them is available while the assistant is answering. What removed message
 
 Open a conversation's menu and choose **Export as JSON** (everything, to import again) or **Export as Markdown** (to read). Secrets are redacted, passwords in addresses are removed, and no provider key is in the file; the export is refused if the keys cannot be scrubbed. The file is written in one step, so a failure leaves no half file.
 
-**Import a conversation** (button above the list) reads a JSON export of up to 50 MB and adds it as a new conversation with new ids. A file is not trusted, even one you exported yourself:
+**Import a conversation** (in the **⋯** menu above the list) reads a JSON export of up to 50 MB and adds it as a new conversation with new ids. A file is not trusted, even one you exported yourself:
 
 - the conversation starts **read only**; choose a model before you continue it;
 - its messages are never replayed to the model as turns of its own: they reach it as one block marked untrusted (`<imported_history untrusted="true">`, every `<` escaped), so instructions inside cannot pass as yours or the model's;
