@@ -351,7 +351,8 @@ func TestReadFileRefusesUNC(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("UNC volume names exist on Windows only")
 	}
-	for _, p := range []string{`\\host\share\a.txt`, `\\.\C:\a.txt`, `\\?\C:\a.txt`, `//host/share/a.txt`} {
+	for _, p := range []string{`\\host\share\a.txt`, `\\.\C:\a.txt`, `\\?\C:\a.txt`, `//host/share/a.txt`,
+		`\??\UNC\host\share\a.txt`, `\??\C:\a.txt`, `\a.txt`, `a.txt`} {
 		refusal(t, readErr(p), "network or device path")
 	}
 }

@@ -360,6 +360,20 @@ func TestDroppedFilesDeclined(t *testing.T) {
 	}
 }
 
+// A bidi override or invisible character in a dropped name never reaches the
+// dialog, and the isolates around the name stay.
+func TestDropConfirmTextStripsBidi(t *testing.T) {
+	txt := dropConfirmText([]string{filepath.Join("dir‮", "gpj.‮txt​\x07")})
+	for _, bad := range []string{"‮", "​", "\x07"} {
+		if strings.Contains(txt, bad) {
+			t.Errorf("%q reached the dialog:\n%q", bad, txt)
+		}
+	}
+	if !strings.Contains(txt, "⁨gpj.txt⁩") {
+		t.Errorf("name or isolates missing:\n%q", txt)
+	}
+}
+
 // A host without a confirmation dialog cannot accept a drop.
 func TestDroppedFilesNoDialog(t *testing.T) {
 	g := newAssistantRig(t)
