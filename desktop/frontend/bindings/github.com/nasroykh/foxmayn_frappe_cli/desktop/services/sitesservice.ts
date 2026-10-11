@@ -83,8 +83,11 @@ export function PreviewPolicy(name: string, p: $models.SitePolicy): $Cancellable
 }
 
 /**
- * Remove deletes a site. An OAuth site's token is revoked on the server
- * first, at most revokeTimeout, before the config lock is taken; a failed
+ * Remove deletes a site. A site with safety rules is removed only after a
+ * native confirmation (No is the default; declined is cancelled,
+ * policy.declined): its rules go with it, and a site added again under that
+ * name starts with none. An OAuth site's token is then revoked on the server,
+ * at most revokeTimeout, before the config lock is taken; a failed
  * revocation is reported but does not stop the removal (as in the CLI).
  */
 export function Remove(name: string): $CancellablePromise<$models.RemoveResult> {

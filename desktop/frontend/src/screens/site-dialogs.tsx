@@ -202,6 +202,11 @@ export function RemoveSiteDialog({ site, onClose }: { site: Site | null; onClose
       onClose()
     } catch (err) {
       const e = appError(err)
+      // Declined in the native dialog that guards a site's safety rules.
+      if (e.key === "policy.declined") {
+        onClose()
+        return
+      }
       toast.add({ title: errorTitle(e), description: e.message, type: "error" })
     } finally {
       setBusy(false)

@@ -1,9 +1,12 @@
 package services
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,12 +17,18 @@ import (
 // was asked.
 type policyHost struct {
 	fakeHost
-	answer bool
-	asked  [][]PolicyChange
+	answer  bool
+	asked   [][]PolicyChange
+	removes []string
 }
 
 func (h *policyHost) ConfirmPolicyChange(site string, opens []PolicyChange) (bool, error) {
 	h.asked = append(h.asked, opens)
+	return h.answer, nil
+}
+
+func (h *policyHost) ConfirmRemoveRules(site string) (bool, error) {
+	h.removes = append(h.removes, site)
 	return h.answer, nil
 }
 
@@ -343,5 +352,47 @@ func TestPolicyRefusesWhatItCannotShow(t *testing.T) {
 func TestSitePolicyCoversMCPPolicy(t *testing.T) {
 	if n := reflect.TypeOf(config.MCPPolicy{}).NumField(); n != reflect.TypeOf(SitePolicy{}).NumField() {
 		t.Fatalf("config.MCPPolicy has %d fields, SitePolicy %d: map the new one in policyOf, config and comparePolicies", n, reflect.TypeOf(SitePolicy{}).NumField())
+	}
+}
+
+func TestRemoveSiteWithRulesAsks(t *testing.T) {
+	ctx := context.Background()
+
+	// Declined: nothing is removed.
+	s, h, _ := policySites(t, false)
+	_, err := s.Remove(ctx, "prod")
+	var e *Error
+	if !errors.As(err, &e) || e.Code != CodeCancelled || e.Key != "policy.declined" {
+		t.Fatalf("declined remove: %v", err)
+	}
+	if !slices.Equal(h.removes, []string{"prod"}) {
+		t.Fatalf("asked %v", h.removes)
+	}
+	if _, err := s.GetPolicy("prod"); err != nil {
+		t.Fatalf("site gone after a declined remove: %v", err)
+	}
+
+	// A site without rules is removed without a question.
+	if _, err := s.Remove(ctx, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.removes) != 1 {
+		t.Fatalf("asked for a site without rules: %v", h.removes)
+	}
+
+	// Confirmed: the site and its rules are gone.
+	s, h, path := policySites(t, true)
+	if _, err := s.Remove(ctx, "prod"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); strings.Contains(string(b), "prod:") || len(h.removes) != 1 {
+		t.Fatalf("site kept or not asked (%v):\n%s", h.removes, b)
+	}
+
+	// A host that cannot ask cannot remove a site with rules.
+	s, _, _ = policySites(t, true)
+	s.host = &fakeHost{}
+	if _, err := s.Remove(ctx, "prod"); !errors.As(err, &e) || e.Key != "policy.cannotAskRemove" {
+		t.Fatalf("remove without a dialog: %v", err)
 	}
 }
