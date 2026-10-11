@@ -2,6 +2,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -423,8 +425,11 @@ func lockFile(path string) (func(), error) {
 		f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
 			// The token lets release remove only its own lock, never one a
-			// later process took after breaking ours as stale.
-			token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
+			// later holder took after breaking ours as stale. It is random:
+			// two takes in one process can share a clock reading.
+			var b [16]byte
+			rand.Read(b[:])
+			token := hex.EncodeToString(b[:])
 			_, werr := f.WriteString(token)
 			if cerr := f.Close(); werr == nil {
 				werr = cerr
