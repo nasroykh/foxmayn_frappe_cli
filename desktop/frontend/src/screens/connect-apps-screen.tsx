@@ -55,22 +55,10 @@ export function AssistantsScreen() {
         title={t("connectApps.title")}
         description={t("connectApps.description")}
         actions={
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label={t("connectApps.lookAgain")}
-                  onClick={reloadAssistants}
-                  disabled={assistants.loading}
-                />
-              }
-            >
-              <IconRefresh />
-            </TooltipTrigger>
-            <TooltipContent>{t("connectApps.lookAgain")}</TooltipContent>
-          </Tooltip>
+          <Button variant="outline" size="sm" onClick={reloadAssistants} disabled={assistants.loading}>
+            <IconRefresh data-icon="inline-start" />
+            {t("connectApps.lookAgain")}
+          </Button>
         }
       />
       <FFCMissingAlert />
@@ -99,7 +87,7 @@ export function AssistantsScreen() {
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
+        <div className="grid auto-rows-fr grid-cols-2 gap-4 xl:grid-cols-3">
           {list.map((a) => (
             <AssistantCard
               key={a.id}
@@ -186,7 +174,7 @@ function AssistantCard({
           </p>
         )}
         {a.status === "not_connected" && (
-          <p className="text-muted-foreground">{t("connectApps.notSetUp")}</p>
+          <p className="text-muted-foreground">{a.detected ? t("connectApps.notSetUp") : notDetectedReason(a, t)}</p>
         )}
         {a.status === "error" && (
           <Alert variant="destructive">
@@ -197,12 +185,28 @@ function AssistantCard({
         )}
       </CardContent>
       <CardFooter className="gap-2">
-        <Button size="sm" onClick={onConnect} disabled={disabled || a.status === "error"}>
-          <IconPlugConnected data-icon="inline-start" />
-          {hasEntry ? t("connectApps.update") : t("connectApps.connect")}
-        </Button>
+        {/* A connected entry is already what this app would write: only a
+            different one is worth updating. An app not found on this computer
+            gets a quiet "Connect anyway" (it creates the settings file). */}
+        {!hasEntry && (
+          <Button
+            size="sm"
+            variant={a.detected ? "default" : "outline"}
+            onClick={onConnect}
+            disabled={disabled || a.status === "error"}
+          >
+            <IconPlugConnected data-icon="inline-start" />
+            {a.detected ? t("connectApps.connect") : t("connectApps.connectAnyway")}
+          </Button>
+        )}
+        {a.status === "different" && (
+          <Button size="sm" onClick={onConnect} disabled={disabled}>
+            <IconPlugConnected data-icon="inline-start" />
+            {t("connectApps.update")}
+          </Button>
+        )}
         {hasEntry && (
-          <Button size="sm" variant="ghost" onClick={onDisconnect}>
+          <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={onDisconnect}>
             <IconPlugConnectedX data-icon="inline-start" />
             {t("connectApps.disconnect")}
           </Button>

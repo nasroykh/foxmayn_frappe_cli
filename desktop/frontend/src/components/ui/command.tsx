@@ -102,7 +102,7 @@ function CommandList({
       data-slot="command-list"
       label={t("ui.suggestions")}
       className={cn(
-        "no-scrollbar max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
+        "max-h-[min(24rem,60svh)] scroll-py-1 overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-width:thin] outline-none",
         className
       )}
       {...props}

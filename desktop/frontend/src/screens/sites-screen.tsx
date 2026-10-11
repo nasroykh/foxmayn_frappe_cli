@@ -7,10 +7,10 @@ import {
   IconPencil,
   IconPlugConnected,
   IconPlus,
+  IconRefresh,
   IconStar,
   IconTrash,
   IconWorld,
-  IconWorldCheck,
 } from "@tabler/icons-react"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
@@ -144,7 +144,8 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
       if (!res) return
       toast.add({
         title: res.ok ? t("sites.toast.connected", { name: site.name }) : t("sites.toast.rejected", { name: site.name }),
-        description: localizedMessage(res),
+        // The title already says "connected": add who the site says is signed in.
+        description: res.ok ? (res.user ? t("sites.connectedAs", { user: res.user }) : undefined) : localizedMessage(res),
         type: res.ok ? "success" : "error",
       })
     } catch (err) {
@@ -169,7 +170,7 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
   }
 
   const actions = [
-    { id: "check", label: t("sites.action.check"), icon: IconWorldCheck, run: runCheck, disabled: busy },
+    { id: "check", label: t("sites.action.check"), icon: IconRefresh, run: runCheck, disabled: busy },
     { id: "default", label: t("sites.action.makeDefault"), icon: IconStar, run: makeDefault, disabled: site.isDefault },
     {
       id: "connect",
@@ -268,7 +269,7 @@ function SiteRow({ site, onAction }: { site: Site; onAction: (kind: "rename" | "
       </ContextMenu>
       <ItemActions>
         <Button variant="outline" size="sm" onClick={runCheck} disabled={busy}>
-          {busy ? <Spinner data-icon="inline-start" /> : <IconWorldCheck data-icon="inline-start" />}
+          {busy ? <Spinner data-icon="inline-start" /> : <IconRefresh data-icon="inline-start" />}
           {busy ? t("sites.checking") : t("sites.check")}
         </Button>
         <DropdownMenu>

@@ -3,6 +3,7 @@ import * as React from "react"
 import { useTranslation } from "react-i18next"
 
 import { useApp } from "@/app/app-context"
+import { useModKey } from "@/components/app-header"
 import { LoadError } from "@/components/page"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -24,6 +25,7 @@ let lastSelected = ""
 /** The Assistant: chat with a model that works on a site, or onboarding when no provider is usable. */
 export function AssistantScreen() {
   const { t } = useTranslation()
+  const mod = useModKey()
   const { sites, addSite, newConversationPending, takeNewConversation } = useApp()
   const [providers, setProviders] = React.useState<ProviderInfo[] | null>(null)
   const [conversations, setConversations] = React.useState<Conversation[] | null>(null)
@@ -242,8 +244,9 @@ export function AssistantScreen() {
           <EmptyContent>
             <Button onClick={() => setNewOpen(true)}>
               <IconPlus data-icon="inline-start" />
-              {t("chat.list.new")}
+              {t("chat.new.title")}
             </Button>
+            <p className="text-muted-foreground text-xs">{t("chat.noConversationShortcut", { mod })}</p>
           </EmptyContent>
         </Empty>
       )}

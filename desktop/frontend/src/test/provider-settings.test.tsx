@@ -40,7 +40,7 @@ describe("provider settings", () => {
   it("lists a provider with the end of its key", async () => {
     render(<ProviderSettings />)
     expect(await screen.findByText("My server")).toBeTruthy()
-    expect(screen.getByText("Saved, ends in ••••9999")).toBeTruthy()
+    expect(screen.getByText(savedLine("Saved, ends in ••••9999"))).toBeTruthy()
   })
 
   it.each([
@@ -71,3 +71,8 @@ describe("provider settings", () => {
     expect(await screen.findByLabelText(/API key/)).toBeTruthy()
   })
 })
+
+/** The "Saved, ends in" line: the end of the key sits in its own element. */
+function savedLine(text: string) {
+  return (_: string, el: Element | null) => el?.tagName === "P" && el.textContent === text
+}

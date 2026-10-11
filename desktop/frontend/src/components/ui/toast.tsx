@@ -27,7 +27,7 @@ function ToastViewport({ className, ...props }: ToastPrimitive.Viewport.Props) {
       data-slot="toast-viewport"
       aria-label={t("ui.notifications")}
       className={cn(
-        "pointer-events-none fixed inset-x-4 bottom-4 z-50 mx-auto w-auto max-w-sm outline-none sm:end-4 sm:start-auto sm:mx-0 sm:w-full",
+        "pointer-events-none fixed end-4 bottom-4 z-50 w-[min(24rem,calc(100vw-2rem))] min-w-[min(20rem,calc(100vw-2rem))] outline-none",
         className
       )}
       {...props}

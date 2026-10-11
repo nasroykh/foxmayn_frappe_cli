@@ -148,7 +148,7 @@
     appearance: none;
     }
   /* Arrows and chevrons point the way the page reads. */
-  [dir="rtl"] :is(.tabler-icon-arrow-left, .tabler-icon-arrow-right, .tabler-icon-chevron-left, .tabler-icon-chevron-right) {
+  [dir="rtl"] :is(.tabler-icon-arrow-left, .tabler-icon-arrow-right, .tabler-icon-chevron-left, .tabler-icon-chevron-right, .tabler-icon-send) {
     transform: scaleX(-1);
     }
 }

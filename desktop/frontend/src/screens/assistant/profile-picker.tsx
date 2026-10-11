@@ -1,11 +1,9 @@
 // The conversation header's profile picker and the prompt preview.
-import { IconFileDescription } from "@tabler/icons-react"
 import * as React from "react"
 import type { TFunction } from "i18next"
 import { useTranslation } from "react-i18next"
 
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from "@/components/ui/native-select"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -84,7 +82,6 @@ export function ProfilePicker({
   const { t } = useTranslation()
   const { presets, own } = useProfiles()
   const [busy, setBusy] = React.useState(false)
-  const [previewOpen, setPreviewOpen] = React.useState(false)
 
   const all = [...(presets ?? []), ...(own ?? [])]
   const current = all.find((p) => p.id === conv.profileID)
@@ -123,10 +120,6 @@ export function ProfilePicker({
         <Skeleton className="h-7 w-32" />
       )}
       {narrowed && <Badge variant="secondary">{t("profile.picker.readOnly")}</Badge>}
-      <Button variant="ghost" size="icon-sm" onClick={() => setPreviewOpen(true)} aria-label={t("prompt.open")}>
-        <IconFileDescription />
-      </Button>
-      <PromptPreviewDialog convID={conv.id} open={previewOpen} onOpenChange={setPreviewOpen} />
     </div>
   )
 }

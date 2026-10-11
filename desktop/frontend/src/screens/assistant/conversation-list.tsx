@@ -1,6 +1,7 @@
 import {
   IconArchive,
   IconArchiveOff,
+  IconArrowLeft,
   IconDots,
   IconFileExport,
   IconFileImport,
@@ -11,7 +12,6 @@ import {
 } from "@tabler/icons-react"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
-import { useModKey } from "@/components/app-header"
 import { cn } from "cn"
 
 import {
@@ -34,7 +34,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useDirection } from "@/components/ui/direction"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { Conversation, ExportFormat } from "@/lib/backend-types"
 import { ConversationSearch, passes, type ListFilter } from "@/screens/assistant/conversation-search"
 import { useProfiles } from "@/screens/assistant/profile-picker"
@@ -70,7 +69,6 @@ export function ConversationList({
   onImport: () => Promise<void>
 }) {
   const { t } = useTranslation()
-  const mod = useModKey()
   const { presets, own } = useProfiles()
   const [doomed, setDoomed] = React.useState<Conversation | null>(null)
   const [busy, setBusy] = React.useState(false)
@@ -102,32 +100,28 @@ export function ConversationList({
       <div className="flex items-center justify-between gap-1 p-3 pb-2">
         <h2 className="min-w-0 truncate text-sm font-semibold">{archive ? t("chat.list.archiveTitle") : t("chat.list.title")}</h2>
         <div className="flex items-center gap-1">
-          <Tooltip>
-            <TooltipTrigger
-              render={<Button variant="ghost" size="icon-sm" aria-label={t("chat.history.import")} onClick={() => void onImport()} />}
-            >
-              <IconFileImport />
-            </TooltipTrigger>
-            <TooltipContent>{t("chat.history.import")}</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant={archive ? "secondary" : "ghost"}
-                  size="icon-sm"
-                  aria-label={archive ? t("chat.list.showActive") : t("chat.list.showArchive", { count: archivedCount })}
-                  aria-pressed={archive}
-                  onClick={() => setArchive((a) => !a)}
-                />
-              }
-            >
-              <IconArchive />
-            </TooltipTrigger>
-            <TooltipContent>
-              {archive ? t("chat.list.showActive") : t("chat.list.showArchive", { count: archivedCount })}
-            </TooltipContent>
-          </Tooltip>
+          {archive ? (
+            <Button variant="ghost" size="sm" onClick={() => setArchive(false)}>
+              <IconArrowLeft data-icon="inline-start" />
+              {t("chat.list.showActive")}
+            </Button>
+          ) : (
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t("chat.list.more")} />}>
+                <IconDots />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-60">
+                <DropdownMenuItem onClick={() => void onImport()}>
+                  <IconFileImport />
+                  {t("chat.history.import")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setArchive(true)}>
+                  <IconArchive />
+                  {t("chat.list.showArchive", { count: archivedCount })}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <Button size="sm" onClick={onNew}>
             <IconPlus data-icon="inline-start" />
             {t("chat.list.new")}
@@ -147,16 +141,9 @@ export function ConversationList({
         onFilter={setFilter}
       />
       <ul className={cn("flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2", searching && "hidden")}>
-        {ordered.length === 0 && (
-          <li className="text-muted-foreground flex flex-col gap-1 px-2 py-1 text-sm">
-            {filtered ? (
-              <span>{t("chat.list.emptyFiltered")}</span>
-            ) : (
-              <>
-                <span>{archive ? t("chat.list.emptyArchive") : t("chat.list.empty")}</span>
-                {!archive && <span className="text-xs">{t("chat.list.emptyHint", { mod })}</span>}
-              </>
-            )}
+        {ordered.length === 0 && (filtered || archive) && (
+          <li className="text-muted-foreground px-2 py-1 text-sm">
+            {filtered ? t("chat.list.emptyFiltered") : t("chat.list.emptyArchive")}
           </li>
         )}
         {ordered.map((c) => {
@@ -176,7 +163,7 @@ export function ConversationList({
                 aria-current={c.id === selected ? "true" : undefined}
                 aria-keyshortcuts="Delete"
                 className={cn(
-                  "hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col rounded-lg px-2 py-1.5 pe-14 text-start text-sm outline-none focus-visible:ring-3",
+                  "hover:bg-muted focus-visible:ring-ring/50 flex w-full flex-col rounded-lg px-2 py-1.5 pe-8 text-start text-sm outline-none focus-visible:ring-3",
                   c.id === selected && "bg-muted",
                 )}
               >
@@ -196,7 +183,7 @@ export function ConversationList({
                       variant="ghost"
                       size="icon-xs"
                       aria-label={t("chat.list.moreLabel", { title })}
-                      className={cn("absolute top-1.5 end-7 opacity-0 group-hover/conv:opacity-100 group-focus-within/conv:opacity-100 focus-visible:opacity-100 data-[popup-open]:opacity-100", c.id === selected && "opacity-100")}
+                      className={cn("absolute top-1.5 end-1 opacity-0 group-hover/conv:opacity-100 group-focus-within/conv:opacity-100 focus-visible:opacity-100 data-[popup-open]:opacity-100", c.id === selected && "opacity-100")}
                     />
                   }
                 >
@@ -224,24 +211,13 @@ export function ConversationList({
                       {t("chat.history.exportMarkdown")}
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onClick={() => setDoomed(c)}>
+                    <IconTrash />
+                    {t("chat.list.delete")}
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={t("chat.list.deleteLabel", { title })}
-                      className={cn("absolute top-1.5 end-1 opacity-0 group-hover/conv:opacity-100 group-focus-within/conv:opacity-100 focus-visible:opacity-100", c.id === selected && "opacity-100")}
-                      onClick={() => setDoomed(c)}
-                    />
-                  }
-                >
-                  <IconTrash />
-                </TooltipTrigger>
-                <TooltipContent>{t("chat.list.delete")}</TooltipContent>
-              </Tooltip>
             </li>
           )
         })}

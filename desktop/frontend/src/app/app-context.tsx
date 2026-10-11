@@ -11,6 +11,28 @@ import { feedbackURL } from "@/lib/feedback"
 const UPDATE_CHECKED_KEY = "ffd-update-checked"
 const UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000
 
+// Update cards on screen ("app" and "ffc": the Settings About and ffc tabs).
+// While one is shown the startup toast would repeat it, so it is skipped, and
+// one already up is closed when the card appears.
+const updateCardsShown = new Set<string>()
+const updateToasts = new Map<string, string>()
+
+/** Settings calls this while a card about an update is mounted; returns the cleanup. */
+export function markUpdateCardShown(kind: "app" | "ffc") {
+  updateCardsShown.add(kind)
+  const id = updateToasts.get(kind)
+  if (id) toast.close(id)
+  updateToasts.delete(kind)
+  return () => {
+    updateCardsShown.delete(kind)
+  }
+}
+
+function addUpdateToast(kind: "app" | "ffc", options: Parameters<typeof toast.add>[0]) {
+  if (updateCardsShown.has(kind)) return
+  updateToasts.set(kind, toast.add(options))
+}
+
 // One startup check per page load, even when React mounts the provider twice.
 let startupCheckStarted = false
 
@@ -184,7 +206,7 @@ export function AppProvider({
         if (info.available && info.installCommand) {
           // The terminal command avoids the warnings an unsigned download meets.
           const terminal = info.installCommand.startsWith("curl") ? "Terminal" : "PowerShell"
-          toast.add({
+          addUpdateToast("app", {
             title: i18n.t("shell.update.availableTitle", { version: info.latest }),
             description: i18n.t("shell.update.installHint", { terminal }),
             type: "info",
@@ -195,7 +217,7 @@ export function AppProvider({
             },
           })
         } else if (info.available) {
-          toast.add({
+          addUpdateToast("app", {
             title: i18n.t("shell.update.availableTitle", { version: info.latest }),
             description: i18n.t("shell.update.githubHint"),
             type: "info",
@@ -204,7 +226,7 @@ export function AppProvider({
           })
         }
         if (info.ffc.available) {
-          toast.add({
+          addUpdateToast("ffc", {
             title: i18n.t("shell.update.ffcTitle", { version: info.ffc.latest }),
             description: i18n.t("shell.update.ffcBody", { current: info.ffc.current }),
             type: "info",

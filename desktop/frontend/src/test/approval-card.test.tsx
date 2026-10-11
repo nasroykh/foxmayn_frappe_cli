@@ -31,6 +31,9 @@ describe("ApprovalCard", () => {
     const diff = screen.getByLabelText("Field changes")
     expect(diff.textContent).toContain("Open")
     expect(diff.textContent).toContain("Closed")
+    // The request stays behind its disclosure when the table shows the change.
+    expect(container.textContent).not.toContain('"status": "Closed"')
+    fireEvent.click(screen.getByRole("button", { name: "Technical details" }))
     expect(container.textContent).toContain('"status": "Closed"')
   })
 
@@ -60,12 +63,13 @@ describe("ApprovalCard", () => {
     expect(answers).toEqual([false, true])
   })
 
-  it("does not treat +++ or --- in a value as headers", () => {
+  it("shows each changed field with its value before and after", () => {
     const card = { ...base, diff: [{ field: "d", old: "---x", new: "+++y" }] }
     render(<ApprovalCard card={card} onAnswer={() => {}} />)
-    const lines = [...screen.getByLabelText("Field changes").querySelectorAll("div")]
-    expect(lines.find((l) => l.textContent?.includes("+++y"))?.className).toContain("bg-primary/10")
-    expect(lines.find((l) => l.textContent?.includes("---x"))?.className).toContain("bg-destructive/10")
+    const row = screen.getByRole("row", { name: /^d/ })
+    const cells = row.querySelectorAll("td")
+    expect(cells[0].textContent).toBe("---x")
+    expect(cells[1].textContent).toBe("+++y")
   })
 
   it("writes every line of a multi-line value with its sign", () => {

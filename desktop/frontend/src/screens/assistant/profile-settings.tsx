@@ -1,6 +1,15 @@
 // Settings > Assistant > Profiles: the presets (duplicate to edit) and the
 // user's own profiles. A profile only narrows what a site allows.
-import { IconAlertTriangle, IconCopy, IconPencil, IconPlus, IconTrash } from "@tabler/icons-react"
+import {
+  IconAlertTriangle,
+  IconChevronDown,
+  IconCopy,
+  IconEye,
+  IconPencil,
+  IconPencilCheck,
+  IconPlus,
+  IconTrash,
+} from "@tabler/icons-react"
 import * as React from "react"
 import { useTranslation } from "react-i18next"
 
@@ -18,14 +27,24 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field"
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+  FieldTitle,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/toast"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { backend } from "@/lib/backend"
 import type { ConversationMode, Profile, Toolset } from "@/lib/backend-types"
 import { appError, errorTitle, type AppError } from "@/lib/errors"
@@ -99,7 +118,9 @@ export function ProfileSettings() {
         </p>
         <p className="text-muted-foreground text-xs">
           {t("profile.summary", {
-            toolsets: p.toolsets.length ? p.toolsets.join(", ") : t("profile.defaultToolsets"),
+            toolsets: shownToolsets(p)
+              .map((ts) => t(`profile.toolset.${ts}.title`))
+              .join(", "),
             count: p.stepLimit,
           })}
         </p>
@@ -199,10 +220,50 @@ export function ProfileSettings() {
   )
 }
 
-/** Edits one of the user's profiles; presets are copied first. */
+/** Tool sets in the order shown; core is always served. */
+// i18n keys: profile.toolset.core.title profile.toolset.core.description profile.toolset.lifecycle.title profile.toolset.lifecycle.description profile.toolset.collab.title profile.toolset.collab.description profile.toolset.admin.title profile.toolset.admin.description profile.toolset.files.title profile.toolset.files.description profile.toolset.erp.title profile.toolset.erp.description
+const DEFAULT_TOOLSETS: Toolset[] = ["core", "lifecycle"]
+
+/** The tool sets a profile serves: its own list, or ffc's default; core always. */
+export function shownToolsets(p: Profile): Toolset[] {
+  const on = p.toolsets.length ? p.toolsets : DEFAULT_TOOLSETS
+  return TOOLSETS.filter((ts) => ts === "core" || on.includes(ts))
+}
+
+/** Whether a profile sets anything the Advanced section holds. */
+function hasAdvanced(p: Profile): boolean {
+  return (
+    p.allowTools.length + p.denyTools.length + p.allowDoctypes.length + p.denyDoctypes.length + p.allowMethods.length + p.denyMethods.length > 0 ||
+    p.callMethod ||
+    !p.keepHistory ||
+    p.stepLimit !== 25
+  )
+}
+
+function ChoiceCard({ id, value, icon, title, description }: { id: string; value: string; icon: React.ReactNode; title: string; description: string }) {
+  return (
+    <FieldLabel htmlFor={id}>
+      <Field orientation="horizontal">
+        <span className="text-muted-foreground [&_svg:not([class*='size-'])]:size-5">{icon}</span>
+        <FieldContent>
+          <FieldTitle>{title}</FieldTitle>
+          <FieldDescription>{description}</FieldDescription>
+        </FieldContent>
+        <RadioGroupItem value={value} id={id} />
+      </Field>
+    </FieldLabel>
+  )
+}
+
+/**
+ * Edits one of the user's profiles; presets are copied first. The form shows
+ * what most people set (name, whether it may change things, what it works
+ * with, instructions); lists, server methods, history and the step limit sit
+ * under Advanced, opened when the profile already sets one of them.
+ */
 export function ProfileEditor({ initial, onSaved }: { initial: Profile; onSaved: (p: Profile) => void }) {
   const { t } = useTranslation()
-  const [p, setP] = React.useState<Profile>(initial)
+  const [p, setP] = React.useState<Profile>(() => ({ ...initial, toolsets: shownToolsets(initial) }))
   const [lists, setLists] = React.useState(() => ({
     allowTools: initial.allowTools.join(", "),
     denyTools: initial.denyTools.join(", "),
@@ -212,6 +273,7 @@ export function ProfileEditor({ initial, onSaved }: { initial: Profile; onSaved:
     denyMethods: initial.denyMethods.join("\n"),
   }))
   const [steps, setSteps] = React.useState(String(initial.stepLimit))
+  const [advanced, setAdvanced] = React.useState(() => hasAdvanced(initial))
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<AppError | null>(null)
   const set = <K extends keyof Profile>(k: K, v: Profile[K]) => setP((x) => ({ ...x, [k]: v }))
@@ -263,80 +325,109 @@ export function ProfileEditor({ initial, onSaved }: { initial: Profile; onSaved:
           <FieldLabel htmlFor="profile-name">{t("profile.field.name")}</FieldLabel>
           <Input id="profile-name" value={p.name} onChange={(e) => set("name", e.target.value)} autoFocus />
         </Field>
-        <Field>
-          <FieldLabel id="profile-mode-label">{t("chat.mode.label")}</FieldLabel>
-          <ToggleGroup
-            variant="outline"
-            size="sm"
-            value={[p.mode]}
-            onValueChange={(v: string[]) => v[0] && set("mode", v[0] as ConversationMode)}
-            aria-labelledby="profile-mode-label"
-          >
-            <ToggleGroupItem value="read">{t("chat.mode.read")}</ToggleGroupItem>
-            <ToggleGroupItem value="ask">{t("chat.mode.ask")}</ToggleGroupItem>
-          </ToggleGroup>
-          <FieldDescription>{t("profile.modeHelp")}</FieldDescription>
-        </Field>
-        <Field>
-          <FieldLabel id="profile-toolsets-label">{t("profile.field.toolsets")}</FieldLabel>
-          <div role="group" aria-labelledby="profile-toolsets-label" className="flex flex-wrap gap-x-4 gap-y-2">
+        <FieldSet>
+          <FieldLegend variant="label">{t("chat.mode.label")}</FieldLegend>
+          <RadioGroup value={p.mode} onValueChange={(v) => set("mode", v as ConversationMode)}>
+            <ChoiceCard
+              id="profile-mode-read"
+              value="read"
+              icon={<IconEye />}
+              title={t("chat.mode.read")}
+              description={t("profile.modeRead")}
+            />
+            <ChoiceCard
+              id="profile-mode-ask"
+              value="ask"
+              icon={<IconPencilCheck />}
+              title={t("chat.mode.ask")}
+              description={t("profile.modeAsk")}
+            />
+          </RadioGroup>
+        </FieldSet>
+        <FieldSet>
+          <FieldLegend variant="label">{t("profile.field.toolsets")}</FieldLegend>
+          <FieldDescription>{t("profile.toolsetsHelp")}</FieldDescription>
+          <FieldGroup data-slot="checkbox-group" className="gap-3">
             {TOOLSETS.map((ts) => (
-              <label key={ts} className="flex items-center gap-2 text-sm">
+              <Field key={ts} orientation="horizontal">
                 <Checkbox
+                  id={`profile-toolset-${ts}`}
                   checked={p.toolsets.includes(ts)}
+                  disabled={ts === "core"}
                   onCheckedChange={(on) =>
-                    set("toolsets", on === true ? [...p.toolsets, ts] : p.toolsets.filter((x) => x !== ts))
+                    set(
+                      "toolsets",
+                      TOOLSETS.filter((x) => (x === ts ? on === true : p.toolsets.includes(x))),
+                    )
                   }
                 />
-                {ts}
-              </label>
+                <FieldContent>
+                  <FieldLabel htmlFor={`profile-toolset-${ts}`} className="font-normal">
+                    {t(`profile.toolset.${ts}.title`)}
+                  </FieldLabel>
+                  <FieldDescription>{t(`profile.toolset.${ts}.description`)}</FieldDescription>
+                </FieldContent>
+              </Field>
             ))}
-          </div>
-          <FieldDescription>{t("profile.toolsetsHelp")}</FieldDescription>
-        </Field>
-        {list("denyTools")}
-        {list("allowTools")}
-        {list("allowDoctypes")}
-        {list("denyDoctypes")}
-        {list("allowMethods", true)}
-        {list("denyMethods", true)}
-        <Field orientation="horizontal">
-          <FieldContent>
-            <FieldTitle>{t("profile.field.callMethod")}</FieldTitle>
-            <FieldDescription>{t("profile.callMethodHelp")}</FieldDescription>
-          </FieldContent>
-          <Switch
-            checked={p.callMethod}
-            onCheckedChange={(v) => set("callMethod", v)}
-            aria-label={t("profile.field.callMethod")}
-          />
-        </Field>
-        <Field orientation="horizontal">
-          <FieldContent>
-            <FieldTitle>{t("profile.field.keepHistory")}</FieldTitle>
-            <FieldDescription>{t("profile.keepHistoryHelp")}</FieldDescription>
-          </FieldContent>
-          <Switch
-            checked={p.keepHistory}
-            onCheckedChange={(v) => set("keepHistory", v)}
-            aria-label={t("profile.field.keepHistory")}
-          />
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="profile-steps">{t("profile.field.stepLimit")}</FieldLabel>
-          <Input id="profile-steps" type="number" min={1} max={100} value={steps} onChange={(e) => setSteps(e.target.value)} />
-        </Field>
+          </FieldGroup>
+        </FieldSet>
         <Field>
           <FieldLabel htmlFor="profile-instructions">{t("profile.field.instructions")}</FieldLabel>
           <Textarea
             id="profile-instructions"
             rows={4}
             maxLength={4000}
+            placeholder={t("profile.instructionsPlaceholder")}
             value={p.instructions}
             onChange={(e) => set("instructions", e.target.value)}
           />
         </Field>
       </FieldGroup>
+
+      <Collapsible open={advanced} onOpenChange={setAdvanced}>
+        <CollapsibleTrigger render={<Button variant="ghost" size="sm" className="text-muted-foreground -ms-2" />}>
+          <IconChevronDown data-icon="inline-start" className="transition-transform in-aria-expanded:rotate-180" />
+          {t("profile.advanced")}
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <FieldGroup className="pt-3">
+            <FieldDescription>{t("profile.advancedHelp")}</FieldDescription>
+            {list("denyTools")}
+            {list("allowTools")}
+            {list("allowDoctypes")}
+            {list("denyDoctypes")}
+            {list("allowMethods", true)}
+            {list("denyMethods", true)}
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldTitle>{t("profile.field.callMethod")}</FieldTitle>
+                <FieldDescription>{t("profile.callMethodHelp")}</FieldDescription>
+              </FieldContent>
+              <Switch
+                checked={p.callMethod}
+                onCheckedChange={(v) => set("callMethod", v)}
+                aria-label={t("profile.field.callMethod")}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldTitle>{t("profile.field.keepHistory")}</FieldTitle>
+                <FieldDescription>{t("profile.keepHistoryHelp")}</FieldDescription>
+              </FieldContent>
+              <Switch
+                checked={p.keepHistory}
+                onCheckedChange={(v) => set("keepHistory", v)}
+                aria-label={t("profile.field.keepHistory")}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="profile-steps">{t("profile.field.stepLimit")}</FieldLabel>
+              <Input id="profile-steps" type="number" min={1} max={100} value={steps} onChange={(e) => setSteps(e.target.value)} />
+              <FieldDescription>{t("profile.stepLimitHelp")}</FieldDescription>
+            </Field>
+          </FieldGroup>
+        </CollapsibleContent>
+      </Collapsible>
       {error && (
         <Alert variant="destructive" role="alert">
           <IconAlertTriangle />

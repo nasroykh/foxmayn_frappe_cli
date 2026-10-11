@@ -7,7 +7,18 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Spinner } from "@/components/ui/spinner"
 import type { ToolApproval, ToolStatus } from "@/lib/backend-types"
 
-/** One tool call, as a compact row; the summary opens on demand. */
+// i18n keys: chat.tool.names.* (one plain label per ffc tool name)
+const KNOWN_TOOLS = new Set([
+  "list_sites", "ping", "get_doc", "list_docs", "count_docs", "get_schema", "list_doctypes", "list_reports",
+  "run_report", "search", "get_doc_context", "create_doc", "update_doc", "delete_doc", "bulk_create", "bulk_update",
+  "bulk_delete", "call_method", "whoami", "check_permission", "aggregate", "submit_doc", "cancel_doc", "bulk_submit",
+  "bulk_cancel", "amend_doc", "copy_doc", "rename_doc", "apply_workflow", "restore_doc", "get_transitions",
+  "add_comment", "assign_to", "remove_assignment", "add_tag", "remove_tag", "share_doc", "unshare_doc", "site_health",
+  "list_jobs", "list_errors", "scheduler_status", "list_attachments", "attach_file", "get_print_html", "erp_map",
+  "erp_payment", "erp_item", "erp_stock", "erp_party",
+])
+
+/** One tool call, as a compact row with a plain label; the raw name and summary open on demand. */
 export function ToolRow({
   tool,
   site,
@@ -36,6 +47,7 @@ export function ToolRow({
     "ffc-approved": t("chat.tool.approved"),
     "ffc-declined": t("chat.tool.declined"),
   }
+  const label = KNOWN_TOOLS.has(tool) ? t(`chat.tool.names.${tool}`) : t("chat.tool.generic")
   const icon =
     status === "running" ? (
       <Spinner className="size-3.5" />
@@ -51,28 +63,32 @@ export function ToolRow({
   return (
     <Collapsible className="bg-muted/50 rounded-lg border text-xs">
       <CollapsibleTrigger
-        disabled={!summary}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-start disabled:cursor-default"
+        
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-start"
       >
         {icon}
-        <span className="font-mono font-medium">{tool}</span>
+        <span className="font-medium">{label}</span>
         {site && <span className="text-muted-foreground truncate">{site}</span>}
         <span className="text-muted-foreground ms-auto">{statusText[status]}</span>
         {approvalText[approval] && (
           <Badge variant={declined ? "destructive" : "secondary"}>{approvalText[approval]}</Badge>
         )}
-        {summary && (
-          <IconChevronDown
-            className={cn("size-3.5 shrink-0 transition-transform in-aria-expanded:rotate-180")}
-            aria-hidden="true"
-          />
-        )}
+        <IconChevronDown
+          className={cn("size-3.5 shrink-0 transition-transform in-aria-expanded:rotate-180")}
+          aria-hidden="true"
+        />
       </CollapsibleTrigger>
-      {summary && (
-        <CollapsibleContent>
-          <p className="text-muted-foreground px-2.5 pb-2 font-mono break-all whitespace-pre-wrap">{summary}</p>
-        </CollapsibleContent>
-      )}
+      <CollapsibleContent>
+        <div className="text-muted-foreground flex flex-col gap-1 px-2.5 pb-2">
+          <p className="flex items-baseline gap-1.5">
+            <span>{t("chat.approval.tool")}</span>
+            <span dir="ltr" className="font-mono">
+              {tool}
+            </span>
+          </p>
+          {summary && <p className="font-mono break-all whitespace-pre-wrap">{summary}</p>}
+        </div>
+      </CollapsibleContent>
     </Collapsible>
   )
 }

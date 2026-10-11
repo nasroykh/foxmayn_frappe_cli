@@ -51,8 +51,8 @@ for (const s of states) {
       let n: Node | null
       while ((n = walker.nextNode())) {
         const el = n.parentElement
-        // Code blocks and diffs hold site data (JSON, field values).
-        if (!el || el.closest("script, style, pre")) continue
+        // Code blocks, commands and field changes hold site data (JSON, values, commands).
+        if (!el || el.closest("script, style, pre, code, [data-site-data]")) continue
         const r = el.getBoundingClientRect()
         if (r.width === 0 && r.height === 0 && !el.closest(".sr-only")) continue
         out.push(n.textContent ?? "")

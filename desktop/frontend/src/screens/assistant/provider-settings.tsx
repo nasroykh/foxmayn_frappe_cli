@@ -2,7 +2,7 @@
 import { IconAlertTriangle, IconKey, IconPencil, IconPlus, IconRadar, IconTrash } from "@tabler/icons-react"
 import type { TFunction } from "i18next"
 import * as React from "react"
-import { useTranslation } from "react-i18next"
+import { Trans, useTranslation } from "react-i18next"
 
 import {
   AlertDialog,
@@ -179,14 +179,20 @@ export function ProviderSettings() {
               <div className="flex min-w-0 flex-col gap-0.5">
                 <p className="flex items-center gap-2 text-sm font-medium">
                   <span className="truncate">{p.label || p.id}</span>
-                  <Badge variant="secondary">{kindName(p.kind, t)}</Badge>
+                  {(p.label || p.id) !== kindName(p.kind, t) && <Badge variant="secondary">{kindName(p.kind, t)}</Badge>}
                   {!usable(p) && <Badge variant="destructive">{t("provider.needsKey")}</Badge>}
                 </p>
                 {p.baseURL && <p className="text-muted-foreground truncate text-xs">{p.baseURL}</p>}
                 <p className="text-muted-foreground text-xs">
-                  {p.defaultModel
-                    ? t("provider.defaultModelIs", { model: p.defaultModel })
-                    : t("provider.noDefaultModel")}
+                  {p.defaultModel ? (
+                    <Trans
+                      i18nKey="provider.defaultModelIs"
+                      values={{ model: p.defaultModel }}
+                      components={{ model: <bdi dir="ltr" className="font-mono" /> }}
+                    />
+                  ) : (
+                    t("provider.noDefaultModel")
+                  )}
                 </p>
                 {(needsKey(p.kind) || p.keySet) && (
                   <SavedLine status={{ set: p.keySet, last4: p.keyLast4 || undefined }} />

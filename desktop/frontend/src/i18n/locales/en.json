@@ -5,7 +5,7 @@
   },
   "connectApps": {
     "title": "Connect apps",
-    "description": "Connect the AI apps on this computer to your Frappe sites. Each gets a “frappe” entry in its settings that runs ffc.",
+    "description": "Let the AI apps on this computer, like Claude and Cursor, use your Frappe sites.",
     "lookAgain": "Look again",
     "addSiteFirst": "Add a site first",
     "noSites": "Apps work with the sites you add here. Add one, then come back to connect.",
@@ -14,7 +14,7 @@
     "loading": "Loading apps",
     "status": {
       "connected": "Connected",
-      "different": "Other settings",
+      "different": "Set up differently",
       "notConnected": "Not connected",
       "error": "Problem"
     },
@@ -46,7 +46,8 @@
         "vscode": "Reload VS Code to stop the server.",
         "codex": "Start a new Codex session for the change to take effect."
       }
-    }
+    },
+    "connectAnyway": "Connect anyway"
   },
   "common": {
     "cancel": "Cancel",
@@ -81,7 +82,7 @@
   },
   "settings": {
     "assistantTab": "Assistant",
-    "description": "How the app looks, where things are kept, and what it is.",
+    "description": "Language, theme, the Assistant, the ffc helper and app information.",
     "generalTab": "General",
     "ffcTab": "ffc helper",
     "aboutTab": "About",
@@ -97,7 +98,7 @@
       "installed": "Installed",
       "notWorking": "Not working",
       "notInstalled": "Not installed",
-      "description": "The program your connected apps run to reach your sites. This app finds it on your PATH or where the ffc installers put it, and can install the latest release for you; it never ships its own copy.",
+      "description": "The small program your connected apps use to reach your sites. This app finds it on this computer and can install the latest version for you.",
       "version": "Version",
       "unknown": "Unknown",
       "location": "ffc location",
@@ -105,7 +106,7 @@
       "noAnswerManager": "Running it failed ({{error}}). Reinstalling it with {{manager}} usually fixes this.",
       "noAnswer": "Running it failed ({{error}}). Installing it again usually fixes this.",
       "updateBody": "Updating replaces the ffc above, where it is. Restart your connected apps afterwards so they use the new version.",
-      "autoCheck": "The app looks for a newer ffc once a day; Check for updates looks right away. You can also run <code>{{command}}</code> in a terminal.",
+      "autoCheck": "The app looks for a newer ffc once a day. “Check for updates” looks right away. You can also run <code>{{command}}</code> in a terminal.",
       "installHere": "Install it here, or run this in a terminal yourself:",
       "updateTo": "Update to {{version}}",
       "installAgain": "Install again",
@@ -167,12 +168,12 @@
     "header": {
       "site": "Site: {{site}}",
       "rename": "Rename",
-      "renameLabel": "Rename this conversation",
       "renameField": "Conversation name",
       "renameSave": "Save name",
       "renameCancel": "Cancel renaming",
       "total": "Total: {{usage}}",
-      "totalHelp": "All model calls of this conversation, the one that names it included."
+      "totalHelp": "All model calls of this conversation, the one that names it included.",
+      "more": "More"
     },
     "usage": {
       "tokens": "{{input}} in · {{output}} out",
@@ -185,10 +186,8 @@
       "label": "Conversations",
       "title": "Conversations",
       "new": "New",
-      "empty": "No conversations yet.",
       "untitled": "New conversation",
       "delete": "Delete",
-      "deleteLabel": "Delete conversation {{title}}",
       "deleteTitle": "Delete this conversation?",
       "deleteBody": "“{{title}}” and its messages are removed from this computer. This cannot be undone.",
       "archiveTitle": "Archive",
@@ -203,9 +202,9 @@
       "notKept": "not kept",
       "showArchive_one": "Show the archive ({{count}})",
       "showArchive_other": "Show the archive ({{count}})",
-      "emptyHint": "Start one with New, or press {{mod}}+N.",
       "emptyFiltered": "No conversation matches these filters.",
-      "resize": "Resize the conversation list"
+      "resize": "Resize the conversation list",
+      "more": "More conversation actions"
     },
     "search": {
       "label": "Search conversations",
@@ -261,13 +260,16 @@
       "sendLabel": "Send message",
       "stop": "Stop",
       "stopLabel": "Stop the assistant",
-      "hint": "Enter sends, Shift+Enter adds a line. Esc stops the assistant.",
       "attachLabel": "Attach files (text, CSV, JSON, XLSX or images)",
       "attachHint": "You can also drop files here or paste an image.",
       "attachFailed": "Not attached",
       "pasteTooBig": "The pasted image is larger than 5 MB.",
       "staged": "Files for the next message",
-      "remove": "Remove {{name}}"
+      "remove": "Remove {{name}}",
+      "hintSend": "to send",
+      "hintNewLine": "for a new line",
+      "keyEnter": "Enter",
+      "keyShift": "Shift"
     },
     "attachments": {
       "label": "Attached files"
@@ -282,9 +284,12 @@
       "names": "Documents",
       "noChanges": "No field changes",
       "diffLabel": "Field changes",
-      "args": "Exact request",
+      "args": "Technical details",
       "approve": "Approve",
-      "decline": "Decline"
+      "decline": "Decline",
+      "field": "Field",
+      "before": "Before",
+      "after": "After"
     },
     "tool": {
       "running": "Running",
@@ -293,7 +298,60 @@
       "stopped": "Stopped",
       "approved": "Approved",
       "declined": "Declined",
-      "cancelled": "Not answered"
+      "cancelled": "Not answered",
+      "names": {
+        "list_sites": "Listed sites",
+        "ping": "Checked the connection",
+        "get_doc": "Read a document",
+        "list_docs": "Listed documents",
+        "count_docs": "Counted documents",
+        "get_schema": "Looked up a document type",
+        "list_doctypes": "Listed document types",
+        "list_reports": "Listed reports",
+        "run_report": "Ran a report",
+        "search": "Searched",
+        "get_doc_context": "Read a document's history",
+        "create_doc": "Created a document",
+        "update_doc": "Updated a document",
+        "delete_doc": "Deleted a document",
+        "bulk_create": "Created several documents",
+        "bulk_update": "Updated several documents",
+        "bulk_delete": "Deleted several documents",
+        "call_method": "Ran a server action",
+        "whoami": "Checked who is signed in",
+        "check_permission": "Checked a permission",
+        "aggregate": "Totalled documents",
+        "submit_doc": "Submitted a document",
+        "cancel_doc": "Cancelled a document",
+        "bulk_submit": "Submitted several documents",
+        "bulk_cancel": "Cancelled several documents",
+        "amend_doc": "Amended a document",
+        "copy_doc": "Duplicated a document",
+        "rename_doc": "Renamed a document",
+        "apply_workflow": "Applied a workflow action",
+        "restore_doc": "Restored a deleted document",
+        "get_transitions": "Looked up workflow steps",
+        "add_comment": "Added a comment",
+        "assign_to": "Assigned a document",
+        "remove_assignment": "Removed an assignment",
+        "add_tag": "Added tags",
+        "remove_tag": "Removed tags",
+        "share_doc": "Shared a document",
+        "unshare_doc": "Stopped sharing a document",
+        "site_health": "Checked site health",
+        "list_jobs": "Listed background jobs",
+        "list_errors": "Listed errors",
+        "scheduler_status": "Checked the scheduler",
+        "list_attachments": "Listed attachments",
+        "attach_file": "Attached a file",
+        "get_print_html": "Prepared a printable view",
+        "erp_map": "Prepared the next document",
+        "erp_payment": "Prepared a payment",
+        "erp_item": "Looked up an item",
+        "erp_stock": "Looked up stock",
+        "erp_party": "Looked up a customer or supplier"
+      },
+      "generic": "Used a tool"
     },
     "error": {
       "title": "The assistant stopped"
@@ -309,36 +367,35 @@
     },
     "starters": {
       "title": "Try asking",
-      "hint": "A prompt only fills the message box. Edit it, then press Enter.",
       "explore": {
-        "p1": "Which apps and versions are installed on this site?",
-        "p2": "Show the 10 most recent Sales Invoices with their customer, total and status.",
-        "p3": "What fields does the Customer DocType have, and which are required?",
-        "p4": "How many open ToDos are there, grouped by who they are assigned to?"
+        "p1": "Which apps are installed on this site, and which versions?",
+        "p2": "Show the 10 most recent sales invoices with customer, total and status.",
+        "p3": "What information is kept for a customer, and which fields are required?",
+        "p4": "How many open tasks are there for each person?"
       },
       "accounts": {
-        "p1": "Which Sales Invoices are overdue? Sort them by outstanding amount.",
-        "p2": "Show the unpaid Purchase Invoices due in the next 14 days.",
-        "p3": "Prepare a draft Payment Entry for the oldest unpaid Sales Invoice.",
+        "p1": "Which sales invoices are overdue? Put the largest unpaid amount first.",
+        "p2": "Show the supplier bills still unpaid that are due in the next 14 days.",
+        "p3": "Prepare a draft payment for the oldest unpaid sales invoice.",
         "p4": "Summarise this month's sales by customer."
       },
       "site-admin": {
         "p1": "Give me a quick health check of this site.",
-        "p2": "Is the scheduler running, and did any scheduled job fail today?",
-        "p3": "Show the latest entries of the Error Log and what they have in common.",
-        "p4": "Are any background jobs stuck in the queue?"
+        "p2": "Are scheduled jobs running, and did any of them fail today?",
+        "p3": "Show the latest errors recorded on the site and what they have in common.",
+        "p4": "Are any background jobs stuck waiting?"
       },
       "data-entry": {
-        "p1": "Create a Customer named … in the customer group … and the territory …",
-        "p2": "Add a ToDo for me: … due on …",
-        "p3": "Change the phone number of the Contact … to …",
-        "p4": "Which fields of the Item DocType must I fill in to create one?"
+        "p1": "Create a customer named … in the customer group … and the territory …",
+        "p2": "Add a task for me: … due on …",
+        "p3": "Change the phone number of the contact … to …",
+        "p4": "Which fields must I fill in to create an item?"
       },
       "local-model": {
-        "p1": "How many Customers are there?",
-        "p2": "Show the five newest Items.",
-        "p3": "What is the status of Sales Invoice …?",
-        "p4": "List the DocTypes of the Selling module."
+        "p1": "How many customers are there?",
+        "p2": "Show the five newest items.",
+        "p3": "What is the status of sales invoice …?",
+        "p4": "List the document types of the Selling module."
       }
     },
     "message": {
@@ -351,11 +408,12 @@
       "editBody": "Everything after it is removed from the conversation, later messages and their files included, and the message goes back to the box below so you can change it and send it again.",
       "deleteTitle": "Delete this message and its answer?",
       "deleteBody": "They are removed from this conversation. What they cost still counts in the conversation's total."
-    }
+    },
+    "noConversationShortcut": "Or press {{mod}}+N."
   },
   "onboarding": {
     "title": "Set up the Assistant",
-    "intro": "Choose the model the Assistant uses. Your key stays in this computer's keychain.",
+    "intro": "Choose the model the Assistant uses. Your key stays in this computer's secure credential store.",
     "back": "Back",
     "next": "Next",
     "chooseLabel": "Choose a provider",
@@ -378,7 +436,7 @@
   },
   "provider": {
     "title": "Assistant providers",
-    "intro": "Where the Assistant's models run. Keys are kept in this computer's keychain, never in the settings file.",
+    "intro": "The AI services the Assistant uses. Keys are kept in this computer's secure credential store, never in the settings file.",
     "add": "Add provider",
     "addAndKey": "Add and set key",
     "addTitle": "Add a provider",
@@ -391,7 +449,7 @@
     "detectFound": "Found {{name}} at {{url}}.",
     "none": "No provider yet.",
     "needsKey": "Needs a key",
-    "defaultModelIs": "Default model: {{model}}",
+    "defaultModelIs": "Default model: <model>{{model}}</model>",
     "noDefaultModel": "No default model",
     "defaultModel": "Default model",
     "editTitle": "Edit provider",
@@ -405,7 +463,7 @@
     "rekey": "Replace key",
     "rekeyLabel": "Replace the key of {{name}}",
     "keyDialogTitle": "Key for {{name}}",
-    "keyDialogBody": "Paste the key. It is checked, then saved in the keychain.",
+    "keyDialogBody": "Paste the key. It is checked, then saved in this computer's secure credential store.",
     "delete": "Delete",
     "deleteLabel": "Delete {{name}}",
     "deleteTitle": "Delete this provider?",
@@ -419,7 +477,7 @@
       "rejected": "The key was not accepted",
       "empty": "Paste the API key.",
       "saved": "Saved",
-      "savedEnds": "Saved, ends in ••••{{last4}}",
+      "savedEnds": "Saved, ends in <end>••••{{last4}}</end>",
       "notSet": "No key saved"
     },
     "models": {
@@ -431,7 +489,7 @@
     "keyCleared": "The address changed, so the saved key was removed. Enter it again.",
     "openrouter": {
       "signIn": "Sign in with OpenRouter",
-      "hint": "Opens OpenRouter in your browser to create a key for this app. The key is saved in this computer's keychain.",
+      "hint": "Opens OpenRouter in your browser to create a key for this app. The key is saved in this computer's secure credential store.",
       "browser": "Continue in your browser…",
       "exchanging": "Getting the key…",
       "verifying": "Checking the key…",
@@ -455,7 +513,6 @@
     "builtIn": "Built in",
     "summary_one": "Tools: {{toolsets}} · up to {{count}} step",
     "summary_other": "Tools: {{toolsets}} · up to {{count}} steps",
-    "defaultToolsets": "default",
     "new": "New profile",
     "newTitle": "New profile",
     "editTitle": "Edit profile",
@@ -469,13 +526,12 @@
     "delete": "Delete profile",
     "deleteTitle": "Delete {{name}}?",
     "deleteBody": "Conversations that use this profile switch to Explore (read only).",
-    "modeHelp": "The stricter of this and the conversation's switch applies.",
-    "toolsetsHelp": "None checked means the default tool sets (core and lifecycle).",
+    "toolsetsHelp": "Documents and reports are always included.",
     "callMethodHelp": "Lets the assistant call server methods, only when the conversation asks before changes and the site allows it.",
     "keepHistoryHelp": "Off: conversations with this profile are not kept and are removed when the app next starts.",
     "field": {
       "name": "Name",
-      "toolsets": "Tool sets",
+      "toolsets": "What it can work with",
       "denyTools": "Tools to hide",
       "allowTools": "Only these tools",
       "allowDoctypes": "Only these DocTypes",
@@ -510,6 +566,38 @@
       },
       "local-model": {
         "name": "Local model"
+      }
+    },
+    "modeRead": "Looks things up and never changes anything.",
+    "modeAsk": "May propose changes; each one waits for your approval.",
+    "instructionsPlaceholder": "For example: Answer with short tables. Our fiscal year starts in January.",
+    "advanced": "Advanced settings",
+    "advancedHelp": "For finer limits. Names are the exact tool, DocType or method names; separate them with commas.",
+    "stepLimitHelp": "How many tool calls one answer may make before it pauses and asks you to continue.",
+    "toolset": {
+      "core": {
+        "title": "Documents and reports",
+        "description": "Find, read, create and update documents; run reports."
+      },
+      "lifecycle": {
+        "title": "Submit, cancel and amend",
+        "description": "Submit, cancel, amend, rename and restore documents; workflows."
+      },
+      "collab": {
+        "title": "Comments and assignments",
+        "description": "Comment, assign, tag and share documents."
+      },
+      "admin": {
+        "title": "Site health",
+        "description": "Background jobs, errors and the scheduler (System Manager)."
+      },
+      "files": {
+        "title": "Files and printing",
+        "description": "Attachments and print formats."
+      },
+      "erp": {
+        "title": "ERPNext helpers",
+        "description": "Item prices and stock, party details, make one document from another, payments."
       }
     }
   },
@@ -622,7 +710,7 @@
     "notEncryptedHint": "This address uses http://, so sign-in details travel unencrypted.",
     "connectedAs": "Connected as {{user}}",
     "lastCheckFailed": "Last check failed",
-    "check": "Check",
+    "check": "Test connection",
     "checking": "Checking…",
     "more": "More actions",
     "moreFor": "More actions for {{name}}",
@@ -633,7 +721,7 @@
       "nowDefaultHint": "Apps that follow the default use it."
     },
     "action": {
-      "check": "Check connection",
+      "check": "Test connection",
       "makeDefault": "Make default",
       "connect": "Connect an app",
       "rename": "Rename…",
@@ -891,7 +979,7 @@
   },
   "page": {
     "ffcNoAnswer": "The ffc helper does not answer",
-    "ffcMissing": "One more thing: install the ffc helper",
+    "ffcMissing": "Last step: install the ffc helper",
     "reinstallWith": "ffc was found but did not start. Reinstalling it with {{manager}} usually fixes this.",
     "reinstall": "ffc was found but did not start. Installing it again usually fixes this.",
     "needed": "Connected apps use ffc, a small program from Foxmayn, to reach your sites. You can add sites and use the Assistant without it, but connected apps need it.",
@@ -910,7 +998,7 @@
     },
     "sidebar": {
       "goToSites": "Foxmayn Frappe Desktop, go to Sites",
-      "manage": "Manage",
+      "manage": "Menu",
       "quickActions": "Quick actions",
       "addSite": "Add a site",
       "updateAvailable": "Update {{version}} available",
@@ -945,7 +1033,7 @@
     "addSite": "Add a site",
     "connectApp": "Connect an app",
     "installFfc": "Install the ffc helper",
-    "checkConnection": "Check a connection",
+    "checkConnection": "Test a site's connection",
     "connected": "{{name}} is connected",
     "notAsExpected": "{{name}} did not answer as expected",
     "newConversation": "New conversation",
