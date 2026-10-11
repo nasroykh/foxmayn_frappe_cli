@@ -532,6 +532,44 @@ func TestApprovalCancelDuringWriteSetsCancelled(t *testing.T) {
 	}
 }
 
+func TestDiffFieldsRevealHiddenCharacters(t *testing.T) {
+	zw, rlo, nul, nbsp, isolate, zwj := string(rune(0x200b)), string(rune(0x202e)), string(rune(0)), string(rune(0xa0)), string(rune(0x2066)), string(rune(0x200d))
+	bs := string(rune(92))
+	doc := map[string]any{"title": "plain", "tags": []any{"a"}}
+	data := map[string]any{
+		"ti" + zw + "tle": "pay" + rlo + "evil" + nul + " " + nbsp + "x\nok\ttab",
+		"tags":            []any{"a" + isolate, map[string]any{"k" + zwj: "v" + rlo}},
+		"bad":             "x\xffy",
+	}
+	input := fmt.Sprint(data)
+	d := diffFields(doc, data)
+	got := map[string]DiffField{}
+	for _, f := range d {
+		got[f.Field] = f
+	}
+	if f, ok := got["ti"+bs+"u200btle"]; !ok || f.New != "pay"+bs+"u202eevil"+bs+"u0000 "+bs+"u00a0x\nok\ttab" {
+		t.Errorf("title diff = %+v (%+v)", f, d)
+	}
+	if f := got["bad"]; f.New != "x"+bs+"xffy" {
+		t.Errorf("bad = %+v", f)
+	}
+	l, _ := got["tags"].New.([]any)
+	if len(l) != 2 || l[0] != "a"+bs+"u2066" || l[1].(map[string]any)["k"+bs+"u200d"] != "v"+bs+"u202e" {
+		t.Errorf("tags = %#v", got["tags"].New)
+	}
+	// The input is not modified.
+	if fmt.Sprint(data) != input {
+		t.Error("diffFields changed its input")
+	}
+	// Visible text of any script is left alone.
+	if s := revealString("h\u00e9llo \u05e9\u05dc\u05d5\u05dd \u65e5\u672c"); s != "h\u00e9llo \u05e9\u05dc\u05d5\u05dd \u65e5\u672c" {
+		t.Errorf("revealString = %q", s)
+	}
+	if s := revealString(string(rune(0xe0041))); s != bs+"U000e0041" {
+		t.Errorf("tag char = %q", s)
+	}
+}
+
 func TestApprovalNoChangesAndDiffNormalisation(t *testing.T) {
 	doc := map[string]any{"enabled": float64(1), "qty": float64(5), "name": "X", "title": "a", "n": nil}
 	data := map[string]any{"enabled": true, "qty": "5", "title": "a", "name": "Y"}
