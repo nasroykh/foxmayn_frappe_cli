@@ -208,3 +208,26 @@ func TestAuditRunID(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyPreparedReport(t *testing.T) {
+	cfg := fakeConfig(t, cmdTSite(t), "apikey")
+	s := mcpTClassifyServer(t, MCPOptions{ConfigPath: cfg})
+	for _, c := range []struct {
+		args map[string]any
+		want string
+	}{
+		{map[string]any{"report_name": "R"}, "read"},
+		{map[string]any{"report_name": "R", "prepared": true}, "write"},
+		{map[string]any{"report_name": "R", "prepared": true, "fresh": true}, "write"},
+		{map[string]any{"report_name": "R", "prepared_report": "PR-1"}, "read"},
+	} {
+		if cls := mcpTClassify(t, s, "run_report", c.args); cls.Action != c.want || cls.Denied != "" {
+			t.Errorf("run_report %v: %+v, want %s", c.args, cls, c.want)
+		}
+	}
+	// Read only only reuses a prepared report.
+	ro := mcpTClassifyServer(t, MCPOptions{ConfigPath: cfg, Policy: config.MCPPolicy{ReadOnly: true}})
+	if cls := mcpTClassify(t, ro, "run_report", map[string]any{"report_name": "R", "prepared": true}); cls.Action != "read" {
+		t.Errorf("read-only prepared: %+v", cls)
+	}
+}

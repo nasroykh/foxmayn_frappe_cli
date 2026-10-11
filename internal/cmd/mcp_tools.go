@@ -39,6 +39,20 @@ func compactReportResult(r map[string]interface{}) map[string]interface{} {
 // lower it.
 var mcpPreparedWait = time.Minute
 
+// preparedMayStart reports whether run_report with args may insert a
+// Prepared Report and queue its job: prepared or fresh with no named
+// prepared_report, on a site where MCP may write (read only only reuses).
+// toolActions keeps run_report a read; Classify reports such a call as a
+// write so an embedding app can ask first.
+func preparedMayStart(args map[string]any, p mcpPolicy) bool {
+	if p.readOnly() {
+		return false
+	}
+	flag := func(k string) bool { v, _ := args[k].(bool); return v }
+	name, _ := args["prepared_report"].(string)
+	return (flag("prepared") || flag("fresh")) && strings.TrimSpace(name) == ""
+}
+
 // runPreparedMCP is run_report with prepared. A read-only server only
 // reuses: a finished result for these filters, or a job already queued for
 // them (make_prepared_report inserts a document and starts a job). Progress
