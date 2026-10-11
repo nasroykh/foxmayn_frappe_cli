@@ -10,6 +10,7 @@ import (
 	"math"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 )
 
 const (
@@ -214,6 +216,9 @@ func (a *activeRun) runWrite(ctx context.Context, e *callEntry) {
 		}
 		if !e.cls.WillAsk {
 			card := a.card(e, ApprovalApp)
+			if e.call.Name == "restore_doc" {
+				a.restoreTarget(ctx, e, &card)
+			}
 			card.Diff = diff
 			card.NoChanges = e.call.Name == "update_doc" && len(diff) == 0
 			switch a.r.approvals.wait(ctx, a.r.approvals.open(a.conv.ID, card)) {
@@ -305,6 +310,34 @@ func (a *activeRun) prepareUpdate(ctx context.Context, e *callEntry) ([]DiffFiel
 		delete(e.args, "if_unmodified")
 	}
 	return diffFields(doc, data), ""
+}
+
+// restoreTarget adds to a restore_doc card the DocType and name the Deleted
+// Document will re-create, when the call names only the Deleted Document:
+// otherwise the card shows "Deleted Document" and not what comes back. The
+// read is best effort (ffc's checkRestore still applies the write rules to
+// that DocType); a failure leaves the card as it was.
+func (a *activeRun) restoreTarget(ctx context.Context, e *callEntry, card *ChatApproval) {
+	deleted, _ := e.args["deleted_document"].(string)
+	if dt, _ := e.args["doctype"].(string); strings.TrimSpace(deleted) == "" || strings.TrimSpace(dt) != "" {
+		return
+	}
+	res, err := a.session.Call(ctx, a.runID, "get_doc", map[string]any{
+		"doctype": "Deleted Document", "name": strings.TrimSpace(deleted), "fields": []any{"deleted_doctype", "deleted_name"},
+	})
+	if err != nil || res.IsError {
+		return
+	}
+	var doc map[string]any
+	if json.Unmarshal([]byte(callResultText(res)), &doc) != nil {
+		return
+	}
+	if dt, _ := doc["deleted_doctype"].(string); dt != "" {
+		card.Doctypes = append(slices.Clone(card.Doctypes), revealString(text.Sanitize(dt)))
+		if n, _ := doc["deleted_name"].(string); n != "" {
+			card.Names = append(slices.Clone(card.Names), revealString(text.Sanitize(n)))
+		}
+	}
 }
 
 // diffFields lists the fields of data whose value differs from doc, by name.
