@@ -31,6 +31,7 @@ Run `ffc <command> --help` for the full text of any command. This reference foll
 | Check the setup | `doctor` | [doctor](doctor.md) |
 | Site health, background jobs, errors, scheduler | `health`, `jobs`, `errors`, `scheduler` | [Site health and operations](admin.md) |
 | Update ffc | `update` | [update](update.md) |
+| Install or update the desktop app (Windows, macOS) | `desktop status`, `desktop install` | [desktop](desktop.md) |
 | Shell completion | `completion` | [Completion](completion.md) |
 | MCP server for AI agents | `mcp` | [MCP server](../mcp/README.md) |
 
