@@ -22,14 +22,6 @@ type attachHost struct {
 	*fakeHost
 	paths []string
 	asked int
-
-	confirm   bool       // the answer to ConfirmDroppedFiles
-	confirmed [][]string // what it was asked, per call
-}
-
-func (h *attachHost) ConfirmDroppedFiles(paths []string) (bool, error) {
-	h.confirmed = append(h.confirmed, paths)
-	return h.confirm, nil
 }
 
 func (h *attachHost) OpenFilesDialog(title, filterName, pattern string) ([]string, error) {
@@ -308,128 +300,84 @@ func TestAttachmentMessageLimits(t *testing.T) {
 	}
 }
 
-// Dropped files are confirmed natively, read in Go and reported as an event.
-func TestDroppedFilesReported(t *testing.T) {
-	g, ah := attachRig(t)
-	ah.confirm = true
-	c := g.conv(t, ModeRead)
-	HandleDroppedFiles(g.a, c.ID, []string{writeFile(t, "d.json", []byte(`{"a":1}`)), writeFile(t, "d.exe", []byte{0x4d, 0x5a, 0})})
-	ev := g.h.named(EventChatAttachments)
-	if len(ev) != 1 {
-		t.Fatalf("events = %d", len(ev))
-	}
-	p := ev[0].(ChatAttachments)
-	if p.ConvID != c.ID || len(p.Attachments) != 1 || p.Attachments[0].Mime != "application/json" || len(p.Errors) != 1 {
-		t.Fatalf("payload = %+v", p)
-	}
-	if len(ah.confirmed) != 1 || len(ah.confirmed[0]) != 2 {
-		t.Fatalf("confirmations = %v", ah.confirmed)
-	}
-	HandleDroppedFiles(g.a, "nope", []string{writeFile(t, "d.txt", []byte("x"))})
-	if ev := g.h.named(EventChatAttachments); len(ev) != 2 || len(ev[1].(ChatAttachments).Errors) != 1 {
-		t.Fatalf("unknown conversation = %+v", ev)
-	}
-}
+// droppedB64 is a file's bytes as the composer sends them.
+func droppedB64(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
 
-// droppedPayload returns the one chat:attachments event a drop emitted.
-func droppedPayload(t *testing.T, g *assistantRig) ChatAttachments {
-	t.Helper()
-	ev := g.h.named(EventChatAttachments)
-	if len(ev) != 1 {
-		t.Fatalf("events = %d, want 1", len(ev))
-	}
-	return ev[0].(ChatAttachments)
-}
-
-// A declined drop reads nothing: the path is a directory that ReadFile would
-// refuse with an error, so an empty, error-free event proves it was not read.
-func TestDroppedFilesDeclined(t *testing.T) {
-	g, ah := attachRig(t)
-	c := g.conv(t, ModeRead)
-	ah.confirm = false
-	HandleDroppedFiles(g.a, c.ID, []string{writeFile(t, "d.txt", []byte("x")), t.TempDir()})
-	p := droppedPayload(t, g)
-	if p.ConvID != c.ID || len(p.Attachments) != 0 || len(p.Errors) != 0 {
-		t.Fatalf("declined payload = %+v", p)
-	}
-	if len(ah.confirmed) != 1 {
-		t.Fatalf("confirmations = %d", len(ah.confirmed))
-	}
-	if staged, _ := g.a.ListAttachments(c.ID); len(staged) != 0 {
-		t.Fatalf("staged = %d", len(staged))
-	}
-}
-
-// A bidi override or invisible character in a dropped name never reaches the
-// dialog, and the isolates around the name stay.
-func TestDropConfirmTextStripsBidi(t *testing.T) {
-	txt := dropConfirmText([]string{filepath.Join("dir‮", "gpj.‮txt​\x07")})
-	for _, bad := range []string{"‮", "​", "\x07"} {
-		if strings.Contains(txt, bad) {
-			t.Errorf("%q reached the dialog:\n%q", bad, txt)
-		}
-	}
-	if !strings.Contains(txt, "⁨gpj.txt⁩") {
-		t.Errorf("name or isolates missing:\n%q", txt)
-	}
-}
-
-// A host without a confirmation dialog cannot accept a drop.
-func TestDroppedFilesNoDialog(t *testing.T) {
+// A dropped file arrives as bytes, never a path, and is staged like a file
+// from the dialog.
+func TestAddDroppedFile(t *testing.T) {
 	g := newAssistantRig(t)
 	c := g.conv(t, ModeRead)
-	HandleDroppedFiles(g.a, c.ID, []string{writeFile(t, "d.txt", []byte("x"))})
-	p := droppedPayload(t, g)
-	if len(p.Attachments) != 0 || len(p.Errors) != 1 {
-		t.Fatalf("payload = %+v", p)
+	s, err := g.a.AddDroppedFile(c.ID, "d.json", droppedB64([]byte(`{"a":1}`)))
+	if err != nil || s.Mime != "application/json" || s.Name != "d.json" || s.Size != 7 {
+		t.Fatalf("json = %+v, %v", s, err)
+	}
+	s, err = g.a.AddDroppedFile(c.ID, "notes.txt", droppedB64([]byte("hello")))
+	if err != nil || s.Kind != attach.KindText || s.Name != "notes.txt" {
+		t.Fatalf("text = %+v, %v", s, err)
+	}
+	if staged, _ := g.a.ListAttachments(c.ID); len(staged) != 2 {
+		t.Fatalf("staged = %d", len(staged))
+	}
+	// A rejected type is refused like one from the dialog.
+	if _, err := g.a.AddDroppedFile(c.ID, "d.exe", droppedB64([]byte{0x4d, 0x5a, 0})); errorCode(t, err) != CodeInvalid {
+		t.Fatalf("exe: %v", err)
+	}
+}
+
+func TestAddDroppedFileRefusals(t *testing.T) {
+	g := newAssistantRig(t)
+	c := g.conv(t, ModeRead)
+	if _, err := g.a.AddDroppedFile(c.ID, "d.txt", "%%%"); errorCode(t, err) != CodeInvalid || !strings.Contains(err.Error(), "could not be read") {
+		t.Fatalf("bad base64: %v", err)
+	}
+	if _, err := g.a.AddDroppedFile(c.ID, "d.txt", ""); errorCode(t, err) != CodeInvalid {
+		t.Fatalf("empty: %v", err)
+	}
+	// Over the cap by encoded length: refused before decoding (the text is
+	// not even valid base64, so a decode would say "could not be read").
+	big := strings.Repeat("!", base64.StdEncoding.EncodedLen(attach.MaxFileBytes)+1)
+	if _, err := g.a.AddDroppedFile(c.ID, "big.txt", big); errorCode(t, err) != CodeInvalid || !strings.Contains(err.Error(), "larger than 10 MB") {
+		t.Fatalf("over the cap: %v", err)
+	}
+	if _, err := g.a.AddDroppedFile("nope", "d.txt", droppedB64([]byte("x"))); errorCode(t, err) != CodeNotFound {
+		t.Fatalf("unknown conversation: %v", err)
 	}
 	if staged, _ := g.a.ListAttachments(c.ID); len(staged) != 0 {
 		t.Fatalf("staged = %d", len(staged))
 	}
 }
 
-// More than five files are refused whole, before the dialog and any read.
-func TestDroppedFilesTooMany(t *testing.T) {
-	g, ah := attachRig(t)
-	ah.confirm = true
+// Once the conversation holds five staged files, a drop adds no more.
+func TestAddDroppedFileCap(t *testing.T) {
+	g := newAssistantRig(t)
 	c := g.conv(t, ModeRead)
-	var paths []string
-	for i := 0; i < attach.MaxPerMessage+1; i++ {
-		paths = append(paths, writeFile(t, "f.txt", []byte("x")))
-	}
-	HandleDroppedFiles(g.a, c.ID, paths)
-	p := droppedPayload(t, g)
-	if len(p.Attachments) != 0 || len(p.Errors) != 1 || !strings.Contains(p.Errors[0], "at most 5") {
-		t.Fatalf("payload = %+v", p)
-	}
-	if len(ah.confirmed) != 0 {
-		t.Fatalf("confirmed %d times, want 0", len(ah.confirmed))
-	}
-	if staged, _ := g.a.ListAttachments(c.ID); len(staged) != 0 {
-		t.Fatalf("staged = %d", len(staged))
-	}
-}
-
-// Once the conversation holds five staged files, a drop reads no more.
-func TestDroppedFilesStagedCap(t *testing.T) {
-	g, ah := attachRig(t)
-	ah.confirm = true
-	c := g.conv(t, ModeRead)
-	for i := 0; i < attach.MaxPerMessage-1; i++ {
-		ah.paths = []string{writeFile(t, "s.txt", []byte{byte('a' + i)})}
-		if _, err := g.a.AddAttachment(c.ID); err != nil {
+	for i := 0; i < attach.MaxPerMessage; i++ {
+		if _, err := g.a.AddDroppedFile(c.ID, "s.txt", droppedB64([]byte{byte('a' + i)})); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Room for one: the second path is a directory that would be refused with
-	// its own error if it were read; the cap error must come instead.
-	HandleDroppedFiles(g.a, c.ID, []string{writeFile(t, "one.txt", []byte("1")), t.TempDir(), writeFile(t, "two.txt", []byte("2"))})
-	p := droppedPayload(t, g)
-	if len(p.Attachments) != 1 || len(p.Errors) != 1 || !strings.Contains(p.Errors[0], "A message can carry at most 5 attachments.") {
-		t.Fatalf("payload = %+v", p)
+	_, err := g.a.AddDroppedFile(c.ID, "six.txt", droppedB64([]byte("6")))
+	if errorCode(t, err) != CodeInvalid || !strings.Contains(err.Error(), "at most 5") {
+		t.Fatalf("sixth: %v", err)
 	}
 	if staged, _ := g.a.ListAttachments(c.ID); len(staged) != attach.MaxPerMessage {
 		t.Fatalf("staged = %d", len(staged))
+	}
+}
+
+// The name comes from the web view: it is stored as its base name, without
+// control characters, never as a path.
+func TestAddDroppedFileCleansTheName(t *testing.T) {
+	g := newAssistantRig(t)
+	c := g.conv(t, ModeRead)
+	s, err := g.a.AddDroppedFile(c.ID, "../../etc/passwd.txt", droppedB64([]byte("x")))
+	if err != nil || s.Name != attach.CleanName("../../etc/passwd.txt") || s.Name != "passwd.txt" {
+		t.Fatalf("name = %+v, %v", s, err)
+	}
+	s, err = g.a.AddDroppedFile(c.ID, `C:\Windows\win`+"\x07.txt", droppedB64([]byte("y")))
+	if err != nil || s.Name != "win.txt" {
+		t.Fatalf("windows name = %+v, %v", s, err)
 	}
 }
 

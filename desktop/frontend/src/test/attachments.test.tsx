@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { cleanup, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import "@/i18n"
@@ -55,10 +55,10 @@ describe("composer attachments", () => {
       return l!
     })
     expect(within(list).getByText("stock.csv")).toBeTruthy()
-    // The composer is a Wails drop target that names its conversation.
+    // The Wails file drop is off: the composer takes drops itself.
     const form = list.closest("form")!
-    expect(form.hasAttribute("data-file-drop-target")).toBe(true)
-    expect(form.getAttribute("data-conv-id")).toBe(c.id)
+    expect(form.hasAttribute("data-file-drop-target")).toBe(false)
+    expect(form.hasAttribute("data-conv-id")).toBe(false)
 
     fireEvent.click(within(list).getByRole("button", { name: "Remove stock.csv" }))
     await waitFor(() => expect(staged()).toBeNull())
@@ -119,5 +119,58 @@ describe("composer attachments", () => {
     // Pasted text is not an attachment.
     fireEvent.paste(input, { clipboardData: { files: [], types: ["text/plain"] } })
     expect(await backend.listAttachments(c.id)).toHaveLength(1)
+  })
+})
+
+function fileDrop(files: File[], types: string[] = ["Files"]) {
+  return { dataTransfer: { files, types, dropEffect: "none" } }
+}
+
+describe("composer drops", () => {
+  it("reads each dropped file and stages it through addDroppedFile with its base64", async () => {
+    const c = await backend.newConversation("acme-prod", "read", "anthropic", "")
+    const add = vi.spyOn(backend, "addDroppedFile")
+    show()
+    const input = await screen.findByLabelText("Message")
+    const form = input.closest("form")!
+
+    // A drag of files is accepted as a copy and shows the drop state.
+    const over = createEvent.dragOver(form, fileDrop([]))
+    fireEvent(form, over)
+    expect(over.defaultPrevented).toBe(true)
+    expect((over as unknown as { dataTransfer: { dropEffect: string } }).dataTransfer.dropEffect).toBe("copy")
+    expect(await screen.findByText("Drop files here to attach them")).toBeTruthy()
+
+    const bytes = new TextEncoder().encode("sku,qty,A1,3")
+    const file = new File([bytes], "stock.csv", { type: "text/csv" })
+    const drop = createEvent.drop(form, fileDrop([file]))
+    fireEvent(form, drop)
+    expect(drop.defaultPrevented).toBe(true)
+
+    await waitFor(() => expect(staged()?.textContent).toContain("stock.csv"))
+    const b64 = btoa(String.fromCharCode(...bytes))
+    expect(add).toHaveBeenCalledWith(c.id, "stock.csv", b64)
+    expect((await backend.listAttachments(c.id)).map((a) => a.name)).toEqual(["stock.csv"])
+    expect(screen.queryByText("Drop files here to attach them")).toBeNull()
+  })
+
+  it("shows the refusal of a dropped file as a toast and ignores drags without files", async () => {
+    const c = await backend.newConversation("acme-prod", "read", "anthropic", "")
+    const toasts = vi.spyOn(toast, "add")
+    const add = vi.spyOn(backend, "addDroppedFile")
+    show()
+    const form = (await screen.findByLabelText("Message")).closest("form")!
+
+    const text = createEvent.dragOver(form, fileDrop([], ["text/plain"]))
+    fireEvent(form, text)
+    expect(text.defaultPrevented).toBe(false)
+    fireEvent.drop(form, fileDrop([new File(["x"], "a.csv")], ["text/plain"]))
+    expect(add).not.toHaveBeenCalled()
+
+    fireEvent.drop(form, fileDrop([new File(["MZ"], "setup.exe")]))
+    await waitFor(() =>
+      expect(toasts).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringContaining("setup.exe") })),
+    )
+    expect(await backend.listAttachments(c.id)).toEqual([])
   })
 })

@@ -38,9 +38,9 @@ Manual download:
 
 - [ ] Add the test site with an API key. `~/.config/ffc/config.yaml` is created; on macOS it has mode 0600 and its folder 0700.
 - [ ] Add a site with a username and password, and one with OAuth (the browser opens; the callback lands on `127.0.0.1`).
-- [ ] Change a site's address. A system dialog asks first, with No as the default; answering No changes nothing.
-- [ ] Add a site again under an existing name (Replace). The dialog asks first.
-- [ ] Safety rules: a change that opens something asks in a system dialog; a narrowing change saves without asking. Remove a site that has rules; the dialog asks first.
+- [ ] Change a site's address to `https://` on the same host: it saves without asking for the sign-in. Change it to another host: the dialog asks for the API key and secret (or username and password) again, and nothing is saved until they check out.
+- [ ] Add a site again under an existing name (Replace). The app asks first, with Cancel as the default.
+- [ ] Safety rules: a change that opens something lists what it opens and asks first; a narrowing change saves without asking. Remove a site that has rules: the question says the rules go with it.
 - [ ] Turning Local models only off asks first.
 
 ## Assistant
@@ -51,7 +51,7 @@ Manual download:
 - [ ] Declining a card changes nothing on the site.
 - [ ] A `restore_doc` card names the DocType it brings back.
 - [ ] Attach an XLSX, a DOCX, a PDF and an image. Each is read or refused with a clear message.
-- [ ] Dropping a file onto the window asks first, with Cancel as the default.
+- [ ] Drop a file on the message box: it is attached. Drop it on macOS too (the drop path changed in 0.9.0).
 
 ## MCP clients
 

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import "@/i18n"
@@ -47,7 +47,7 @@ describe("safety rules sheet", () => {
     fireEvent.click(await radio(/Read only/))
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(b.savePolicy).toHaveBeenCalled())
-    expect(b.savePolicy).toHaveBeenCalledWith("acme-prod", blank, { ...blank, readOnly: true })
+    expect(b.savePolicy).toHaveBeenCalledWith("acme-prod", blank, { ...blank, readOnly: true }, false)
     await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 
@@ -59,7 +59,7 @@ describe("safety rules sheet", () => {
     fireEvent.click(await radio(/Read only/))
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(b.savePolicy).toHaveBeenCalled())
-    expect(b.savePolicy).toHaveBeenCalledWith("acme-prod", strict, { ...strict, readOnly: true })
+    expect(b.savePolicy).toHaveBeenCalledWith("acme-prod", strict, { ...strict, readOnly: true }, false)
   })
 
   it("opens a policy with lists as Custom", async () => {
@@ -69,18 +69,29 @@ describe("safety rules sheet", () => {
     expect((screen.getByLabelText("Document types to refuse") as HTMLTextAreaElement).value).toBe("User")
   })
 
-  it("warns when the change opens access, and keeps the sheet open when declined", async () => {
+  it("asks in a dialog when the change opens access, and saves only after Open access", async () => {
     b.getPolicy.mockResolvedValue({ ...blank, readOnly: true })
     b.previewPolicy.mockResolvedValue({ opens: [{ kind: "readOnlyOff", values: [] }], narrows: [] })
-    b.savePolicy.mockRejectedValue({ code: "cancelled", message: "Nothing was changed.", key: "policy.declined" })
+    b.savePolicy.mockResolvedValue(blank)
     const onClose = open()
     fireEvent.click(await radio(/Ask before risky changes/))
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
-    expect(await screen.findByText("This opens access")).toBeTruthy()
-    expect(screen.getByText("Read only is turned off.")).toBeTruthy()
-    expect(screen.getByText("You will be asked to confirm.")).toBeTruthy()
-    expect(await screen.findByText("Nothing was changed.")).toBeTruthy()
+    const dialog = await screen.findByRole("alertdialog")
+    expect(within(dialog).getByText("Read only is turned off.")).toBeTruthy()
+    expect(within(dialog).getByText("acme-prod").tagName).toBe("BDI")
+    expect(b.savePolicy).not.toHaveBeenCalled()
+    // Cancel is the default focus.
+    await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" })))
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }))
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull())
+    expect(b.savePolicy).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    fireEvent.click(await within(await screen.findByRole("alertdialog")).findByRole("button", { name: "Open access" }))
+    await waitFor(() => expect(b.savePolicy).toHaveBeenCalledWith("acme-prod", { ...blank, readOnly: true }, blank, true))
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 
   it("reloads the policy when the rules changed elsewhere", async () => {

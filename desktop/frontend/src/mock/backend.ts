@@ -30,7 +30,6 @@ import type {
   AddedSite,
   ApplyResult,
   Assistant,
-  ChatAttachments,
   StagedAttachment,
   AssistantList,
   ApprovalOutcome,
@@ -246,6 +245,19 @@ function normalizeURL(raw: string) {
   }
 }
 
+/** Go's SameServer: same host (any case) and port, a default port counts as none, never https to http. */
+function sameServer(oldURL: string, newURL: string) {
+  try {
+    const o = new URL(oldURL)
+    const n = new URL(newURL)
+    if (o.protocol === "https:" && n.protocol !== "https:") return false
+    // URL.port is already "" for a scheme's default port.
+    return o.hostname.toLowerCase() === n.hostname.toLowerCase() && o.port === n.port
+  } catch {
+    return false
+  }
+}
+
 function save(added: StoredSite, replace: boolean): AddedSite {
   const exists = sites.some((s) => s.name === added.name)
   if (exists && !replace) fail("exists", `A site called "${added.name}" already exists.`, { field: "name" })
@@ -423,7 +435,6 @@ const chat = {
   title: new Set<(v: ChatTitle) => void>(),
   done: new Set<(v: ChatDone) => void>(),
   error: new Set<(v: ChatError) => void>(),
-  attachments: new Set<(v: ChatAttachments) => void>(),
 }
 
 // Attachments: the files staged for each conversation's next message. The
@@ -1098,13 +1109,26 @@ export const backend: Backend = {
       .sort((a, b) => a.name.localeCompare(b.name))
     changed()
   },
-  async changeURL(name, raw) {
+  async needsSignIn(name, raw) {
+    const s = find(name)
+    await wait(60)
+    return !sameServer(s.url, normalizeURL(raw))
+  },
+  async changeURL(name, raw, sign) {
     const s = find(name)
     if (s.auth === "oauth")
       fail("unavailable", "Sites that use browser sign-in cannot change address. Remove the site and add it again.")
     const url = normalizeURL(raw)
+    let user = s.user
+    if (!sameServer(s.url, url)) {
+      // Another server never gets the saved sign-in: it has to be typed again.
+      const session = s.auth === "password"
+      const ok = session ? sign.username.trim() && sign.password : sign.apiKey.trim() && sign.apiSecret.trim()
+      if (!ok) fail("invalid", "This address is on another server. Enter the site's sign-in again.", { key: "site.newServer" })
+      if (session) user = sign.username.trim()
+    }
     await wait(200)
-    sites = sites.map((x) => (x.name === name ? { ...x, url, plainHTTP: url.startsWith("http://") } : x))
+    sites = sites.map((x) => (x.name === name ? { ...x, url, user, plainHTTP: url.startsWith("http://") } : x))
     changed()
     return url
   },
@@ -1132,16 +1156,16 @@ export const backend: Backend = {
     await wait(100)
     return comparePolicies(policyOf(name), cleanPolicy(p))
   },
-  async savePolicy(name, base, p) {
+  async savePolicy(name, base, p, opensConfirmed) {
     find(name)
     await wait(300)
     const next = cleanPolicy(p)
     const cur = policyOf(name)
     if (JSON.stringify(cleanPolicy(base)) !== JSON.stringify(cur))
       fail("invalid", "These rules were changed somewhere else since you opened them. Open them again.", { key: "policy.changed" })
-    // The real app asks in a native dialog before it opens access; ?policy=decline plays a "No".
-    if (comparePolicies(cur, next).opens.length > 0 && params.get("policy") === "decline")
-      fail("cancelled", "Nothing was changed.", { key: "policy.declined" })
+    // The screen asks before it opens access; Go refuses an unconfirmed opening.
+    if (comparePolicies(cur, next).opens.length > 0 && !opensConfirmed)
+      fail("invalid", "Confirm the changes that open access before saving.", { key: "policy.confirmNeeded" })
     policies.set(name, next)
     return clonePolicy(next)
   },
@@ -1365,6 +1389,43 @@ export const backend: Backend = {
     const list = stagedOf(convID)
     if (list.length >= MAX_ATTACHMENTS) fail("invalid", `A message can carry at most ${MAX_ATTACHMENTS} attachments.`, { field: "attachment" })
     const a: StagedAttachment = { id: newID("att"), name, mime, size: bytes, kind: "image" }
+    list.push(a)
+    return { ...a }
+  },
+  async addDroppedFile(convID, name, base64) {
+    const c = findConv(convID)
+    await wait(80)
+    const bytes = Math.floor((base64.length * 3) / 4) - (base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0)
+    const ext = (name.split(".").pop() ?? "").toLowerCase()
+    const types: Record<string, [string, StagedAttachment["kind"]]> = {
+      txt: ["text/plain", "text"],
+      md: ["text/markdown", "text"],
+      csv: ["text/csv", "text"],
+      json: ["application/json", "text"],
+      xlsx: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text"],
+      docx: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text"],
+      pdf: ["application/pdf", "document"],
+      png: ["image/png", "image"],
+      jpg: ["image/jpeg", "image"],
+      jpeg: ["image/jpeg", "image"],
+      webp: ["image/webp", "image"],
+      gif: ["image/gif", "image"],
+    }
+    const type = types[ext]
+    if (!type) {
+      fail("invalid", `${name}: this type of file cannot be attached. Attach text, CSV, JSON, XLSX, DOCX, PDF, PNG, JPEG, WebP or GIF files.`, {
+        field: "attachment",
+      })
+    }
+    if (bytes > 10 << 20) fail("invalid", `${name}: this file is larger than 10 MB.`, { field: "attachment" })
+    if (type[1] === "image" && !takesImages(c)) {
+      fail("invalid", `${name}: the model of this conversation does not take images. Choose a model that reads images, or attach text.`, {
+        field: "attachment",
+      })
+    }
+    const list = stagedOf(convID)
+    if (list.length >= MAX_ATTACHMENTS) fail("invalid", `A message can carry at most ${MAX_ATTACHMENTS} attachments.`, { field: "attachment" })
+    const a: StagedAttachment = { id: newID("att"), name, mime: type[0], size: bytes, kind: type[1] }
     list.push(a)
     return { ...a }
   },
@@ -1760,7 +1821,6 @@ export const backend: Backend = {
   onChatTitle: (cb) => on(chat.title, cb),
   onChatDone: (cb) => on(chat.done, cb),
   onChatError: (cb) => on(chat.error, cb),
-  onChatAttachments: (cb) => on(chat.attachments, cb),
   onOpenRouterAuth: (cb) => on(openRouterListeners, cb),
 
   onConfigChanged: (cb) => on(configListeners, cb),

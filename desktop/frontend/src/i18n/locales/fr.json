@@ -272,7 +272,10 @@
       "hintSend": "pour envoyer",
       "hintNewLine": "pour une nouvelle ligne",
       "keyEnter": "Entrée",
-      "keyShift": "Maj"
+      "keyShift": "Maj",
+      "dropHere": "Déposez des fichiers ici pour les joindre",
+      "tooMany": "Un message peut contenir au plus {{max}} pièces jointes.",
+      "dropTooBig": "{{name}} dépasse 10 Mo."
     },
     "attachments": {
       "label": "Fichiers joints"
@@ -629,7 +632,12 @@
     "localOnly": "Modèles locaux uniquement",
     "localOnlyHelp": "Les conversations sur ce site ne peuvent utiliser qu’un serveur de modèles sur cet ordinateur (Ollama, LM Studio ou une adresse locale). Les modèles cloud d’Ollama (noms se terminant par cloud) sont refusés : ils tournent sur ollama.com.",
     "localOnlyFrom": "Défini sous l’ancien nom du site, « {{site}} ». Désactivez-le ici pour l’effacer.",
-    "saved": "Paramètres du site enregistrés"
+    "saved": "Paramètres du site enregistrés",
+    "confirmOnline": {
+      "title": "Laisser les modèles en ligne lire ce site ?",
+      "body": "Si « Modèles locaux uniquement » est désactivé, les conversations sur <site>{{site}}</site> peuvent utiliser des fournisseurs de modèles en ligne : les données de ce site peuvent donc leur parvenir.",
+      "action": "Autoriser les modèles en ligne"
+    }
   },
   "errors": {
     "title": {
@@ -659,7 +667,8 @@
       "newURLFailed": "La vérification de la nouvelle adresse a échoué.",
       "connected": "Connecté",
       "signInExpired": "Votre connexion a expiré. Reconnectez-vous pour continuer à utiliser ce site.",
-      "signInRejected": "Le site n’accepte plus cette connexion. Reconnectez-vous."
+      "signInRejected": "Le site n’accepte plus cette connexion. Reconnectez-vous.",
+      "newServer": "Cette adresse est sur un autre serveur. Saisissez à nouveau la connexion du site."
     },
     "chat": {
       "busy": "L’Assistant est encore en train de répondre dans cette conversation.",
@@ -697,14 +706,9 @@
       "tooMany": "Cette liste est trop longue.",
       "badEntry": "Cette entrée n’est pas valide : {{entry}}.",
       "changed": "Ces règles ont été modifiées ailleurs depuis leur ouverture. Ouvrez-les à nouveau.",
-      "cannotAsk": "Cette modification ouvre l’accès, et l’app ne peut pas vous demander de la confirmer ici.",
-      "cannotAskRemove": "Ce site a des règles de sécurité, et l’app ne peut pas vous demander ici de confirmer leur suppression.",
-      "cannotAskSite": "L’app ne peut pas vous demander de confirmer cette modification ici.",
-      "askFailed": "La confirmation n’a pas pu s’afficher.",
-      "declined": "Rien n’a été modifié.",
+      "confirmNeeded": "Confirmez les modifications qui ouvrent l’accès avant d’enregistrer.",
       "saveFailed": "Les règles n’ont pas pu être enregistrées.",
       "handEdited": "Ces règles ont été modifiées à la main d’une façon que cet écran ne peut pas afficher (une entrée vide). Corrigez-les dans le fichier de configuration.",
-      "busy": "Une autre modification des règles de sécurité attend votre réponse.",
       "anchors": "Ces règles partagent des parties avec d’autres entrées du fichier de configuration (ancres YAML ou clés de fusion). Modifiez-les dans le fichier."
     },
     "activity": {
@@ -777,21 +781,27 @@
     },
     "url": {
       "title": "Changer l’adresse",
-      "description": "À utiliser lorsque le site a déménagé à une nouvelle adresse. La connexion enregistrée reste la même.",
+      "description": "À utiliser lorsque le site a déménagé à une nouvelle adresse. Sur le même serveur, la connexion enregistrée reste la même.",
       "label": "Adresse du site",
       "hint": "Par exemple erp.example.com ou https://erp.example.com.",
       "submit": "Enregistrer l’adresse",
-      "done": "{{name}} utilise désormais {{url}}"
+      "done": "{{name}} utilise désormais {{url}}",
+      "newServer": {
+        "title": "Se reconnecter pour la nouvelle adresse",
+        "body": "Cette adresse est sur un autre serveur : la connexion enregistrée n’y est donc pas envoyée. Saisissez la connexion pour la nouvelle adresse."
+      }
     },
     "remove": {
-      "title": "Supprimer {{name}} ?",
+      "title": "Supprimer <site>{{name}}</site> ?",
       "bodyOAuth": "L’app se déconnecte d’abord du site : la connexion enregistrée cesse alors de fonctionner partout. Les apps qui utilisent ce site n’y ont plus accès. Rien n’est supprimé sur le site lui-même.",
       "bodyLocal": "Les identifiants de connexion enregistrés sont supprimés de cet ordinateur. Les apps qui utilisent ce site n’y ont plus accès. Rien n’est supprimé sur le site lui-même.",
       "submit": "Supprimer le site",
       "done": "{{name}} supprimé",
       "revoked": "Sa connexion a été révoquée sur le site.",
       "notRevoked": "La connexion n’a pas pu être révoquée sur le site ; elle expirera d’elle-même.",
-      "newDefault": "{{name}} est désormais le site par défaut."
+      "newDefault": "{{name}} est désormais le site par défaut.",
+      "rules": "Ses règles de sécurité sont supprimées avec lui.",
+      "rulesMaybe": "Les règles de sécurité qu’il peut avoir sont supprimées avec lui."
     }
   },
   "addSite": {
@@ -831,7 +841,10 @@
     },
     "replace": {
       "label": "Remplacer le site enregistré nommé {{name}}",
-      "hint": "Son adresse et sa connexion sont écrasées lorsque vous terminez."
+      "hint": "Son adresse et sa connexion sont écrasées lorsque vous terminez.",
+      "confirmTitle": "Remplacer <site>{{name}}</site> ?",
+      "confirmBody": "Sa connexion enregistrée est supprimée et son adresse est écrasée par la nouvelle.",
+      "confirmAction": "Remplacer le site"
     },
     "http": {
       "title": "Cette adresse n’est pas chiffrée",
@@ -1165,7 +1178,10 @@
       "label": "Quand demander avant un changement risqué",
       "always": "Toujours (refuser si l’app ne peut pas demander)",
       "default": "Quand l’app peut demander (par défaut)",
-      "never": "Jamais (ne rien demander)"
+      "never": "Jamais (ne rien demander)",
+      "title": "Ouvrir l’accès pour <site>{{site}}</site> ?",
+      "description": "L’enregistrement de ces règles permet à l’Assistant et aux apps connectées à ce site d’en faire plus qu’avant :",
+      "action": "Ouvrir l’accès"
     },
     "list": {
       "allowDoctypes": "Uniquement ces types de documents (DocTypes)",
@@ -1175,8 +1191,6 @@
       "denyMethods": "Méthodes serveur à refuser",
       "hint": "Séparez les entrées par des virgules ou des retours à la ligne. Laissez vide pour ne rien limiter."
     },
-    "opensTitle": "Cela ouvre l’accès",
-    "willConfirm": "On vous demandera de confirmer.",
     "opens": {
       "readOnlyOff": "La lecture seule est désactivée.",
       "confirmLooser": "Les changements risqués demandent moins souvent confirmation.",
@@ -1194,7 +1208,6 @@
       "generic": "Autre chose est ouvert."
     },
     "saved": "Règles de sécurité enregistrées",
-    "declined": "Rien n’a été modifié.",
     "reloaded": "Les règles affichées sont maintenant les règles actuelles. Vérifiez-les, puis enregistrez de nouveau.",
     "loadFailed": "Impossible de charger les règles de sécurité"
   },

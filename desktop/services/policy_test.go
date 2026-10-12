@@ -2,35 +2,14 @@ package services
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
 )
-
-// policyHost is a host that answers the policy dialog and records what it
-// was asked.
-type policyHost struct {
-	fakeHost
-	answer  bool
-	asked   [][]PolicyChange
-	removes []string
-}
-
-func (h *policyHost) ConfirmPolicyChange(site string, opens []PolicyChange) (bool, error) {
-	h.asked = append(h.asked, opens)
-	return h.answer, nil
-}
-
-func (h *policyHost) ConfirmRemoveRules(site string) (bool, error) {
-	h.removes = append(h.removes, site)
-	return h.answer, nil
-}
 
 const policyConfig = `# sites
 default_site: prod
@@ -48,14 +27,13 @@ sites:
     api_secret: s
 `
 
-func policySites(t *testing.T, answer bool) (*SitesService, *policyHost, string) {
+func policySites(t *testing.T) (*SitesService, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := os.WriteFile(path, []byte(policyConfig), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h := &policyHost{answer: answer}
-	return NewSitesService(h, path), h, path
+	return NewSitesService(&fakeHost{}, path), path
 }
 
 func kinds(cs []PolicyChange) string {
@@ -137,8 +115,8 @@ func TestCheckPolicy(t *testing.T) {
 	}
 }
 
-func TestSavePolicyNarrowingWritesWithoutAsking(t *testing.T) {
-	s, h, path := policySites(t, false)
+func TestSavePolicyNarrowingNeedsNoConfirmation(t *testing.T) {
+	s, path := policySites(t)
 	base, err := s.GetPolicy("prod")
 	if err != nil {
 		t.Fatal(err)
@@ -149,12 +127,9 @@ func TestSavePolicyNarrowingWritesWithoutAsking(t *testing.T) {
 	want := base
 	want.DenyDoctypes = []string{"File", "User"}
 	want.Confirm = "always"
-	got, err := s.SavePolicy("prod", base, want)
+	got, err := s.SavePolicy("prod", base, want, false)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(h.asked) != 0 {
-		t.Fatalf("asked for a narrowing change: %v", h.asked)
 	}
 	if !got.equal(want) {
 		t.Fatalf("stored %+v, want %+v", got, want)
@@ -173,24 +148,22 @@ func TestSavePolicyNarrowingWritesWithoutAsking(t *testing.T) {
 	}
 }
 
-func TestSavePolicyOpeningAsksAndDecliningWritesNothing(t *testing.T) {
-	s, h, path := policySites(t, false)
+// A change that opens access is saved only with opensConfirmed, which the
+// screen sets after showing PreviewPolicy's opens; narrowing never needs it.
+func TestSavePolicyOpeningNeedsConfirmation(t *testing.T) {
+	s, path := policySites(t)
 	before, _ := os.ReadFile(path)
 	base, _ := s.GetPolicy("prod")
 	loose := SitePolicy{} // read only off, User no longer refused
-	_, err := s.SavePolicy("prod", base, loose)
-	if errorCode(t, err) != CodeCancelled {
-		t.Fatalf("declined: %v", err)
-	}
-	if len(h.asked) != 1 || kinds(h.asked[0]) != "readOnlyOff= denyDoctypesRemoved=User" {
-		t.Fatalf("asked %v", h.asked)
+	_, err := s.SavePolicy("prod", base, loose, false)
+	if errorCode(t, err) != CodeInvalid || errKey(err) != "policy.confirmNeeded" {
+		t.Fatalf("unconfirmed opening: %v", err)
 	}
 	if after, _ := os.ReadFile(path); string(after) != string(before) {
-		t.Fatalf("a declined change was written:\n%s", after)
+		t.Fatalf("an unconfirmed change was written:\n%s", after)
 	}
 
-	h.answer = true
-	got, err := s.SavePolicy("prod", base, loose)
+	got, err := s.SavePolicy("prod", base, loose, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,120 +174,44 @@ func TestSavePolicyOpeningAsksAndDecliningWritesNothing(t *testing.T) {
 	if site, _ := config.LoadSite("prod", path); site.MCP != nil {
 		t.Fatalf("mcp kept: %+v", site.MCP)
 	}
-}
 
-// A host without the native dialog cannot loosen a site; it can narrow one.
-func TestSavePolicyWithoutDialogRefusesOpening(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	os.WriteFile(path, []byte(policyConfig), 0o600)
-	s := NewSitesService(&fakeHost{}, path)
-	base, _ := s.GetPolicy("prod")
-	if _, err := s.SavePolicy("prod", base, SitePolicy{}); errorCode(t, err) != CodeUnavailable {
-		t.Fatalf("opening without a dialog: %v", err)
+	// Confirming a change that only narrows is harmless.
+	if _, err := s.SavePolicy("dev", SitePolicy{}, SitePolicy{ReadOnly: true}, true); err != nil {
+		t.Fatalf("narrowing with confirmation: %v", err)
 	}
-	if _, err := s.SavePolicy("dev", SitePolicy{}, SitePolicy{ReadOnly: true}); err != nil {
-		t.Fatalf("narrowing without a dialog: %v", err)
+	if _, err := s.SavePolicy("dev", SitePolicy{ReadOnly: true}, SitePolicy{ReadOnly: true, Confirm: "always"}, false); err != nil {
+		t.Fatalf("narrowing without confirmation: %v", err)
 	}
 }
 
 // The screen's base must match the file: a change made elsewhere is never
-// overwritten unseen, and an approved change is refused when the file moved
-// on while the dialog was open.
+// overwritten unseen.
 func TestSavePolicyRefusesStaleBase(t *testing.T) {
-	s, h, path := policySites(t, true)
+	s, path := policySites(t)
 	base, _ := s.GetPolicy("prod")
-	if _, err := s.SavePolicy("prod", SitePolicy{}, base); errorCode(t, err) != CodeInvalid {
+	if _, err := s.SavePolicy("prod", SitePolicy{}, base, true); errorCode(t, err) != CodeInvalid {
 		t.Fatalf("stale base: %v", err)
 	}
 
-	// The file changes while the dialog is open.
-	h.answer = true
-	s2 := NewSitesService(&changingHost{policyHost: h, path: path}, path)
-	if _, err := s2.SavePolicy("prod", base, SitePolicy{}); errorCode(t, err) != CodeInvalid {
-		t.Fatalf("file changed during the dialog: %v", err)
+	// The file changes after the screen read it.
+	err := config.Edit(path, func(f *config.File) error {
+		return f.SetSiteMCP("prod", &config.MCPPolicy{ReadOnly: true, Confirm: "always"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SavePolicy("prod", base, SitePolicy{}, true); errorCode(t, err) != CodeInvalid {
+		t.Fatalf("file changed since the read: %v", err)
 	}
 	if site, _ := config.LoadSite("prod", path); site.MCP == nil || site.MCP.Confirm != "always" {
 		t.Fatalf("the other change was overwritten: %+v", site.MCP)
 	}
 }
 
-// changingHost edits the file while its dialog is open.
-type changingHost struct {
-	*policyHost
-	path string
-}
-
-func (h *changingHost) ConfirmPolicyChange(site string, opens []PolicyChange) (bool, error) {
-	err := config.Edit(h.path, func(f *config.File) error {
-		return f.SetSiteMCP(site, &config.MCPPolicy{ReadOnly: true, Confirm: "always"})
-	})
-	if err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func TestSavePolicyUnknownSite(t *testing.T) {
-	s, _, _ := policySites(t, true)
-	if _, err := s.SavePolicy("nope", SitePolicy{}, SitePolicy{ReadOnly: true}); errorCode(t, err) != CodeNotFound {
+	s, _ := policySites(t)
+	if _, err := s.SavePolicy("nope", SitePolicy{}, SitePolicy{ReadOnly: true}, false); errorCode(t, err) != CodeNotFound {
 		t.Fatalf("unknown site: %v", err)
-	}
-}
-
-func TestPolicyDialogText(t *testing.T) {
-	txt := policyChangeText("prod", []PolicyChange{
-		{Kind: policyReadOnlyOff, Values: []string{}},
-		{Kind: policyConfirmLooser, Values: []string{"if-supported", "never"}},
-		{Kind: policyDenyDoctypesRemoved, Values: []string{"User", "Role\x07"}},
-		{Kind: "future", Values: []string{"x"}},
-	})
-	for _, want := range []string{"prod", "Read only is turned off", "“when the app can ask” to “never”", "User", "Another change"} {
-		if !strings.Contains(txt, want) {
-			t.Errorf("missing %q in:\n%s", want, txt)
-		}
-	}
-	if strings.ContainsRune(txt, '\x07') {
-		t.Error("a control character reached the dialog")
-	}
-	many := make([]string, policyDialogValues+3)
-	for i := range many {
-		many[i] = "D" + strings.Repeat("x", i)
-	}
-	if txt := policyChangeText("p", []PolicyChange{{Kind: policyAllowDoctypesAdded, Values: many}}); !strings.Contains(txt, "and 3 more") {
-		t.Errorf("long list not cut:\n%s", txt)
-	}
-}
-
-func TestQuestionButtons(t *testing.T) {
-	win := questionButtons("windows", "Open access", "Cancel", false)
-	if win[0].label != "Yes" || !win[0].yes || win[1].label != "No" || !win[1].isDefault || win[0].isDefault {
-		t.Fatalf("windows: %+v", win)
-	}
-	if mac := questionButtons("darwin", "Attach", "Cancel", true); mac[0].label != "Attach" || !mac[0].isDefault || mac[1].label != "Cancel" || !mac[1].isCancel {
-		t.Fatalf("darwin: %+v", mac)
-	}
-}
-
-func TestPolicyDialogPutsUnlocksFirst(t *testing.T) {
-	txt := policyChangeText("p", []PolicyChange{
-		{Kind: policyAllowDoctypesAdded, Values: []string{"ToDo"}},
-		{Kind: policySensitiveUnlocked, Values: []string{"User"}},
-	})
-	if strings.Index(txt, "Sensitive") > strings.Index(txt, "in addition") || !strings.Contains(txt, "do not open access") {
-		t.Fatalf("order or warning:\n%s", txt)
-	}
-	if got := policyText("a\u202eb\u200bc"); got != "abc" {
-		t.Fatalf("policyText %q", got)
-	}
-}
-
-func TestSavePolicyBusyWhileAsking(t *testing.T) {
-	s, _, _ := policySites(t, true)
-	policyMu.Lock()
-	_, err := s.SavePolicy("dev", SitePolicy{}, SitePolicy{ReadOnly: true})
-	policyMu.Unlock()
-	if errorCode(t, err) != CodeUnavailable {
-		t.Fatalf("busy: %v", err)
 	}
 }
 
@@ -325,7 +222,7 @@ func TestPolicyRefusesWhatItCannotShow(t *testing.T) {
 	} {
 		path := filepath.Join(t.TempDir(), "config.yaml")
 		os.WriteFile(path, []byte("sites:\n  a:\n    url: https://a\n    mcp:\n"+mcp), 0o600)
-		s := NewSitesService(&policyHost{answer: true}, path)
+		s := NewSitesService(&fakeHost{}, path)
 		base, err := s.GetPolicy("a")
 		if name == "blank" {
 			if errorCode(t, err) != CodeInvalid {
@@ -338,7 +235,7 @@ func TestPolicyRefusesWhatItCannotShow(t *testing.T) {
 		}
 		next := base
 		next.DenyDoctypes = append(next.DenyDoctypes, "File")
-		if _, err := s.SavePolicy("a", base, next); errorCode(t, err) != CodeInvalid {
+		if _, err := s.SavePolicy("a", base, next, true); errorCode(t, err) != CodeInvalid {
 			t.Errorf("anchor: %v", err)
 		}
 	}
@@ -355,44 +252,17 @@ func TestSitePolicyCoversMCPPolicy(t *testing.T) {
 	}
 }
 
-func TestRemoveSiteWithRulesAsks(t *testing.T) {
-	ctx := context.Background()
-
-	// Declined: nothing is removed.
-	s, h, _ := policySites(t, false)
-	_, err := s.Remove(ctx, "prod")
-	var e *Error
-	if !errors.As(err, &e) || e.Code != CodeCancelled || e.Key != "policy.declined" {
-		t.Fatalf("declined remove: %v", err)
-	}
-	if !slices.Equal(h.removes, []string{"prod"}) {
-		t.Fatalf("asked %v", h.removes)
-	}
-	if _, err := s.GetPolicy("prod"); err != nil {
-		t.Fatalf("site gone after a declined remove: %v", err)
-	}
-
-	// A site without rules is removed without a question.
-	if _, err := s.Remove(ctx, "dev"); err != nil {
+// A site with rules is removed without a question (the screen says so
+// first), and its rules go with it.
+func TestRemoveSiteWithRules(t *testing.T) {
+	s, path := policySites(t)
+	if _, err := s.Remove(context.Background(), "prod"); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.removes) != 1 {
-		t.Fatalf("asked for a site without rules: %v", h.removes)
+	if b, _ := os.ReadFile(path); strings.Contains(string(b), "prod:") || strings.Contains(string(b), "deny_doctypes") {
+		t.Fatalf("site or rules kept:\n%s", b)
 	}
-
-	// Confirmed: the site and its rules are gone.
-	s, h, path := policySites(t, true)
-	if _, err := s.Remove(ctx, "prod"); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(path); strings.Contains(string(b), "prod:") || len(h.removes) != 1 {
-		t.Fatalf("site kept or not asked (%v):\n%s", h.removes, b)
-	}
-
-	// A host that cannot ask cannot remove a site with rules.
-	s, _, _ = policySites(t, true)
-	s.host = &fakeHost{}
-	if _, err := s.Remove(ctx, "prod"); !errors.As(err, &e) || e.Key != "policy.cannotAskRemove" {
-		t.Fatalf("remove without a dialog: %v", err)
+	if _, err := s.GetPolicy("prod"); errorCode(t, err) != CodeNotFound {
+		t.Fatalf("GetPolicy after remove: %v", err)
 	}
 }

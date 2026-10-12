@@ -252,16 +252,6 @@ export interface ChatApprovalClosed {
 }
 
 /**
- * ChatAttachments is the payload of EventChatAttachments: what AddAttachment
- * would answer, for the conversation the files were dropped on.
- */
-export interface ChatAttachments {
-    "convID": string;
-    "attachments": StagedAttachment[] | null;
-    "errors": string[] | null;
-}
-
-/**
  * ChatDelta is the payload of EventChatDelta.
  */
 export interface ChatDelta {
@@ -670,6 +660,18 @@ export interface Model {
      * Default marks the model the app picks first.
      */
     "default": boolean;
+}
+
+/**
+ * NewSignIn is the sign-in ChangeURL needs when a site moves to another
+ * server: an API key and secret for an API-key site, a username and
+ * password for a password site.
+ */
+export interface NewSignIn {
+    "apiKey": string;
+    "apiSecret": string;
+    "username": string;
+    "password": string;
 }
 
 /**

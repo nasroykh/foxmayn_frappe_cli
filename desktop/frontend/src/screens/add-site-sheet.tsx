@@ -9,6 +9,7 @@ import {
   IconKey,
   IconLockOpen,
   IconPlugConnected,
+  IconReplace,
   IconUser,
 } from "@tabler/icons-react"
 import * as React from "react"
@@ -22,6 +23,7 @@ import { SecretInput } from "@/components/secret-input"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
@@ -81,6 +83,8 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
   const [name, setName] = React.useState("")
   const [nameTouched, setNameTouched] = React.useState(false)
   const [replace, setReplace] = React.useState(false)
+  // Replacing a saved site deletes its sign-in: the person confirms first.
+  const [confirmReplace, setConfirmReplace] = React.useState(false)
   const [validation, setValidation] = React.useState<Validation | null>(null)
   const [showErrors, setShowErrors] = React.useState(false)
 
@@ -115,6 +119,7 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
     setName("")
     setNameTouched(false)
     setReplace(false)
+    setConfirmReplace(false)
     setValidation(null)
     setShowErrors(false)
     setMethod("oauth")
@@ -187,7 +192,9 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
   function next1(e: React.FormEvent) {
     e.preventDefault()
     setShowErrors(true)
-    if (step1OK) setStep(2)
+    if (!step1OK) return
+    if (validation?.exists && replace) setConfirmReplace(true)
+    else setStep(2)
   }
 
   function finish(site: AddedSite) {
@@ -639,6 +646,19 @@ export function AddSiteSheet({ open, onOpenChange }: { open: boolean; onOpenChan
             </>
           )}
         </SheetFooter>
+
+        <ConfirmDialog
+          open={confirmReplace}
+          onOpenChange={setConfirmReplace}
+          icon={<IconReplace />}
+          title={<Trans i18nKey="addSite.replace.confirmTitle" values={{ name: validation?.name ?? name }} components={{ site: <bdi /> }} />}
+          description={t("addSite.replace.confirmBody")}
+          confirmLabel={t("addSite.replace.confirmAction")}
+          onConfirm={() => {
+            setConfirmReplace(false)
+            setStep(2)
+          }}
+        />
       </SheetContent>
     </Sheet>
   )

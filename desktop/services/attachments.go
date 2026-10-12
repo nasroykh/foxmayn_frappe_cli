@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"path/filepath"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/attach"
@@ -17,16 +15,13 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// EventChatAttachments reports files dropped on a conversation's composer.
-// In Wails v3 beta.28 a native drop goes Go -> JS -> the Go runtime method
-// WindowFilesDropped, so the paths and the target conversation come from the
-// web view and any script in it could forge them. They are trusted only after
-// the person confirms them in a native dialog (ConfirmDroppedFiles).
-const EventChatAttachments = "chat:attachments"
-
-func init() {
-	application.RegisterEvent[ChatAttachments](EventChatAttachments)
-}
+// Dropped files never reach Go as paths. In Wails v3 beta.28 a native drop
+// goes Go -> JS -> the Go runtime method WindowFilesDropped, so a script in
+// the web view could name any path on the disk. The app therefore runs with
+// EnableFileDrop off, and the composer reads a dropped file's bytes through
+// the browser's File API, which only hands a page the files a person dropped
+// or picked, and sends them to AddDroppedFile. Only the native file dialog
+// (AddAttachment) gives Go a path.
 
 // attachFilter is what the attach dialog offers.
 const attachFilter = "*.txt;*.md;*.log;*.csv;*.tsv;*.json;*.xlsx;*.docx;*.pdf;*.png;*.jpg;*.jpeg;*.webp;*.gif"
@@ -51,66 +46,13 @@ type AttachResult struct {
 	Cancelled   bool               `json:"cancelled,omitempty"`
 }
 
-// ChatAttachments is the payload of EventChatAttachments: what AddAttachment
-// would answer, for the conversation the files were dropped on.
-type ChatAttachments struct {
-	ConvID      string             `json:"convID"`
-	Attachments []StagedAttachment `json:"attachments"`
-	Errors      []string           `json:"errors"`
-}
-
 // AttachDialogs is what attaching needs from the desktop shell: a dialog
 // that picks files to open. No paths means the person cancelled.
 type AttachDialogs interface {
 	OpenFilesDialog(title, filterName, pattern string) ([]string, error)
 }
 
-// DropConfirmer asks the person, in a native dialog the web view cannot
-// click, whether dropped files may be attached. A host without it cannot
-// accept drops.
-type DropConfirmer interface {
-	ConfirmDroppedFiles(paths []string) (bool, error)
-}
-
-var (
-	_ AttachDialogs = (*WailsHost)(nil)
-	_ DropConfirmer = (*WailsHost)(nil)
-)
-
-// ConfirmDroppedFiles asks "Attach dropped files?" with each file's name and
-// folder. The paths come from the web view, so Cancel is the default button:
-// Enter must not attach a forged path. false means the person cancelled or
-// closed the dialog.
-func (h *WailsHost) ConfirmDroppedFiles(paths []string) (bool, error) {
-	return h.askQuestion(dialogT("dropTitle"), dropConfirmText(paths), dialogT("dropAttach"), dialogT("dropCancel"), false)
-}
-
-// dropConfirmText is the dialog body. Names and folders lose control, bidi and
-// invisible characters (a name with U+202E would display reversed).
-func dropConfirmText(paths []string) string {
-	var b strings.Builder
-	b.WriteString(dialogT("dropBody") + "\n")
-	for _, p := range paths {
-		// First-strong isolates keep a Latin path whole inside an Arabic
-		// sentence, and an Arabic name whole inside an English one.
-		fmt.Fprintf(&b, "\n%s\n    %s", isolate(policyText(filepath.Base(p))), fmt.Sprintf(dialogT("dropIn"), isolate(policyText(filepath.Dir(p)))))
-	}
-	return b.String()
-}
-
-// isolate wraps s in FIRST STRONG ISOLATE ... POP DIRECTIONAL ISOLATE.
-func isolate(s string) string { return "\u2068" + s + "\u2069" }
-
-// dialogText makes a file name safe to show in a dialog: control characters
-// become spaces.
-func dialogText(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, s)
-}
+var _ AttachDialogs = (*WailsHost)(nil)
 
 // OpenFilesDialog asks for files to open.
 func (h *WailsHost) OpenFilesDialog(title, filterName, pattern string) ([]string, error) {
@@ -171,68 +113,43 @@ func (a *AssistantService) AddAttachment(convID string) (AttachResult, error) {
 	return a.attachPaths(st, convID, paths)
 }
 
-// HandleDroppedFiles attaches files dropped on the composer of convID (the
-// drop target's data-conv-id) and reports the outcome as
-// EventChatAttachments. A function, not a method, so Wails does not bind it.
-// The paths and convID come from JS through the Wails runtime, so a script in
-// the web view can forge them: nothing is read until the person confirms the
-// files in a native dialog. More than MaxPerMessage files are refused before
-// the dialog.
-func HandleDroppedFiles(a *AssistantService, convID string, paths []string) {
-	if a == nil || convID == "" || len(paths) == 0 {
-		return
-	}
-	refused := func(msg string) (AttachResult, error) {
-		res := AttachResult{Attachments: []StagedAttachment{}, Errors: []string{}}
-		if msg != "" {
-			res.Errors = append(res.Errors, msg)
-		}
-		return res, nil
-	}
-	res, err := func() (AttachResult, error) {
-		if len(paths) > attach.MaxPerMessage {
-			return refused(fmt.Sprintf("A message can carry at most %d attachments.", attach.MaxPerMessage))
-		}
-		if err := func() error {
-			_, st, done, err := a.enter()
-			if err != nil {
-				return err
-			}
-			defer done()
-			if _, err := st.GetConversation(convID); err != nil {
-				return wrapStoreErr(err)
-			}
-			return nil
-		}(); err != nil {
-			return AttachResult{}, err
-		}
-		dlg, ok := a.host.(DropConfirmer)
-		if !ok {
-			return refused("Dropping files needs a native dialog, which this app cannot show.")
-		}
-		// The dialog is modal: the service is not held while it is open.
-		yes, err := dlg.ConfirmDroppedFiles(paths)
-		if err != nil {
-			return refused("The confirmation dialog failed.")
-		}
-		if !yes {
-			return refused("")
-		}
-		_, st, done, err := a.enter()
-		if err != nil {
-			return AttachResult{}, err
-		}
-		defer done()
-		if _, err := st.GetConversation(convID); err != nil {
-			return AttachResult{}, wrapStoreErr(err)
-		}
-		return a.attachPaths(st, convID, paths)
-	}()
+// AddDroppedFile attaches a file dropped on a conversation's composer: its
+// name and its content as base64, read in the web view through the File API
+// (never a path, see above). At most MaxFileBytes decoded, checked like a
+// file from the dialog; the message holds at most MaxPerMessage.
+func (a *AssistantService) AddDroppedFile(convID, name, b64 string) (StagedAttachment, error) {
+	_, st, done, err := a.enter()
 	if err != nil {
-		res = AttachResult{Attachments: []StagedAttachment{}, Errors: []string{toServiceError(err).Message}}
+		return StagedAttachment{}, err
 	}
-	a.host.Emit(EventChatAttachments, ChatAttachments{ConvID: convID, Attachments: res.Attachments, Errors: res.Errors})
+	defer done()
+	if _, err := st.GetConversation(convID); err != nil {
+		return StagedAttachment{}, wrapStoreErr(err)
+	}
+	staged, err := st.StagedAttachments(convID)
+	if err != nil {
+		return StagedAttachment{}, wrapStoreErr(err)
+	}
+	if len(staged) >= attach.MaxPerMessage {
+		return StagedAttachment{}, invalid("attachment", fmt.Sprintf("A message can carry at most %d attachments.", attach.MaxPerMessage))
+	}
+	b64 = strings.TrimSpace(b64)
+	if len(b64) > base64.StdEncoding.EncodedLen(attach.MaxFileBytes) {
+		return StagedAttachment{}, invalid("attachment", fmt.Sprintf("%s is larger than 10 MB.", attachName(name)))
+	}
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return StagedAttachment{}, invalid("attachment", fmt.Sprintf("%s could not be read.", attachName(name)))
+	}
+	f, err := attach.Parse(name, data)
+	if err != nil {
+		return StagedAttachment{}, attachErr(err)
+	}
+	return a.stage(st, convID, f)
 }
+
+// attachName is a dropped file's name as a refusal shows it.
+func attachName(name string) string { return attach.CleanName(name) }
 
 func (a *AssistantService) attachPaths(st *store.Store, convID string, paths []string) (AttachResult, error) {
 	res := AttachResult{Attachments: []StagedAttachment{}, Errors: []string{}}

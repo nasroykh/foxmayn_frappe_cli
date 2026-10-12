@@ -429,6 +429,10 @@ func hasAnyImageExt(ext string) bool {
 	return false
 }
 
+// CleanName is name as the app shows and stores it: the last path element,
+// without control characters, at most 200 runes ("attachment" when empty).
+func CleanName(name string) string { return cleanName(name) }
+
 // cleanName keeps the base name, without control characters, at most 200
 // characters.
 func cleanName(name string) string {

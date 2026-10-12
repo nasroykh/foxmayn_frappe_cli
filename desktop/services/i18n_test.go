@@ -25,11 +25,11 @@ func TestSetLanguage(t *testing.T) {
 		}
 	}
 	s.SetLanguage("ar")
-	if got := dialogT("dropCancel"); got != "إلغاء" {
+	if got := dialogT("attachTitle"); got != "إرفاق ملفات" {
 		t.Errorf("dialogT in Arabic = %q", got)
 	}
 	s.SetLanguage("de")
-	if got := dialogT("dropCancel"); got != "Cancel" {
+	if got := dialogT("attachTitle"); got != "Attach files" {
 		t.Errorf("dialogT fallback = %q", got)
 	}
 }

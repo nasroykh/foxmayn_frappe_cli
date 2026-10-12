@@ -63,18 +63,10 @@ func main() {
 			BackgroundColour: services.WindowBackground(app.Env.IsDarkMode()),
 			Hidden:           true,
 			URL:              "/",
-			// Files dropped on an element marked data-file-drop-target (the
-			// chat composer) reach Go as paths; the composer names its
-			// conversation in data-conv-id.
-			EnableFileDrop: true,
-		})
-		w.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
-			ctx := e.Context()
-			convID := ""
-			if t := ctx.DropTargetDetails(); t != nil {
-				convID = t.Attributes["data-conv-id"]
-			}
-			go services.HandleDroppedFiles(assistant, convID, ctx.DroppedFiles())
+			// Off: Wails would pass dropped paths through the web view, where
+			// a script could forge them. The composer reads dropped files with
+			// the File API instead (services.AddDroppedFile).
+			EnableFileDrop: false,
 		})
 		time.AfterFunc(3*time.Second, func() {
 			if !w.IsVisible() {

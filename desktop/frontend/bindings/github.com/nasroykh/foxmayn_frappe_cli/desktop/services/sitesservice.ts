@@ -41,14 +41,17 @@ export function CancelSignIn(): $CancellablePromise<void> {
 }
 
 /**
- * ChangeURL points a site at a new address after checking its stored
- * credentials there. The check sends them to the new address, so it is
- * confirmed natively first (declined is cancelled, policy.declined). OAuth
+ * ChangeURL points a site at a new address after checking its sign-in
+ * there. On the same server (SameServer) the saved sign-in is checked there
+ * and kept. On another server the saved sign-in is never sent: the person
+ * types it again in sign (site.newServer when it is missing), and it
+ * replaces the saved one. The window never gets saved secrets back, so a
+ * script in it cannot send them to a server of its choosing this way. OAuth
  * sites are refused: their OAuth client and tokens belong to the old server,
  * so they sign in again instead (as in the CLI).
  */
-export function ChangeURL(name: string, rawURL: string): $CancellablePromise<string> {
-    return $Call.ByID(3021472746, name, rawURL);
+export function ChangeURL(name: string, rawURL: string, sign: $models.NewSignIn): $CancellablePromise<string> {
+    return $Call.ByID(3021472746, name, rawURL, sign);
 }
 
 /**
@@ -77,6 +80,15 @@ export function List(): $CancellablePromise<$models.SiteList> {
 }
 
 /**
+ * NeedsSignIn reports whether moving a site to rawURL takes a new sign-in
+ * (ChangeURL's sign): true when rawURL is on another server. An address
+ * that is not valid answers false; ChangeURL reports it.
+ */
+export function NeedsSignIn(name: string, rawURL: string): $CancellablePromise<boolean> {
+    return $Call.ByID(307720064, name, rawURL);
+}
+
+/**
  * PreviewPolicy checks a policy and says what saving it would open and
  * narrow compared with the site's current rules.
  */
@@ -85,12 +97,11 @@ export function PreviewPolicy(name: string, p: $models.SitePolicy): $Cancellable
 }
 
 /**
- * Remove deletes a site. A site with safety rules is removed only after a
- * native confirmation (No is the default; declined is cancelled,
- * policy.declined): its rules go with it, and a site added again under that
- * name starts with none. An OAuth site's token is then revoked on the server,
- * at most revokeTimeout, before the config lock is taken; a failed
- * revocation is reported but does not stop the removal (as in the CLI).
+ * Remove deletes a site; its safety rules go with it (the screen says so
+ * first), and a site added again under that name starts with none. An OAuth
+ * site's token is then revoked on the server, at most revokeTimeout, before
+ * the config lock is taken; a failed revocation is reported but does not
+ * stop the removal (as in the CLI).
  */
 export function Remove(name: string): $CancellablePromise<$models.RemoveResult> {
     return $Call.ByID(4058840745, name);
@@ -116,11 +127,12 @@ export function ReopenSignInPage(): $CancellablePromise<void> {
  * SavePolicy replaces a site's safety rules. base is the policy the screen
  * showed: when the file changed since (another window, ffc, an editor), the
  * save is refused so nothing is overwritten unseen. A change that opens
- * access asks first in a native dialog; declining saves nothing. It returns
- * the rules as stored.
+ * access is saved only with opensConfirmed: the screen shows PreviewPolicy's
+ * opens for exactly this base and p and asks first (without it,
+ * policy.confirmNeeded). It returns the rules as stored.
  */
-export function SavePolicy(name: string, base: $models.SitePolicy, p: $models.SitePolicy): $CancellablePromise<$models.SitePolicy> {
-    return $Call.ByID(3659342630, name, base, p);
+export function SavePolicy(name: string, base: $models.SitePolicy, p: $models.SitePolicy, opensConfirmed: boolean): $CancellablePromise<$models.SitePolicy> {
+    return $Call.ByID(3659342630, name, base, p, opensConfirmed);
 }
 
 /**
