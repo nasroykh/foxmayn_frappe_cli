@@ -182,7 +182,7 @@ func TestSetDefaultRenameChangeURL(t *testing.T) {
 	if err := s.Rename("a", " "); code(err) != CodeInvalid {
 		t.Errorf("rename to blank: %v", err)
 	}
-	newURL, err := s.ChangeURL(ctx, "c", other.URL)
+	newURL, err := s.ChangeURL(ctx, "c", other.URL, NewSignIn{APIKey: frappetest.APIKey, APISecret: frappetest.APISecret})
 	if err != nil || newURL != other.URL {
 		t.Fatalf("ChangeURL = %q, %v", newURL, err)
 	}
@@ -193,7 +193,7 @@ func TestSetDefaultRenameChangeURL(t *testing.T) {
 	// A URL whose site refuses the credentials is not saved.
 	refusing := frappetest.New(t)
 	refusing.Handle("GET /api/method/frappe.auth.get_logged_user", frappetest.ErrorHandler(frappetest.Permission("Not permitted")))
-	if _, err := s.ChangeURL(ctx, "a", refusing.URL); err == nil {
+	if _, err := s.ChangeURL(ctx, "a", refusing.URL, NewSignIn{APIKey: frappetest.APIKey, APISecret: frappetest.APISecret}); err == nil {
 		t.Error("ChangeURL to a refusing site succeeded")
 	}
 	if cfg, _ := config.Read(path); cfg.Sites["a"].URL != fake.URL {
@@ -207,7 +207,7 @@ func TestChangeURLRefusesOAuth(t *testing.T) {
 	if err := (sitesetup.Store{Path: path}).Init("o", config.SiteConfig{URL: fake.URL, AccessToken: frappetest.Token}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ChangeURL(context.Background(), "o", "https://elsewhere.example.com"); code(err) != CodeUnavailable {
+	if _, err := s.ChangeURL(context.Background(), "o", "https://elsewhere.example.com", NewSignIn{}); code(err) != CodeUnavailable {
 		t.Errorf("ChangeURL on OAuth: %v", err)
 	}
 }

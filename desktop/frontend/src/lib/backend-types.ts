@@ -14,7 +14,6 @@ import type {
   BrowserSignInRequest,
   ChatApproval as GeneratedChatApproval,
   ChatApprovalClosed,
-  ChatAttachments as GeneratedChatAttachments,
   ChatDelta,
   ChatDone,
   ChatError,
@@ -35,6 +34,7 @@ import type {
   ImportResult,
   KeyStatus,
   Model,
+  NewSignIn,
   OpenRouterAuth as GeneratedOpenRouterAuth,
   PasswordRequest,
   PolicyChange as GeneratedPolicyChange,
@@ -85,6 +85,7 @@ export type {
   ImportResult,
   KeyStatus,
   Model,
+  NewSignIn,
   PasswordRequest,
   Preview,
   ProviderInfo,
@@ -193,12 +194,6 @@ export interface AttachResult extends Omit<GeneratedAttachResult, "attachments" 
   cancelled: boolean
 }
 
-/** chat:attachments: files dropped on a conversation's composer, read by Go. */
-export interface ChatAttachments extends Omit<GeneratedChatAttachments, "attachments" | "errors"> {
-  attachments: StagedAttachment[]
-  errors: string[]
-}
-
 export interface ConversationDetail extends Omit<GeneratedConversationDetail, "messages" | "runUsage"> {
   messages: ChatMessage[]
   /** Tokens and cost of each run, shown under the run's last message (msgID). */
@@ -282,7 +277,7 @@ export interface Backend {
 
   listSites(): Promise<SiteList>
   validate(name: string, url: string): Promise<Validation>
-  /** The add* methods ask in a native dialog before replacing an existing site; declined is cancelled (policy.declined). */
+  /** The add* methods replace an existing site of that name when replace is set; the screen asks first (no native dialog). */
   addWithAPIKey(req: APIKeyRequest): Promise<AddedSite>
   addWithPassword(req: PasswordRequest): Promise<AddedSite>
   signInWithBrowser(req: BrowserSignInRequest): Promise<AddedSite>
@@ -291,15 +286,25 @@ export interface Backend {
   check(name: string): Promise<CheckResult>
   setDefault(name: string): Promise<void>
   rename(oldName: string, newName: string): Promise<void>
-  /** Asks in a native dialog before the saved sign-in is sent to a new address; declined is cancelled (policy.declined). */
-  changeURL(name: string, url: string): Promise<string>
-  /** A site with safety rules asks in a native dialog first; declined is cancelled (policy.declined). */
+  /**
+   * On the same server the saved sign-in is kept (sign is ignored). On another
+   * server it is never sent: sign must carry the new one (invalid, site.newServer
+   * when it is missing). OAuth sites are refused.
+   */
+  changeURL(name: string, url: string, sign: NewSignIn): Promise<string>
+  /** True when url is on another server than the site's, so changeURL needs a sign-in. */
+  needsSignIn(name: string, url: string): Promise<boolean>
+  /** The screen asks first when the site has safety rules (no native dialog). */
   remove(name: string): Promise<RemoveResult>
   getPolicy(name: string): Promise<SitePolicy>
-  /** What saving would open (needs a native confirmation) and narrow. */
+  /** What saving would open (needs opensConfirmed) and narrow. */
   previewPolicy(name: string, p: SitePolicy): Promise<PolicyPreview>
-  /** base is the policy the screen loaded: a stale one is refused (invalid, policy.changed); a declined confirmation is cancelled (policy.declined). */
-  savePolicy(name: string, base: SitePolicy, p: SitePolicy): Promise<SitePolicy>
+  /**
+   * base is the policy the screen loaded: a stale one is refused (invalid,
+   * policy.changed). A change that opens access is refused (invalid,
+   * policy.confirmNeeded) unless opensConfirmed: the screen asks first.
+   */
+  savePolicy(name: string, base: SitePolicy, p: SitePolicy, opensConfirmed: boolean): Promise<SitePolicy>
 
   listAssistants(): Promise<AssistantList>
   preview(req: ConnectRequest): Promise<Preview>
@@ -319,6 +324,8 @@ export interface Backend {
   addAttachment(convID: string): Promise<AttachResult>
   /** Stages a pasted image (base64 or a data URL, at most 5 MB). */
   addPastedImage(convID: string, base64: string): Promise<StagedAttachment>
+  /** Stages a file dropped on the composer, read in the web view (base64 without a data: prefix). Go checks type and size. */
+  addDroppedFile(convID: string, name: string, base64: string): Promise<StagedAttachment>
   /** Refused (not_found) for a file already sent or of another conversation. */
   removeAttachment(convID: string, id: string): Promise<void>
   /** The files staged for the next message. */
@@ -375,7 +382,7 @@ export interface Backend {
   /** "" for none. Refused while a run is active, and for a cloud provider on a local-only site. */
   setConversationProfile(convID: string, profileID: string): Promise<Conversation>
   getSiteSettings(site: string): Promise<SiteSettings>
-  /** Turning localOnly off asks in a native dialog first; declined is cancelled (policy.declined). */
+  /** Turning localOnly off: the screen asks first (no native dialog). */
   saveSiteSettings(s: SiteSettings): Promise<SiteSettings>
   /** Opens an engine session (may sign in) but calls no tool. */
   promptPreview(convID: string): Promise<PromptPreview>
@@ -402,8 +409,6 @@ export interface Backend {
   onChatTitle(cb: (ev: ChatTitle) => void): () => void
   onChatDone(cb: (ev: ChatDone) => void): () => void
   onChatError(cb: (ev: ChatError) => void): () => void
-  /** Files dropped on a composer (marked data-file-drop-target, data-conv-id). */
-  onChatAttachments(cb: (ev: ChatAttachments) => void): () => void
   onOpenRouterAuth(cb: (ev: OpenRouterAuth) => void): () => void
 
   onConfigChanged(cb: (ev: ConfigChanged) => void): () => void

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -319,36 +320,9 @@ func nameMessage(name string, err error) string {
 	return "This name can't be used: " + text.Sanitize(err.Error())
 }
 
-// SiteConfirmer asks the person, in a native dialog the web view cannot
-// click, before a change that sends a site's saved sign-in to an address or
-// lets its data reach a cloud model: changing its address, replacing it, or
-// turning off Local models only. A host without it refuses those changes.
-type SiteConfirmer interface {
-	ConfirmNewAddress(site, oldURL, newURL string) (bool, error)
-	ConfirmReplaceSite(site, newURL string) (bool, error)
-	ConfirmLocalOnlyOff(site string) (bool, error)
-}
-
-// confirmSite asks through the host's SiteConfirmer. Declined is cancelled
-// (policy.declined); a host that cannot ask refuses (policy.cannotAskSite).
-func confirmSite(host Host, ask func(SiteConfirmer) (bool, error)) error {
-	c, ok := host.(SiteConfirmer)
-	if !ok {
-		return keyed(CodeUnavailable, "policy.cannotAskSite", nil)
-	}
-	yes, err := ask(c)
-	if err != nil {
-		return keyed(CodeFailed, "policy.askFailed", err)
-	}
-	if !yes {
-		return keyed(CodeCancelled, "policy.declined", nil)
-	}
-	return nil
-}
-
 // prepare validates a request's name and URL and refuses an existing name
-// unless replace is set. Replacing a site deletes its saved sign-in, so it
-// is confirmed natively first.
+// unless replace is set (the screen asks before it sets it: replacing a site
+// deletes its saved sign-in).
 func (s *SitesService) prepare(name, rawURL string, replace bool) (string, string, bool, error) {
 	v := s.Validate(name, rawURL)
 	switch {
@@ -359,12 +333,6 @@ func (s *SitesService) prepare(name, rawURL string, replace bool) (string, strin
 	case v.Exists && !replace:
 		return "", "", false, &Error{Code: CodeExists, Field: "name",
 			Message: fmt.Sprintf("You already have a site called %q. Pick another name, or choose to replace it.", v.Name)}
-	}
-	if v.Exists {
-		err := confirmSite(s.host, func(c SiteConfirmer) (bool, error) { return c.ConfirmReplaceSite(v.Name, v.URL) })
-		if err != nil {
-			return "", "", false, err
-		}
 	}
 	return v.Name, v.URL, v.Exists, nil
 }
@@ -581,12 +549,25 @@ func (s *SitesService) Rename(oldName, newName string) error {
 	return nil
 }
 
-// ChangeURL points a site at a new address after checking its stored
-// credentials there. The check sends them to the new address, so it is
-// confirmed natively first (declined is cancelled, policy.declined). OAuth
+// NewSignIn is the sign-in ChangeURL needs when a site moves to another
+// server: an API key and secret for an API-key site, a username and
+// password for a password site.
+type NewSignIn struct {
+	APIKey    string `json:"apiKey"`
+	APISecret string `json:"apiSecret"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+}
+
+// ChangeURL points a site at a new address after checking its sign-in
+// there. On the same server (SameServer) the saved sign-in is checked there
+// and kept. On another server the saved sign-in is never sent: the person
+// types it again in sign (site.newServer when it is missing), and it
+// replaces the saved one. The window never gets saved secrets back, so a
+// script in it cannot send them to a server of its choosing this way. OAuth
 // sites are refused: their OAuth client and tokens belong to the old server,
 // so they sign in again instead (as in the CLI).
-func (s *SitesService) ChangeURL(ctx context.Context, name, rawURL string) (string, error) {
+func (s *SitesService) ChangeURL(ctx context.Context, name, rawURL string, sign NewSignIn) (string, error) {
 	site, _, err := s.lookup(name)
 	if err != nil {
 		return "", err
@@ -598,9 +579,10 @@ func (s *SitesService) ChangeURL(ctx context.Context, name, rawURL string) (stri
 	if err != nil {
 		return "", invalid("url", "This doesn't look like a web address: "+text.Sanitize(err.Error()))
 	}
-	if newURL != site.URL {
-		old := site.URL
-		if err := confirmSite(s.host, func(c SiteConfirmer) (bool, error) { return c.ConfirmNewAddress(name, old, newURL) }); err != nil {
+	moved := !SameServer(site.URL, newURL)
+	if moved {
+		site, err = withNewSignIn(site, sign)
+		if err != nil {
 			return "", err
 		}
 	}
@@ -608,7 +590,15 @@ func (s *SitesService) ChangeURL(ctx context.Context, name, rawURL string) (stri
 	if _, err := s.verify(ctx, site); err != nil {
 		return "", siteError(stepNewURL, err)
 	}
-	if err := s.store.SetURL(name, newURL); err != nil {
+	if moved {
+		// PutSite keeps the site's mcp block when MCP is nil, so its safety
+		// rules stay.
+		site.MCP = nil
+		err = s.store.AddOrInit(name, site)
+	} else {
+		err = s.store.SetURL(name, newURL)
+	}
+	if err != nil {
 		return "", newError(CodeFailed, "The new address could not be saved.", err)
 	}
 	s.mu.Lock()
@@ -617,35 +607,75 @@ func (s *SitesService) ChangeURL(ctx context.Context, name, rawURL string) (stri
 	return newURL, nil
 }
 
-// Remove deletes a site. A site with safety rules is removed only after a
-// native confirmation (No is the default; declined is cancelled,
-// policy.declined): its rules go with it, and a site added again under that
-// name starts with none. An OAuth site's token is then revoked on the server,
-// at most revokeTimeout, before the config lock is taken; a failed
-// revocation is reported but does not stop the removal (as in the CLI).
+// NeedsSignIn reports whether moving a site to rawURL takes a new sign-in
+// (ChangeURL's sign): true when rawURL is on another server. An address
+// that is not valid answers false; ChangeURL reports it.
+func (s *SitesService) NeedsSignIn(name, rawURL string) (bool, error) {
+	site, _, err := s.lookup(name)
+	if err != nil {
+		return false, err
+	}
+	newURL, err := sitesetup.NormalizeURL(rawURL)
+	if err != nil {
+		return false, nil
+	}
+	return !SameServer(site.URL, newURL), nil
+}
+
+// SameServer reports whether two site addresses reach the same server: the
+// same host name (any case) and port, where a scheme's default port counts
+// as no port, and not https to http (that would send the sign-in in clear).
+// http to https on the same host is the same server.
+func SameServer(oldURL, newURL string) bool {
+	o, err1 := url.Parse(oldURL)
+	n, err2 := url.Parse(newURL)
+	if err1 != nil || err2 != nil || o.Hostname() == "" {
+		return false
+	}
+	if o.Scheme == "https" && n.Scheme != "https" {
+		return false
+	}
+	port := func(u *url.URL) string {
+		p := u.Port()
+		if (u.Scheme == "https" && p == "443") || (u.Scheme == "http" && p == "80") {
+			return ""
+		}
+		return p
+	}
+	return strings.EqualFold(o.Hostname(), n.Hostname()) && port(o) == port(n)
+}
+
+// withNewSignIn replaces a site's saved sign-in with sign, of the same kind:
+// an API key and secret, or a username and password. A missing part is
+// site.newServer.
+func withNewSignIn(site config.SiteConfig, sign NewSignIn) (config.SiteConfig, error) {
+	if site.IsSessionAuth() {
+		site.Username, site.Password = strings.TrimSpace(sign.Username), sign.Password
+		if site.Username == "" || site.Password == "" {
+			return site, keyed(CodeInvalid, "site.newServer", nil)
+		}
+		return site, nil
+	}
+	site.APIKey, site.APISecret = strings.TrimSpace(sign.APIKey), strings.TrimSpace(sign.APISecret)
+	if site.APIKey == "" || site.APISecret == "" {
+		return site, keyed(CodeInvalid, "site.newServer", nil)
+	}
+	return site, nil
+}
+
+// Remove deletes a site; its safety rules go with it (the screen says so
+// first), and a site added again under that name starts with none. An OAuth
+// site's token is then revoked on the server, at most revokeTimeout, before
+// the config lock is taken; a failed revocation is reported but does not
+// stop the removal (as in the CLI).
 func (s *SitesService) Remove(ctx context.Context, name string) (RemoveResult, error) {
 	site, _, err := s.lookup(name)
 	if err != nil {
 		return RemoveResult{}, err
 	}
-	if !policyOf(site.MCP).equal(SitePolicy{}) {
-		// Held until the site is gone, so no rules are saved meanwhile.
-		if !policyMu.TryLock() {
-			return RemoveResult{}, keyed(CodeUnavailable, "policy.busy", nil)
-		}
-		defer policyMu.Unlock()
-		c, ok := s.host.(PolicyConfirmer)
-		if !ok {
-			return RemoveResult{}, keyed(CodeUnavailable, "policy.cannotAskRemove", nil)
-		}
-		yes, err := c.ConfirmRemoveRules(name)
-		if err != nil {
-			return RemoveResult{}, keyed(CodeFailed, "policy.askFailed", err)
-		}
-		if !yes {
-			return RemoveResult{}, keyed(CodeCancelled, "policy.declined", nil)
-		}
-	}
+	// Held until the site is gone, so no rules are saved meanwhile.
+	policyMu.Lock()
+	defer policyMu.Unlock()
 	var res RemoveResult
 	if site.RefreshToken != "" || site.AccessToken != "" {
 		revoked, err := s.revoke(ctx, site, revokeTimeout)

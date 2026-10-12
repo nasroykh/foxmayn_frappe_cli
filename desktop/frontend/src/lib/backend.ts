@@ -127,7 +127,8 @@ export const backend: Backend = {
   check: (name) => SitesService.Check(name),
   setDefault: (name) => SitesService.SetDefault(name),
   rename: (oldName, newName) => SitesService.Rename(oldName, newName),
-  changeURL: (name, url) => SitesService.ChangeURL(name, url),
+  changeURL: (name, url, sign) => SitesService.ChangeURL(name, url, sign),
+  needsSignIn: (name, url) => SitesService.NeedsSignIn(name, url),
   remove: (name) => SitesService.Remove(name),
   getPolicy: async (name) => policy(await SitesService.GetPolicy(name)),
   previewPolicy: async (name, p): Promise<PolicyPreview> => {
@@ -135,7 +136,7 @@ export const backend: Backend = {
     const changes = (l: wire.PolicyChange[] | null) => (l ?? []).map((c) => ({ ...c, values: c.values ?? [] }))
     return { opens: changes(r.opens), narrows: changes(r.narrows) }
   },
-  savePolicy: async (name, base, p) => policy(await SitesService.SavePolicy(name, base, p)),
+  savePolicy: async (name, base, p, opensConfirmed) => policy(await SitesService.SavePolicy(name, base, p, opensConfirmed)),
 
   listAssistants: () => AssistantsService.List(),
   preview: (req) => AssistantsService.Preview(req),
@@ -149,6 +150,7 @@ export const backend: Backend = {
     return { attachments: (r.attachments ?? []).map(staged), errors: r.errors ?? [], cancelled: r.cancelled ?? false }
   },
   addPastedImage: async (convID, base64) => staged(await AssistantService.AddPastedImage(convID, base64)),
+  addDroppedFile: async (convID, name, base64) => staged(await AssistantService.AddDroppedFile(convID, name, base64)),
   removeAttachment: (convID, id) => AssistantService.RemoveAttachment(convID, id),
   listAttachments: async (convID) => ((await AssistantService.ListAttachments(convID)) ?? []).map(staged),
   cancelRun: (runID) => AssistantService.Cancel(runID),
@@ -206,10 +208,6 @@ export const backend: Backend = {
   onChatTitle: (cb) => Events.On("chat:title", (ev) => cb(ev.data)),
   onChatDone: (cb) => Events.On("chat:done", (ev) => cb(ev.data)),
   onChatError: (cb) => Events.On("chat:error", (ev) => cb(ev.data)),
-  onChatAttachments: (cb) =>
-    Events.On("chat:attachments", (ev) =>
-      cb({ ...ev.data, attachments: (ev.data.attachments ?? []).map(staged), errors: ev.data.errors ?? [] }),
-    ),
   onOpenRouterAuth: (cb) => Events.On("auth:openrouter", (ev) => cb(ev.data as OpenRouterAuth)),
 
   onConfigChanged: (cb) => Events.On("config:changed", (ev) => cb(ev.data)),

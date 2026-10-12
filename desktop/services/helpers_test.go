@@ -43,28 +43,6 @@ type fakeHost struct {
 	themes  []bool
 	openURL func(string) error
 	subs    map[string][]func(any)
-	// siteNo declines the site dialogs (SiteConfirmer); siteAsks records them.
-	siteNo   bool
-	siteAsks []string
-}
-
-func (h *fakeHost) siteAsk(q string) (bool, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.siteAsks = append(h.siteAsks, q)
-	return !h.siteNo, nil
-}
-
-func (h *fakeHost) ConfirmNewAddress(site, oldURL, newURL string) (bool, error) {
-	return h.siteAsk("address " + site + " " + oldURL + " -> " + newURL)
-}
-
-func (h *fakeHost) ConfirmReplaceSite(site, newURL string) (bool, error) {
-	return h.siteAsk("replace " + site + " " + newURL)
-}
-
-func (h *fakeHost) ConfirmLocalOnlyOff(site string) (bool, error) {
-	return h.siteAsk("localOff " + site)
 }
 
 func (h *fakeHost) Emit(name string, data any) {

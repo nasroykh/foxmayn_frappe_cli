@@ -19,10 +19,11 @@ import (
 // apps connected through ffc mcp alike. The Safety screen edits them here.
 //
 // A change that opens access (read only turned off, an allow list lifted or
-// widened, a deny entry removed, fewer questions) is confirmed in a native
-// dialog before anything is written: the page can call SavePolicy directly,
-// so a script in the web view must not be able to loosen a site by itself.
-// A change that only narrows access is saved without a question.
+// widened, a deny entry removed, fewer questions) is confirmed in the app
+// before anything is written: the screen shows what PreviewPolicy says it
+// opens and saves with opensConfirmed. That dialog is in the web view, so it
+// proves what was shown, not that a person clicked (ADR-005). A change that
+// only narrows access is saved without a question.
 
 // SitePolicy is a site's MCP policy as the Safety screen edits it. Empty
 // lists mean no limit (allow) or nothing refused (deny); an empty Confirm is
@@ -84,19 +85,10 @@ const (
 	policyMethodsEnabled    = "serverMethodsEnabled"
 )
 
-// PolicyConfirmer asks the person, in a native dialog the web view cannot
-// click, whether a change that opens access to a site may be saved, and
-// whether a site may be removed with its rules. A host without it cannot
-// loosen a site's rules or remove a site that has some.
-type PolicyConfirmer interface {
-	ConfirmPolicyChange(site string, opens []PolicyChange) (bool, error)
-	ConfirmRemoveRules(site string) (bool, error)
-}
-
 // toolNamePattern is the shape of an ffc tool name.
 var toolNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 
-// policyMu keeps two saves from asking and writing at the same time.
+// policyMu keeps two saves, or a save and a removal, from running at once.
 var policyMu sync.Mutex
 
 func policyOf(p *config.MCPPolicy) SitePolicy {
@@ -367,14 +359,11 @@ func (s *SitesService) PreviewPolicy(name string, p SitePolicy) (PolicyPreview, 
 // SavePolicy replaces a site's safety rules. base is the policy the screen
 // showed: when the file changed since (another window, ffc, an editor), the
 // save is refused so nothing is overwritten unseen. A change that opens
-// access asks first in a native dialog; declining saves nothing. It returns
-// the rules as stored.
-func (s *SitesService) SavePolicy(name string, base, p SitePolicy) (SitePolicy, error) {
-	// A save that comes while another waits for its dialog is refused, not
-	// queued: the person must not answer a question meant for another.
-	if !policyMu.TryLock() {
-		return SitePolicy{}, keyed(CodeUnavailable, "policy.busy", nil)
-	}
+// access is saved only with opensConfirmed: the screen shows PreviewPolicy's
+// opens for exactly this base and p and asks first (without it,
+// policy.confirmNeeded). It returns the rules as stored.
+func (s *SitesService) SavePolicy(name string, base, p SitePolicy, opensConfirmed bool) (SitePolicy, error) {
+	policyMu.Lock()
 	defer policyMu.Unlock()
 	p, err := checkPolicy(p)
 	if err != nil {
@@ -390,20 +379,8 @@ func (s *SitesService) SavePolicy(name string, base, p SitePolicy) (SitePolicy, 
 	if cur.equal(p) {
 		return cur, nil
 	}
-	if opens := comparePolicies(cur, p).Opens; len(opens) > 0 {
-		// Asked before the config lock is taken: the dialog may stay open
-		// longer than the lock may be held.
-		c, ok := s.host.(PolicyConfirmer)
-		if !ok {
-			return SitePolicy{}, keyed(CodeUnavailable, "policy.cannotAsk", nil)
-		}
-		yes, err := c.ConfirmPolicyChange(name, opens)
-		if err != nil {
-			return SitePolicy{}, keyed(CodeFailed, "policy.askFailed", err)
-		}
-		if !yes {
-			return SitePolicy{}, keyed(CodeCancelled, "policy.declined", nil)
-		}
+	if len(comparePolicies(cur, p).Opens) > 0 && !opensConfirmed {
+		return SitePolicy{}, keyed(CodeInvalid, "policy.confirmNeeded", nil)
 	}
 	err = config.Edit(s.path, func(f *config.File) error {
 		site, ok := f.Site(name)
@@ -411,7 +388,7 @@ func (s *SitesService) SavePolicy(name string, base, p SitePolicy) (SitePolicy, 
 			return &Error{Code: CodeNotFound, Message: fmt.Sprintf("There is no site called %q any more.", name)}
 		}
 		// What was confirmed is the change from cur: refuse if the file moved
-		// on while the dialog was open.
+		// on since it was read.
 		if !faithful(site.MCP) || !policyOf(site.MCP).equal(cur) {
 			return keyed(CodeInvalid, "policy.changed", nil)
 		}

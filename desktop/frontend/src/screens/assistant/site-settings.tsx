@@ -1,8 +1,9 @@
 // Settings > Assistant > Sites: per-site instructions and the local-only switch.
-import { IconAlertTriangle } from "@tabler/icons-react"
+import { IconAlertTriangle, IconWorld } from "@tabler/icons-react"
 import * as React from "react"
-import { useTranslation } from "react-i18next"
+import { Trans, useTranslation } from "react-i18next"
 
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field"
@@ -24,6 +25,9 @@ export function SiteAssistantSettings() {
   const [ss, setSS] = React.useState<SiteSettings | null>(null)
   const [error, setError] = React.useState<AppError | null>(null)
   const [saving, setSaving] = React.useState(false)
+  // What is saved now, to tell when the save turns Local models only off.
+  const [savedLocalOnly, setSavedLocalOnly] = React.useState(false)
+  const [confirmOnline, setConfirmOnline] = React.useState(false)
 
   const chosen = site || sites.data?.defaultSite || list[0]?.name || ""
 
@@ -33,7 +37,11 @@ export function SiteAssistantSettings() {
     setSS(null)
     setError(null)
     backend.getSiteSettings(chosen).then(
-      (s) => live && setSS(s),
+      (s) => {
+        if (!live) return
+        setSS(s)
+        setSavedLocalOnly(s.localOnly)
+      },
       (err) => live && setError(appError(err)),
     )
     return () => {
@@ -41,19 +49,25 @@ export function SiteAssistantSettings() {
     }
   }, [chosen])
 
-  async function save(e: React.FormEvent) {
+  function onSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!ss) return
+    // Letting online models read the site is asked first.
+    if (savedLocalOnly && !ss.localOnly) setConfirmOnline(true)
+    else void save()
+  }
+
+  async function save() {
     if (!ss) return
     setSaving(true)
     setError(null)
     try {
-      setSS(await backend.saveSiteSettings(ss))
+      const saved = await backend.saveSiteSettings(ss)
+      setSS(saved)
+      setSavedLocalOnly(saved.localOnly)
       toast.add({ title: t("siteSettings.saved"), type: "success" })
     } catch (err) {
-      const e = appError(err)
-      setError(e)
-      // Declined in the native dialog: show what is still saved.
-      if (e.key === "policy.declined") setSS(await backend.getSiteSettings(ss.site).catch(() => ss))
+      setError(appError(err))
     } finally {
       setSaving(false)
     }
@@ -70,7 +84,7 @@ export function SiteAssistantSettings() {
       {list.length === 0 ? (
         <p className="text-muted-foreground text-sm">{t("siteSettings.noSites")}</p>
       ) : (
-        <form onSubmit={(e) => void save(e)} className="flex flex-col gap-4 rounded-xl border p-4">
+        <form onSubmit={onSubmit} className="flex flex-col gap-4 rounded-xl border p-4">
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="site-settings-site">{t("siteSettings.site")}</FieldLabel>
@@ -126,6 +140,20 @@ export function SiteAssistantSettings() {
           </div>
         </form>
       )}
+      <ConfirmDialog
+        open={confirmOnline}
+        onOpenChange={setConfirmOnline}
+        icon={<IconWorld />}
+        title={t("siteSettings.confirmOnline.title")}
+        description={
+          <Trans i18nKey="siteSettings.confirmOnline.body" values={{ site: ss?.site }} components={{ site: <bdi /> }} />
+        }
+        confirmLabel={t("siteSettings.confirmOnline.action")}
+        onConfirm={() => {
+          setConfirmOnline(false)
+          void save()
+        }}
+      />
     </section>
   )
 }

@@ -270,7 +270,10 @@
       "hintSend": "to send",
       "hintNewLine": "for a new line",
       "keyEnter": "Enter",
-      "keyShift": "Shift"
+      "keyShift": "Shift",
+      "dropHere": "Drop files here to attach them",
+      "tooMany": "A message can carry at most {{max}} attachments.",
+      "dropTooBig": "{{name}} is larger than 10 MB."
     },
     "attachments": {
       "label": "Attached files"
@@ -624,7 +627,12 @@
     "localOnly": "Local models only",
     "localOnlyHelp": "Conversations on this site may use only a model server on this computer (Ollama, LM Studio or a local address). Ollama cloud models (names ending in cloud) are refused: they run on ollama.com.",
     "localOnlyFrom": "Set under the site's earlier name \"{{site}}\". Turn it off here to clear it.",
-    "saved": "Site settings saved"
+    "saved": "Site settings saved",
+    "confirmOnline": {
+      "title": "Let online models read this site?",
+      "body": "With Local models only off, conversations about <site>{{site}}</site> can use online model providers, so data from this site can reach them.",
+      "action": "Allow online models"
+    }
   },
   "errors": {
     "title": {
@@ -654,7 +662,8 @@
       "newURLFailed": "Checking the new address failed.",
       "connected": "Connected",
       "signInExpired": "Your sign-in has expired. Sign in again to keep using this site.",
-      "signInRejected": "The site no longer accepts this sign-in. Sign in again."
+      "signInRejected": "The site no longer accepts this sign-in. Sign in again.",
+      "newServer": "This address is on another server. Enter the site's sign-in again."
     },
     "chat": {
       "busy": "The assistant is still answering in this conversation.",
@@ -692,14 +701,9 @@
       "tooMany": "That list is too long.",
       "badEntry": "This entry is not valid: {{entry}}.",
       "changed": "These rules were changed somewhere else since you opened them. Open them again.",
-      "cannotAsk": "This change opens access, and the app cannot ask you to confirm it here.",
-      "cannotAskRemove": "This site has safety rules, and the app cannot ask you to confirm removing them here.",
-      "cannotAskSite": "The app cannot ask you to confirm this change here.",
-      "askFailed": "The confirmation could not be shown.",
-      "declined": "Nothing was changed.",
+      "confirmNeeded": "Confirm the changes that open access before saving.",
       "saveFailed": "The rules could not be saved.",
       "handEdited": "These rules were edited by hand in a way this screen cannot show (a blank entry). Fix them in the config file.",
-      "busy": "Another change to the safety rules is waiting for your answer.",
       "anchors": "These rules share parts with other entries of the config file (YAML anchors or merge keys). Edit them in the file."
     },
     "activity": {
@@ -772,21 +776,27 @@
     },
     "url": {
       "title": "Change address",
-      "description": "Use this when the site moved to a new address. The saved sign-in stays the same.",
+      "description": "Use this when the site moved to a new address. On the same server the saved sign-in stays the same.",
       "label": "Site address",
       "hint": "For example erp.example.com or https://erp.example.com.",
       "submit": "Save address",
-      "done": "{{name}} now uses {{url}}"
+      "done": "{{name}} now uses {{url}}",
+      "newServer": {
+        "title": "Sign in again for the new address",
+        "body": "This address is on another server, so the saved sign-in is not sent there. Enter the sign-in for the new address."
+      }
     },
     "remove": {
-      "title": "Remove {{name}}?",
+      "title": "Remove <site>{{name}}</site>?",
       "bodyOAuth": "The app signs out of the site first, so the saved sign-in stops working everywhere. Apps using this site lose access to it. Nothing on the site itself is deleted.",
       "bodyLocal": "The saved sign-in details are deleted from this computer. Apps using this site lose access to it. Nothing on the site itself is deleted.",
       "submit": "Remove site",
       "done": "Removed {{name}}",
       "revoked": "Its sign-in was revoked on the site.",
       "notRevoked": "The sign-in could not be revoked on the site; it expires on its own.",
-      "newDefault": "{{name}} is now the default site."
+      "newDefault": "{{name}} is now the default site.",
+      "rules": "Its safety rules are deleted with it.",
+      "rulesMaybe": "Any safety rules it has are deleted with it."
     }
   },
   "addSite": {
@@ -826,7 +836,10 @@
     },
     "replace": {
       "label": "Replace the saved site called {{name}}",
-      "hint": "Its address and sign-in are overwritten when you finish."
+      "hint": "Its address and sign-in are overwritten when you finish.",
+      "confirmTitle": "Replace <site>{{name}}</site>?",
+      "confirmBody": "Its saved sign-in is deleted, and its address is overwritten by the new one.",
+      "confirmAction": "Replace site"
     },
     "http": {
       "title": "This address is not encrypted",
@@ -1160,7 +1173,10 @@
       "label": "When to ask before risky changes",
       "always": "Always (refuse when the app cannot ask)",
       "default": "When the app can ask (default)",
-      "never": "Never (ask nothing)"
+      "never": "Never (ask nothing)",
+      "title": "Open access for <site>{{site}}</site>?",
+      "description": "Saving these rules lets the Assistant and the apps connected to this site do more than before:",
+      "action": "Open access"
     },
     "list": {
       "allowDoctypes": "Only these document types (DocTypes)",
@@ -1170,8 +1186,6 @@
       "denyMethods": "Server methods to refuse",
       "hint": "Separate entries with commas or new lines. Leave empty for no limit."
     },
-    "opensTitle": "This opens access",
-    "willConfirm": "You will be asked to confirm.",
     "opens": {
       "readOnlyOff": "Read only is turned off.",
       "confirmLooser": "Risky changes ask less often.",
@@ -1189,7 +1203,6 @@
       "generic": "Something else is opened."
     },
     "saved": "Safety rules saved",
-    "declined": "Nothing was changed.",
     "reloaded": "The rules shown are now the current ones. Check them, then save again.",
     "loadFailed": "Could not load the safety rules"
   },

@@ -72,6 +72,9 @@ function notify(err: unknown) {
 }
 
 const MAX_PASTED_BYTES = 5 << 20
+// Go enforces both limits; the composer stops early on the same numbers.
+const MAX_ATTACHMENTS = 5
+const MAX_DROPPED_BYTES = 10 << 20
 
 /** Reads a pasted file as a data URL. */
 function readDataURL(file: Blob): Promise<string> {
@@ -113,6 +116,7 @@ export function ChatPane({
   const [focused, setFocused] = React.useState(false)
   const [staged, setStaged] = React.useState<StagedAttachment[]>([])
   const [attaching, setAttaching] = React.useState(false)
+  const [dropping, setDropping] = React.useState(false)
   const [runUsage, setRunUsage] = React.useState<RunUsage[]>([])
   const [total, setTotal] = React.useState<UsageTotals>(noUsage)
   const [renaming, setRenaming] = React.useState<string | null>(null)
@@ -181,12 +185,6 @@ export function ChatPane({
   // The chat events. Cleaned up on unmount; the reducer drops other runs' events.
   React.useEffect(() => {
     const offs = [
-      // Files dropped on this composer, read by Go.
-      backend.onChatAttachments((ev) => {
-        if (ev.convID !== convRef.current) return
-        setStaged((s) => [...s, ...ev.attachments])
-        for (const msg of ev.errors) attachErrorRef.current(msg)
-      }),
       backend.onChatDelta((ev) => dispatch({ type: "delta", convID: ev.convID, runID: ev.runID, text: ev.text })),
       backend.onChatTool((ev) => dispatch({ type: "tool", ev })),
       backend.onChatUsage((ev) => dispatch({ type: "usage", ev })),
@@ -263,8 +261,6 @@ export function ChatPane({
   function attachError(message: string) {
     toast.add({ title: t("chat.composer.attachFailed"), description: message, type: "error" })
   }
-  const attachErrorRef = React.useRef(attachError)
-  attachErrorRef.current = attachError
 
   async function pickFiles() {
     const id = convID
@@ -292,6 +288,53 @@ export function ChatPane({
     } catch (err) {
       attachError(appError(err).message)
     }
+  }
+
+  // Dropped files are read here with the File API (the Wails file drop is off)
+  // and handed to Go one by one, which sniffs and checks each of them.
+  async function dropFiles(files: File[]) {
+    const id = convID
+    const room = Math.max(0, MAX_ATTACHMENTS - staged.length)
+    if (files.length > room) attachError(t("chat.composer.tooMany", { max: MAX_ATTACHMENTS }))
+    for (const f of files.slice(0, room)) {
+      if (f.size > MAX_DROPPED_BYTES) {
+        attachError(t("chat.composer.dropTooBig", { name: f.name }))
+        continue
+      }
+      try {
+        const url = await readDataURL(f)
+        const a = await backend.addDroppedFile(id, f.name, url.slice(url.indexOf(",") + 1))
+        if (convRef.current === id) setStaged((s) => [...s, a])
+      } catch (err) {
+        attachError(appError(err).message)
+      }
+    }
+  }
+
+  // Only drags that carry files are ours. stopPropagation keeps the Wails
+  // runtime (it listens on the document) from setting dropEffect "none".
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files")
+  function onDragOver(e: React.DragEvent<HTMLFormElement>) {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = active ? "none" : "copy"
+    if (!active) setDropping(true)
+  }
+  function onDragLeave(e: React.DragEvent<HTMLFormElement>) {
+    if (!hasFiles(e)) return
+    e.stopPropagation()
+    // Moving over a child of the form is not leaving it.
+    if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return
+    setDropping(false)
+  }
+  function onDrop(e: React.DragEvent<HTMLFormElement>) {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    setDropping(false)
+    if (active) return
+    void dropFiles(Array.from(e.dataTransfer.files))
   }
 
   function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
@@ -686,14 +729,22 @@ export function ChatPane({
       </div>
 
       <form
-        className="[&.file-drop-target-active]:bg-muted border-t p-3"
-        data-file-drop-target
-        data-conv-id={convID}
+        className={cn("border-t p-3", dropping && "bg-muted")}
+        data-dropping={dropping || undefined}
+        onDragEnter={onDragOver}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
         onSubmit={(e) => {
           e.preventDefault()
           void send()
         }}
       >
+        {dropping && (
+          <p role="status" className="text-muted-foreground mx-auto mb-2 max-w-3xl rounded-lg border border-dashed p-2 text-center text-sm">
+            {t("chat.composer.dropHere")}
+          </p>
+        )}
         {staged.length > 0 && (
           <div className="mx-auto mb-2 max-w-3xl">
             <AttachmentChips items={staged} label={t("chat.composer.staged")} onRemove={(a) => void unstage(a)} />

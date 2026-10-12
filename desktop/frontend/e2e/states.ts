@@ -53,6 +53,59 @@ export const states: State[] = [
     },
   },
   {
+    name: "safety-confirm",
+    reach: async (page) => {
+      await openSafety(page)
+      // acme-prod refuses User; lifting that opens access, which the dialog confirms.
+      await page.locator("#safety-denyDoctypes").fill("")
+      await page.locator("button[form=safety-form]").click()
+      await expect(page.getByRole("alertdialog")).toBeVisible({ timeout: 5000 })
+    },
+  },
+  {
+    name: "change-address-signin",
+    reach: async (page) => {
+      // The second site (acme-staging, API key); another host asks for the sign-in again.
+      await page.locator("main [role=listitem]").nth(1).locator("button:has(svg.tabler-icon-dots)").click()
+      await page.locator("[role=menuitem]:has(svg.tabler-icon-link)").click()
+      await expect(dialog(page)).toBeVisible()
+      await page.locator("#one-field").fill("https://erp.other-server.example")
+      await expect(page.getByTestId("url-sign-in")).toBeVisible({ timeout: 5000 })
+    },
+  },
+  {
+    name: "replace-site-confirm",
+    reach: async (page) => {
+      await page.locator('[data-sidebar="menu-button"]').nth(6).click()
+      await expect(dialog(page)).toBeVisible()
+      await page.locator("#site-url").fill("https://staging.acme.example")
+      await page.locator("#site-name").fill("acme-staging")
+      await page.locator("#site-replace").click()
+      await dialog(page).locator("button[form=site-form]").click()
+      await expect(page.getByRole("alertdialog")).toBeVisible({ timeout: 5000 })
+    },
+  },
+  {
+    name: "local-only-off-confirm",
+    reach: async (page) => {
+      await goTo(page, "settings")
+      await page.getByRole("tab").nth(1).click()
+      const section = page.locator("section[aria-labelledby=site-settings-title]")
+      await section.scrollIntoViewIfNeeded()
+      const sw = section.locator("[data-slot=switch]")
+      await expect(sw).toBeVisible({ timeout: 5000 })
+      // On and saved first, then off: only turning it off asks.
+      await sw.click()
+      await expect(sw).toHaveAttribute("aria-checked", "true")
+      await section.locator("button[type=submit]").click()
+      await expect(page.locator('[data-slot="toast"]').first()).toBeVisible({ timeout: 5000 })
+      await sw.click()
+      await expect(sw).toHaveAttribute("aria-checked", "false")
+      await section.locator("button[type=submit]").click()
+      await expect(page.getByRole("alertdialog")).toBeVisible({ timeout: 5000 })
+    },
+  },
+  {
     name: "add-site",
     reach: async (page) => {
       await page.locator('[data-sidebar="menu-button"]').nth(6).click()
@@ -102,10 +155,10 @@ export const states: State[] = [
       await expect(page.locator("#chat-input")).toBeVisible()
       // The mock's samples, in order: a CSV, an XLSX, a PDF and a DOCX.
       // The paperclip (the chips have buttons too, before it).
-      const clip = page.locator("form[data-file-drop-target] button:has(svg.tabler-icon-paperclip)")
+      const clip = page.locator("form:has(#chat-input) button:has(svg.tabler-icon-paperclip)")
       for (let i = 1; i <= 4; i++) {
         await clip.click()
-        await expect(page.locator("form[data-file-drop-target] ul li").nth(i - 1)).toBeVisible({ timeout: 5000 })
+        await expect(page.locator("form:has(#chat-input) ul li").nth(i - 1)).toBeVisible({ timeout: 5000 })
       }
     },
   },

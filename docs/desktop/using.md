@@ -36,7 +36,7 @@ The Sites screen lists every site in `~/.config/ffc/config.yaml`, including ones
 
 Click **Add a site** (sidebar or Sites screen). Four steps:
 
-1. **Site address and name.** Enter the address (for example `erp.example.com`). The name is suggested from it; it is how ffc and connected apps refer to the site. To replace a saved site with the same name, tick **Replace the saved site called <name>**; the app asks in a system dialog before it deletes the saved sign-in.
+1. **Site address and name.** Enter the address (for example `erp.example.com`). The name is suggested from it; it is how ffc and connected apps refer to the site. To replace a saved site with the same name, tick **Replace the saved site called <name>**; the app asks before it deletes the saved sign-in.
 2. **Choose how to sign in:**
    - **Sign in with your browser** (recommended). The app never sees your password, and it works with two-factor authentication.
    - **Use an API key.**
@@ -61,8 +61,8 @@ Each site's menu has:
 | **Make default** | The site used when no site is named (by ffc and by apps set to "Default site"). |
 | **Connect an app** | Opens the connect dialog with this site selected. |
 | **Rename…** | Changes the site's name. Apps pinned to the old name stop working until you reconnect them. |
-| **Change address…** | Moves the site to a new address after checking the saved credentials against it. It asks first in a system dialog, because the saved key or password is sent to the new address. Not available for browser sign-in sites: remove and add them again. |
-| **Remove…** | Removes the site. If it has safety rules, a system dialog asks first: the rules are removed with it. For a browser sign-in site, the app then revokes its token on the site (best effort, 10 seconds). |
+| **Change address…** | Moves the site to a new address. On the same server (for example `http://` to `https://`, or another path), the saved key or password is checked there and kept. On another server, enter the API key and secret, or the username and password, again: the saved ones are never sent to a different server. Not available for browser sign-in sites: remove and add them again. |
+| **Remove…** | Removes the site. It asks first, and says so when the site's safety rules go with it. For a browser sign-in site, the app then revokes its token on the site (best effort, 10 seconds). |
 | **Safety rules** | What the Assistant and the connected apps may do on the site (below). |
 
 ### Safety rules
@@ -73,7 +73,7 @@ A site's safety rules are its ffc [per-site policy](../mcp/safety.md#per-site-po
 - **Ask before risky changes** (the default): changes are allowed; deleting, cancelling, sharing and similar actions ask first when the app can.
 - **Custom**: the read-only switch, when to ask (always, when the app can ask, never), and the lists: only these document types, document types to refuse, only these tools, only these server methods, server methods to refuse.
 
-The rules are saved in the ffc config file (its comments and other settings are kept). A change that opens access asks you to confirm it in a system dialog first, listing what it opens: read only turned off, fewer questions, a limit lifted or widened, an entry no longer refused, a sensitive document type made writable (users, roles, scripts, settings…), a server method refused by default made callable, or server methods callable again. A change that only narrows access is saved at once. If the rules were changed elsewhere (another window, ffc, an editor) since you opened them, the save is refused and they are shown again.
+The rules are saved in the ffc config file (its comments and other settings are kept). A change that opens access asks you to confirm it first, listing what it opens: read only turned off, fewer questions, a limit lifted or widened, an entry no longer refused, a sensitive document type made writable (users, roles, scripts, settings…), a server method refused by default made callable, or server methods callable again. A change that only narrows access is saved at once. If the rules were changed elsewhere (another window, ffc, an editor) since you opened them, the save is refused and they are shown again.
 
 ## Connect apps
 
@@ -141,7 +141,7 @@ Presets cannot be changed. **Duplicate** one in Settings > Assistant > Profiles 
 Settings > Assistant > Site settings holds two things per site:
 
 - **Instructions for this site.** Sent to the model in every conversation on the site, with the profile's own instructions.
-- **Local models only.** Conversations on the site may use only a model server on this computer: Ollama, LM Studio or a custom server whose address is `localhost` or a loopback address. Hosted providers are refused. So are Ollama cloud models (names ending in `cloud`, such as `gpt-oss:120b-cloud`): the local Ollama passes them on to ollama.com. The rule is checked when you create a conversation, when you change its profile, before every run and before each model turn. Turning it off asks first in a system dialog.
+- **Local models only.** Conversations on the site may use only a model server on this computer: Ollama, LM Studio or a custom server whose address is `localhost` or a loopback address. Hosted providers are refused. So are Ollama cloud models (names ending in `cloud`, such as `gpt-oss:120b-cloud`): the local Ollama passes them on to ollama.com. The rule is checked when you create a conversation, when you change its profile, before every run and before each model turn. Turning it off asks first.
 
 The settings follow a site that was renamed with `ffc` (same address, new name), as long as the old name is no longer in the ffc config; a rename never turns local only off. A conversation remembers the address its site had: if the site now points elsewhere, the run is refused and you start a new conversation.
 
@@ -241,7 +241,7 @@ A file of another format or version, or one that does not hold together, is refu
 
 ### Attachments
 
-Drop files on the message box, click the paperclip, or paste an image, and they go with your next message. The app asks before it attaches dropped files (Cancel is the default). You can remove one before you send.
+Drop files on the message box, click the paperclip, or paste an image, and they go with your next message. The app reads only the files you drop; it never opens a file by its path on your disk. You can remove one before you send.
 
 - Text, Markdown, log, CSV, TSV and JSON files are sent as text. An XLSX workbook is sent as CSV, one block per sheet. A Word document (DOCX) is sent as its text: paragraphs, and tables as tab-separated rows (headers, footers, comments and tracked deletions are left out). Old .doc and .xls files and password-protected ones are refused: save them as DOCX or XLSX first.
 - PNG, JPEG, WebP and GIF images are sent only to a model that reads images: Claude 3 and later; OpenAI GPT-4o, GPT-4.1, GPT-4.5, GPT-5 and the o1, o3 and o4 chat models (not mini previews, audio, realtime, search, Codex, image or embedding models); and Gemini 1.5 and later. OpenRouter and models on your computer get no images yet. If you switch a conversation to a model without images, earlier images reach it as a short note.

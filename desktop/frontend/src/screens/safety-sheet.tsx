@@ -1,10 +1,12 @@
 // The Safety rules sheet of a site: its ffc policy (what the Assistant and
 // every connected app may do there). Most people pick one of two cards; the
-// lists sit under Custom. A save that opens access is confirmed by Go in a
-// native dialog, so this screen only warns in advance.
-import { IconAlertTriangle, IconEye, IconInfoCircle, IconListCheck, IconShieldCheck } from "@tabler/icons-react"
+// lists sit under Custom. A save that opens access is confirmed here, in an
+// alert dialog, before it is sent; Go refuses an unconfirmed opening.
+import { IconAlertTriangle, IconEye, IconInfoCircle, IconListCheck, IconLockOpen, IconShieldCheck } from "@tabler/icons-react"
 import * as React from "react"
-import { useTranslation } from "react-i18next"
+import { Trans, useTranslation } from "react-i18next"
+
+import { ConfirmDialog } from "@/components/confirm-dialog"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -49,6 +51,9 @@ const splitList = (s: string) =>
     .filter(Boolean)
 
 const noLists = (p: SitePolicy) => LIST_KEYS.every((k) => p[k].length === 0)
+
+/** Whether a site has any safety rule at all (an empty policy is no key in the config). */
+export const hasRules = (p: SitePolicy) => p.readOnly || p.confirm !== "" || !noLists(p)
 
 /** A policy that is exactly one of the two cards opens as it; anything else as Custom. */
 export function choiceOf(p: SitePolicy): Choice {
@@ -154,9 +159,10 @@ function SafetyBody({ site, onClose }: { site: Site; onClose: () => void }) {
   const [draft, setDraft] = React.useState<Draft | null>(null)
   const [loadError, setLoadError] = React.useState<AppError | null>(null)
   const [saving, setSaving] = React.useState(false)
-  const [opens, setOpens] = React.useState<PolicyChange[]>([])
+  // The save that waits for the person to confirm what it opens.
+  const [pending, setPending] = React.useState<{ next: SitePolicy; opens: PolicyChange[] } | null>(null)
   const [error, setError] = React.useState<AppError | null>(null)
-  const [note, setNote] = React.useState<"declined" | "reloaded" | null>(null)
+  const [note, setNote] = React.useState<"reloaded" | null>(null)
 
   const load = React.useCallback(async () => {
     setLoadError(null)
@@ -180,29 +186,47 @@ function SafetyBody({ site, onClose }: { site: Site; onClose: () => void }) {
     setSaving(true)
     setError(null)
     setNote(null)
-    setOpens([])
     try {
       const next = policyOf(draft)
       const pv = await backend.previewPolicy(site.name, next)
-      // The native confirmation comes from Go on save; say so beforehand.
-      setOpens(pv.opens)
-      await backend.savePolicy(site.name, base, next)
-      toast.add({ title: t("safety.saved"), type: "success" })
-      onClose()
-    } catch (err) {
-      const ae = appError(err)
-      if (ae.key === "policy.declined") {
-        setNote("declined")
-      } else if (ae.key === "policy.changed") {
-        setOpens([])
-        setError(ae)
-        await load()
-        setNote("reloaded")
-      } else {
-        setError(ae)
+      if (pv.opens.length > 0) {
+        // Ask first; confirm() sends the save.
+        setPending({ next, opens: pv.opens })
+        return
       }
+      await commit(next, false)
+    } catch (err) {
+      fail(err)
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function commit(next: SitePolicy, opensConfirmed: boolean) {
+    if (!base) return
+    await backend.savePolicy(site.name, base, next, opensConfirmed)
+    toast.add({ title: t("safety.saved"), type: "success" })
+    onClose()
+  }
+
+  async function confirm() {
+    if (!pending) return
+    setSaving(true)
+    try {
+      await commit(pending.next, true)
+    } catch (err) {
+      fail(err)
+    } finally {
+      setPending(null)
+      setSaving(false)
+    }
+  }
+
+  function fail(err: unknown) {
+    const ae = appError(err)
+    setError(ae)
+    if (ae.key === "policy.changed") {
+      void load().then(() => setNote("reloaded"))
     }
   }
 
@@ -301,26 +325,6 @@ function SafetyBody({ site, onClose }: { site: Site; onClose: () => void }) {
               </FieldSet>
             )}
 
-            {opens.length > 0 && (
-              <Alert data-testid="safety-opens">
-                <IconInfoCircle />
-                <AlertTitle>{t("safety.opensTitle")}</AlertTitle>
-                <AlertDescription>
-                  <ul className="list-disc ps-4">
-                    {opens.map((c, i) => (
-                      <OpenLine key={i} change={c} />
-                    ))}
-                  </ul>
-                  <p className="mt-1">{t("safety.willConfirm")}</p>
-                </AlertDescription>
-              </Alert>
-            )}
-            {note === "declined" && (
-              <Alert role="status">
-                <IconInfoCircle />
-                <AlertDescription>{t("safety.declined")}</AlertDescription>
-              </Alert>
-            )}
             {note === "reloaded" && (
               <Alert role="status">
                 <IconInfoCircle />
@@ -343,10 +347,29 @@ function SafetyBody({ site, onClose }: { site: Site; onClose: () => void }) {
           {t("common.cancel")}
         </Button>
         <Button type="submit" form="safety-form" disabled={saving || !draft}>
-          {saving && <Spinner data-icon="inline-start" />}
+          {saving && !pending && <Spinner data-icon="inline-start" />}
           {t("common.save")}
         </Button>
       </SheetFooter>
+
+      <ConfirmDialog
+        open={pending !== null}
+        onOpenChange={(o) => !o && setPending(null)}
+        icon={<IconLockOpen />}
+        title={
+          <Trans i18nKey="safety.confirm.title" values={{ site: site.name }} components={{ site: <bdi /> }} />
+        }
+        description={t("safety.confirm.description")}
+        confirmLabel={t("safety.confirm.action")}
+        onConfirm={() => void confirm()}
+        busy={saving}
+      >
+        <ul className="list-disc ps-8 text-sm" data-testid="safety-opens">
+          {(pending?.opens ?? []).map((c, i) => (
+            <OpenLine key={i} change={c} />
+          ))}
+        </ul>
+      </ConfirmDialog>
     </>
   )
 }
