@@ -80,7 +80,7 @@ export const states: State[] = [
       await expect(dialog(page)).toBeVisible()
       await page.locator("#site-url").fill("https://staging.acme.example")
       await page.locator("#site-name").fill("acme-staging")
-      await page.locator("#site-replace").click()
+      await page.locator("label[for=site-replace]").click()
       await dialog(page).locator("button[form=site-form]").click()
       await expect(page.getByRole("alertdialog")).toBeVisible({ timeout: 5000 })
     },

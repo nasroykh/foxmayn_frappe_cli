@@ -57,7 +57,7 @@ export function ConfirmDialog({
           <AlertDialogCancel ref={cancelRef} disabled={busy}>
             {t("common.cancel")}
           </AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={onConfirm} disabled={busy}>
+          <AlertDialogAction variant="destructive" className="text-red-700 dark:text-red-300" onClick={onConfirm} disabled={busy}>
             {busy && <Spinner data-icon="inline-start" />}
             {confirmLabel}
           </AlertDialogAction>
