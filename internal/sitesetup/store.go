@@ -95,6 +95,26 @@ func (s Store) SetURL(name, siteURL string) error {
 	return nil
 }
 
+// Move replaces a site that still points at fromURL with site (another
+// server, with its own sign-in). The mcp block stays (PutSite). A site that
+// is gone or points elsewhere by now is an error, never written again.
+func (s Store) Move(name, fromURL string, site config.SiteConfig) error {
+	if err := config.Edit(s.Path, func(f *config.File) error {
+		cur, ok := f.Site(name)
+		if !ok {
+			return fmt.Errorf("site %q not found in config", name)
+		}
+		if cur.URL != fromURL {
+			return fmt.Errorf("site %q changed meanwhile", name)
+		}
+		return f.PutSite(name, site)
+	}); err != nil {
+		return err
+	}
+	s.dropCache(name)
+	return nil
+}
+
 // Removed is what Remove changed besides the site itself.
 type Removed struct {
 	WasDefault bool   // the site was default_site

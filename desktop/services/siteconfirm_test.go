@@ -38,6 +38,12 @@ func TestSameServer(t *testing.T) {
 		{"different port on both", "http://localhost:8000", "http://localhost:8001", false},
 		{"http port moves to https", "http://erp.example.com:8000", "https://erp.example.com", false},
 		{"unparsable", "https://erp.example.com", "https://[bad", false},
+		{"trailing dot", "https://erp.example.com", "https://erp.example.com.", false},
+		{"suffix host", "https://erp.example.com", "https://erp.example.com.evil.test", false},
+		{"ipv6", "http://[::1]:8000", "http://[::1]:8000", true},
+		{"ipv6 other port", "http://[::1]:8000", "http://[::1]:8001", false},
+		{"unicode case folding", "https://site.example", "https://ſite.example", false},
+		{"non-ascii identical", "https://café.example", "https://café.example", false},
 		{"no host", "", "https://erp.example.com", false},
 	}
 	for _, c := range cases {
@@ -189,6 +195,60 @@ func TestChangeURLOtherServerPasswordSite(t *testing.T) {
 	}
 	if other.Logins() == 0 {
 		t.Fatal("the new server saw no login")
+	}
+}
+
+// A site holding both a key and a password (and leftovers of an OAuth
+// sign-in) signs in with the key, so the move asks for a key, and nothing
+// saved reaches the new server or stays with the new address.
+func TestChangeURLOtherServerCarriesNothingSaved(t *testing.T) {
+	ctx := context.Background()
+	fake, other := frappetest.New(t), frappetest.New(t)
+	s, _, path := newSites(t)
+	old := config.SiteConfig{
+		URL: fake.URL, APIKey: "old-key", APISecret: "old-secret", Username: "old-user", Password: "old-password",
+		OAuthClientID: "old-client", OAuthClientSecret: "old-client-secret", RefreshToken: "old-refresh", TokenExpiry: 1,
+		MCP: &config.MCPPolicy{ReadOnly: true},
+	}
+	if err := (sitesetup.Store{Path: path}).Init("a", old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ChangeURL(ctx, "a", other.URL, NewSignIn{Username: frappetest.Username, Password: frappetest.Password}); errKey(err) != "site.newServer" {
+		t.Fatalf("a password for a key site = %v", err)
+	}
+	if _, err := s.ChangeURL(ctx, "a", other.URL, NewSignIn{APIKey: frappetest.APIKey, APISecret: frappetest.APISecret}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range other.Requests() {
+		if strings.Contains(r.Header.Get("Authorization")+r.Header.Get("Cookie")+r.Body, "old-") {
+			t.Fatalf("a saved secret reached the new server: %+v", r)
+		}
+	}
+	cfg, _ := config.Read(path)
+	want := config.SiteConfig{URL: other.URL, APIKey: frappetest.APIKey, APISecret: frappetest.APISecret, MCP: &config.MCPPolicy{ReadOnly: true}}
+	if got := cfg.Sites["a"]; got.URL != want.URL || got.APIKey != want.APIKey || got.APISecret != want.APISecret ||
+		got.Username != "" || got.Password != "" || got.OAuthClientID != "" || got.OAuthClientSecret != "" ||
+		got.RefreshToken != "" || got.TokenExpiry != 0 || got.MCP == nil || !got.MCP.ReadOnly {
+		t.Fatalf("config = %+v", got)
+	}
+}
+
+// A site removed while the new server is checked is not written back.
+func TestChangeURLSiteRemovedMeanwhile(t *testing.T) {
+	ctx := context.Background()
+	s, _, path := newSites(t)
+	seedAPIKeySite(t, path, "https://erp.example.com")
+	s.verify = func(context.Context, config.SiteConfig) (string, error) {
+		if _, err := (sitesetup.Store{Path: path}).Remove("a"); err != nil {
+			t.Fatal(err)
+		}
+		return "", nil
+	}
+	if _, err := s.ChangeURL(ctx, "a", "https://erp.example.org", NewSignIn{APIKey: "k", APISecret: "s"}); err == nil {
+		t.Fatal("ChangeURL succeeded on a removed site")
+	}
+	if cfg, _ := config.Read(path); len(cfg.Sites) != 0 {
+		t.Fatalf("the removed site came back: %+v", cfg.Sites)
 	}
 }
 

@@ -61,7 +61,7 @@ Each site's menu has:
 | **Make default** | The site used when no site is named (by ffc and by apps set to "Default site"). |
 | **Connect an app** | Opens the connect dialog with this site selected. |
 | **Rename…** | Changes the site's name. Apps pinned to the old name stop working until you reconnect them. |
-| **Change address…** | Moves the site to a new address. On the same server (for example `http://` to `https://`, or another path), the saved key or password is checked there and kept. On another server, enter the API key and secret, or the username and password, again: the saved ones are never sent to a different server. Not available for browser sign-in sites: remove and add them again. |
+| **Change address…** | Moves the site to a new address. On the same server (for example `http://` to `https://`), the saved key or password is checked there and kept. On another server, enter the API key and secret, or the username and password, again: the saved ones are never sent to a different server. Not available for browser sign-in sites: remove and add them again. |
 | **Remove…** | Removes the site. It asks first, and says so when the site's safety rules go with it. For a browser sign-in site, the app then revokes its token on the site (best effort, 10 seconds). |
 | **Safety rules** | What the Assistant and the connected apps may do on the site (below). |
 

@@ -206,7 +206,7 @@ export function SiteURLDialog({ site, onClose }: { site: Site | null; onClose: (
     setBusy(true)
     setError("")
     try {
-      const saved = await backend.changeURL(kept.name, url, needs ? sign : noSign)
+      const saved = await backend.changeURL(kept.name, url, sign) // Go ignores it on the same server
       await reloadSites()
       toast.add({ title: t("siteDialogs.url.done", { name: kept.name, url: saved }), type: "success" })
       onClose()

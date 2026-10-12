@@ -579,7 +579,8 @@ func (s *SitesService) ChangeURL(ctx context.Context, name, rawURL string, sign 
 	if err != nil {
 		return "", invalid("url", "This doesn't look like a web address: "+text.Sanitize(err.Error()))
 	}
-	moved := !SameServer(site.URL, newURL)
+	oldURL := site.URL
+	moved := !SameServer(oldURL, newURL)
 	if moved {
 		site, err = withNewSignIn(site, sign)
 		if err != nil {
@@ -591,10 +592,9 @@ func (s *SitesService) ChangeURL(ctx context.Context, name, rawURL string, sign 
 		return "", siteError(stepNewURL, err)
 	}
 	if moved {
-		// PutSite keeps the site's mcp block when MCP is nil, so its safety
-		// rules stay.
-		site.MCP = nil
-		err = s.store.AddOrInit(name, site)
+		// Only if the site still points at oldURL: a site removed or moved
+		// during the check is not brought back.
+		err = s.store.Move(name, oldURL, site)
 	} else {
 		err = s.store.SetURL(name, newURL)
 	}
@@ -642,25 +642,40 @@ func SameServer(oldURL, newURL string) bool {
 		}
 		return p
 	}
-	return strings.EqualFold(o.Hostname(), n.Hostname()) && port(o) == port(n)
+	// ASCII only: Unicode case folding equates host names that resolve to
+	// different servers (ſ and s), so a non-ASCII host always asks.
+	oh, nh := o.Hostname(), n.Hostname()
+	return isASCII(oh) && isASCII(nh) && strings.EqualFold(oh, nh) && port(o) == port(n)
 }
 
-// withNewSignIn replaces a site's saved sign-in with sign, of the same kind:
-// an API key and secret, or a username and password. A missing part is
-// site.newServer.
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+// withNewSignIn returns a site holding only sign, of the kind the site signs
+// in with now (authMethod's order, which client.New and Verify follow): an
+// API key and secret, or a username and password. Nothing else of the old
+// site is carried, so no saved key, password, token or OAuth client reaches
+// the new server. A missing part is site.newServer.
 func withNewSignIn(site config.SiteConfig, sign NewSignIn) (config.SiteConfig, error) {
-	if site.IsSessionAuth() {
-		site.Username, site.Password = strings.TrimSpace(sign.Username), sign.Password
-		if site.Username == "" || site.Password == "" {
+	fresh := config.SiteConfig{Name: site.Name}
+	if authMethod(site) == AuthPassword {
+		fresh.Username, fresh.Password = strings.TrimSpace(sign.Username), sign.Password
+		if fresh.Username == "" || fresh.Password == "" {
 			return site, keyed(CodeInvalid, "site.newServer", nil)
 		}
-		return site, nil
+		return fresh, nil
 	}
-	site.APIKey, site.APISecret = strings.TrimSpace(sign.APIKey), strings.TrimSpace(sign.APISecret)
-	if site.APIKey == "" || site.APISecret == "" {
+	fresh.APIKey, fresh.APISecret = strings.TrimSpace(sign.APIKey), strings.TrimSpace(sign.APISecret)
+	if fresh.APIKey == "" || fresh.APISecret == "" {
 		return site, keyed(CodeInvalid, "site.newServer", nil)
 	}
-	return site, nil
+	return fresh, nil
 }
 
 // Remove deletes a site; its safety rules go with it (the screen says so
