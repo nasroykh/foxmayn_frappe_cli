@@ -197,15 +197,6 @@ func (r *desktopRig) run(ctx context.Context, name string, args ...string) ([]by
 	return nil, nil
 }
 
-func (r *desktopRig) ran(name string) bool {
-	for _, c := range r.calls {
-		if path.Base(c[0]) == name {
-			return true
-		}
-	}
-	return false
-}
-
 func (r *desktopRig) marker() string {
 	b, err := os.ReadFile(filepath.Join(r.target.Path, "Contents", "marker"))
 	if err != nil {
