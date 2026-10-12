@@ -18,11 +18,12 @@ Entry point `cmd/ffc/main.go` → `internal/cmd` (cobra). Find the rest with `ls
 
 - `internal/cmd/site_client.go`: `loadSite` (= `loadSiteConfig`, no network, + `refreshSite`, OAuth refresh under the config lock) and `newClient` are the ONLY way a command or MCP tool gets a site client.
 - `internal/cmd/helpers.go`: `callSite[T]` (client + spinner), `runSpinner`, `confirm`, `readInput` ("-" = stdin), `parseObject`, `splitCSV`, `filterKeys`/`selectKeys`, `listLimit`, `docName`, `validateFiltersJSON`. `internal/cmd/render.go` is the output layer (`render`, `machineOutput`/`printResult`, `listDocs`).
-- `internal/sitesetup/` never prompts or exits and has no huh/cobra; `internal/cmd` imports it, never the reverse. `internal/loopback`, `internal/sitecache`, `internal/release` and `internal/mcpinstall` are prompt- and cobra-free too (the desktop imports them). `internal/client` may still warn on stderr (plain-HTTP warning, `--debug` trace).
+- `internal/sitesetup/` never prompts or exits and has no huh/cobra; `internal/cmd` imports it, never the reverse. `internal/loopback`, `internal/sitecache`, `internal/release`, `internal/desktopinstall` and `internal/mcpinstall` are prompt- and cobra-free too (the desktop imports them). `internal/client` may still warn on stderr (plain-HTTP warning, `--debug` trace).
 - `internal/client`: one `do()` request path (`client.go`), transport in `http.go`, `raw.go` (`SitePath`, `CheckHeaders`) is the credential boundary, `debug.go` holds the redaction helpers.
 - `internal/config/file.go`: every config write goes through `Edit`/`Overwrite` (see Common Pitfalls).
 - `internal/output` + `internal/text`: every server value passes through `text.Sanitize`.
 - `internal/cmd/update_check.go` owns `rootCmd.PersistentPreRunE`.
+- `internal/cmd/desktop.go`: `ffc desktop status|install`, a non-site command over `internal/desktopinstall` (the desktop app shares it). `desktopError` maps its errors to exit codes; tests swap `desktopGOOS`, `newDesktopInstaller`, `desktopLocate`.
 - MCP: `mcp_args.go` `toolHandler` runs parse → scope → policy → confirm → client → call → audit line; tools are registered in `mcp_tools.go` (and its siblings), their policy tables `toolActions`/`toolSurface` live in `mcp_policy.go`.
 - `desktop/` is a nested Go module; `tools/` (relsign, gendocs, mcpb, lint) is build tooling and is not shipped.
 

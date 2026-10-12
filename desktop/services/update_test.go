@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/desktopinstall"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/release"
 )
 
@@ -24,6 +26,11 @@ func updateService(t *testing.T, cur string, h http.HandlerFunc) *AppService {
 	s := NewAppService(&fakeHost{}, "/x/config.yaml", fakeLocator("darwin", "/Users/me", "", nil))
 	s.version = cur
 	s.releasesURL = srv.URL
+	// A copy that could replace itself; the self-update tests change these.
+	s.exe = func() (string, error) {
+		return "/Applications/Foxmayn Frappe Desktop.app/Contents/MacOS/foxmayn-frappe-desktop", nil
+	}
+	s.eligible = func(string, desktopinstall.Version, string) error { return nil }
 	return s
 }
 
@@ -98,7 +105,7 @@ func TestCheckForUpdateURLAndDate(t *testing.T) {
 		"javascript:alert(1)",
 		"",
 	} {
-		r := &updateRelease{TagName: "desktop-v0.2.0", HTMLURL: bad}
+		r := &release.Release{TagName: "desktop-v0.2.0", HTMLURL: bad}
 		if u := releasePageURL(r); u != relBase+"desktop-v0.2.0" {
 			t.Errorf("html_url %q gave %q", bad, u)
 		}
@@ -130,12 +137,14 @@ func TestCheckForUpdatePrereleaseRule(t *testing.T) {
 		avail  bool
 		latest string
 	}{
-		{"0.9.0", true, "1.1.0-rc.1"}, // 0.x: prereleases count
-		{"1.0.0", false, "1.0.0"},     // stable 1.x: they do not
-		{"0.9.0-rc.1", true, "1.1.0-rc.1"},
-		{"1.0.0-rc.1", true, "1.1.0-rc.1"}, // itself a prerelease
-		{"1.1.0-rc.1", false, "1.1.0-rc.1"},
-		{"0.1.0", true, "1.1.0-rc.1"},
+		// The newer stable 1.0.0 is offered instead of the rc: it is what
+		// InstallUpdate installs.
+		{"0.9.0", true, "1.0.0"},
+		{"1.0.0", false, "1.0.0"}, // stable 1.x: prereleases do not count
+		{"0.9.0-rc.1", true, "1.0.0"},
+		{"1.0.0-rc.1", true, "1.0.0"},
+		{"1.1.0-rc.1", false, "1.1.0-rc.1"}, // itself the newest prerelease
+		{"0.1.0", true, "1.0.0"},
 	}
 	for _, c := range cases {
 		got, err := updateService(t, c.cur, list).CheckForUpdate(context.Background())
@@ -145,14 +154,17 @@ func TestCheckForUpdatePrereleaseRule(t *testing.T) {
 		if got.Available != c.avail || got.Latest != c.latest {
 			t.Errorf("current %s: available=%v latest=%q, want %v %q", c.cur, got.Available, got.Latest, c.avail, c.latest)
 		}
-		// The scripts install the newest stable release, so a prerelease
-		// offer has no command (the release page only).
-		if got.InstallCommand != "" {
-			t.Errorf("current %s: InstallCommand = %q for a prerelease", c.cur, got.InstallCommand)
+		if got.Available && got.InstallCommand == "" {
+			t.Errorf("current %s: no InstallCommand for the stable %s", c.cur, got.Latest)
 		}
 	}
+	// Nothing stable is newer: the rc is only linked to, no command.
+	got, err := updateService(t, "1.0.0-rc.1", listJSON(`[{"tag_name":"desktop-v1.1.0-rc.1","prerelease":true},{"tag_name":"desktop-v0.9.0"}]`)).CheckForUpdate(context.Background())
+	if err != nil || !got.Available || got.Latest != "1.1.0-rc.1" || got.InstallCommand != "" || got.CanInstall {
+		t.Errorf("rc only: %+v, %v", got, err)
+	}
 	// A flagged prerelease with a plain tag counts as one on 1.x.
-	got, err := updateService(t, "1.0.0", listJSON(`[{"tag_name":"desktop-v1.2.0","prerelease":true}]`)).CheckForUpdate(context.Background())
+	got, err = updateService(t, "1.0.0", listJSON(`[{"tag_name":"desktop-v1.2.0","prerelease":true}]`)).CheckForUpdate(context.Background())
 	if err != nil || got.Available || got.Latest != "" {
 		t.Errorf("flagged prerelease on 1.x: %+v, %v", got, err)
 	}
@@ -236,41 +248,6 @@ func TestCheckForUpdateCancel(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the check did not stop after cancel")
-	}
-}
-
-func TestSemverCompare(t *testing.T) {
-	order := []string{
-		"0.0.1", "0.1.0-alpha", "0.1.0-alpha.1", "0.1.0-alpha.beta", "0.1.0-beta", "0.1.0-beta.2",
-		"0.1.0-beta.11", "0.1.0-rc.1", "0.1.0", "0.1.1", "0.2.0", "0.10.0", "1.0.0-rc.1", "1.0.0", "2.0.0",
-	}
-	for i := range order {
-		for j := range order {
-			a, ok1 := parseSemver(order[i])
-			b, ok2 := parseSemver(order[j])
-			if !ok1 || !ok2 {
-				t.Fatalf("parse %q %q", order[i], order[j])
-			}
-			want := 0
-			if i < j {
-				want = -1
-			} else if i > j {
-				want = 1
-			}
-			if got := a.compare(b); got != want {
-				t.Errorf("compare(%s, %s) = %d, want %d", order[i], order[j], got, want)
-			}
-		}
-	}
-	a, _ := parseSemver("v1.2.3+one")
-	b, _ := parseSemver("1.2.3+two")
-	if a.compare(b) != 0 || a.String() != "1.2.3" {
-		t.Errorf("build metadata must not matter: %v %v", a, b)
-	}
-	for _, bad := range []string{"", "1", "1.2", "1.2.3.4", "1.2.x", "-1.2.3", "1.2.3-", "1.2.3-a..b", "01.2.3", "99999999999999999999.0.0", "v v1.2.3"} {
-		if _, ok := parseSemver(bad); ok {
-			t.Errorf("%q parsed", bad)
-		}
 	}
 }
 
@@ -399,5 +376,61 @@ func TestCheckFFCUpdate(t *testing.T) {
 	fail := func(w http.ResponseWriter, r *http.Request) { http.Error(w, "down", http.StatusBadGateway) }
 	if got, err := ffcService(t, "0.1.0", "1.12.0", fail).CheckFFCUpdate(context.Background()); err == nil || got.Current != "1.12.0" {
 		t.Errorf("fetch failure: %+v, %v", got, err)
+	}
+}
+
+func TestCheckForUpdateCanInstall(t *testing.T) {
+	list := listJSON(`[{"tag_name":"desktop-v0.2.0","html_url":"` + relBase + `desktop-v0.2.0"}]`)
+	s := updateService(t, "0.1.0", list)
+	got, err := s.CheckForUpdate(context.Background())
+	if err != nil || !got.Available || !got.CanInstall || got.InstallBlocked != "" {
+		t.Fatalf("eligible: %+v, %v", got, err)
+	}
+	if got.InstallCommand == "" {
+		t.Error("the copy command is the fallback and stays")
+	}
+
+	for _, c := range []struct {
+		err error
+		key string
+	}{
+		{desktopinstall.ErrNotInstalledCopy, "update.notInstalled"},
+		{desktopinstall.ErrNotWritable, "update.notWritable"},
+		{desktopinstall.ErrUnsupported, "update.unsupported"},
+	} {
+		s.eligible = func(string, desktopinstall.Version, string) error { return fmt.Errorf("x: %w", c.err) }
+		got, err := s.CheckForUpdate(context.Background())
+		if err != nil || got.CanInstall || got.InstallBlocked != c.key || got.InstallCommand == "" {
+			t.Errorf("%v: %+v, %v", c.err, got, err)
+		}
+		if _, ok := errorKeys[got.InstallBlocked]; !ok {
+			t.Errorf("%q is not an error key", got.InstallBlocked)
+		}
+	}
+
+	// No update, or a prerelease the app only links to: nothing to install.
+	s = updateService(t, "0.2.0", list)
+	if got, _ := s.CheckForUpdate(context.Background()); got.CanInstall || got.InstallBlocked != "" {
+		t.Errorf("up to date: %+v", got)
+	}
+	s = updateService(t, "0.1.0", listJSON(`[{"tag_name":"desktop-v0.2.0-rc.1","prerelease":true}]`))
+	if got, _ := s.CheckForUpdate(context.Background()); !got.Available || got.CanInstall || got.InstallCommand != "" {
+		t.Errorf("prerelease: %+v", got)
+	}
+}
+
+// When the newest release has a "-" suffix but an older stable one is newer
+// than the app, the stable one is offered, can be installed, and is exactly
+// what Find (so InstallUpdate) picks.
+func TestCheckForUpdateOffersTheInstallableRelease(t *testing.T) {
+	list := listJSON(`[
+	 {"tag_name":"desktop-v0.12.0-rc.1","prerelease":true},
+	 {"tag_name":"desktop-v0.11.0","prerelease":true,"html_url":"` + relBase + `desktop-v0.11.0"},
+	 {"tag_name":"desktop-v0.9.0"}]`)
+	s := updateService(t, "0.10.0", list)
+	got, err := s.CheckForUpdate(context.Background())
+	if err != nil || !got.Available || got.Latest != "0.11.0" || !got.CanInstall || got.InstallBlocked != "" ||
+		got.URL != relBase+"desktop-v0.11.0" || !strings.Contains(got.InstallCommand, "desktop-v0.11.0") {
+		t.Fatalf("offer: %+v, %v", got, err)
 	}
 }

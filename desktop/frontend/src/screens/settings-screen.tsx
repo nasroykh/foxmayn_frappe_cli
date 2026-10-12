@@ -386,7 +386,7 @@ function FFCCheckResult({ result, updatable, onUpdate }: { result: FFCCheck; upd
 
 function UpdateResult({ result }: { result: UpdateOutcome }) {
   const { t } = useTranslation()
-  const { downloadUpdate, env } = useApp()
+  const { downloadUpdate, installUpdate, env } = useApp()
   const terminal = env.data?.os === "darwin" ? "Terminal" : "PowerShell"
   if (result.kind === "error") {
     return (
@@ -410,11 +410,29 @@ function UpdateResult({ result }: { result: UpdateOutcome }) {
         <IconArrowUpCircle />
         <AlertTitle>{t("settings.update.availableTitle", { version: result.info.latest })}</AlertTitle>
         <AlertDescription className="flex flex-col gap-2">
-          {result.info.installCommand ? (
+          {result.info.canInstall ? (
+            <>
+              <span>
+                {youHave} {t("settings.update.installBody")}
+              </span>
+              <span>{t("settings.update.orTerminal", { terminal })}</span>
+              <CopyField
+                wrap
+                value={result.info.installCommand}
+                label={t("settings.installCommand")}
+                copiedTitle={t("shell.update.commandCopied")}
+              />
+            </>
+          ) : result.info.installCommand ? (
             <>
               <span>
                 {youHave} {t("settings.update.easiestWay", { terminal })}
               </span>
+              {result.info.installBlocked && (
+                <span>
+                  {t("settings.update.cannotSelf")} {t(`errors.${result.info.installBlocked}`)}
+                </span>
+              )}
               <CopyField
                 wrap
                 value={result.info.installCommand}
@@ -429,13 +447,19 @@ function UpdateResult({ result }: { result: UpdateOutcome }) {
             </span>
           )}
         </AlertDescription>
-        <AlertAction>
+        <AlertAction className="flex gap-2">
+          {result.info.canInstall && (
+            <Button size="sm" onClick={() => installUpdate(result.info)}>
+              <IconDownload data-icon="inline-start" />
+              {t("settings.update.install")}
+            </Button>
+          )}
           <Button
             size="sm"
             variant={result.info.installCommand ? "outline" : "default"}
             onClick={() => void downloadUpdate(result.info)}
           >
-            <IconDownload data-icon="inline-start" />
+            {!result.info.canInstall && <IconDownload data-icon="inline-start" />}
             {t("common.download")}
           </Button>
         </AlertAction>
@@ -451,6 +475,7 @@ function UpdateResult({ result }: { result: UpdateOutcome }) {
   )
 }
 
+// i18n keys: errors.update.*
 type UpdateOutcome =
   | { kind: "uptodate"; info: UpdateInfo }
   | { kind: "available"; info: UpdateInfo }

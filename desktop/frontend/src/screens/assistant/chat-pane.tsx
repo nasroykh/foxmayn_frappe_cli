@@ -56,6 +56,7 @@ import type {
 } from "@/lib/backend-types"
 import { hasUsage, mergeTotals, noUsage } from "@/lib/cost"
 import { appError, errorTitle, localizedMessage, type AppError } from "@/lib/errors"
+import { reportUnsent } from "@/lib/unsent"
 import { MODAL } from "@/lib/modal"
 import { chatReducer, initialState } from "@/screens/assistant/chat-reducer"
 import { MessageFooter } from "@/screens/assistant/message-footer"
@@ -107,6 +108,7 @@ export function ChatPane({
   const { t } = useTranslation()
   const app = useOptionalApp()
   const convID = conv.id
+  const unsentID = React.useId()
   const [state, dispatch] = React.useReducer(chatReducer, convID, initialState)
   const [messages, setMessages] = React.useState<ChatMessage[] | null>(null)
   const [loadError, setLoadError] = React.useState<AppError | null>(null)
@@ -137,6 +139,9 @@ export function ChatPane({
   onChangedRef.current = onChanged
 
   const active = state.phase === "running" || state.phase === "starting"
+
+  // The update dialog warns about text not sent yet.
+  React.useEffect(() => reportUnsent(unsentID, draft.trim() !== "" || staged.length > 0), [unsentID, draft, staged.length])
 
   // The store is the truth: (re)load the conversation, then ask for open cards.
   const load = React.useCallback(async () => {

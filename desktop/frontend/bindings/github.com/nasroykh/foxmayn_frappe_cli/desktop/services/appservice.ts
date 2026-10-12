@@ -30,7 +30,8 @@ export function CheckFFCUpdate(): $CancellablePromise<$models.FFCUpdate> {
  * CheckForUpdate asks GitHub for the newest desktop release (tag
  * desktop-v<semver>, not a draft) and compares it with this app's version.
  * A prerelease counts only while the running version is 0.x or itself a
- * prerelease. An app version that does not parse (a development build) is
+ * prerelease, but a newer release that InstallUpdate can install (no "-"
+ * suffix) is offered in place of a still newer rc or beta. An app version that does not parse (a development build) is
  * never offered an app update. From the same list it compares the installed
  * ffc, when FFCInfo.Updatable (InstallFFC replaces it in place; anything else
  * is left to its own `ffc update` notice), with the ffc release InstallFFC
@@ -60,6 +61,24 @@ export function Environment(): $CancellablePromise<$models.Environment> {
  */
 export function InstallFFC(): $CancellablePromise<$models.FFCInfo> {
     return $Call.ByID(2608237942);
+}
+
+/**
+ * InstallUpdate replaces this copy of the app with the newest release and
+ * restarts it. It takes no input from the web view: the release is the one
+ * internal/desktopinstall finds for this version, the signed checksums and
+ * the file's SHA-256 are verified before anything is installed, and the
+ * program started afterwards is the path LocateSelf returned for this very
+ * copy. The UI has already asked the person (and warned about a running
+ * assistant or unsent text). Steps arrive as "update:progress" events.
+ * 
+ * Cancelling ctx stops it until the install begins; from then on it runs to
+ * the end, because stopping half way is the one thing that could leave the
+ * app broken. Any failure leaves the current copy as it was. On success the
+ * call returns after the new copy was started, and the app quits.
+ */
+export function InstallUpdate(): $CancellablePromise<$models.UpdateInstall> {
+    return $Call.ByID(3005676600);
 }
 
 /**

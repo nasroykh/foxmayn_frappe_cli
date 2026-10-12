@@ -111,6 +111,8 @@ export const backend: Backend = {
   installFFC: () => cancellable(AppService.InstallFFC()),
   openWebsite: (url) => AppService.OpenWebsite(url),
   checkForUpdate: () => AppService.CheckForUpdate(),
+  installUpdate: () => cancellable(AppService.InstallUpdate()),
+  activeRuns: () => AssistantService.ActiveRuns(),
   checkFFCUpdate: () => AppService.CheckFFCUpdate(),
   openConfigFolder: () => AppService.OpenConfigFolder(),
   openFFCFolder: () => AppService.OpenFFCFolder(),
@@ -213,6 +215,7 @@ export const backend: Backend = {
   onConfigChanged: (cb) => Events.On("config:changed", (ev) => cb(ev.data)),
   onSignInProgress: (cb) => Events.On("signin:progress", (ev) => cb(ev.data)),
   onInstallerLog: (cb) => Events.On("installer:log", (ev) => cb(ev.data.line)),
+  onUpdateProgress: (cb) => Events.On("update:progress", (ev) => cb(ev.data)),
 
   queryActivity: async (q): Promise<ActivityPage> => {
     const r = await ActivityService.Query(q)

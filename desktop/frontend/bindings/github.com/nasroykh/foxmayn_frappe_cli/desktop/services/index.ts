@@ -70,6 +70,8 @@ export type {
     SiteSettings,
     StagedAttachment,
     UpdateInfo,
+    UpdateInstall,
+    UpdateProgress,
     UsageTotals,
     Validation,
     WSLInfo

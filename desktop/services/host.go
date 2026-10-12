@@ -23,12 +23,15 @@ const (
 	EventSignInProgress = "signin:progress"
 	// EventInstallerLog carries one line of the ffc installer's output.
 	EventInstallerLog = "installer:log"
+	// EventUpdateProgress reports the steps of AppService.InstallUpdate.
+	EventUpdateProgress = "update:progress"
 )
 
 func init() {
 	application.RegisterEvent[ConfigChanged](EventConfigChanged)
 	application.RegisterEvent[SignInProgress](EventSignInProgress)
 	application.RegisterEvent[InstallerLine](EventInstallerLog)
+	application.RegisterEvent[UpdateProgress](EventUpdateProgress)
 }
 
 // ConfigChanged is the payload of EventConfigChanged.
@@ -59,6 +62,17 @@ type InstallerLine struct {
 	Line string `json:"line"`
 }
 
+// UpdateProgress is the payload of EventUpdateProgress.
+type UpdateProgress struct {
+	// Step is one of "checking", "downloading", "verifying", "installing",
+	// "restarting".
+	Step string `json:"step"`
+	// Done and Total are bytes of the download (step "downloading"); Total is
+	// 0 when the size is unknown.
+	Done  int64 `json:"done"`
+	Total int64 `json:"total"`
+}
+
 // Host is what the services need from the desktop shell: emitting events and
 // opening things with the operating system. main wires it to the Wails app;
 // tests use a fake.
@@ -67,6 +81,8 @@ type Host interface {
 	OpenURL(url string) error
 	OpenFile(path string) error
 	SetWindowTheme(dark bool)
+	// Quit ends the app (after an update started the new copy).
+	Quit()
 }
 
 // WindowBackground is the window colour behind the page: the page's
@@ -119,6 +135,13 @@ func (h *WailsHost) OpenURL(url string) error {
 // OpenFile opens a file or folder with the operating system.
 func (h *WailsHost) OpenFile(path string) error {
 	return h.App.Browser.OpenFile(path)
+}
+
+// Quit ends the app.
+func (h *WailsHost) Quit() {
+	if h.App != nil {
+		h.App.Quit()
+	}
 }
 
 // SetWindowTheme gives every window the background of the page's theme and

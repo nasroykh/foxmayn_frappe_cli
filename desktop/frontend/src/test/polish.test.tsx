@@ -28,7 +28,7 @@ beforeEach(async () => {
   }
 })
 
-const actions = { addSite: () => {}, connectAssistant: () => {}, installFFC: () => {}, newConversation: () => {}, takeNewConversation: () => {}, openShortcuts: () => {}, openActivity: () => {}, takeActivityFilter: () => {} }
+const actions = { addSite: () => {}, connectAssistant: () => {}, installFFC: () => {}, installUpdate: () => {}, newConversation: () => {}, takeNewConversation: () => {}, openShortcuts: () => {}, openActivity: () => {}, takeActivityFilter: () => {} }
 
 describe("feedback link", () => {
   it("prefills only the version, the OS and the language", () => {

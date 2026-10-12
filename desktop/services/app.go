@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/config"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/desktopinstall"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/release"
 )
 
@@ -49,10 +50,22 @@ type AppService struct {
 	version     string
 	releasesURL string
 
+	// The self-update (InstallUpdate). selfUpdate finds, downloads and
+	// installs; exe is the running executable, start launches the new copy
+	// (the path is always the one LocateSelf returned). locate, eligible and
+	// tempDir are seams for tests; updateMu allows one update at a time.
+	selfUpdate *desktopinstall.Installer
+	exe        func() (string, error)
+	start      func(name string, args ...string) error
+	locate     func(goos, exe string) (desktopinstall.Target, error)
+	eligible   func(goos string, cur desktopinstall.Version, exe string) error
+	tempDir    func() (string, error)
+
 	wslOnce sync.Once
 	wslInfo WSLInfo
 
 	installMu sync.Mutex
+	updateMu  sync.Mutex
 }
 
 // NewAppService builds the service for this machine. configPath is the ffc
@@ -63,6 +76,12 @@ func NewAppService(host Host, configPath string, ffc *FFCLocator) *AppService {
 		install:     newFFCInstaller(runtime.GOOS, home).installAt,
 		version:     AppVersion,
 		releasesURL: release.ReleasesURL,
+		selfUpdate:  desktopinstall.New(runtime.GOOS),
+		exe:         os.Executable,
+		start:       startDetached,
+		locate:      desktopinstall.LocateSelf,
+		eligible:    desktopinstall.Eligible,
+		tempDir:     desktopinstall.NewTempDir,
 		host:        host,
 		goos:        runtime.GOOS,
 		configPath:  configPath,

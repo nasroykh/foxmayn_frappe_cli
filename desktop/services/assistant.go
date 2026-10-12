@@ -292,6 +292,17 @@ func (a *AssistantService) ready() (*runner, *store.Store, error) {
 	return a.run, a.st, nil
 }
 
+// ActiveRuns is the number of runs answering now, in any conversation. The
+// update dialog warns before it restarts the app while one is going.
+func (a *AssistantService) ActiveRuns() int {
+	r, _, done, err := a.enter()
+	if err != nil {
+		return 0
+	}
+	defer done()
+	return r.activeCount()
+}
+
 // Send adds the user's message to a conversation and starts a run. It returns
 // the run's id at once; the answer arrives as chat:* events. attachmentIDs
 // are attachments staged in this conversation (AddAttachment,

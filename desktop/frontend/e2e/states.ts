@@ -20,6 +20,19 @@ async function newConversation(page: Page) {
   await expect(dialog(page)).toBeVisible()
 }
 
+/** Settings > About, then the update card's primary button (Install update) opens the dialog. */
+async function openUpdateInstall(page: Page) {
+  await goTo(page, "settings")
+  await page.getByRole("tab").last().click()
+  await page.locator('[data-slot="alert-action"] button').first().click()
+  await expect(dialog(page)).toBeVisible()
+}
+
+/** The dialog's last footer button: Install and restart. */
+async function confirmUpdateInstall(page: Page) {
+  await dialog(page).locator('[data-slot="dialog-footer"] button').last().click()
+}
+
 /** The first site's (acme-prod) menu, then its Safety rules action; waits for the loaded policy. */
 async function openSafety(page: Page) {
   await page.locator("main [role=listitem]").first().locator("button:has(svg.tabler-icon-dots)").click()
@@ -268,6 +281,46 @@ export const states: State[] = [
     reach: async (page) => {
       await goTo(page, "settings")
       await page.getByRole("tab").last().click()
+    },
+  },
+  {
+    // The confirmation with both warnings: a run is going (?busy=1) and the
+    // dialog is opened from the About tab.
+    name: "update-install-confirm",
+    query: "update=available&busy=1",
+    reach: async (page) => {
+      await openUpdateInstall(page)
+      await expect(dialog(page).locator('[data-slot="alert"]')).toBeVisible()
+    },
+  },
+  {
+    // ?install=hold stays in the download (16 of 48 MB) until cancelled.
+    name: "update-install-progress",
+    query: "update=available&install=hold",
+    reach: async (page) => {
+      await openUpdateInstall(page)
+      await confirmUpdateInstall(page)
+      await expect(dialog(page).getByRole("progressbar")).toBeVisible({ timeout: 5000 })
+      await page.waitForTimeout(1800)
+    },
+  },
+  {
+    name: "update-install-failed",
+    query: "update=available&install=fail",
+    reach: async (page) => {
+      await openUpdateInstall(page)
+      await confirmUpdateInstall(page)
+      await expect(dialog(page).locator('[data-slot="alert"]')).toBeVisible({ timeout: 8000 })
+    },
+  },
+  {
+    // The copy cannot update itself: no Install button, the reason and the command.
+    name: "update-install-blocked",
+    query: "update=available&install=blocked",
+    reach: async (page) => {
+      await goTo(page, "settings")
+      await page.getByRole("tab").last().click()
+      await expect(page.locator('[data-slot="alert"]').first()).toBeVisible()
     },
   },
 ]

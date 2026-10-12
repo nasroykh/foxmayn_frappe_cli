@@ -1124,9 +1124,48 @@ export interface UpdateInfo {
     "installCommand": string;
 
     /**
+     * CanInstall is true when InstallUpdate can replace this copy of the app
+     * with Latest (a local check: an installed copy in a writable place).
+     */
+    "canInstall": boolean;
+
+    /**
+     * InstallBlocked is the error key (errors.<key>) saying why an available
+     * update cannot be installed from the app; "" when it can, or when the
+     * update is a prerelease the app only links to.
+     */
+    "installBlocked": string;
+
+    /**
      * FFC compares the installed ffc with the newest ffc release.
      */
     "ffc": FFCUpdate;
+}
+
+/**
+ * UpdateInstall is the result of InstallUpdate. When it returns, the new copy
+ * was started and the app is quitting.
+ */
+export interface UpdateInstall {
+    "version": string;
+}
+
+/**
+ * UpdateProgress is the payload of EventUpdateProgress.
+ */
+export interface UpdateProgress {
+    /**
+     * Step is one of "checking", "downloading", "verifying", "installing",
+     * "restarting".
+     */
+    "step": string;
+
+    /**
+     * Done and Total are bytes of the download (step "downloading"); Total is
+     * 0 when the size is unknown.
+     */
+    "done": number;
+    "total": number;
 }
 
 /**

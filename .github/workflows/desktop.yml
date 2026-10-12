@@ -84,6 +84,15 @@ jobs:
           CGO_ENABLED: "1"
         run: go test -race ./...
 
+      # The packages the app installs updates with are in the root module, so
+      # the desktop's own go test skips them. On macOS this also runs the real
+      # hdiutil/ditto/codesign test (TestApplyRealDiskImage). desktop/go.mod
+      # and the root go.mod name the same toolchain, which setup-go installed.
+      - name: Test the update installer (root module)
+        if: runner.os == 'macOS'
+        working-directory: .
+        run: go test -count=1 ./internal/desktopinstall/... ./internal/release/...
+
       # The Wails CLI at the version desktop/go.mod requires.
       - name: Install wails3
         run: go install "github.com/wailsapp/wails/v3/cmd/wails3@$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)"

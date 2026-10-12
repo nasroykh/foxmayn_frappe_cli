@@ -68,6 +68,7 @@ import type {
   SitePolicy,
   SiteSettings,
   ToolStatus,
+  UpdateProgress,
   UsageTotals,
 } from "@/lib/backend-types"
 import { addEvent, mergeTotals, noUsage } from "@/lib/cost"
@@ -97,6 +98,7 @@ type Listener<T> = Set<(v: T) => void>
 const configListeners: Listener<ConfigChanged> = new Set()
 const signInListeners: Listener<SignInProgress> = new Set()
 const installListeners: Listener<string> = new Set()
+const updateListeners: Listener<UpdateProgress> = new Set()
 const openRouterListeners: Listener<OpenRouterAuth> = new Set()
 
 function on<T>(set: Listener<T>, cb: (v: T) => void) {
@@ -902,6 +904,8 @@ export const backend: Backend = {
       latest: available ? "0.2.0" : "0.1.0",
       url: "https://github.com/nasroykh/foxmayn_frappe_cli/releases/tag/desktop-v" + (available ? "0.2.0" : "0.1.0"),
       publishedAt: "2026-10-20T09:30:00Z",
+      canInstall: available && params.get("install") !== "blocked",
+      installBlocked: available && params.get("install") === "blocked" ? "update.notInstalled" : "",
       installCommand: !available
         ? ""
         : os === "windows"
@@ -909,6 +913,49 @@ export const backend: Backend = {
           : "curl -fsSL https://raw.githubusercontent.com/nasroykh/foxmayn_frappe_cli/desktop-v0.2.0/install-desktop.sh | sh",
       ffc: { available: ffc.found && ffcLatest !== ffc.version, current: ffc.version, latest: ffcLatest },
     }
+  },
+  // ?install=ok (default) runs the steps and resolves; fail stops with a
+  // verify error after the download; hold stays in the download until
+  // cancelled (for the e2e screenshot); blocked makes the check say the copy
+  // cannot update itself. ?busy=1: an assistant run is going.
+  installUpdate() {
+    return cancellable(async (signal) => {
+      const emit = (step: string, done = 0, total = 0) => {
+        for (const cb of updateListeners) cb({ step, done, total })
+      }
+      const mode = params.get("install")
+      const total = 48_000_000
+      emit("checking")
+      await wait(400)
+      for (let done = 0; done <= total; done += 8_000_000) {
+        if (signal.aborted) fail("cancelled", "The update was cancelled. Nothing was installed.", { key: "update.cancelled" })
+        emit("downloading", done, total)
+        if (mode === "hold" && done >= 16_000_000) {
+          await new Promise<void>((_, reject) => {
+            signal.addEventListener("abort", () =>
+              reject(Object.assign(new Error("cancelled"), { cause: { code: "cancelled", message: "The update was cancelled. Nothing was installed.", key: "update.cancelled" } })),
+            )
+          })
+        }
+        await wait(300)
+      }
+      emit("verifying")
+      await wait(500)
+      if (mode === "fail") {
+        fail("failed", "The download did not pass its safety checks, so nothing was installed.", {
+          key: "update.verify",
+          detail: "verification failed: checksums.txt: signature does not match",
+        })
+      }
+      emit("installing")
+      await wait(700)
+      emit("restarting")
+      await wait(500)
+      return { version: "0.2.0" }
+    })
+  },
+  async activeRuns() {
+    return params.get("busy") === "1" ? 1 : 0
   },
   async checkFFCUpdate() {
     await wait(600)
@@ -1826,6 +1873,7 @@ export const backend: Backend = {
   onConfigChanged: (cb) => on(configListeners, cb),
   onSignInProgress: (cb) => on(signInListeners, cb),
   onInstallerLog: (cb) => on(installListeners, cb),
+  onUpdateProgress: (cb) => on(updateListeners, cb),
 
   async queryActivity(q): Promise<ActivityPage> {
     await wait(150)

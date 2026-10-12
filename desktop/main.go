@@ -3,10 +3,14 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
+	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/services"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/cmd"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/desktopinstall"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -20,6 +24,10 @@ func main() {
 	// A jq filter of an MCP tool runs in this executable started again; the
 	// child must run the filter, not the app.
 	cmd.RunJQChildIfRequested()
+
+	if pid, ok := afterUpdatePID(os.Args[1:]); ok {
+		finishUpdate(pid)
+	}
 
 	configPath, err := services.ConfigPath()
 	if err != nil {
@@ -77,5 +85,38 @@ func main() {
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// afterUpdatePID reads "--after-update <pid>", the only argument the app
+// accepts (a copy that InstallUpdate started). The pid must be a plain
+// integer; every other argument is ignored.
+func afterUpdatePID(args []string) (int, bool) {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] != "--after-update" {
+			continue
+		}
+		pid, err := strconv.Atoi(args[i+1])
+		if err != nil || pid <= 0 || strconv.Itoa(pid) != args[i+1] {
+			return 0, false
+		}
+		return pid, true
+	}
+	return 0, false
+}
+
+// finishUpdate waits (at most 15 seconds) for the old copy to exit, then
+// removes the files the update left beside this one (<name>.old, <name>.new).
+func finishUpdate(pid int) {
+	deadline := time.Now().Add(15 * time.Second)
+	for services.ProcessRunning(pid) && time.Now().Before(deadline) {
+		time.Sleep(200 * time.Millisecond)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	if t, err := desktopinstall.LocateSelf(runtime.GOOS, exe); err == nil {
+		desktopinstall.CleanupOld(t)
 	}
 }
