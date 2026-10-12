@@ -29,7 +29,7 @@ Why this is easier: beta builds are not yet signed by Apple or with a Windows co
 
 Options (environment variables): `FFD_VERSION=0.1.1` installs that version instead of the newest; `FFD_NO_OPEN=1` does not open the app afterwards. On macOS, `FFC_SKIP_SIGNATURE=1` skips the signature check, at your own risk.
 
-When a new version is out, the app's update notice (Settings > About) has an **Install update** button that does the same in the app (it checks the release signature on both systems and restarts the app), and shows this command, pinned to that release, with a copy button. From a terminal without the scripts, `ffc desktop install` does the same as the scripts using the `ffc` you already have.
+When a new version is out, the app's update notice (Settings > About) has an **Install update** button that does the same in the app (it checks the release signature on both systems and restarts the app), and shows this command, pinned to that release, with a copy button. From a terminal without the scripts, `ffc desktop install` downloads, checks and installs the same release using the `ffc` you already have. Unlike the scripts it does not close the app first or open it afterwards: restart the app yourself to use the new version.
 
 ## Download
 

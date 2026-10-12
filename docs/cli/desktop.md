@@ -7,6 +7,7 @@ ffc desktop status                 # installed version, newest release, is there
 ffc desktop install                # install or update (asks first)
 ffc desktop install --yes          # no question
 ffc desktop install --dry-run      # show what would be installed, download nothing
+ffc desktop install --force        # install over a copy whose version cannot be read
 ```
 
 ## desktop status
@@ -34,13 +35,16 @@ Installs the newest desktop release, or updates an installed copy to it.
 | Flag | Description |
 | --- | --- |
 | `-y, --yes` | Skip the confirmation. Without a terminal, `--yes` is required. |
-| `--dry-run` | Print the plan (`action`, `from`, `to`, `asset`, `path`, `dry_run`) and exit 0. Only the release list is read; nothing is downloaded or changed. |
+| `--force` | Install the newest release over an installed copy whose version ffc cannot read. Without it ffc refuses that case (exit 1). |
+| `--dry-run` | Print the plan (`action`, `from`, `to`, `asset`, `path`, `dry_run`) and exit 0. Only the release list is read; nothing is downloaded or changed. `from` is `unknown` for a copy whose version cannot be read (needs `--force`, like the real run). |
 
 The result (`--json`, `--output` and `--jq` work as everywhere) has `action` (`install`, `update`, or `none` when the installed version is already the newest), `version`, `path` and `restart_needed`.
 
-- **Windows:** the per-user setup runs silently and installs into `%LOCALAPPDATA%\Programs\Foxmayn Frappe Desktop`. A running copy is moved aside first, so it keeps running until restarted.
-- **macOS:** the app is copied from the disk image. An installed copy is updated where it is (`/Applications` or `~/Applications`); a first install goes to `/Applications`, or to `~/Applications` when `/Applications` is not writable by you. The old copy stays in place until the new one has passed its checks.
-- It never downgrades and never reinstalls the same version: when the installed version is the newest, it says so and exits 0 without downloading.
+- **Windows:** the per-user setup runs silently and installs into `%LOCALAPPDATA%\Programs\Foxmayn Frappe Desktop`. A running copy is moved aside first (as `foxmayn-frappe-desktop.exe.old`, which a running exe cannot be deleted from; the next update removes it), so it keeps running until restarted. If the setup fails or times out, the new exe is discarded and the old one is put back.
+- **macOS:** the app is copied from the disk image. An installed copy is updated where it is (`/Applications` or `~/Applications`); a first install goes to `/Applications`, or to `~/Applications` when `/Applications` is not writable by you. The old copy stays in place until the new one has passed its checks, and then stays beside it as `Foxmayn Frappe Desktop.app.old` (the app may be running from it); the next update removes it, and so does the app when it restarts itself after an in-app update.
+- It never downgrades and never reinstalls the same version: when the installed version is the newest, it says so and exits 0 without downloading. The one exception is `--force` for a copy whose version cannot be read (ffc cannot compare it, so it installs the newest release over it).
+- Once the download has been checked, the install runs to the end: Ctrl-C stops the download, not a copy that is half way in.
+- It takes the same release the app's own update check offers: a release with a `-` suffix is never installed, and a GitHub "prerelease" with a plain number only while the installed version is 0.x or itself a prerelease.
 - It never quits or opens the app. After an update, ffc prints "restart it" on stderr and `restart_needed` is true; restart the app to use the new version.
 - A pre-1.0 release that GitHub marks as a "prerelease" is installable; one with a `-rc` or `-beta` suffix never is.
 
@@ -60,7 +64,7 @@ Any failure installs nothing (exit 1). The download goes into a private folder t
 | Code | When |
 | --- | --- |
 | 0 | Done, up to date, or `status` / `--dry-run` answered. |
-| 1 | Verification, asset, install or "no release" failure; not an installed copy of the app. |
+| 1 | Verification, asset, install or "no release" failure; not an installed copy of the app; the installed version cannot be read and `--force` is missing. |
 | 2 | Not Windows or macOS; no `--yes` and no terminal; bad flag. |
 | 5 | The install location is not writable by you. |
 | 7 | GitHub unreachable or rate limited (the API allows 60 requests an hour per address). |

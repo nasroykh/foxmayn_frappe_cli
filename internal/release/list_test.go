@@ -64,6 +64,17 @@ func TestChecksumFor(t *testing.T) {
 	if _, err := ChecksumFor([]byte("zz  a.zip\n"), "a.zip"); err == nil || !strings.Contains(err.Error(), "malformed") {
 		t.Errorf("malformed: %v", err)
 	}
+	// A second entry for the same name is refused, whatever its sum.
+	line := hex.EncodeToString(sum[:]) + "  a.zip\n"
+	for _, dup := range []string{line + line, line + strings.Repeat("1", 64) + "  a.zip\n"} {
+		if _, err := ChecksumFor([]byte(dup), "a.zip"); err == nil || !strings.Contains(err.Error(), "more than one") {
+			t.Errorf("duplicate: %v", err)
+		}
+	}
+	// A duplicate of another file does not matter.
+	if _, err := ChecksumFor([]byte(line+line), "b.zip"); err == nil || !strings.Contains(err.Error(), "no checksum entry") {
+		t.Errorf("other file: %v", err)
+	}
 }
 
 func TestSignedChecksums(t *testing.T) {

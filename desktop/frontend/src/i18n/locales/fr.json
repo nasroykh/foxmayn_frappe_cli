@@ -721,7 +721,7 @@
     },
     "update": {
       "unsupported": "L'application ne peut se mettre à jour elle-même que sous Windows et macOS.",
-      "notInstalled": "Cette copie n'a pas été installée par l'installeur de l'application (version de développement, image disque ou application déplacée) : elle ne peut pas se mettre à jour elle-même.",
+      "notInstalled": "Cette copie n'a pas été installée par l'installeur de l'application (version de développement ou image disque), ou elle a été renommée ou, sous Windows, déplacée hors de son dossier d'installation : elle ne peut pas se mettre à jour elle-même.",
       "notWritable": "Le dossier de l'application n'est pas modifiable par votre utilisateur : elle ne peut pas se mettre à jour elle-même.",
       "notNewer": "Vous avez déjà la version la plus récente.",
       "rateLimited": "GitHub limite les requêtes pour le moment. Réessayez plus tard.",

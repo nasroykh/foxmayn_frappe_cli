@@ -30,7 +30,8 @@ export function CheckFFCUpdate(): $CancellablePromise<$models.FFCUpdate> {
  * CheckForUpdate asks GitHub for the newest desktop release (tag
  * desktop-v<semver>, not a draft) and compares it with this app's version.
  * A prerelease counts only while the running version is 0.x or itself a
- * prerelease. An app version that does not parse (a development build) is
+ * prerelease, but a newer release that InstallUpdate can install (no "-"
+ * suffix) is offered in place of a still newer rc or beta. An app version that does not parse (a development build) is
  * never offered an app update. From the same list it compares the installed
  * ffc, when FFCInfo.Updatable (InstallFFC replaces it in place; anything else
  * is left to its own `ffc update` notice), with the ffc release InstallFFC

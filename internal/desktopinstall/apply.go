@@ -16,6 +16,16 @@ const (
 	detachTime   = 30 * time.Second
 )
 
+// The macOS tools run by absolute path, so a PATH entry cannot stand in for
+// them.
+const (
+	toolHdiutil  = "/usr/bin/hdiutil"
+	toolDitto    = "/usr/bin/ditto"
+	toolCodesign = "/usr/bin/codesign"
+	toolPlutil   = "/usr/bin/plutil"
+	toolXattr    = "/usr/bin/xattr"
+)
+
 // Apply installs the file Download returned (asset, the path) as version v
 // over t. Every external program runs through in.Run with an argument
 // vector. The previous copy is moved aside and only removed by CleanupOld,
@@ -69,14 +79,14 @@ func (in *Installer) applyDarwin(ctx context.Context, t Target, asset string, v 
 	}
 
 	in.log("mounting the disk image")
-	if _, err := run(ctx, "hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mnt, asset); err != nil {
+	if _, err := run(ctx, toolHdiutil, "attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mnt, asset); err != nil {
 		return fmt.Errorf("%w: mounting the disk image: %w", ErrInstall, err)
 	}
 	defer func() {
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), detachTime)
 		defer cancel()
-		if _, derr := run(dctx, "hdiutil", "detach", mnt); derr != nil {
-			if _, derr = run(dctx, "hdiutil", "detach", "-force", mnt); derr != nil {
+		if _, derr := run(dctx, toolHdiutil, "detach", mnt); derr != nil {
+			if _, derr = run(dctx, toolHdiutil, "detach", "-force", mnt); derr != nil {
 				in.log("unmounting the disk image failed: " + derr.Error())
 			}
 		}
@@ -108,12 +118,12 @@ func (in *Installer) applyDarwin(ctx context.Context, t Target, asset string, v 
 	}()
 
 	in.log("copying the app")
-	if _, err := run(ctx, "ditto", src, newPath); err != nil {
+	if _, err := run(ctx, toolDitto, src, newPath); err != nil {
 		return fmt.Errorf("%w: copying the app: %w", ErrInstall, err)
 	}
 
 	in.log("checking the app")
-	if _, err := run(ctx, "codesign", "--verify", "--deep", "--strict", newPath); err != nil {
+	if _, err := run(ctx, toolCodesign, "--verify", "--deep", "--strict", newPath); err != nil {
 		return fmt.Errorf("%w: code signature: %w", ErrVerify, err)
 	}
 	for _, c := range []struct{ key, want string }{
@@ -131,7 +141,7 @@ func (in *Installer) applyDarwin(ctx context.Context, t Target, asset string, v 
 	}
 	// Go writes no quarantine flag; one here means the file came some other
 	// way, so refuse it rather than strip a mark Gatekeeper would act on.
-	out, err := run(ctx, "xattr", "-lr", newPath)
+	out, err := run(ctx, toolXattr, "-lr", newPath)
 	if err != nil {
 		return fmt.Errorf("%w: reading extended attributes: %w", ErrVerify, err)
 	}
@@ -168,6 +178,7 @@ func (in *Installer) applyWindows(ctx context.Context, t Target, setup string) e
 	hadOld := false
 	if _, serr := os.Lstat(exe); serr == nil {
 		hadOld = true
+		removeStale(t) // what an earlier update left beside the exe
 		if rerr := os.Remove(oldPath); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
 			oldPath = fmt.Sprintf("%s.old-%d", exe, time.Now().UnixNano())
 		}
@@ -190,6 +201,15 @@ func (in *Installer) applyWindows(ctx context.Context, t Target, setup string) e
 	}
 	if err != nil {
 		if hadOld {
+			// Whatever the failed setup left at exe (a partial or a finished
+			// new exe) goes, so the old one is what stays.
+			if _, serr := os.Lstat(exe); serr == nil {
+				if rerr := os.Remove(exe); rerr != nil {
+					if rerr = os.Rename(exe, fmt.Sprintf("%s.old-%d", exe, time.Now().UnixNano())); rerr != nil {
+						err = fmt.Errorf("%w (and removing the new app failed: %v)", err, rerr)
+					}
+				}
+			}
 			if _, serr := os.Lstat(exe); serr != nil {
 				if berr := os.Rename(oldPath, exe); berr != nil {
 					err = fmt.Errorf("%w (and restoring the old app failed: %v)", err, berr)
@@ -205,9 +225,15 @@ func (in *Installer) applyWindows(ctx context.Context, t Target, setup string) e
 }
 
 // CleanupOld removes the previous copy and any half-copied one that Apply
-// left beside t. It is best effort and never fails; call it once the new
-// copy runs (or later, from the new copy).
-func CleanupOld(t Target) {
+// left beside t. It is best effort and never fails; call it from the new copy
+// once it runs (the old one may still be running until then). Apply removes
+// what an earlier update left before it starts, so a copy that never calls
+// this only keeps one stale copy until the next update.
+func CleanupOld(t Target) { removeStale(t) }
+
+// removeStale is CleanupOld's work, also run by Apply before it moves the
+// current copy aside.
+func removeStale(t Target) {
 	if t.Path == "" {
 		return
 	}

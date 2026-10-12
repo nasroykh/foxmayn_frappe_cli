@@ -26,7 +26,7 @@ var (
 
 const desktopName = "Foxmayn Frappe Desktop"
 
-var deskYes bool
+var deskYes, deskForce bool
 
 var desktopCmd = &cobra.Command{
 	Use:   "desktop",
@@ -66,12 +66,17 @@ writable (an existing copy is updated where it is). The previous copy stays in
 place until the new one passes its checks.
 
 Nothing happens when the installed version is already the newest, and ffc never
-downgrades. ffc does not quit or open the app: restart it to use the new version.
+downgrades. When an installed copy's version cannot be read, ffc cannot tell
+whether that would be a downgrade and refuses; --force installs the newest
+release over it. ffc does not quit or open the app: restart it to use the new
+version. On macOS the previous copy stays beside the new one as <name>.old (the
+app may still run from it) until the next update removes it.
 
 Examples:
   ffc desktop install             # asks first
   ffc desktop install --yes       # no question
   ffc desktop install --dry-run   # show what would be installed
+  ffc desktop install --force     # the installed version cannot be read
 `,
 	Args: cobra.NoArgs,
 	RunE: runDesktopInstall,
@@ -79,6 +84,7 @@ Examples:
 
 func init() {
 	desktopInstallCmd.Flags().BoolVarP(&deskYes, "yes", "y", false, "Skip the confirmation")
+	desktopInstallCmd.Flags().BoolVar(&deskForce, "force", false, "Install over an installed copy whose version cannot be read")
 	addDryRun(desktopInstallCmd, false)
 	desktopCmd.AddCommand(desktopStatusCmd, desktopInstallCmd)
 	rootCmd.AddCommand(desktopCmd)
@@ -172,9 +178,20 @@ func runDesktopStatus(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	cur, haveCur := installedVersion(t)
 	var plan desktopinstall.Plan
 	var planErr error
-	if err := runSpinner("Checking for the latest release…", func() { plan, planErr = in.Latest(ctx) }); err != nil {
+	if err := runSpinner("Checking for the latest release…", func() {
+		if haveCur {
+			// The pick rule of the app's own update check and install.
+			plan, planErr = in.Find(ctx, cur)
+			if errors.Is(planErr, desktopinstall.ErrNotNewer) {
+				planErr = nil
+			}
+		} else {
+			plan, planErr = in.Latest(ctx)
+		}
+	}); err != nil {
 		return err
 	}
 	if planErr != nil {
@@ -190,8 +207,7 @@ func runDesktopStatus(cmd *cobra.Command, _ []string) error {
 	if t.Installed {
 		// An installed copy whose version is unknown cannot be shown to be
 		// current, so it counts as outdated.
-		cur, ok := installedVersion(t)
-		st.UpdateAvailable = !ok || plan.Version.Compare(cur) > 0
+		st.UpdateAvailable = !haveCur || plan.Version.Compare(cur) > 0
 	}
 	fields := []string{"installed", "installed_version", "path", "latest", "update_available", "release_url"}
 	return render(st, fields, func() error {
@@ -215,6 +231,7 @@ func runDesktopInstall(cmd *cobra.Command, _ []string) error {
 	}
 
 	cur, haveCur := installedVersion(t)
+	unknown := t.Installed && !haveCur // there is a copy, its version cannot be read
 	var plan desktopinstall.Plan
 	var planErr error
 	if err := runSpinner("Checking for the latest release…", func() {
@@ -241,12 +258,20 @@ func runDesktopInstall(cmd *cobra.Command, _ []string) error {
 		action = "update"
 	}
 	to := plan.Version.String()
+	from := t.Version
+	if unknown {
+		// Cannot tell whether the newest release is newer than this copy.
+		if !deskForce {
+			return fmt.Errorf("the installed %s at %s has a version ffc could not read; pass --force to install %s over it", desktopName, t.Path, to)
+		}
+		from = "unknown"
+	}
 
 	if dryRunOn(cmd) {
-		return render(desktopPlanView{Action: action, From: t.Version, To: to, Asset: plan.Asset, Path: t.Path, DryRun: true},
+		return render(desktopPlanView{Action: action, From: from, To: to, Asset: plan.Asset, Path: t.Path, DryRun: true},
 			[]string{"action", "from", "to", "asset", "path", "dry_run"}, func() error {
 				output.PrintDocTable(map[string]interface{}{
-					"action": action, "from": t.Version, "to": to, "asset": plan.Asset, "path": t.Path,
+					"action": action, "from": from, "to": to, "asset": plan.Asset, "path": t.Path,
 				}, []string{"action", "from", "to", "asset", "path"})
 				return nil
 			})
@@ -255,7 +280,10 @@ func runDesktopInstall(cmd *cobra.Command, _ []string) error {
 	if !deskYes {
 		title := fmt.Sprintf("Install %s %s?", desktopName, to)
 		if action == "update" {
-			title = fmt.Sprintf("Update %s from %s to %s?", desktopName, orUnknown(t.Version), to)
+			title = fmt.Sprintf("Update %s from %s to %s?", desktopName, orUnknown(from), to)
+		}
+		if unknown {
+			title = fmt.Sprintf("The installed %s version is unknown. Install %s over it?", desktopName, to)
 		}
 		if err := confirm(title); err != nil {
 			return err
@@ -281,14 +309,18 @@ func runDesktopInstall(cmd *cobra.Command, _ []string) error {
 
 	var applyErr error
 	if err := runSpinner(fmt.Sprintf("Installing %s %s…", desktopName, to), func() {
-		applyErr = in.Apply(ctx, t, path, plan.Version)
+		// Past this point a Ctrl-C must not stop the install half way (a
+		// killed ditto or setup could leave a broken app): it runs to the end.
+		applyErr = in.Apply(context.WithoutCancel(ctx), t, path, plan.Version)
 	}); err != nil {
 		return err
 	}
 	if applyErr != nil {
 		return desktopError(applyErr)
 	}
-	desktopinstall.CleanupOld(t) // best effort; a running Windows exe stays until next time
+	// The previous copy stays as <name>.old: the app may be running from it.
+	// Apply removes it at the next update, and the app does at its next start
+	// after an in-app update.
 
 	res := desktopResult{Action: action, Version: to, Path: t.Path, RestartNeeded: t.Installed}
 	if !machineOutput() {
@@ -301,7 +333,7 @@ func runDesktopInstall(cmd *cobra.Command, _ []string) error {
 }
 
 func orUnknown(v string) string {
-	if v == "" {
+	if v == "" || v == "unknown" {
 		return "an unknown version"
 	}
 	return v

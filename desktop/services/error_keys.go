@@ -67,7 +67,7 @@ var errorKeys = map[string]string{
 	"policy.handEdited":    "These rules were edited by hand in a way this screen cannot show (a blank entry). Fix them in the config file.",
 	"policy.anchors":       "These rules share parts with other entries of the config file (YAML anchors or merge keys). Edit them in the file.",
 	"update.unsupported":   "The app can update itself only on Windows and macOS.",
-	"update.notInstalled":  "This copy was not installed by the app's installer (a development build, a disk image or a moved app), so it cannot update itself.",
+	"update.notInstalled":  "This copy was not installed by the app's installer (a development build or a disk image), or it was renamed or, on Windows, moved out of its install folder, so it cannot update itself.",
 	"update.notWritable":   "This app's folder cannot be changed by your user, so it cannot update itself.",
 	"update.notNewer":      "You already have the newest version.",
 	"update.rateLimited":   "GitHub is limiting requests right now. Try again later.",

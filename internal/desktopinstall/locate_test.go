@@ -166,7 +166,7 @@ func TestLocateInstalledDarwin(t *testing.T) {
 	if err != nil || !got.Installed || got.Path != userApp || got.Version != "0.9.0" {
 		t.Errorf("user copy: %+v %v", got, err)
 	}
-	want := []string{"plutil", "-extract", "CFBundleShortVersionString", "raw", "-o", "-", filepath.Join(userApp, "Contents", "Info.plist")}
+	want := []string{toolPlutil, "-extract", "CFBundleShortVersionString", "raw", "-o", "-", filepath.Join(userApp, "Contents", "Info.plist")}
 	if strings.Join(plutilArgs, "|") != strings.Join(want, "|") {
 		t.Errorf("plutil argv = %q", plutilArgs)
 	}

@@ -172,3 +172,41 @@ func TestUnsupportedOSMakesNoRequest(t *testing.T) {
 		t.Errorf("%d requests on an unsupported OS", n)
 	}
 }
+
+// Find follows the update check's rule for flagged prereleases and never
+// installs a "-" suffix.
+func TestFindPickRule(t *testing.T) {
+	f, in := newFake(t, "windows")
+	f.publish("desktop-v1.3.0-rc.1", []byte("rc"), "prerelease")
+	f.publish("desktop-v1.2.0", []byte("flagged"), "prerelease") // plain number, flagged
+	f.publish("desktop-v1.1.0", []byte("stable"))
+	f.publish("desktop-v1.0.0", []byte("older"))
+
+	for _, c := range []struct {
+		cur     string
+		wantTag string
+		wantErr error
+	}{
+		{"1.0.0", "desktop-v1.1.0", nil},         // stable 1.x skips the flagged 1.2.0 and the rc
+		{"1.1.0", "desktop-v1.1.0", ErrNotNewer}, // nothing newer it may take
+		{"0.9.0", "desktop-v1.2.0", nil},         // 0.x takes a flagged prerelease, still not the rc
+		{"1.2.0", "desktop-v1.1.0", ErrNotNewer}, // a stable 1.2.0 skips the flagged 1.2.0
+		{"1.1.0-rc.1", "desktop-v1.2.0", nil},    // a prerelease user takes flagged ones
+		{"1.2.0-rc.1", "desktop-v1.2.0", nil},    // and a stable release above its own rc
+	} {
+		cur, _ := ParseVersion(c.cur)
+		p, err := in.Find(context.Background(), cur)
+		if !errors.Is(err, c.wantErr) || (c.wantErr == nil && err != nil) || p.Tag != c.wantTag {
+			t.Errorf("Find(%s) = %s, %v; want %s, %v", c.cur, p.Tag, err, c.wantTag, c.wantErr)
+		}
+	}
+
+	// Only a flagged prerelease and an rc: a stable app finds nothing.
+	f2, in2 := newFake(t, "windows")
+	f2.publish("desktop-v1.3.0-rc.1", []byte("rc"), "prerelease")
+	f2.publish("desktop-v1.2.0", []byte("flagged"), "prerelease")
+	cur, _ := ParseVersion("1.0.0")
+	if _, err := in2.Find(context.Background(), cur); !errors.Is(err, ErrNoRelease) {
+		t.Errorf("stable app, only prereleases: %v", err)
+	}
+}

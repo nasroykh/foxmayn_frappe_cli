@@ -64,7 +64,8 @@ type FFCUpdate struct {
 // CheckForUpdate asks GitHub for the newest desktop release (tag
 // desktop-v<semver>, not a draft) and compares it with this app's version.
 // A prerelease counts only while the running version is 0.x or itself a
-// prerelease. An app version that does not parse (a development build) is
+// prerelease, but a newer release that InstallUpdate can install (no "-"
+// suffix) is offered in place of a still newer rc or beta. An app version that does not parse (a development build) is
 // never offered an app update. From the same list it compares the installed
 // ffc, when FFCInfo.Updatable (InstallFFC replaces it in place; anything else
 // is left to its own `ffc update` notice), with the ffc release InstallFFC
@@ -94,6 +95,11 @@ func (s *AppService) CheckForUpdate(ctx context.Context) (UpdateInfo, error) {
 		return info, nil
 	}
 	best, bestVer, ok := desktopinstall.Newest(rels, cur)
+	// An update InstallUpdate can install wins over a newer rc or beta: the
+	// version offered is the version Find installs, never a different one.
+	if ib, iv, iok := desktopinstall.NewestInstallable(rels, cur); iok && iv.Compare(cur) > 0 {
+		best, bestVer, ok = ib, iv, true
+	}
 	if !ok {
 		return info, nil
 	}

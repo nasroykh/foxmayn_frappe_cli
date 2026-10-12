@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -57,6 +58,10 @@ type macRig struct {
 
 func (r *macRig) run(_ context.Context, name string, args ...string) ([]byte, error) {
 	r.calls = append(r.calls, append([]string{name}, args...))
+	if path.Dir(name) != "/usr/bin" {
+		r.t.Errorf("%s is not run by absolute path under /usr/bin", name)
+	}
+	name = path.Base(name)
 	key := name
 	switch name {
 	case "hdiutil":
@@ -119,14 +124,14 @@ func TestApplyDarwinOrderAndArgv(t *testing.T) {
 	app := filepath.Join(mnt, bundleApp)
 	plist := filepath.Join(tg.Path+".new", "Contents", "Info.plist")
 	want := [][]string{
-		{"hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mnt, asset},
-		{"ditto", app, tg.Path + ".new"},
-		{"codesign", "--verify", "--deep", "--strict", tg.Path + ".new"},
-		{"plutil", "-extract", "CFBundleIdentifier", "raw", "-o", "-", plist},
-		{"plutil", "-extract", "CFBundleShortVersionString", "raw", "-o", "-", plist},
-		{"plutil", "-extract", "CFBundleExecutable", "raw", "-o", "-", plist},
-		{"xattr", "-lr", tg.Path + ".new"},
-		{"hdiutil", "detach", mnt},
+		{toolHdiutil, "attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mnt, asset},
+		{toolDitto, app, tg.Path + ".new"},
+		{toolCodesign, "--verify", "--deep", "--strict", tg.Path + ".new"},
+		{toolPlutil, "-extract", "CFBundleIdentifier", "raw", "-o", "-", plist},
+		{toolPlutil, "-extract", "CFBundleShortVersionString", "raw", "-o", "-", plist},
+		{toolPlutil, "-extract", "CFBundleExecutable", "raw", "-o", "-", plist},
+		{toolXattr, "-lr", tg.Path + ".new"},
+		{toolHdiutil, "detach", mnt},
 	}
 	if !reflect.DeepEqual(r.calls, want) {
 		t.Errorf("calls:\n got %q\nwant %q", r.calls, want)
@@ -183,12 +188,12 @@ func TestApplyDarwinFailuresKeepTheOldBundle(t *testing.T) {
 				t.Error(".new or .old left behind")
 			}
 			last := r.calls[len(r.calls)-1]
-			if gotDetach := last[0] == "hdiutil" && last[1] == "detach"; gotDetach != c.detach {
+			if gotDetach := last[0] == toolHdiutil && last[1] == "detach"; gotDetach != c.detach {
 				t.Errorf("detach = %v, want %v (calls %q)", gotDetach, c.detach, r.calls)
 			}
 			// The command that failed is the last one before the detach: nothing ran after it.
 			for _, call := range r.calls {
-				if call[0] == "xattr" && c.name != "quarantined" && c.name != "xattr fails" {
+				if call[0] == toolXattr && c.name != "quarantined" && c.name != "xattr fails" {
 					t.Errorf("xattr ran after an earlier failure: %q", r.calls)
 				}
 			}
@@ -213,7 +218,7 @@ func TestApplyDarwinFreshInstallAndDetachFallback(t *testing.T) {
 	// it shares the key only by verb. Both must have been attempted.
 	n := 0
 	for _, c := range r.calls {
-		if c[0] == "hdiutil" && c[1] == "detach" {
+		if c[0] == toolHdiutil && c[1] == "detach" {
 			n++
 		}
 	}
@@ -363,6 +368,51 @@ func TestApplyWindows(t *testing.T) {
 		}
 		if readFile(t, tg.Path) != "old" || exists(tg.Path+".old") {
 			t.Errorf("exe = %q, .old exists = %v", readFile(t, tg.Path), exists(tg.Path+".old"))
+		}
+	})
+	for _, c := range []struct {
+		name string
+		err  error
+	}{
+		{"setup writes the new exe then exits non-zero", errors.New("exit status 1")},
+		{"setup writes the new exe then times out", context.DeadlineExceeded},
+	} {
+		t.Run(c.name+", old exe restored", func(t *testing.T) {
+			in, asset, v := downloaded(t, "windows")
+			tg := newTarget(t, true)
+			run, _ := setupRun(t, tg, asset, func() error {
+				if err := os.WriteFile(tg.Path, []byte("half new"), 0o755); err != nil {
+					return err
+				}
+				return c.err
+			})
+			in.Run = run
+			if err := in.Apply(context.Background(), tg, asset, v); !errors.Is(err, ErrInstall) {
+				t.Fatalf("err = %v", err)
+			}
+			if readFile(t, tg.Path) != "old" {
+				t.Errorf("exe = %q, want the old one back", readFile(t, tg.Path))
+			}
+			if exists(tg.Path + ".old") {
+				t.Error(".old still there")
+			}
+			if m, _ := filepath.Glob(escapeGlob(tg.Path) + ".old-*"); len(m) != 0 {
+				t.Errorf("new exe left aside: %q", m)
+			}
+		})
+	}
+	t.Run("stale copies of an earlier update are removed first", func(t *testing.T) {
+		in, asset, v := downloaded(t, "windows")
+		tg := newTarget(t, true)
+		write(t, tg.Path+".old-123", "stale")
+		write(t, tg.Path+".new", "stale")
+		run, _ := setupRun(t, tg, asset, func() error { return os.WriteFile(tg.Path, []byte("new"), 0o755) })
+		in.Run = run
+		if err := in.Apply(context.Background(), tg, asset, v); err != nil {
+			t.Fatal(err)
+		}
+		if exists(tg.Path+".old-123") || exists(tg.Path+".new") {
+			t.Error("stale copies survived Apply")
 		}
 	})
 	t.Run("setup succeeds but writes no exe, exe restored", func(t *testing.T) {

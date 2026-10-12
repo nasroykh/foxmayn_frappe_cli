@@ -91,11 +91,21 @@ func AssetName(goos string, v Version) (string, error) {
 
 // Newest picks the newest desktop release for an app at version cur: no
 // drafts, no CLI tags, and a prerelease (GitHub-flagged or with a "-" suffix)
-// only while the app itself is 0.x or a prerelease. It is the one pick rule
-// for the update check, the in-app install and the CLI. ok is false when
-// nothing qualifies; the result may be older than cur.
+// only while the app itself is 0.x or a prerelease. It is the rule of the
+// update check (what to tell the person about); ok is false when nothing
+// qualifies, and the result may be older than cur. What an install may take
+// is NewestInstallable.
 func Newest(rels []release.Release, cur Version) (*release.Release, Version, bool) {
 	return newest(rels, cur, false)
+}
+
+// NewestInstallable is Newest without the releases that carry a "-" suffix
+// (rc, beta), which are linked to and never installed. Find uses it, and the
+// update check offers it as the installable update, so the version shown is
+// the version installed. A GitHub-flagged prerelease with a plain number
+// still follows Newest's rule: only while cur is 0.x or a prerelease.
+func NewestInstallable(rels []release.Release, cur Version) (*release.Release, Version, bool) {
+	return newest(rels, cur, true)
 }
 
 func newest(rels []release.Release, cur Version, stableOnly bool) (*release.Release, Version, bool) {
@@ -120,23 +130,34 @@ func newest(rels []release.Release, cur Version, stableOnly bool) (*release.Rele
 	return best, bestVer, best != nil
 }
 
-// Latest returns the plan for the newest installable release, whatever is
-// installed. A release with a "-" suffix (rc, beta) is never planned; a
-// GitHub "prerelease" with a plain 0.x number is.
-func (in *Installer) Latest(ctx context.Context) (Plan, error) {
+// list fetches the release list, mapping the failures to this package's
+// errors.
+func (in *Installer) list(ctx context.Context) ([]release.Release, error) {
 	if !supported(in.GOOS) {
-		return Plan{}, ErrUnsupported
+		return nil, ErrUnsupported
 	}
 	rels, err := release.List(ctx, in.ReleasesURL, listTimeout)
 	if err != nil {
 		if cerr := ctx.Err(); cerr != nil {
-			return Plan{}, cerr
+			return nil, cerr
 		}
 		var se *release.StatusError
 		if errors.As(err, &se) && (se.Code == 403 || se.Code == 429) {
-			return Plan{}, fmt.Errorf("%w: %w", ErrRateLimited, err)
+			return nil, fmt.Errorf("%w: %w", ErrRateLimited, err)
 		}
-		return Plan{}, fmt.Errorf("%w: listing releases: %w", ErrNetwork, err)
+		return nil, fmt.Errorf("%w: listing releases: %w", ErrNetwork, err)
+	}
+	return rels, nil
+}
+
+// Latest returns the plan for the newest release to install on a machine
+// that has none (or whose version is unknown). A release with a "-" suffix
+// (rc, beta) is never planned; a GitHub "prerelease" with a plain 0.x number
+// is.
+func (in *Installer) Latest(ctx context.Context) (Plan, error) {
+	rels, err := in.list(ctx)
+	if err != nil {
+		return Plan{}, err
 	}
 	// Version{} is 0.0.0: flagged prereleases count, "-" suffixes do not.
 	rel, v, ok := newest(rels, Version{}, true)
@@ -146,15 +167,26 @@ func (in *Installer) Latest(ctx context.Context) (Plan, error) {
 	return in.plan(rel, v)
 }
 
-// Find is Latest for an installed version cur: ErrNotNewer (with the plan
-// still returned) when the newest release is not newer than cur, so there is
-// no downgrade and no reinstall.
+// Find is the plan for an installed version cur, picked by
+// NewestInstallable(rels, cur): a stable cur is never moved to a flagged
+// prerelease, a "-" suffix is never installed, and a stable release is still
+// found when a newer suffixed one exists. ErrNotNewer (with the plan still
+// returned) when the pick is not newer than cur, so there is no downgrade and
+// no reinstall.
 func (in *Installer) Find(ctx context.Context, cur Version) (Plan, error) {
-	p, err := in.Latest(ctx)
+	rels, err := in.list(ctx)
+	if err != nil {
+		return Plan{}, err
+	}
+	rel, v, ok := NewestInstallable(rels, cur)
+	if !ok {
+		return Plan{}, ErrNoRelease
+	}
+	p, err := in.plan(rel, v)
 	if err != nil {
 		return p, err
 	}
-	if p.Version.Compare(cur) <= 0 {
+	if v.Compare(cur) <= 0 {
 		return p, ErrNotNewer
 	}
 	return p, nil

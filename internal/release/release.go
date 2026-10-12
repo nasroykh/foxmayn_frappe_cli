@@ -277,21 +277,30 @@ func SignedChecksums(ctx context.Context, sumsURL, sigURL string) ([]byte, error
 }
 
 // ChecksumFor returns the SHA-256 that a (verified) checksums.txt body lists
-// for asset. Lines are "<hex-sha256>  <filename>".
+// for asset. Lines are "<hex-sha256>  <filename>". A second entry for the
+// same file name is an error, even with the same sum: which one a tool picks
+// must never decide what gets installed.
 func ChecksumFor(body []byte, asset string) ([32]byte, error) {
 	var sum [32]byte
+	found := false
 	for _, line := range strings.Split(string(body), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 2 && fields[1] == asset {
+			if found {
+				return [32]byte{}, fmt.Errorf("more than one checksum entry for %s in checksums.txt", asset)
+			}
 			raw, err := hex.DecodeString(fields[0])
 			if err != nil || len(raw) != len(sum) {
 				return sum, fmt.Errorf("malformed checksum entry for %s in checksums.txt", asset)
 			}
 			copy(sum[:], raw)
-			return sum, nil
+			found = true
 		}
 	}
-	return sum, fmt.Errorf("no checksum entry for %s in checksums.txt", asset)
+	if !found {
+		return sum, fmt.Errorf("no checksum entry for %s in checksums.txt", asset)
+	}
+	return sum, nil
 }
 
 // Extract returns the ffc binary from a release archive of goos (a zip on

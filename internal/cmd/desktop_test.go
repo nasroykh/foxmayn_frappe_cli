@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -40,6 +41,7 @@ type desktopRig struct {
 	files  map[string][]byte
 
 	calls  [][]string
+	onRun  func(tool string) // called with the tool's base name, before it runs
 	plist  map[string]string
 	target desktopinstall.Target
 	locErr error
@@ -164,10 +166,22 @@ func (r *desktopRig) publish(version string) {
 
 // run plays hdiutil, ditto, codesign, plutil and xattr against the real
 // file system and records every call.
-func (r *desktopRig) run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (r *desktopRig) run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if path.Dir(name) != "/usr/bin" {
+		r.t.Errorf("%s is not run by absolute path under /usr/bin", name)
+	}
+	name = path.Base(name)
 	r.mu.Lock()
 	r.calls = append(r.calls, append([]string{name}, args...))
 	r.mu.Unlock()
+	if r.onRun != nil {
+		r.onRun(name)
+	}
+	if name != "hdiutil" || args[0] != "detach" { // the unmount is deliberately uncancellable
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	switch name {
 	case "hdiutil":
 		if args[0] == "attach" {
@@ -185,7 +199,7 @@ func (r *desktopRig) run(_ context.Context, name string, args ...string) ([]byte
 
 func (r *desktopRig) ran(name string) bool {
 	for _, c := range r.calls {
-		if c[0] == name {
+		if path.Base(c[0]) == name {
 			return true
 		}
 	}
@@ -477,3 +491,117 @@ func TestDesktopErrorMapping(t *testing.T) {
 }
 
 func classifyCode(err error) int { c, _ := classify(err); return c }
+
+// Ctrl-C while the install runs (after the download) must not stop it: the
+// copy and the swap finish, as the app's own update does.
+func TestDesktopInstallApplyIgnoresCancel(t *testing.T) {
+	r := newDesktopRig(t, "0.9.0")
+	r.publish("0.10.0")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.onRun = func(tool string) {
+		if tool == "ditto" {
+			cancel()
+		}
+	}
+	res := runFFCCtx(t, ctx, "", "", "desktop", "install", "--yes", "--json")
+	if res.Code != 0 {
+		t.Fatalf("exit %d: %v\n%s", res.Code, res.Err, res.Stderr)
+	}
+	if got := r.marker(); got != "new" {
+		t.Errorf("bundle marker = %q, want new (the install was cut short)", got)
+	}
+}
+
+// The download is the part that Ctrl-C may stop, and then nothing is applied.
+func TestDesktopInstallCancelledBeforeApplyInstallsNothing(t *testing.T) {
+	r := newDesktopRig(t, "0.9.0")
+	r.publish("0.10.0")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res := runFFCCtx(t, ctx, "", "", "desktop", "install", "--yes", "--json")
+	if res.Code == 0 || len(r.calls) != 0 || r.marker() != "old" {
+		t.Errorf("exit %d, calls %v, marker %q", res.Code, r.calls, r.marker())
+	}
+}
+
+// An installed copy whose version cannot be read is never replaced silently:
+// the newest release might be older than it.
+func TestDesktopInstallUnknownInstalledVersion(t *testing.T) {
+	for _, ver := range []string{"", "banana"} {
+		t.Run("version "+ver, func(t *testing.T) {
+			r := newDesktopRig(t, "0.11.0")
+			r.target.Version = ver
+			r.publish("0.10.0")
+
+			res := runFFC(t, "", "", "desktop", "install", "--yes")
+			if res.Code != exitGeneric || !strings.Contains(res.Stderr, "could not read") || !strings.Contains(res.Stderr, "--force") ||
+				!strings.Contains(res.Stderr, "0.10.0") {
+				t.Errorf("exit %d, stderr %q", res.Code, res.Stderr)
+			}
+			if r.downloads() != 0 || len(r.calls) != 0 || r.marker() != "old" {
+				t.Errorf("touched things: %v %v %q", r.hits, r.calls, r.marker())
+			}
+			// --dry-run tells the truth too: the real run would refuse.
+			if res := runFFC(t, "", "", "desktop", "install", "--dry-run"); res.Code != exitGeneric {
+				t.Errorf("dry run without --force: exit %d", res.Code)
+			}
+
+			res = runFFC(t, "", "", "desktop", "install", "--force", "--dry-run", "--json")
+			if res.Code != 0 {
+				t.Fatalf("dry run: exit %d: %v %s", res.Code, res.Err, res.Stderr)
+			}
+			if m := jsonObj(t, res.Stdout); m["from"] != "unknown" || m["to"] != "0.10.0" || m["action"] != "update" {
+				t.Errorf("plan = %v", m)
+			}
+			if len(r.calls) != 0 {
+				t.Errorf("dry run ran %v", r.calls)
+			}
+
+			res = runFFC(t, "", "", "desktop", "install", "--force", "--yes", "--json")
+			if res.Code != 0 {
+				t.Fatalf("forced: exit %d: %v %s", res.Code, res.Err, res.Stderr)
+			}
+			if m := jsonObj(t, res.Stdout); m["action"] != "update" || m["version"] != "0.10.0" {
+				t.Errorf("result = %v", m)
+			}
+			if r.marker() != "new" {
+				t.Errorf("marker = %q", r.marker())
+			}
+		})
+	}
+}
+
+// The CLI leaves the previous bundle as .old (the app may be running from
+// it); Apply replaces what an earlier update left.
+func TestDesktopInstallKeepsPreviousCopyAsOld(t *testing.T) {
+	r := newDesktopRig(t, "0.9.0")
+	r.publish("0.10.0")
+	r.write(filepath.Join(r.target.Path+".old", "Contents", "marker"), "stale")
+	if res := runFFC(t, "", "", "desktop", "install", "--yes"); res.Code != 0 {
+		t.Fatalf("exit %d: %v %s", res.Code, res.Err, res.Stderr)
+	}
+	b, err := os.ReadFile(filepath.Join(r.target.Path+".old", "Contents", "marker"))
+	if err != nil || string(b) != "old" {
+		t.Errorf(".old = %q, %v; want the replaced copy", b, err)
+	}
+	if fileExists(r.target.Path + ".new") {
+		t.Error(".new left behind")
+	}
+}
+
+// status follows the same pick rule as install: a flagged prerelease with a
+// plain number is not offered to a stable 1.x install.
+func TestDesktopStatusUsesTheInstallPickRule(t *testing.T) {
+	r := newDesktopRig(t, "1.0.0")
+	r.publish("1.1.0")
+	r.publish("1.2.0")
+	r.rels[1].Prerelease = true
+	res := runFFC(t, "", "", "desktop", "status", "--json")
+	if res.Code != 0 {
+		t.Fatalf("exit %d: %v", res.Code, res.Err)
+	}
+	if m := jsonObj(t, res.Stdout); m["latest"] != "1.1.0" || m["update_available"] != true {
+		t.Errorf("status = %v", m)
+	}
+}

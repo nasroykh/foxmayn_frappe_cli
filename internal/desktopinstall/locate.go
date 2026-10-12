@@ -187,7 +187,7 @@ func (in *Installer) locateInstalledDarwin(home string) (Target, error) {
 
 // plistValue reads one Info.plist key of an app bundle with plutil.
 func (in *Installer) plistValue(ctx context.Context, app, key string) (string, error) {
-	out, err := in.run()(ctx, "plutil", "-extract", key, "raw", "-o", "-", filepath.Join(app, "Contents", "Info.plist"))
+	out, err := in.run()(ctx, toolPlutil, "-extract", key, "raw", "-o", "-", filepath.Join(app, "Contents", "Info.plist"))
 	if err != nil {
 		return "", err
 	}

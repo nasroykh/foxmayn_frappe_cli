@@ -316,3 +316,50 @@ func TestActiveRunsWithoutStore(t *testing.T) {
 		t.Errorf("ActiveRuns = %d", n)
 	}
 }
+
+// Cancelling the call while the install runs changes nothing: the setup
+// finishes, the new copy is started and the app quits.
+func TestInstallUpdateCancelDuringInstallStillCompletes(t *testing.T) {
+	f := newUpdFake(t, "0.1.0")
+	f.publish("0.2.0", []byte("setup bytes"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inner := f.svc.selfUpdate.Run
+	f.svc.selfUpdate.Run = func(c context.Context, name string, args ...string) ([]byte, error) {
+		cancel() // the window closes mid-install
+		if c.Err() != nil {
+			t.Error("the installer's context was cancelled with the caller's")
+		}
+		return inner(c, name, args...)
+	}
+	res, err := f.svc.InstallUpdate(ctx)
+	if err != nil || res.Version != "0.2.0" {
+		t.Fatalf("got %+v, %v", res, err)
+	}
+	if len(f.started) != 1 || f.host.quits != 1 {
+		t.Errorf("started = %v, quits = %d", f.started, f.host.quits)
+	}
+	if b, _ := os.ReadFile(f.exe); string(b) != "new" {
+		t.Errorf("exe = %q", b)
+	}
+}
+
+// The version the dialog shows (CheckForUpdate) is the version installed,
+// also when the newest release is an rc.
+func TestInstallUpdateInstallsWhatTheCheckOffered(t *testing.T) {
+	f := newUpdFake(t, "0.10.0")
+	f.publish("0.11.0", []byte("stable"))
+	f.publish("0.12.0-rc.1", []byte("rc"))
+	f.rels[1].Prerelease = true
+	f.rels[0], f.rels[1] = f.rels[1], f.rels[0] // newest first, the rc on top
+	f.svc.eligible = func(string, desktopinstall.Version, string) error { return nil }
+
+	info, err := f.svc.CheckForUpdate(context.Background())
+	if err != nil || !info.CanInstall || info.Latest != "0.11.0" {
+		t.Fatalf("check: %+v, %v", info, err)
+	}
+	res, err := f.svc.InstallUpdate(context.Background())
+	if err != nil || res.Version != info.Latest {
+		t.Fatalf("installed %+v (%v), offered %s", res, err, info.Latest)
+	}
+}
