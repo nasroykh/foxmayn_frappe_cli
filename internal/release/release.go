@@ -42,11 +42,19 @@ const (
 
 // Release is the part of GitHub's release JSON that ffc reads.
 type Release struct {
-	TagName    string  `json:"tag_name"`
-	Draft      bool    `json:"draft"`
-	Prerelease bool    `json:"prerelease"`
-	Assets     []Asset `json:"assets"`
+	TagName     string  `json:"tag_name"`
+	Draft       bool    `json:"draft"`
+	Prerelease  bool    `json:"prerelease"`
+	HTMLURL     string  `json:"html_url"`
+	PublishedAt string  `json:"published_at"`
+	Assets      []Asset `json:"assets"`
 }
+
+// StatusError is a GitHub API answer other than 200. Callers map Code (403
+// and 429 are the rate limit).
+type StatusError struct{ Code int }
+
+func (e *StatusError) Error() string { return fmt.Sprintf("GitHub API returned HTTP %d", e.Code) }
 
 // Asset is one file attached to a release.
 type Asset struct {
@@ -70,11 +78,9 @@ type Target struct {
 // tags; desktop releases use another prefix). It is what releases/latest
 // gave before desktop releases existed.
 func Latest(ctx context.Context, url string, timeout time.Duration) (*Release, error) {
-	var rels []Release
-	if status, err := getJSON(ctx, url, timeout, &rels); err != nil {
+	rels, err := List(ctx, url, timeout)
+	if err != nil {
 		return nil, err
-	} else if status != 200 {
-		return nil, fmt.Errorf("GitHub API returned HTTP %d", status)
 	}
 	for i := range rels {
 		if r := &rels[i]; !r.Draft && !r.Prerelease && IsCLITag(r.TagName) {
@@ -82,6 +88,21 @@ func Latest(ctx context.Context, url string, timeout time.Duration) (*Release, e
 		}
 	}
 	return nil, fmt.Errorf("no ffc release found on GitHub")
+}
+
+// List returns the releases in the list at url (ReleasesURL outside tests),
+// newest first as GitHub sends them, drafts and every kind of tag included.
+// A non-200 answer is a *StatusError.
+func List(ctx context.Context, url string, timeout time.Duration) ([]Release, error) {
+	var rels []Release
+	status, err := getJSON(ctx, url, timeout, &rels)
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, &StatusError{Code: status}
+	}
+	return rels, nil
 }
 
 // Tagged returns the ffc release tagged tag from base (APIBase outside tests),
@@ -99,7 +120,7 @@ func Tagged(ctx context.Context, base, tag string, timeout time.Duration) (*Rele
 	case status == 404:
 		return nil, fmt.Errorf("no ffc release %s on GitHub", tag)
 	case status != 200:
-		return nil, fmt.Errorf("GitHub API returned HTTP %d", status)
+		return nil, &StatusError{Code: status}
 	case rel.Draft || rel.TagName != tag:
 		return nil, fmt.Errorf("no ffc release %s on GitHub", tag)
 	}
@@ -216,37 +237,61 @@ func Fetch(ctx context.Context, url string, timeout time.Duration, max int64) ([
 // for assetName (H1, D19). The archive name carries the version, so a signed
 // checksums.txt from an older release cannot vouch for this one.
 func Verify(ctx context.Context, archive []byte, checksumsURL, sigURL, assetName string) error {
-	if checksumsURL == "" {
-		return fmt.Errorf("release has no checksums.txt — refusing to install an unverified binary")
+	body, err := SignedChecksums(ctx, checksumsURL, sigURL)
+	if err != nil {
+		return err
+	}
+	want, err := ChecksumFor(body, assetName)
+	if err != nil {
+		return err
+	}
+	if got := sha256.Sum256(archive); got != want {
+		return fmt.Errorf("checksum mismatch for %s:\n  expected %s\n  got      %s",
+			assetName, hex.EncodeToString(want[:]), hex.EncodeToString(got[:]))
+	}
+	return nil
+}
+
+// SignedChecksums fetches checksums.txt and its signature and returns the
+// body once the signature verifies against relsig.ReleaseKeys. An empty URL
+// is refused: nothing unsigned is ever trusted.
+func SignedChecksums(ctx context.Context, sumsURL, sigURL string) ([]byte, error) {
+	if sumsURL == "" {
+		return nil, fmt.Errorf("release has no checksums.txt — refusing to install an unverified binary")
 	}
 	if sigURL == "" {
-		return fmt.Errorf("release has no %s — refusing to install an unverified binary", relsig.SignatureName)
+		return nil, fmt.Errorf("release has no %s — refusing to install an unverified binary", relsig.SignatureName)
 	}
-	body, err := Fetch(ctx, checksumsURL, 30*time.Second, maxChecksumsBytes)
+	body, err := Fetch(ctx, sumsURL, 30*time.Second, maxChecksumsBytes)
 	if err != nil {
-		return fmt.Errorf("fetching checksums: %w", err)
+		return nil, fmt.Errorf("fetching checksums: %w", err)
 	}
 	sig, err := Fetch(ctx, sigURL, 30*time.Second, relsig.MaxSignatureBytes)
 	if err != nil {
-		return fmt.Errorf("fetching checksums signature: %w", err)
+		return nil, fmt.Errorf("fetching checksums signature: %w", err)
 	}
 	if err := relsig.Verify(relsig.ReleaseKeys, body, sig); err != nil {
-		return fmt.Errorf("checksums.txt signature check failed — refusing to install: %w", err)
+		return nil, fmt.Errorf("checksums.txt signature check failed — refusing to install: %w", err)
 	}
+	return body, nil
+}
 
-	sum := sha256.Sum256(archive)
-	got := hex.EncodeToString(sum[:])
+// ChecksumFor returns the SHA-256 that a (verified) checksums.txt body lists
+// for asset. Lines are "<hex-sha256>  <filename>".
+func ChecksumFor(body []byte, asset string) ([32]byte, error) {
+	var sum [32]byte
 	for _, line := range strings.Split(string(body), "\n") {
-		// checksums.txt lines are "<hex-sha256>  <filename>".
 		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[1] == assetName {
-			if !strings.EqualFold(fields[0], got) {
-				return fmt.Errorf("checksum mismatch for %s:\n  expected %s\n  got      %s", assetName, fields[0], got)
+		if len(fields) == 2 && fields[1] == asset {
+			raw, err := hex.DecodeString(fields[0])
+			if err != nil || len(raw) != len(sum) {
+				return sum, fmt.Errorf("malformed checksum entry for %s in checksums.txt", asset)
 			}
-			return nil
+			copy(sum[:], raw)
+			return sum, nil
 		}
 	}
-	return fmt.Errorf("no checksum entry for %s in checksums.txt", assetName)
+	return sum, fmt.Errorf("no checksum entry for %s in checksums.txt", asset)
 }
 
 // Extract returns the ffc binary from a release archive of goos (a zip on
