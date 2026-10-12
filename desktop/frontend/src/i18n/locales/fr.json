@@ -129,7 +129,11 @@
       "orDownload": "Ou téléchargez-la depuis GitHub et installez-la par-dessus celle-ci.",
       "downloadFromGitHub": "Téléchargez-la depuis GitHub et installez-la par-dessus celle-ci.",
       "upToDateTitle": "L’app est à jour",
-      "upToDateBody": "La version {{version}} est la plus récente."
+      "upToDateBody": "La version {{version}} est la plus récente.",
+      "install": "Installer la mise à jour",
+      "installBody": "L'application la télécharge, vérifie sa signature et son empreinte, l'installe et redémarre d'elle-même.",
+      "orTerminal": "Ou exécutez ceci dans {{terminal}} :",
+      "cannotSelf": "Cette copie ne peut pas installer les mises à jour d'elle-même."
     },
     "about": {
       "version": "Version {{version}}",
@@ -714,6 +718,21 @@
     "activity": {
       "limit": "Demandez de 1 à 200 entrées à partir d’une position de 0 ou plus.",
       "readFailed": "Le journal d’activité n’a pas pu être lu."
+    },
+    "update": {
+      "unsupported": "L'application ne peut se mettre à jour elle-même que sous Windows et macOS.",
+      "notInstalled": "Cette copie n'a pas été installée par l'installeur de l'application (version de développement, image disque ou application déplacée) : elle ne peut pas se mettre à jour elle-même.",
+      "notWritable": "Le dossier de l'application n'est pas modifiable par votre utilisateur : elle ne peut pas se mettre à jour elle-même.",
+      "notNewer": "Vous avez déjà la version la plus récente.",
+      "rateLimited": "GitHub limite les requêtes pour le moment. Réessayez plus tard.",
+      "network": "La mise à jour n'a pas pu être téléchargée. Vérifiez votre connexion internet.",
+      "noRelease": "Aucune version de l'application n'a été trouvée sur GitHub.",
+      "asset": "La version ne contient pas les fichiers attendus.",
+      "verify": "Le téléchargement n'a pas passé ses contrôles de sécurité : rien n'a été installé.",
+      "install": "La mise à jour n'a pas pu être installée. Votre version actuelle a été conservée.",
+      "relaunch": "La mise à jour est installée, mais l'application n'a pas pu se relancer. Fermez-la et rouvrez-la.",
+      "busy": "Une mise à jour est déjà en cours.",
+      "cancelled": "La mise à jour a été annulée. Rien n'a été installé."
     }
   },
   "auth": {
@@ -1011,6 +1030,28 @@
     "updateButton": "Mettre à jour ffc",
     "installButton": "Installer ffc"
   },
+  "updateInstall": {
+    "title": "Installer la version {{version}} ?",
+    "body": "L'application télécharge la mise à jour, vérifie sa signature et son empreinte, l'installe et redémarre d'elle-même.",
+    "warnTitle": "Avant le redémarrage de l'application",
+    "warnRun": "Un assistant est encore en train de répondre. Le redémarrage l'arrête.",
+    "warnDraft": "Il y a du texte non envoyé dans la zone de message. Il sera perdu au redémarrage.",
+    "install": "Installer et redémarrer",
+    "notNow": "Pas maintenant",
+    "cancelled": "Mise à jour annulée",
+    "failed": "La mise à jour n'a pas été installée",
+    "alsoTerminal": "Vous pouvez aussi l'installer dans un terminal :",
+    "restartNote": "L'application se ferme puis se rouvre dans un instant.",
+    "progress": "Progression de la mise à jour",
+    "megabytes": "{{done}} sur {{total}} Mo",
+    "step": {
+      "checking": "Recherche de la mise à jour",
+      "downloading": "Téléchargement",
+      "verifying": "Vérification de la signature et de l'empreinte",
+      "installing": "Installation",
+      "restarting": "Redémarrage de l'application"
+    }
+  },
   "wsl": {
     "title": "Paramètres ffc trouvés dans WSL",
     "bodyOne": "Votre environnement Linux ({{distro}}) a ses propres paramètres ffc. Cette app gère uniquement les paramètres Windows, et les deux ne sont pas synchronisés. Ajoutez aussi les sites ici si vous voulez que les apps Windows les utilisent.",
@@ -1060,7 +1101,8 @@
       "commandCopied": "Commande copiée",
       "githubHint": "Une version plus récente peut être téléchargée depuis GitHub.",
       "ffcTitle": "ffc {{version}} est disponible",
-      "ffcBody": "Vous avez ffc {{current}}. L’app peut le mettre à jour pour vous."
+      "ffcBody": "Vous avez ffc {{current}}. L’app peut le mettre à jour pour vous.",
+      "install": "Installer la mise à jour"
     }
   },
   "palette": {

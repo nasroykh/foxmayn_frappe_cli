@@ -17,6 +17,14 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * ActiveRuns is the number of runs answering now, in any conversation. The
+ * update dialog warns before it restarts the app while one is going.
+ */
+export function ActiveRuns(): $CancellablePromise<number> {
+    return $Call.ByID(736457285);
+}
+
+/**
  * AddAttachment opens a file dialog and attaches the chosen files to the
  * next message of a conversation. Each file is checked (see package attach);
  * one refused does not stop the others.

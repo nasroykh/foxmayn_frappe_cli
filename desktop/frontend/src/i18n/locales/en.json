@@ -129,7 +129,11 @@
       "orDownload": "Or download it from GitHub and install it over this one.",
       "downloadFromGitHub": "Download it from GitHub and install it over this one.",
       "upToDateTitle": "The app is up to date",
-      "upToDateBody": "Version {{version}} is the newest one."
+      "upToDateBody": "Version {{version}} is the newest one.",
+      "install": "Install update",
+      "installBody": "The app downloads it, checks its signature and checksum, installs it and restarts itself.",
+      "orTerminal": "Or run this in {{terminal}} instead:",
+      "cannotSelf": "This copy cannot install updates by itself."
     },
     "about": {
       "version": "Version {{version}}",
@@ -709,6 +713,21 @@
     "activity": {
       "limit": "Ask for 1 to 200 entries from a position of 0 or more.",
       "readFailed": "The activity log could not be read."
+    },
+    "update": {
+      "unsupported": "The app can update itself only on Windows and macOS.",
+      "notInstalled": "This copy was not installed by the app's installer (a development build, a disk image or a moved app), so it cannot update itself.",
+      "notWritable": "This app's folder cannot be changed by your user, so it cannot update itself.",
+      "notNewer": "You already have the newest version.",
+      "rateLimited": "GitHub is limiting requests right now. Try again later.",
+      "network": "The update could not be downloaded. Check your internet connection.",
+      "noRelease": "No release of the app was found on GitHub.",
+      "asset": "The release does not have the expected files.",
+      "verify": "The download did not pass its safety checks, so nothing was installed.",
+      "install": "The update could not be installed. Your current version was kept.",
+      "relaunch": "The update is installed, but the app could not restart itself. Close it and open it again.",
+      "busy": "An update is already running.",
+      "cancelled": "The update was cancelled. Nothing was installed."
     }
   },
   "auth": {
@@ -1006,6 +1025,28 @@
     "updateButton": "Update ffc",
     "installButton": "Install ffc"
   },
+  "updateInstall": {
+    "title": "Install version {{version}}?",
+    "body": "The app downloads the update, checks its signature and checksum, installs it and restarts by itself.",
+    "warnTitle": "Before the app restarts",
+    "warnRun": "An assistant is still answering. Restarting stops it.",
+    "warnDraft": "There is unsent text in the message box. It is lost when the app restarts.",
+    "install": "Install and restart",
+    "notNow": "Not now",
+    "cancelled": "Update cancelled",
+    "failed": "The update was not installed",
+    "alsoTerminal": "You can also install it in a terminal:",
+    "restartNote": "The app closes and opens again in a moment.",
+    "progress": "Update progress",
+    "megabytes": "{{done}} of {{total}} MB",
+    "step": {
+      "checking": "Looking for the update",
+      "downloading": "Downloading",
+      "verifying": "Checking the signature and checksum",
+      "installing": "Installing",
+      "restarting": "Restarting the app"
+    }
+  },
   "wsl": {
     "title": "ffc settings found in WSL",
     "bodyOne": "Your Linux environment ({{distro}}) has its own ffc settings. This app manages the Windows settings only, and the two are not synced. Add the sites here too if you want Windows apps to use them.",
@@ -1055,7 +1096,8 @@
       "commandCopied": "Command copied",
       "githubHint": "A newer version can be downloaded from GitHub.",
       "ffcTitle": "ffc {{version}} is available",
-      "ffcBody": "You have ffc {{current}}. The app can update it for you."
+      "ffcBody": "You have ffc {{current}}. The app can update it for you.",
+      "install": "Install update"
     }
   },
   "palette": {

@@ -41,6 +41,7 @@ type fakeHost struct {
 	opened  []string
 	files   []string
 	themes  []bool
+	quits   int
 	openURL func(string) error
 	subs    map[string][]func(any)
 }
@@ -87,6 +88,12 @@ func (h *fakeHost) SetWindowTheme(dark bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.themes = append(h.themes, dark)
+}
+
+func (h *fakeHost) Quit() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.quits++
 }
 
 func (h *fakeHost) named(name string) []any {

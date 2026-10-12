@@ -21,6 +21,13 @@ Messages Foxmayn Frappe Desktop may show, and what to do about them.
 | The app's settings file is read-only. | Make the file writable, then connect again. |
 | The app's settings file could not be read, so it was left as it is. | The file has a syntax error. Fix it by hand (the app never overwrites a file it cannot parse). |
 | GitHub could not be reached / is limiting requests | The update check or ffc download failed. Try again later. |
+| This copy was not installed by the app's installer ... so it cannot update itself. | A development build, an app run from a disk image or moved out of its folder. Install the app with the installer or the script, then update from there; until then use the command in Settings > About. |
+| This app's folder cannot be changed by your user, so it cannot update itself. | The app lives where your user cannot write (for example `/Applications` owned by another user). Run the update command from Settings > About, or move the app to `~/Applications`. |
+| The download did not pass its safety checks, so nothing was installed. | The signature or checksum of the update did not match. Your current version was kept. Try again later or download it from the release page. |
+| The release does not have the expected files. / No release of the app was found on GitHub. | The release is incomplete or not published yet. Try again later. |
+| The update could not be installed. Your current version was kept. | The installer or the copy step failed. Run the command from Settings > About in a terminal to see the error. |
+| The update is installed, but the app could not restart itself. | Close the app and open it again; it is already the new version. |
+| An update is already running. / The update was cancelled. | Wait for the running update, or start it again. Nothing was installed after a cancel. |
 | An app is "Connected" but does not see the site | Restart the app fully. For Claude Desktop, quit it from the tray or menu bar too. |
 | ffc settings found in WSL | Informational: the app manages only the Windows config. |
 

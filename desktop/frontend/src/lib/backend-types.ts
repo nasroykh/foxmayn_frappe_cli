@@ -54,6 +54,8 @@ import type {
   SiteSettings,
   StagedAttachment as GeneratedStagedAttachment,
   UpdateInfo,
+  UpdateInstall,
+  UpdateProgress,
   UsageTotals,
   Validation,
   WSLInfo,
@@ -98,6 +100,8 @@ export type {
   SiteList,
   SiteSettings,
   UpdateInfo,
+  UpdateInstall,
+  UpdateProgress,
   UsageTotals,
   Validation,
   WSLInfo,
@@ -267,6 +271,14 @@ export interface Backend {
   installFFC(): Cancellable<FFCInfo>
   openWebsite(url: string): Promise<void>
   checkForUpdate(): Promise<UpdateInfo>
+  /**
+   * Installs the newest release over this copy and restarts the app. Takes no
+   * input: Go picks the release and the target. Cancel works until the install
+   * begins; on success the app quits.
+   */
+  installUpdate(): Cancellable<UpdateInstall>
+  /** Assistant runs answering now (the update dialog warns before it restarts the app). */
+  activeRuns(): Promise<number>
   /** The ffc helper tab's check: also compares a package manager's copy. */
   checkFFCUpdate(): Promise<FFCUpdate>
   openConfigFolder(): Promise<void>
@@ -414,6 +426,7 @@ export interface Backend {
   onConfigChanged(cb: (ev: ConfigChanged) => void): () => void
   onSignInProgress(cb: (ev: SignInProgress) => void): () => void
   onInstallerLog(cb: (line: string) => void): () => void
+  onUpdateProgress(cb: (ev: UpdateProgress) => void): () => void
 
   /** ffc's audit log of tool calls, newest first. Read only; limit 1 to 200 (0 is 50). */
   queryActivity(q: ActivityQuery): Promise<ActivityPage>

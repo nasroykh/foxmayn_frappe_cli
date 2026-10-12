@@ -8,6 +8,8 @@ import { CommandPalette } from "@/components/command-palette"
 import { ShortcutsDialog } from "@/components/shortcuts-dialog"
 import { modalOpen } from "@/lib/modal"
 import { InstallFFCDialog } from "@/components/install-ffc-dialog"
+import { UpdateInstallDialog } from "@/components/update-install-dialog"
+import type { UpdateInfo } from "@/lib/backend-types"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { AddSiteSheet } from "@/screens/add-site-sheet"
@@ -42,6 +44,7 @@ export default function App() {
   const [addSiteOpen, setAddSiteOpen] = React.useState(false)
   const [connectTarget, setConnectTarget] = React.useState<ConnectTarget | null>(null)
   const [installOpen, setInstallOpen] = React.useState(false)
+  const [updateOffer, setUpdateOffer] = React.useState<UpdateInfo | null>(null)
   const [shortcutsOpen, setShortcutsOpen] = React.useState(false)
   const [newConversationPending, setNewConversationPending] = React.useState(false)
   const [pendingActivityFilter, setPendingActivityFilter] = React.useState<{ runID: string } | null>(null)
@@ -54,6 +57,7 @@ export default function App() {
         setConnectTarget({ client, site })
       },
       installFFC: () => setInstallOpen(true),
+      installUpdate: (info: UpdateInfo) => setUpdateOffer(info),
       newConversation: () => {
         setScreen("assistant")
         setNewConversationPending(true)
@@ -82,6 +86,7 @@ export default function App() {
       <AddSiteSheet open={addSiteOpen} onOpenChange={setAddSiteOpen} />
       <ConnectDialog target={connectTarget} onClose={() => setConnectTarget(null)} />
       <InstallFFCDialog open={installOpen} onOpenChange={setInstallOpen} />
+      <UpdateInstallDialog info={updateOffer} onClose={() => setUpdateOffer(null)} />
     </AppProvider>
   )
 }

@@ -217,6 +217,13 @@ func (r *runner) whileIdle(convID string, fn func() error) error {
 	return fn()
 }
 
+// activeCount is the number of runs active now.
+func (r *runner) activeCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.active)
+}
+
 // activeRunOf returns the id of the run active on convID, or "".
 func (r *runner) activeRunOf(convID string) string {
 	r.mu.Lock()

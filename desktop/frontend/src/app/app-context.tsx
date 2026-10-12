@@ -118,6 +118,8 @@ interface AppContextValue {
   connectAssistant: (client?: string, site?: string) => void
   /** Opens the ffc install dialog. */
   installFFC: () => void
+  /** Opens the dialog that installs the app update (Go downloads, verifies, installs, restarts). */
+  installUpdate: (info: UpdateInfo) => void
   /** Goes to the Assistant and asks for a new conversation. */
   newConversation: () => void
   /** A new conversation was asked for and the Assistant has not opened its form yet. */
@@ -142,6 +144,7 @@ export interface AppActions {
   addSite: () => void
   connectAssistant: (client?: string, site?: string) => void
   installFFC: () => void
+  installUpdate: (info: UpdateInfo) => void
   newConversation: () => void
   takeNewConversation: () => void
   openShortcuts: () => void
@@ -213,7 +216,15 @@ export function AppProvider({
     markUpdateChecked()
     void checkUpdate().then(
       (info) => {
-        if (info.available && info.installCommand) {
+        if (info.available && info.canInstall) {
+          addUpdateToast("app", {
+            title: i18n.t("shell.update.availableTitle", { version: info.latest }),
+            description: i18n.t("settings.update.installBody"),
+            type: "info",
+            timeout: 20000,
+            actionProps: { children: i18n.t("shell.update.install"), onClick: () => actions.installUpdate(info) },
+          })
+        } else if (info.available && info.installCommand) {
           // The terminal command avoids the warnings an unsigned download meets.
           const terminal = info.installCommand.startsWith("curl") ? "Terminal" : "PowerShell"
           addUpdateToast("app", {
@@ -247,7 +258,7 @@ export function AppProvider({
       },
       () => {},
     )
-  }, [checkUpdate, downloadUpdate, actions.installFFC])
+  }, [checkUpdate, downloadUpdate, actions])
 
   // The check's answer stays valid only for the ffc it saw: after an update
   // (or a new ffc found) the installed version differs, and nothing is offered.

@@ -24,6 +24,7 @@ declare module "@wailsio/runtime" {
             "config:changed": services$0.ConfigChanged;
             "installer:log": services$0.InstallerLine;
             "signin:progress": services$0.SignInProgress;
+            "update:progress": services$0.UpdateProgress;
         }
     }
 }

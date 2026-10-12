@@ -63,6 +63,24 @@ export function InstallFFC(): $CancellablePromise<$models.FFCInfo> {
 }
 
 /**
+ * InstallUpdate replaces this copy of the app with the newest release and
+ * restarts it. It takes no input from the web view: the release is the one
+ * internal/desktopinstall finds for this version, the signed checksums and
+ * the file's SHA-256 are verified before anything is installed, and the
+ * program started afterwards is the path LocateSelf returned for this very
+ * copy. The UI has already asked the person (and warned about a running
+ * assistant or unsent text). Steps arrive as "update:progress" events.
+ * 
+ * Cancelling ctx stops it until the install begins; from then on it runs to
+ * the end, because stopping half way is the one thing that could leave the
+ * app broken. Any failure leaves the current copy as it was. On success the
+ * call returns after the new copy was started, and the app quits.
+ */
+export function InstallUpdate(): $CancellablePromise<$models.UpdateInstall> {
+    return $Call.ByID(3005676600);
+}
+
+/**
  * OpenConfigFolder opens the folder that holds config.yaml.
  */
 export function OpenConfigFolder(): $CancellablePromise<void> {

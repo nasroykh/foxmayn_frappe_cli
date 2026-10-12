@@ -10,7 +10,7 @@ A desktop app for Windows and macOS that manages your Frappe and ERPNext sites a
 - **Connect apps.** Connect Claude Desktop, Claude Code, Cursor, VS Code or Codex to a site, optionally read-only, with a preview of the change first. Disconnect again with one click.
 - **ffc helper.** Apps reach your sites through the `ffc` command line. If it is missing, the app downloads the latest ffc release, verifies its signature and checksum, and installs it for you.
 - **English, French and Arabic.** The whole app, right to left in Arabic, following your system's language until you choose one. Keyboard shortcuts, and the chat works with the keyboard alone.
-- **Update notice.** Tells you when a newer version of the app is available, and updates ffc for you when a newer ffc release is out.
+- **Updates.** Tells you when a newer version of the app is available and installs it for you (it checks the release signature and checksum, installs and restarts the app), and updates ffc when a newer ffc release is out.
 
 The app and the CLI share one config file, `~/.config/ffc/config.yaml`. Sites you add with `ffc` show up in the app, and the other way round, live.
 
