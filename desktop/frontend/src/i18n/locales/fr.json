@@ -299,7 +299,12 @@
       "decline": "Refuser",
       "field": "Champ",
       "before": "Avant",
-      "after": "Après"
+      "after": "Après",
+      "source": "Dans l’original",
+      "copy": "Dans le nouveau document",
+      "copyDiffLabel": "Champs fixés par la demande",
+      "noOverrides": "La demande ne fixe aucun champ",
+      "docDiffLabel": "Champs modifiés dans {{name}}"
     },
     "tool": {
       "running": "En cours",

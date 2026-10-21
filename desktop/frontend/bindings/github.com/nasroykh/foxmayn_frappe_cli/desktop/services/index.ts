@@ -41,6 +41,7 @@ export type {
     Conversation,
     ConversationDetail,
     DiffField,
+    DocChanges,
     EditResult,
     Environment,
     Error,

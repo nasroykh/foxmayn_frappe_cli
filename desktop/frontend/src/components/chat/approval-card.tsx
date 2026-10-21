@@ -4,7 +4,8 @@ import { useTranslation } from "react-i18next"
 
 import { Details } from "@/components/page"
 import { Button } from "@/components/ui/button"
-import type { ChatApproval, DiffField } from "@/lib/backend-types"
+import type { ChatApproval, DiffField, DocChanges } from "@/lib/backend-types"
+import { cn } from "cn"
 
 function show(v: unknown): string {
   if (typeof v === "string") return v
@@ -12,21 +13,25 @@ function show(v: unknown): string {
   return JSON.stringify(v)
 }
 
-/** The field changes as a table: field, value before (struck), value after. */
-function FieldChanges({ fields }: { fields: DiffField[] }) {
+/**
+ * The field changes as a table: field, value before (struck), value after. A
+ * copy lists every field it sets, its columns named after the original and
+ * the new document.
+ */
+function FieldChanges({ fields, label, copy }: { fields: DiffField[]; label: string; copy?: boolean }) {
   const { t } = useTranslation()
   return (
-    <table aria-label={t("chat.approval.diffLabel")} className="w-full table-fixed border-collapse overflow-hidden rounded-md text-xs">
+    <table aria-label={label} className="w-full table-fixed border-collapse overflow-hidden rounded-md text-xs">
       <thead className="text-muted-foreground">
         <tr className="border-b">
           <th scope="col" className="w-1/4 py-1 pe-2 text-start font-medium">
             {t("chat.approval.field")}
           </th>
           <th scope="col" className="py-1 pe-2 text-start font-medium">
-            {t("chat.approval.before")}
+            {copy ? t("chat.approval.source") : t("chat.approval.before")}
           </th>
           <th scope="col" className="py-1 text-start font-medium">
-            {t("chat.approval.after")}
+            {copy ? t("chat.approval.copy") : t("chat.approval.after")}
           </th>
         </tr>
       </thead>
@@ -36,7 +41,14 @@ function FieldChanges({ fields }: { fields: DiffField[] }) {
             <th scope="row" dir="ltr" className="py-1.5 pe-2 text-start font-mono font-normal break-all">
               {f.field}
             </th>
-            <td dir="auto" className="text-destructive py-1.5 pe-2 break-words whitespace-pre-wrap line-through decoration-1">
+            {/* A copy leaves the original as it is: its value is not struck. */}
+            <td
+              dir="auto"
+              className={cn(
+                "py-1.5 pe-2 break-words whitespace-pre-wrap",
+                copy ? "text-muted-foreground" : "text-destructive line-through decoration-1",
+              )}
+            >
               {show(f.old)}
             </td>
             <td dir="auto" className="py-1.5 font-medium break-words whitespace-pre-wrap text-emerald-700 dark:text-emerald-400">
@@ -46,6 +58,28 @@ function FieldChanges({ fields }: { fields: DiffField[] }) {
         ))}
       </tbody>
     </table>
+  )
+}
+
+/** The documents of a bulk_update, each with its field changes. */
+function DocumentChanges({ docs }: { docs: DocChanges[] }) {
+  const { t } = useTranslation()
+  return (
+    <ul className="flex flex-col gap-3">
+      {docs.map((d, i) => (
+        <li key={`${i}:${d.name}`} className="flex flex-col gap-1">
+          {/* The name is isolated (font-mono), the line follows the page's direction. */}
+          <p data-site-data className="text-xs font-medium break-all">
+            <span className="font-mono">{d.name}</span>
+          </p>
+          {d.noChanges ? (
+            <p className="text-muted-foreground">{t("chat.approval.noChanges")}</p>
+          ) : (
+            <FieldChanges fields={d.diff} label={t("chat.approval.docDiffLabel", { name: d.name })} />
+          )}
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -80,7 +114,9 @@ export function ApprovalCard({
     declineRef.current?.focus()
   }, [card.approvalID, busy])
   const isUpdate = card.tool === "update_doc"
-  const showsDiff = isUpdate && !card.noChanges && card.diff.length > 0
+  const isCopy = card.tool === "copy_doc" || card.tool === "amend_doc"
+  const isBulk = card.tool === "bulk_update" && card.docs.length > 0
+  const showsDiff = ((isUpdate || isCopy) && !card.noChanges && card.diff.length > 0) || isBulk
   const title = card.kind === "ffc" ? card.message || t("chat.approval.ffcFallback") : t("chat.approval.appTitle")
 
   return (
@@ -122,10 +158,17 @@ export function ApprovalCard({
         (card.noChanges ? (
           <p className="text-muted-foreground">{t("chat.approval.noChanges")}</p>
         ) : (
-          showsDiff && <FieldChanges fields={card.diff} />
+          showsDiff && <FieldChanges fields={card.diff} label={t("chat.approval.diffLabel")} />
         ))}
+      {isCopy &&
+        (card.noChanges ? (
+          <p className="text-muted-foreground">{t("chat.approval.noOverrides")}</p>
+        ) : (
+          showsDiff && <FieldChanges fields={card.diff} label={t("chat.approval.copyDiffLabel")} copy />
+        ))}
+      {isBulk && <DocumentChanges docs={card.docs} />}
 
-      {/* The request is the only detail of a change other than an update: open then. */}
+      {/* The request is the only detail of a change the app has not diffed: open then. */}
       <Details label={t("chat.approval.args")} defaultOpen={!showsDiff}>
         {JSON.stringify(card.args, null, 2)}
       </Details>

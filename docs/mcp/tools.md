@@ -39,7 +39,7 @@ R = read tool (kept by `--read-only`), W = writes, M = `call_method` (treated as
 | `create_doc` | W | Create a document. | `ffc create-doc` |
 | `update_doc` | W | Update fields; `if_unmodified` fails if the document was saved since it was read. | `ffc update-doc` |
 | `delete_doc` | W | Delete a document (asks for confirmation). | `ffc delete-doc` |
-| `bulk_create`, `bulk_update`, `bulk_delete` | W | Up to 200 items per call, in order one at a time (optional `concurrency` 1-4); progress notifications; `bulk_delete` asks for confirmation. `bulk_create` also takes `atomic` (all or none, one request). | `ffc bulk-*` |
+| `bulk_create`, `bulk_update`, `bulk_delete` | W | Up to 200 items per call, in order one at a time (optional `concurrency` 1-4); progress notifications; `bulk_delete` asks for confirmation. `bulk_create` also takes `atomic` (all or none, one request). A `bulk_update` item may carry the `modified` it was read with; that item then fails if the document was saved since. | `ffc bulk-*` |
 | `call_method` | M | Call a whitelisted method; `full_response: true` returns the whole response object. | `ffc call-method` |
 
 ### `lifecycle`
@@ -49,8 +49,8 @@ R = read tool (kept by `--read-only`), W = writes, M = `call_method` (treated as
 | `submit_doc` | W | Submit a draft. |
 | `cancel_doc` | W | Cancel a submitted document (asks for confirmation). |
 | `bulk_submit`, `bulk_cancel` | W | Submit drafts or cancel submitted documents, up to 200 names of one DocType per call, one at a time in the order given; each document is read first and one in the wrong state fails on its own; refused for a DocType with an active workflow; both ask for confirmation. |
-| `amend_doc` | W | Amend a cancelled document. |
-| `copy_doc` | W | Duplicate a document. |
+| `amend_doc` | W | Amend a cancelled document; `if_unmodified` fails, creating nothing, if it was saved since it was read. |
+| `copy_doc` | W | Duplicate a document; `if_unmodified` fails, creating nothing, if the source was saved since it was read. |
 | `rename_doc` | W | Rename, or merge into another document (a merge asks for confirmation). |
 | `restore_doc` | W | Restore a deleted document, the undo of `delete_doc`: name the Deleted Document (`deleted_document`) or the document (`doctype` and `name`: its latest unrestored deletion), not both. Deleted Document counts as a read and only `deny_doctypes` applies to it (no need to list it in `allow_doctypes`); the DocType rules (write) apply to the DocType being restored, taken from the record after checking that its `data` names the same DocType, so a deleted Server Script, User or Webhook is refused unless `allow_doctypes` lists it. Writing Deleted Document with `create_doc` and the like is refused (sensitive). Does not ask for confirmation. |
 | `apply_workflow` | W | Apply a workflow action (asks for confirmation: an action may submit or cancel). |

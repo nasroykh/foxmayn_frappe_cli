@@ -224,15 +224,24 @@ export interface ChatApproval {
     "args": json$0.RawMessage;
 
     /**
-     * Diff lists the changed fields of an update_doc.
+     * Diff lists the changed fields of an update_doc, or for a copy_doc or
+     * amend_doc the fields the new document takes from data instead of the
+     * source (Old is the source's value).
      */
     "diff"?: DiffField[] | null;
 
     /**
      * NoChanges is set for an update_doc whose data matches the document
-     * already, so the UI can say "no field changes".
+     * already, or a copy whose data changes no field of the source, so the
+     * UI can say so.
      */
     "noChanges"?: boolean;
+
+    /**
+     * Docs lists each document of a bulk_update with its changed fields, in
+     * the order of the call.
+     */
+    "docs"?: DocChanges[] | null;
 
     /**
      * Message is ffc's question, for kind "ffc".
@@ -481,6 +490,16 @@ export interface DiffField {
     "field": string;
     "old": any;
     "new": any;
+}
+
+/**
+ * DocChanges is one document of a bulk_update card. NoChanges is set when its
+ * item matches the document already.
+ */
+export interface DocChanges {
+    "name": string;
+    "diff": DiffField[] | null;
+    "noChanges"?: boolean;
 }
 
 /**

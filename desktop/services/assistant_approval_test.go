@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/llm"
 	"github.com/nasroykh/foxmayn_frappe_cli/desktop/store"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/cmd"
 )
 
 // waitApproval waits for the n-th chat:approval event and returns it.
@@ -692,5 +694,337 @@ func TestChatEventsCarryTheConversation(t *testing.T) {
 	}
 	if n := check(g2, cid2); n < 4 {
 		t.Errorf("only %d chat events in the approval run", n)
+	}
+}
+
+func TestApprovalBulkUpdateShowsDiffsAndPins(t *testing.T) {
+	g := newLoopRig(t,
+		toolTurn(call("c1", "bulk_update", `{"doctype":"ToDo","data":"[{\"name\":\"TD-1\",\"description\":\"one\",\"modified\":\"1999-01-01 00:00:00\"},{\"name\":\"TD-2\",\"status\":\"Closed\"}]"}`)),
+		textTurn("done"),
+	)
+	cid := g.conv(t, "ask")
+	runID, err := g.r.start(cid, "update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := g.waitApproval(t, 1)
+	if len(card.Docs) != 2 || card.Docs[0].Name != "TD-1" || card.Docs[1].Name != "TD-2" {
+		t.Fatalf("docs = %+v", card.Docs)
+	}
+	if d := card.Docs[0]; d.NoChanges || len(d.Diff) != 1 || d.Diff[0].Field != "description" || d.Diff[0].Old != "alpha" || d.Diff[0].New != "one" {
+		t.Errorf("TD-1 = %+v", d)
+	}
+	if d := card.Docs[1]; !d.NoChanges || len(d.Diff) != 0 {
+		t.Errorf("TD-2 = %+v (already Closed)", d)
+	}
+	if card.NoChanges || len(card.Diff) != 0 {
+		t.Errorf("card = %+v", card)
+	}
+	// Each item is pinned to the version read, the model's own value replaced.
+	var args struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(card.Args, &args); err != nil || len(args.Data) != 2 {
+		t.Fatalf("args = %s, %v", card.Args, err)
+	}
+	for i, name := range []string{"TD-1", "TD-2"} {
+		doc, _ := g.fake.Doc("ToDo", name)
+		if args.Data[i]["modified"] != fmt.Sprint(doc["modified"]) {
+			t.Errorf("item %d modified = %v, want %v", i, args.Data[i]["modified"], doc["modified"])
+		}
+	}
+	if err := g.r.answer(cid, card.ApprovalID, true); err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunDone {
+		t.Fatalf("done = %+v", d)
+	}
+	if got, _ := g.fake.Doc("ToDo", "TD-1"); got["description"] != "one" {
+		t.Errorf("TD-1 = %v", got)
+	}
+	n := 0
+	for _, l := range engineAudit(t, g.path) {
+		if l["run_id"] != runID {
+			t.Errorf("audit line = %v", l)
+		}
+		n++
+	}
+	if n != 3 {
+		t.Errorf("%d audit lines, want two get_doc and bulk_update", n)
+	}
+}
+
+func TestApprovalBulkUpdateConflict(t *testing.T) {
+	g := newLoopRig(t,
+		toolTurn(call("c1", "bulk_update", `{"doctype":"ToDo","data":[{"name":"TD-1","description":"mine"},{"name":"TD-3","description":"mine"}]}`)),
+		textTurn("done"),
+	)
+	cid := g.conv(t, "ask")
+	if _, err := g.r.start(cid, "update"); err != nil {
+		t.Fatal(err)
+	}
+	card := g.waitApproval(t, 1)
+	// Someone else saves TD-3 while the card is open.
+	other, err := g.r.engine.Open(t.Context(), "prod", EngineAsk, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	res, err := other.Call(t.Context(), "someone", "update_doc", map[string]any{"doctype": "ToDo", "name": "TD-3", "data": map[string]any{"description": "theirs"}})
+	if err != nil || res.IsError {
+		t.Fatalf("other update: %v %v", err, res)
+	}
+	if err := g.r.answer(cid, card.ApprovalID, true); err != nil {
+		t.Fatal(err)
+	}
+	g.waitDone(t, 1)
+	if got, _ := g.fake.Doc("ToDo", "TD-1"); got["description"] != "mine" {
+		t.Errorf("TD-1 = %v", got)
+	}
+	if got, _ := g.fake.Doc("ToDo", "TD-3"); got["description"] != "theirs" {
+		t.Errorf("TD-3 overwritten: %v", got)
+	}
+	tr := g.toolResults(t, cid)
+	if len(tr) != 1 || !strings.Contains(tr[0].Text, "TD-3 was changed on the server since") || !strings.Contains(tr[0].Text, "Some documents changed after the user was shown") {
+		t.Errorf("result = %+v", tr)
+	}
+}
+
+// A bulk_update that cannot be shown whole gets no card and writes nothing.
+func TestApprovalBulkUpdateRefusals(t *testing.T) {
+	for _, tc := range []struct{ data, want string }{
+		{`[{"name":"TD-1","status":"Closed"},{"name":"td-1","status":"Open"}]`, `names "td-1" more than once`},
+		{`[{"name":"TD-1","status":"Closed"},{"name":"TD-404","status":"Open"}]`, "Could not read the document before the change"},
+		{`[{"status":"Closed"}]`, `item 1 is missing a "name" field`}, // ffc refuses it before any read
+		{`{"name":"TD-1"}`, "expected a JSON array of objects"},
+	} {
+		args, _ := json.Marshal(map[string]any{"doctype": "ToDo", "data": json.RawMessage(tc.data)})
+		g := newLoopRig(t, toolTurn(call("c1", "bulk_update", string(args))), textTurn("done"))
+		cid := g.conv(t, "ask")
+		if _, err := g.r.start(cid, "update"); err != nil {
+			t.Fatal(err)
+		}
+		g.waitDone(t, 1)
+		if n := len(g.h.named(EventChatApproval)); n != 0 {
+			t.Errorf("%s: %d cards", tc.data, n)
+		}
+		if w := g.writes(t); len(w) != 0 {
+			t.Errorf("%s: writes %v", tc.data, w)
+		}
+		if tr := g.toolResults(t, cid); len(tr) != 1 || !tr[0].IsError || !strings.Contains(tr[0].Text, tc.want) {
+			t.Errorf("%s: result = %+v", tc.data, tr)
+		}
+	}
+}
+
+func TestApprovalCopyDocShowsOverridesAndPinsSource(t *testing.T) {
+	for _, tool := range []string{"copy_doc", "amend_doc"} {
+		g := newLoopRig(t,
+			toolTurn(call("c1", tool, `{"doctype":"ToDo","name":"TD-1","data":{"description":"copy","status":"Open"}}`)),
+			textTurn("done"),
+		)
+		cid := g.conv(t, "ask")
+		if _, err := g.r.start(cid, "copy"); err != nil {
+			t.Fatal(err)
+		}
+		card := g.waitApproval(t, 1)
+		// Every field data sets is listed, a value equal to the source's too;
+		// amend_doc also shows the amended_from ffc writes.
+		want := []DiffField{{Field: "description", Old: "alpha", New: "copy"}, {Field: "status", Old: "Open", New: "Open"}}
+		if tool == "amend_doc" {
+			want = append([]DiffField{{Field: "amended_from", Old: nil, New: "TD-1"}}, want...)
+		}
+		if card.NoChanges || !reflect.DeepEqual(card.Diff, want) {
+			t.Errorf("%s diff = %+v, want %+v", tool, card.Diff, want)
+		}
+		doc, _ := g.fake.Doc("ToDo", "TD-1")
+		var args map[string]any
+		if err := json.Unmarshal(card.Args, &args); err != nil || args["if_unmodified"] != fmt.Sprint(doc["modified"]) {
+			t.Errorf("%s args = %s, %v", tool, card.Args, err)
+		}
+		// The source is saved while the card is open: nothing is created.
+		other, err := g.r.engine.Open(t.Context(), "prod", EngineAsk, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := other.Call(t.Context(), "someone", "update_doc", map[string]any{"doctype": "ToDo", "name": "TD-1", "data": map[string]any{"description": "theirs"}})
+		other.Close()
+		if err != nil || res.IsError {
+			t.Fatalf("other update: %v %v", err, res)
+		}
+		if err := g.r.answer(cid, card.ApprovalID, true); err != nil {
+			t.Fatal(err)
+		}
+		g.waitDone(t, 1)
+		if n := g.fake.Count("ToDo"); n != 3 {
+			t.Errorf("%s: %d ToDos, want 3", tool, n)
+		}
+		if tr := g.toolResults(t, cid); len(tr) != 1 || !tr[0].IsError || !strings.Contains(tr[0].Text, "was changed on the server since") || !strings.Contains(tr[0].Text, "do not retry on your own") {
+			t.Errorf("%s result = %+v", tool, tr)
+		}
+	}
+}
+
+func TestApprovalCopyDocWithoutData(t *testing.T) {
+	g := newLoopRig(t, toolTurn(call("c1", "copy_doc", `{"doctype":"ToDo","name":"TD-2"}`)), textTurn("done"))
+	cid := g.conv(t, "ask")
+	if _, err := g.r.start(cid, "copy"); err != nil {
+		t.Fatal(err)
+	}
+	card := g.waitApproval(t, 1)
+	if !card.NoChanges || len(card.Diff) != 0 {
+		t.Errorf("card = %+v", card)
+	}
+	if err := g.r.answer(cid, card.ApprovalID, true); err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunDone {
+		t.Fatalf("done = %+v", d)
+	}
+	if n := g.fake.Count("ToDo"); n != 4 {
+		t.Errorf("%d ToDos, want the copy", n)
+	}
+}
+
+// A copy drops the identity fields before data is applied, so data that sets
+// one to the source's own value is still shown: here the copy of a submitted
+// document would be created submitted, under a name the model chose.
+func TestApprovalCopyDocShowsIdentityOverrides(t *testing.T) {
+	g := newLoopRig(t,
+		toolTurn(call("c1", "copy_doc", `{"doctype":"ToDo","name":"TD-9","data":{"docstatus":1,"name":"TD-9"}}`)),
+		textTurn("done"),
+	)
+	g.fake.Add("ToDo", map[string]any{"name": "TD-9", "description": "submitted", "docstatus": json.Number("1")})
+	cid := g.conv(t, "ask")
+	if _, err := g.r.start(cid, "copy"); err != nil {
+		t.Fatal(err)
+	}
+	card := g.waitApproval(t, 1)
+	fields := map[string]DiffField{}
+	for _, d := range card.Diff {
+		fields[d.Field] = d
+	}
+	if len(fields) != 2 || fields["name"].New != "TD-9" || fmt.Sprint(fields["docstatus"].New) != "1" || card.NoChanges {
+		t.Errorf("diff = %+v", card.Diff)
+	}
+	if err := g.r.answer(cid, card.ApprovalID, false); err != nil {
+		t.Fatal(err)
+	}
+	g.waitDone(t, 1)
+}
+
+func TestApprovalAmendDocCreatesTheAmendment(t *testing.T) {
+	g := newLoopRig(t, toolTurn(call("c1", "amend_doc", `{"doctype":"ToDo","name":"TD-9"}`)), textTurn("done"))
+	g.fake.Add("ToDo", map[string]any{"name": "TD-9", "description": "cancelled", "docstatus": json.Number("2")})
+	cid := g.conv(t, "ask")
+	if _, err := g.r.start(cid, "amend"); err != nil {
+		t.Fatal(err)
+	}
+	card := g.waitApproval(t, 1)
+	if len(card.Diff) != 1 || card.Diff[0].Field != "amended_from" || card.Diff[0].New != "TD-9" {
+		t.Errorf("diff = %+v", card.Diff)
+	}
+	if err := g.r.answer(cid, card.ApprovalID, true); err != nil {
+		t.Fatal(err)
+	}
+	if d := g.waitDone(t, 1); d.Status != RunDone {
+		t.Fatalf("done = %+v", d)
+	}
+	if got, ok := g.fake.Doc("ToDo", "TD-9-1"); !ok || got["amended_from"] != "TD-9" || got["description"] != "cancelled" {
+		t.Errorf("amendment = %v, %v", got, ok)
+	}
+}
+
+// Stop while the documents of a bulk_update are being read: no card, nothing
+// written, the call recorded as cancelled.
+func TestApprovalCancelDuringBulkPreread(t *testing.T) {
+	g := newLoopRig(t, toolTurn(call("c1", "bulk_update", `{"doctype":"ToDo","data":[{"name":"TD-1","status":"Closed"},{"name":"TD-2","status":"Open"}]}`)), textTurn("never"))
+	entered := make(chan struct{})
+	var once sync.Once
+	g.fake.Handle("GET /api/resource/ToDo/TD-2", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(entered) })
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second):
+		}
+	}))
+	cid := g.conv(t, "ask")
+	runID, err := g.r.start(cid, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("get_doc never called")
+	}
+	g.r.cancelRun(runID)
+	if d := g.waitDone(t, 1); d.Status != RunCancelled {
+		t.Fatalf("done = %+v", d)
+	}
+	if n := len(g.h.named(EventChatApproval)); n != 0 {
+		t.Errorf("%d cards", n)
+	}
+	if w := g.writes(t); len(w) != 0 {
+		t.Errorf("writes %v", w)
+	}
+	calls, _ := g.st.ListToolCalls(runID)
+	if len(calls) != 1 || calls[0].Approval != ApprovalCancelled {
+		t.Errorf("calls = %+v", calls)
+	}
+}
+
+// Over ffc's bulk limit the call fails before any document is read.
+func TestApprovalBulkUpdateTooManyItems(t *testing.T) {
+	items := make([]map[string]any, cmd.MaxMCPBulkItems+1)
+	for i := range items {
+		items[i] = map[string]any{"name": fmt.Sprintf("TD-%d", i+1), "status": "Closed"}
+	}
+	args, _ := json.Marshal(map[string]any{"doctype": "ToDo", "data": items})
+	g := newLoopRig(t, toolTurn(call("c1", "bulk_update", string(args))), textTurn("done"))
+	cid := g.conv(t, "ask")
+	if _, err := g.r.start(cid, "update"); err != nil {
+		t.Fatal(err)
+	}
+	g.waitDone(t, 1)
+	if tr := g.toolResults(t, cid); len(tr) != 1 || !tr[0].IsError || !strings.Contains(tr[0].Text, "at most 200") {
+		t.Errorf("result = %+v", tr)
+	}
+	for _, rq := range g.fake.Requests() {
+		if strings.HasPrefix(rq.Path, "/api/resource/ToDo/") {
+			t.Fatalf("a document was read: %s %s", rq.Method, rq.Path)
+		}
+	}
+	if n := len(g.h.named(EventChatApproval)); n != 0 {
+		t.Errorf("%d cards", n)
+	}
+}
+
+// After a failed read the remaining documents are not read: the call fails
+// anyway.
+func TestApprovalBulkUpdateStopsReadingAfterAFailure(t *testing.T) {
+	items := []map[string]any{{"name": "TD-404", "status": "Closed"}}
+	for i := range 40 {
+		items = append(items, map[string]any{"name": fmt.Sprintf("TD-%d", i+1), "status": "Closed"})
+	}
+	args, _ := json.Marshal(map[string]any{"doctype": "ToDo", "data": items})
+	g := newLoopRig(t, toolTurn(call("c1", "bulk_update", string(args))), textTurn("done"))
+	cid := g.conv(t, "ask")
+	if _, err := g.r.start(cid, "update"); err != nil {
+		t.Fatal(err)
+	}
+	g.waitDone(t, 1)
+	if tr := g.toolResults(t, cid); len(tr) != 1 || !tr[0].IsError || !strings.Contains(tr[0].Text, "Could not read the document before the change") {
+		t.Errorf("result = %+v", tr)
+	}
+	reads := 0
+	for _, rq := range g.fake.Requests() {
+		if strings.HasPrefix(rq.Path, "/api/resource/ToDo/") {
+			reads++
+		}
+	}
+	// The failing read is first; at most the workers' reads already started follow.
+	if reads > 1+2*bulkPrereadWorkers {
+		t.Errorf("%d reads after a failure, want at most %d", reads, 1+2*bulkPrereadWorkers)
 	}
 }

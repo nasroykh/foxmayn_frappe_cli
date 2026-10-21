@@ -153,17 +153,30 @@ export type ApprovalOutcome = "approved" | "declined" | "cancelled"
 /** ChatToolCall.approval: "" when the call needed none. */
 export type ToolApproval = "" | "approved" | "declined" | "cancelled" | "ffc-approved" | "ffc-declined"
 
+/** One document of a bulk_update card. */
+export interface DocChanges {
+  name: string
+  diff: DiffField[]
+  noChanges: boolean
+}
+
 /** An approval card. `args` is the exact JSON the call will run with. */
 export interface ChatApproval
-  extends Omit<GeneratedChatApproval, "kind" | "args" | "doctypes" | "names" | "diff" | "noChanges" | "message"> {
+  extends Omit<GeneratedChatApproval, "kind" | "args" | "doctypes" | "names" | "diff" | "noChanges" | "docs" | "message"> {
   kind: ApprovalKind
   args: Record<string, unknown>
   doctypes: string[]
   names: string[]
-  /** The changed fields of an update_doc; empty with noChanges. */
+  /**
+   * The changed fields of an update_doc, or the fields a copy_doc/amend_doc
+   * sets differently from its source (old = the source's value); empty with
+   * noChanges.
+   */
   diff: DiffField[]
-  /** update_doc whose data already matches the document. */
+  /** update_doc whose data already matches the document, or a copy that changes no field. */
   noChanges: boolean
+  /** Each document of a bulk_update, in the call's order. */
+  docs: DocChanges[]
   /** ffc's question, for kind "ffc". */
   message: string
 }

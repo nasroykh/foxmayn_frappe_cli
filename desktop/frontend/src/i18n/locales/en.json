@@ -297,7 +297,12 @@
       "decline": "Decline",
       "field": "Field",
       "before": "Before",
-      "after": "After"
+      "after": "After",
+      "source": "In the original",
+      "copy": "In the new document",
+      "copyDiffLabel": "Fields the request sets",
+      "noOverrides": "The request sets no field",
+      "docDiffLabel": "Field changes in {{name}}"
     },
     "tool": {
       "running": "Running",

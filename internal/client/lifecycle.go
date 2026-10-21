@@ -190,10 +190,14 @@ func (c *FrappeClient) copyOf(ctx context.Context, doc map[string]interface{}, d
 // Amend: a copy that keeps the "no copy" fields, with amended_from set (and
 // amendment_date, when the DocType has it, to today), which Frappe names
 // <name>-1 (<prefix>-<n+1> for an amendment of an amendment). overrides are
-// applied on top.
-func (c *FrappeClient) AmendDoc(ctx context.Context, doctype, name string, overrides map[string]interface{}) (map[string]interface{}, error) {
+// applied on top. A non-empty ifUnmodified must equal the cancelled
+// document's "modified" (see checkUnmodified).
+func (c *FrappeClient) AmendDoc(ctx context.Context, doctype, name string, overrides map[string]interface{}, ifUnmodified string) (map[string]interface{}, error) {
 	doc, err := c.GetDoc(ctx, doctype, name)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkUnmodified(doc, doctype, name, ifUnmodified); err != nil {
 		return nil, err
 	}
 	if ds := fmt.Sprint(doc["docstatus"]); ds != "2" {
@@ -212,16 +216,34 @@ func (c *FrappeClient) AmendDoc(ctx context.Context, doctype, name string, overr
 
 // DuplicateDoc creates a copy of a document, like the desk's Duplicate: the
 // "no copy" fields are left out, child rows are copied. overrides are
-// applied on top.
-func (c *FrappeClient) DuplicateDoc(ctx context.Context, doctype, name string, overrides map[string]interface{}) (map[string]interface{}, error) {
+// applied on top. A non-empty ifUnmodified must equal the source's
+// "modified" (see checkUnmodified).
+func (c *FrappeClient) DuplicateDoc(ctx context.Context, doctype, name string, overrides map[string]interface{}, ifUnmodified string) (map[string]interface{}, error) {
 	doc, err := c.GetDoc(ctx, doctype, name)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkUnmodified(doc, doctype, name, ifUnmodified); err != nil {
 		return nil, err
 	}
 	if _, err := c.copyOf(ctx, doc, doctype, false, overrides); err != nil {
 		return nil, err
 	}
 	return c.CreateDoc(ctx, doctype, doc)
+}
+
+// checkUnmodified is the optimistic-concurrency check of a copy: Frappe
+// checks "modified" only when a document is saved, and a copy saves a new
+// one. A source saved since ifUnmodified was read is a StateError, so
+// nothing is created from a version the caller has not seen.
+func checkUnmodified(doc map[string]interface{}, doctype, name, ifUnmodified string) error {
+	if ifUnmodified == "" {
+		return nil
+	}
+	if now := fmt.Sprint(doc["modified"]); now != ifUnmodified {
+		return &StateError{fmt.Sprintf("%s %s was changed on the server since %q (now %q); nothing was created", doctype, name, ifUnmodified, now)}
+	}
+	return nil
 }
 
 // RenameDoc renames a document and returns its new name. With merge, the

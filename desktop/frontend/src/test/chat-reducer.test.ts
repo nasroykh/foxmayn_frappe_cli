@@ -19,6 +19,7 @@ const card = (over: Partial<ChatApproval> = {}): ChatApproval => ({
   args: {},
   diff: [],
   noChanges: false,
+  docs: [],
   message: "",
   ...over,
 })

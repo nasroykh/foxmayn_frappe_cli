@@ -267,7 +267,7 @@ func TestMCPCallMethodNativeArgs(t *testing.T) {
 
 func TestMCPBulkDeleteTooMany(t *testing.T) {
 	s, fs := newMCPTestServer(t)
-	names := make([]interface{}, maxMCPBulkItems+1)
+	names := make([]interface{}, MaxMCPBulkItems+1)
 	for i := range names {
 		names[i] = fmt.Sprintf("N%d", i)
 	}
