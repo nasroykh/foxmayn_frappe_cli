@@ -2,7 +2,7 @@ module github.com/nasroykh/foxmayn_frappe_cli/tools/lint
 
 go 1.26.0
 
-toolchain go1.27.2
+toolchain go1.27.3
 
 tool honnef.co/go/tools/cmd/staticcheck
 
