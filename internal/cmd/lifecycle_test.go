@@ -414,6 +414,37 @@ func TestMCPLifecycleTools(t *testing.T) {
 		t.Errorf("copy_doc = %v", got)
 	}
 
+	// if_unmodified pins the source: a stale value creates nothing.
+	src, _ := site.Doc("Sales Order", "SO-3")
+	before := site.Count("Sales Order")
+	for _, tool := range []string{"copy_doc", "amend_doc"} {
+		args = doc("SO-3")
+		args["if_unmodified"] = "1999-01-01 00:00:00"
+		mcpTErr(t, s, tool, args, "was changed on the server since")
+	}
+	if n := site.Count("Sales Order"); n != before {
+		t.Errorf("%d Sales Orders after stale copies, want %d", n, before)
+	}
+	// A pin that is not a string is refused, never dropped unchecked.
+	for _, tool := range []string{"copy_doc", "amend_doc"} {
+		args = doc("SO-3")
+		args["if_unmodified"] = 20261021
+		mcpTErr(t, s, tool, args, "if_unmodified: expected a string")
+	}
+	args = doc("SO-3")
+	args["if_unmodified"] = fmt.Sprint(src["modified"])
+	if got := mcpTObj(t, mcpTOK(t, s, "copy_doc", args)); got["customer"] != src["customer"] {
+		t.Errorf("pinned copy_doc = %v", got)
+	}
+	// SO-3 has its amendment already; SO-4 is another cancelled order.
+	site.Add("Sales Order", map[string]interface{}{"name": "SO-4", "docstatus": json.Number("2")})
+	so4, _ := site.Doc("Sales Order", "SO-4")
+	args = doc("SO-4")
+	args["if_unmodified"] = fmt.Sprint(so4["modified"])
+	if got := mcpTObj(t, mcpTOK(t, s, "amend_doc", args)); got["name"] != "SO-4-1" {
+		t.Errorf("pinned amend_doc = %v", got)
+	}
+
 	args = doc("SO-1")
 	args["new_name"] = "SO-9"
 	if got := mcpTObj(t, mcpTOK(t, s, "rename_doc", args)); got["name"] != "SO-9" || got["merged"] != false {

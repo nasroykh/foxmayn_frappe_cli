@@ -20,8 +20,9 @@ import (
 // the server's memory) with megabytes of rows.
 const maxToolResultBytes = 512 << 10
 
-// maxMCPBulkItems caps the items a single bulk_* tool call may touch.
-const maxMCPBulkItems = 200
+// MaxMCPBulkItems caps the items a single bulk_* tool call may touch. The
+// desktop checks it before it reads every document of a bulk_update.
+const MaxMCPBulkItems = 200
 
 // maxMCPBulkWorkers is how many items bulk_create, bulk_update and
 // bulk_delete have in flight at once. bulk_submit and bulk_cancel run one at

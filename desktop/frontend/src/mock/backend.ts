@@ -606,32 +606,50 @@ async function script(run: MockRun, c: MockConv, text: string) {
     return finish(run, c, "paused", true)
   }
 
-  if (/\b(update|change|delete|create|add)\b/.test(lower) && !writes) {
+  if (/\b(update|change|delete|create|add|copy|duplicate|bulk)\b/.test(lower) && !writes) {
     await say("I can only read in this conversation. Switch it to \"Ask before changes\" and I can propose the change for your approval.")
     return finish(run, c, "done")
   }
 
   const isDelete = /\bdelete\b/.test(lower)
   const isCreate = /\b(create|add)\b/.test(lower)
-  const isUpdate = /\b(update|change)\b/.test(lower)
-  if (isDelete || isCreate || isUpdate) {
-    if (isUpdate) {
+  const isBulk = /\bbulk\b/.test(lower)
+  const isCopy = /\b(copy|duplicate)\b/.test(lower)
+  const isUpdate = /\b(update|change)\b/.test(lower) && !isBulk
+  if (isDelete || isCreate || isUpdate || isBulk || isCopy) {
+    if (isUpdate || isCopy) {
       const t = await toolCall(run, "get_doc", site, "doctype=ToDo name=TD-0001")
       record(t.callID, "get_doc", t.status, "", "doctype=ToDo name=TD-0001")
     }
     if (run.cancelled) return finish(run, c, "cancelled")
-    const tool = isDelete ? "delete_doc" : isCreate ? "create_doc" : "update_doc"
+    const tool = isDelete ? "delete_doc" : isCreate ? "create_doc" : isBulk ? "bulk_update" : isCopy ? "copy_doc" : "update_doc"
     const same = /\bsame\b/.test(lower)
     const args: Record<string, unknown> = isCreate
       ? { doctype: "ToDo", data: { description: "Call the supplier", priority: "High" } }
       : isDelete
         ? { doctype: "ToDo", name: "TD-0001" }
-        : {
-            doctype: "ToDo",
-            name: "TD-0001",
-            data: same ? { status: "Open" } : { description: "Call the supplier back", status: "Closed" },
-            if_unmodified: "2026-10-08 09:14:03.512",
-          }
+        : isBulk
+          ? {
+              doctype: "ToDo",
+              data: [
+                { name: "TD-0001", status: "Closed", modified: "2026-10-08 09:14:03.512" },
+                { name: "TD-0002", status: "Closed", priority: "Low", modified: "2026-10-09 16:02:41.007" },
+                { name: "TD-0003", status: "Closed", modified: "2026-10-10 08:30:00.000" },
+              ],
+            }
+          : isCopy
+            ? {
+                doctype: "ToDo",
+                name: "TD-0001",
+                data: same ? {} : { date: "2026-10-20" },
+                if_unmodified: "2026-10-08 09:14:03.512",
+              }
+            : {
+                doctype: "ToDo",
+                name: "TD-0001",
+                data: same ? { status: "Open" } : { description: "Call the supplier back", status: "Closed" },
+                if_unmodified: "2026-10-08 09:14:03.512",
+              }
     const callID = newID("call")
     emit(chat.tool, { convID: run.convID, runID: run.id, callID, tool, site, status: "running", summary: "doctype=ToDo" })
     const outcome = await ask(run, {
@@ -639,15 +657,32 @@ async function script(run: MockRun, c: MockConv, text: string) {
       tool,
       site,
       doctypes: ["ToDo"],
-      names: isCreate ? [] : ["TD-0001"],
+      names: isCreate ? [] : isBulk ? ["TD-0001", "TD-0002", "TD-0003"] : ["TD-0001"],
       args,
-      diff: isUpdate && !same
+      diff:
+        isUpdate && !same
+          ? [
+              { field: "description", old: "Call the supplier", new: "Call the supplier back" },
+              { field: "status", old: "Open", new: "Closed" },
+            ]
+          : isCopy && !same
+            ? [{ field: "date", old: "2026-10-12", new: "2026-10-20" }]
+            : [],
+      noChanges: (isUpdate || isCopy) && same,
+      docs: isBulk
         ? [
-            { field: "description", old: "Call the supplier", new: "Call the supplier back" },
-            { field: "status", old: "Open", new: "Closed" },
+            { name: "TD-0001", diff: [{ field: "status", old: "Open", new: "Closed" }], noChanges: false },
+            {
+              name: "TD-0002",
+              diff: [
+                { field: "priority", old: "Medium", new: "Low" },
+                { field: "status", old: "Open", new: "Closed" },
+              ],
+              noChanges: false,
+            },
+            { name: "TD-0003", diff: [], noChanges: true },
           ]
         : [],
-      noChanges: isUpdate && same,
       message: isDelete ? 'Delete ToDo "TD-0001"? This cannot be undone.' : "",
     })
     const approved = outcome === "approved"

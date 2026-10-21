@@ -44,7 +44,7 @@ Examples:
 			return err
 		}
 		doc, err := callSite(cmd, fmt.Sprintf("Amending %s %s…", amDoctype, amName), func(ctx context.Context, c *client.FrappeClient) (map[string]interface{}, error) {
-			return c.AmendDoc(ctx, amDoctype, amName, overrides)
+			return c.AmendDoc(ctx, amDoctype, amName, overrides, "")
 		})
 		if err != nil {
 			return err
@@ -70,7 +70,7 @@ Examples:
 			return err
 		}
 		doc, err := callSite(cmd, fmt.Sprintf("Copying %s %s…", cpDoctype, cpName), func(ctx context.Context, c *client.FrappeClient) (map[string]interface{}, error) {
-			return c.DuplicateDoc(ctx, cpDoctype, cpName, overrides)
+			return c.DuplicateDoc(ctx, cpDoctype, cpName, overrides, "")
 		})
 		if err != nil {
 			return err

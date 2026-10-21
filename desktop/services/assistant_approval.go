@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"math"
 	"reflect"
 	"regexp"
@@ -15,10 +16,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/nasroykh/foxmayn_frappe_cli/internal/cmd"
 	"github.com/nasroykh/foxmayn_frappe_cli/internal/text"
 )
 
@@ -27,6 +30,8 @@ const (
 	approvalCancelledResult = "Stopped by the user before this change ran."
 	approvalUnaskedWarning  = "Warning: this change was applied without the confirmation the app expects."
 	approvalConflictHint    = "\nThe document changed after the user was shown this change, so nothing was saved. Read it again with get_doc and tell the user what changed before trying anything else; do not retry on your own."
+	// A bulk_update reports its failed items in a successful result.
+	approvalBulkConflictHint = "\nSome documents changed after the user was shown this change, so their items were not saved (the results say which; the others were saved). Read those again with get_doc and tell the user what changed before trying anything else; do not retry on your own."
 )
 
 // approvalBroker holds the cards waiting for the user. A card is answered by
@@ -191,10 +196,24 @@ func (a *activeRun) runWrite(ctx context.Context, e *callEntry) {
 		return
 	}
 	if !e.cls.WillAsk {
-		var diff []DiffField
-		if e.call.Name == "update_doc" {
-			var msg string
-			if diff, msg = a.prepareUpdate(ctx, e); msg != "" {
+		var (
+			diff     []DiffField
+			docs     []DocChanges
+			msg      string
+			prepared = true
+		)
+		switch e.call.Name {
+		case "update_doc":
+			diff, msg = a.prepareUpdate(ctx, e)
+		case "bulk_update":
+			docs, msg = a.prepareBulkUpdate(ctx, e)
+		case "copy_doc", "amend_doc":
+			diff, msg = a.prepareCopy(ctx, e)
+		default:
+			prepared = false
+		}
+		if prepared {
+			if msg != "" {
 				if ctx.Err() != nil {
 					e.result, e.isErr, e.status = approvalCancelledResult, true, ToolStopped
 					a.setApproval(e, ApprovalCancelled)
@@ -219,8 +238,8 @@ func (a *activeRun) runWrite(ctx context.Context, e *callEntry) {
 			if e.call.Name == "restore_doc" {
 				a.restoreTarget(ctx, e, &card)
 			}
-			card.Diff = diff
-			card.NoChanges = e.call.Name == "update_doc" && len(diff) == 0
+			card.Diff, card.Docs = diff, docs
+			card.NoChanges = prepared && e.call.Name != "bulk_update" && len(diff) == 0
 			switch a.r.approvals.wait(ctx, a.r.approvals.open(a.conv.ID, card)) {
 			case ApprovalDeclined:
 				a.setApproval(e, ApprovalDeclined)
@@ -258,8 +277,11 @@ func (a *activeRun) runWrite(ctx context.Context, e *callEntry) {
 		a.violation = "A change to " + a.conv.Site + " (" + e.call.Name + ") was applied without the confirmation the app expects. The assistant was stopped. Check the document before going on."
 		a.errMu.Unlock()
 	}
-	if e.isErr && isConflict(e.result) {
+	switch {
+	case e.isErr && isConflict(e.result):
 		e.result += approvalConflictHint
+	case e.call.Name == "bulk_update" && isConflict(e.result):
+		e.result += approvalBulkConflictHint
 	}
 }
 
@@ -272,44 +294,228 @@ func isConflict(text string) bool {
 // version read (if_unmodified) and returns the changed fields. A non-empty
 // message is the call's error result.
 func (a *activeRun) prepareUpdate(ctx context.Context, e *callEntry) ([]DiffField, string) {
-	data := map[string]any{}
-	switch d := e.args["data"].(type) {
-	case map[string]any:
-		data = d
-	case string:
-		if err := json.Unmarshal([]byte(d), &data); err != nil || data == nil {
-			return nil, "The data argument of update_doc was not a JSON object. Call it again with one."
-		}
-	default:
+	data, ok := objectOf(e.args["data"])
+	if !ok {
 		return nil, "The data argument of update_doc was not a JSON object. Call it again with one."
 	}
+	doc, msg := a.readTarget(ctx, e)
+	if msg != "" {
+		return nil, msg
+	}
+	pin(e.args, "if_unmodified", doc)
+	return diffFields(doc, data), ""
+}
+
+// prepareCopy reads the source of a copy_doc or amend_doc, pins the call to
+// the version read (if_unmodified: ffc creates nothing from a source saved
+// since) and returns every field data sets, next to the source's value.
+func (a *activeRun) prepareCopy(ctx context.Context, e *callEntry) ([]DiffField, string) {
+	data := map[string]any{}
+	if v := e.args["data"]; v != nil {
+		var ok bool
+		if data, ok = objectOf(v); !ok {
+			return nil, "The data argument of " + e.call.Name + " was not a JSON object. Call it again with one."
+		}
+	}
+	doc, msg := a.readTarget(ctx, e)
+	if msg != "" {
+		return nil, msg
+	}
+	pin(e.args, "if_unmodified", doc)
+	if e.call.Name == "amend_doc" {
+		// ffc links the amendment to its source whatever data says.
+		data = maps.Clone(data)
+		data["amended_from"] = e.args["name"]
+	}
+	return overrideFields(doc, data), ""
+}
+
+// bulkPrereadWorkers is how many documents of a bulk_update are read at once,
+// as many as ffc's own bulk tools have in flight.
+const bulkPrereadWorkers = 4
+
+// prepareBulkUpdate reads every document a bulk_update names, pins each item
+// to the version read (its "modified": Frappe then refuses that item if the
+// document was saved since) and returns each document's changed fields, in
+// the order of the call. A document named twice is refused, since its second
+// item would always conflict with the first. Nothing is written when any
+// read fails.
+func (a *activeRun) prepareBulkUpdate(ctx context.Context, e *callEntry) ([]DocChanges, string) {
+	const invalid = "The data argument of bulk_update was not a JSON array of objects that each have a name. Call it again with one."
+	raw := e.args["data"]
+	if s, ok := raw.(string); ok {
+		if err := json.Unmarshal([]byte(s), &raw); err != nil {
+			return nil, invalid
+		}
+	}
+	list, ok := raw.([]any)
+	if !ok || len(list) == 0 {
+		return nil, invalid
+	}
+	if len(list) > cmd.MaxMCPBulkItems {
+		return nil, fmt.Sprintf("bulk_update may change at most %d documents in one call. Split it into smaller calls.", cmd.MaxMCPBulkItems)
+	}
+	items := make([]map[string]any, len(list))
+	names := make([]string, len(list))
+	seen := map[string]bool{}
+	for i, v := range list {
+		item, ok := v.(map[string]any)
+		if !ok {
+			return nil, invalid
+		}
+		name, ok := nameString(item["name"])
+		if !ok {
+			return nil, invalid
+		}
+		// Frappe compares names without regard to case or trailing spaces
+		// (the key of ffc's refuseDuplicateNames).
+		key := strings.ToLower(strings.TrimSpace(name))
+		if seen[key] {
+			return nil, "bulk_update names " + strconv.Quote(name) + " more than once. Put all changes to one document in one item and call it again."
+		}
+		seen[key] = true
+		items[i], names[i] = item, name
+	}
+
+	reads := make([]docRead, len(items))
+	next := make(chan int)
+	var (
+		wg     sync.WaitGroup
+		failed atomic.Bool // one failed read fails the call: read no more
+	)
+	for range min(bulkPrereadWorkers, len(items)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				reads[i] = a.readDoc(ctx, map[string]any{"doctype": e.args["doctype"], "name": items[i]["name"]})
+				if reads[i].failed != "" {
+					failed.Store(true)
+				}
+			}
+		}()
+	}
+	for i := range items {
+		if ctx.Err() != nil || failed.Load() {
+			break
+		}
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+	if ctx.Err() != nil {
+		return nil, approvalCancelledResult
+	}
+	// The first failure in the call's order is the result. Items after a
+	// failure may not have been read: their zero docRead is never used.
+	docs := make([]map[string]any, len(items))
+	for i, r := range reads {
+		if r.doc == nil && r.failed == "" {
+			continue
+		}
+		var msg string
+		if docs[i], msg = a.readResult(e, r); msg != "" {
+			return nil, msg
+		}
+	}
+
+	out := make([]DocChanges, len(items))
+	for i, item := range items {
+		pin(item, "modified", docs[i])
+		diff := diffFields(docs[i], item)
+		out[i] = DocChanges{Name: revealString(names[i]), Diff: diff, NoChanges: len(diff) == 0}
+	}
+	e.args["data"] = list
+	return out, ""
+}
+
+// readTarget reads the document a call names by its doctype and name.
+func (a *activeRun) readTarget(ctx context.Context, e *callEntry) (map[string]any, string) {
 	read := map[string]any{}
 	for _, k := range []string{"doctype", "name"} {
 		if v, ok := e.args[k]; ok {
 			read[k] = v
 		}
 	}
-	// The failure text can come from the site, so it is marked as the site's
-	// answer: modelResult cuts it and wraps it as data once, after the cut,
-	// so the closing tag always survives.
+	return a.readResult(e, a.readDoc(ctx, read))
+}
+
+// docRead is the outcome of one get_doc read for a card.
+type docRead struct {
+	doc      map[string]any
+	failed   string // the failure, when the read failed
+	fromSite bool   // failed is the site's (or the connection's) text
+}
+
+// readDoc reads one document for a card through get_doc, so the site's rules
+// and the audit log apply. It touches no call state, so the reads of a
+// bulk_update can run at once.
+func (a *activeRun) readDoc(ctx context.Context, read map[string]any) docRead {
 	res, err := a.session.Call(ctx, a.runID, "get_doc", read)
 	if err != nil {
-		return nil, a.prereadFailed(e, toServiceError(err).Error())
+		return docRead{failed: toServiceError(err).Error(), fromSite: true}
 	}
 	text := callResultText(res)
 	if res.IsError {
-		return nil, a.prereadFailed(e, text)
+		return docRead{failed: text, fromSite: true}
 	}
 	var doc map[string]any
 	if err := json.Unmarshal([]byte(text), &doc); err != nil || doc == nil {
-		return nil, "Could not read the document before the change."
+		return docRead{failed: "Could not read the document before the change."}
 	}
+	return docRead{doc: doc}
+}
+
+// readResult returns the document read, or the call's error result. Failure
+// text from the site is marked as the site's answer: modelResult cuts it and
+// wraps it as data once, after the cut, so the closing tag always survives.
+func (a *activeRun) readResult(e *callEntry, r docRead) (map[string]any, string) {
+	switch {
+	case r.fromSite:
+		return nil, a.prereadFailed(e, r.failed)
+	case r.failed != "":
+		return nil, r.failed
+	}
+	return r.doc, ""
+}
+
+// pin sets args[key] to the "modified" of the document read, or removes it
+// when the document has none, so the call runs against that version only.
+func pin(args map[string]any, key string, doc map[string]any) {
 	if m, ok := doc["modified"]; ok && m != nil && fmt.Sprint(m) != "" {
-		e.args["if_unmodified"] = fmt.Sprint(m)
+		args[key] = fmt.Sprint(m)
 	} else {
-		delete(e.args, "if_unmodified")
+		delete(args, key)
 	}
-	return diffFields(doc, data), ""
+}
+
+// objectOf reads a JSON object argument given as an object or as JSON text.
+func objectOf(v any) (map[string]any, bool) {
+	switch d := v.(type) {
+	case map[string]any:
+		return d, true
+	case string:
+		var m map[string]any
+		if err := json.Unmarshal([]byte(d), &m); err != nil || m == nil {
+			return nil, false
+		}
+		return m, true
+	}
+	return nil, false
+}
+
+// nameString reads a document name the way ffc's bulk tools take it: a
+// non-blank string, or a number (integer-named DocTypes).
+func nameString(v any) (string, bool) {
+	switch t := v.(type) {
+	case string:
+		return t, strings.TrimSpace(t) != ""
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64), true
+	case json.Number:
+		return t.String(), true
+	}
+	return "", false
 }
 
 // restoreTarget adds to a restore_doc card the DocType and name the Deleted
@@ -354,6 +560,19 @@ func diffFields(doc, data map[string]any) []DiffField {
 		}
 		// The card shows reveal()ed copies; the call's args stay as sent.
 		out = append(out, DiffField{Field: revealString(k), Old: reveal(ov), New: reveal(nv)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Field < out[j].Field })
+	return out
+}
+
+// overrideFields lists every field of data, by name, next to the source's
+// value: a copy drops the identity and "no copy" fields before data is
+// applied, so a value equal to the source's may still be a change (docstatus
+// on a submitted source, name), and only the full list shows what is set.
+func overrideFields(doc, data map[string]any) []DiffField {
+	out := make([]DiffField, 0, len(data))
+	for k, nv := range data {
+		out = append(out, DiffField{Field: revealString(k), Old: reveal(doc[k]), New: reveal(nv)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Field < out[j].Field })
 	return out
@@ -479,8 +698,8 @@ func (a *activeRun) violationText() string {
 	return a.violation
 }
 
-// prereadFailed is the error result of an update_doc whose document could not
-// be read first. text may come from the site, so it is recorded as the site's
+// prereadFailed is the error result of a write whose document could not be
+// read first. text may come from the site, so it is recorded as the site's
 // answer (see modelResult).
 func (a *activeRun) prereadFailed(e *callEntry, text string) string {
 	e.site, e.siteText, e.siteTool = true, text, "get_doc"

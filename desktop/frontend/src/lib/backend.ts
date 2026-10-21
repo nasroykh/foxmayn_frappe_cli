@@ -56,6 +56,7 @@ function approval(a: wire.ChatApproval): ChatApproval {
     names: a.names ?? [],
     diff: a.diff ?? [],
     noChanges: a.noChanges ?? false,
+    docs: (a.docs ?? []).map((d) => ({ name: d.name, diff: d.diff ?? [], noChanges: d.noChanges ?? false })),
     message: a.message ?? "",
   }
 }

@@ -367,7 +367,7 @@ func TestMCPBulkLifecycleRefusals(t *testing.T) {
 			args := map[string]interface{}{"doctype": "Sales Order", "names": []interface{}{"SO-1", "SO-2"}}
 
 			// Bad input never reaches the site.
-			names := make([]interface{}, maxMCPBulkItems+1)
+			names := make([]interface{}, MaxMCPBulkItems+1)
 			for i := range names {
 				names[i] = fmt.Sprintf("SO-%d", i)
 			}

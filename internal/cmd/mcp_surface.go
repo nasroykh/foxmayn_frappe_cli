@@ -197,7 +197,7 @@ func mcpInstructions(s *server.MCPServer, env *mcpEnv, policies []mcpPolicy, res
 	if has("submit_doc", "cancel_doc", "amend_doc") {
 		bulk := ""
 		if has("bulk_submit", "bulk_cancel") {
-			bulk = fmt.Sprintf(" bulk_submit and bulk_cancel do the first two for up to %d documents of one DocType, one at a time in the order given.", maxMCPBulkItems)
+			bulk = fmt.Sprintf(" bulk_submit and bulk_cancel do the first two for up to %d documents of one DocType, one at a time in the order given.", MaxMCPBulkItems)
 		}
 		line("Lifecycle: submit_doc (0 to 1), cancel_doc (1 to 2, cannot be undone), amend_doc (a new draft <name>-1 from a cancelled document).%s", bulk)
 	}

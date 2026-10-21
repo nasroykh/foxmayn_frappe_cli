@@ -818,6 +818,34 @@ func TestMCPFakeBulkUpdate(t *testing.T) {
 	}
 }
 
+// A bulk_update item that carries "modified" fails alone when the document
+// was saved since, with ffc's conflict wording (the desktop matches it).
+func TestMCPFakeBulkUpdatePinned(t *testing.T) {
+	s, site := newMCPFake(t, false)
+	mcpTSeedTodos(site)
+	td2, _ := site.Doc("ToDo", "TD-2")
+	m := mcpTObj(t, mcpTOK(t, s, "bulk_update", map[string]interface{}{
+		"doctype": "ToDo",
+		"data": []interface{}{
+			map[string]interface{}{"name": "TD-1", "status": "Closed", "modified": "1999-01-01 00:00:00"},
+			map[string]interface{}{"name": "TD-2", "status": "Closed", "modified": fmt.Sprint(td2["modified"])},
+		},
+	}))
+	if m["updated"] != 1.0 || m["failed"] != 1.0 {
+		t.Fatalf("report = %v", m)
+	}
+	res := m["results"].([]interface{})
+	if r := res[0].(map[string]interface{}); r["status"] != "error" || !strings.Contains(fmt.Sprint(r["error"]), `ToDo TD-1 was changed on the server since modified "1999-01-01 00:00:00"`) {
+		t.Errorf("stale item = %v", r)
+	}
+	if d, _ := site.Doc("ToDo", "TD-1"); d["status"] == "Closed" {
+		t.Errorf("TD-1 saved despite the pin: %v", d)
+	}
+	if d, _ := site.Doc("ToDo", "TD-2"); d["status"] != "Closed" {
+		t.Errorf("TD-2 = %v", d)
+	}
+}
+
 func TestMCPFakeBulkDelete(t *testing.T) {
 	s, site := newMCPFake(t, false)
 	mcpTSeedTodos(site)
@@ -841,8 +869,8 @@ func TestMCPFakeBulkDelete(t *testing.T) {
 func TestMCPFakeBulkRefusals(t *testing.T) {
 	s, site := newMCPFake(t, false)
 	site.AddDocType("ToDo")
-	items := make([]interface{}, maxMCPBulkItems+1)
-	names := make([]interface{}, maxMCPBulkItems+1)
+	items := make([]interface{}, MaxMCPBulkItems+1)
+	names := make([]interface{}, MaxMCPBulkItems+1)
 	for i := range items {
 		items[i] = map[string]interface{}{"name": fmt.Sprintf("n%d", i)}
 		names[i] = fmt.Sprintf("n%d", i)
@@ -859,8 +887,8 @@ func TestMCPFakeBulkRefusals(t *testing.T) {
 		t.Errorf("%d requests reached the site", n)
 	}
 	// Exactly the limit is accepted.
-	m := mcpTObj(t, mcpTOK(t, s, "bulk_create", map[string]interface{}{"doctype": "ToDo", "data": items[:maxMCPBulkItems]}))
-	if m["created"] != float64(maxMCPBulkItems) || site.Count("ToDo") != maxMCPBulkItems {
+	m := mcpTObj(t, mcpTOK(t, s, "bulk_create", map[string]interface{}{"doctype": "ToDo", "data": items[:MaxMCPBulkItems]}))
+	if m["created"] != float64(MaxMCPBulkItems) || site.Count("ToDo") != MaxMCPBulkItems {
 		t.Errorf("at limit: %v count=%d", m["created"], site.Count("ToDo"))
 	}
 }

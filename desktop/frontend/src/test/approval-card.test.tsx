@@ -19,6 +19,7 @@ const base: ChatApproval = {
   args: { doctype: "ToDo", name: "TD-0001", data: { status: "Closed" } },
   diff: [{ field: "status", old: "Open", new: "Closed" }],
   noChanges: false,
+  docs: [],
   message: "",
 }
 
@@ -41,6 +42,43 @@ describe("ApprovalCard", () => {
     render(<ApprovalCard card={{ ...base, diff: [], noChanges: true }} onAnswer={() => {}} />)
     expect(screen.getByText("No field changes")).toBeTruthy()
     expect(screen.queryByLabelText("Field changes")).toBeNull()
+  })
+
+  it("shows each document of a bulk_update", () => {
+    const card: ChatApproval = {
+      ...base,
+      tool: "bulk_update",
+      names: ["TD-0001", "TD-0002"],
+      args: { doctype: "ToDo", data: [{ name: "TD-0001", status: "Closed" }, { name: "TD-0002", status: "Closed" }] },
+      diff: [],
+      docs: [
+        { name: "TD-0001", diff: [{ field: "status", old: "Open", new: "Closed" }], noChanges: false },
+        { name: "TD-0002", diff: [], noChanges: true },
+      ],
+    }
+    const { container } = render(<ApprovalCard card={card} onAnswer={() => {}} />)
+    expect(screen.getByLabelText("Field changes in TD-0001").textContent).toContain("Closed")
+    expect(screen.queryByLabelText("Field changes in TD-0002")).toBeNull()
+    expect(screen.getByText("No field changes")).toBeTruthy()
+    expect(container.textContent).not.toContain('"status": "Closed"')
+  })
+
+  it("shows every field a copy sets, next to the original", () => {
+    const card: ChatApproval = {
+      ...base,
+      tool: "copy_doc",
+      args: { doctype: "ToDo", name: "TD-0001", data: { date: "2026-10-20" } },
+      diff: [{ field: "date", old: "2026-10-12", new: "2026-10-20" }],
+    }
+    render(<ApprovalCard card={card} onAnswer={() => {}} />)
+    const table = screen.getByLabelText("Fields the request sets")
+    expect(table.textContent).toContain("In the original")
+    expect(table.textContent).toContain("In the new document")
+    expect(table.textContent).toContain("2026-10-20")
+    cleanup()
+    render(<ApprovalCard card={{ ...card, diff: [], noChanges: true }} onAnswer={() => {}} />)
+    expect(screen.getByText("The request sets no field")).toBeTruthy()
+    expect(document.body.textContent).toContain('"doctype": "ToDo"')
   })
 
   it("shows the ffc question for an ffc card", () => {

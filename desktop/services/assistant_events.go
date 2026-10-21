@@ -126,6 +126,14 @@ type DiffField struct {
 	New   any    `json:"new"`
 }
 
+// DocChanges is one document of a bulk_update card. NoChanges is set when its
+// item matches the document already.
+type DocChanges struct {
+	Name      string      `json:"name"`
+	Diff      []DiffField `json:"diff"`
+	NoChanges bool        `json:"noChanges,omitempty"`
+}
+
 // ChatApproval is the payload of EventChatApproval and an item of the list
 // the UI reads to show open cards again after a reload.
 type ChatApproval struct {
@@ -140,11 +148,16 @@ type ChatApproval struct {
 	Names    []string `json:"names,omitempty"`
 	// Args is the exact JSON the call will run with.
 	Args json.RawMessage `json:"args"`
-	// Diff lists the changed fields of an update_doc.
+	// Diff lists the changed fields of an update_doc, or for a copy_doc or
+	// amend_doc every field data sets in the new document (Old is the
+	// source's value; amend_doc's amended_from is the one ffc writes).
 	Diff []DiffField `json:"diff,omitempty"`
 	// NoChanges is set for an update_doc whose data matches the document
-	// already, so the UI can say "no field changes".
+	// already, or a copy_doc whose data sets no field, so the UI can say so.
 	NoChanges bool `json:"noChanges,omitempty"`
+	// Docs lists each document of a bulk_update with its changed fields, in
+	// the order of the call.
+	Docs []DocChanges `json:"docs,omitempty"`
 	// Message is ffc's question, for kind "ffc".
 	Message string `json:"message,omitempty"`
 }

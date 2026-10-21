@@ -613,10 +613,14 @@ func registerUpdateDoc(s *server.MCPServer, env *mcpEnv) {
 			return nil, err
 		}
 		data = withoutName(data)
+		pin, err := stringArg(req, "if_unmodified")
+		if err != nil {
+			return nil, err
+		}
 		since := "the modified timestamp given"
-		if v := req.GetString("if_unmodified", ""); v != "" {
-			data["modified"] = v
-			since = fmt.Sprintf("if_unmodified %q", v)
+		if pin != "" {
+			data["modified"] = pin
+			since = fmt.Sprintf("if_unmodified %q", pin)
 		}
 		return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
 			d, err := c.UpdateDoc(ctx, doctype, name, data)
@@ -699,8 +703,8 @@ func registerCallMethod(s *server.MCPServer, env *mcpEnv) {
 // bulkTool runs a validated bulk operation for an MCP tool with the given
 // number of workers. Results stay in input order whatever the workers do.
 func bulkTool(n, workers int, done string, op func(ctx context.Context, c *client.FrappeClient, i int) (string, error)) (toolCall, error) {
-	if n > maxMCPBulkItems {
-		return nil, fmt.Errorf("too many items (%d): a single call may touch at most %d documents", n, maxMCPBulkItems)
+	if n > MaxMCPBulkItems {
+		return nil, fmt.Errorf("too many items (%d): a single call may touch at most %d documents", n, MaxMCPBulkItems)
 	}
 	return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
 		// Count and notify under one lock, so the progress values a client
@@ -758,7 +762,7 @@ func refuseDuplicateNames(names []string) error {
 
 func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_create",
-		mcp.WithDescription(fmt.Sprintf("Create multiple Frappe documents in one call (at most %d). Each element of the data array is an object of field values for one document. Returns per-item results with created names or error messages. Items are created in input order, one at a time, unless you set concurrency (up to %d) for items that do not depend on each other (no links between them, no tree parent among them); order is then not kept. Processing continues on individual failures. Set atomic to true for all or none: the items go to the site in one request and one database transaction (at most %d), so if any item is invalid nothing is created and the call fails with that item's error instead of a per-item report (a hook that commits, or a schema change such as a Custom Field, ends the transaction early). atomic cannot be combined with concurrency, and every item must be of the given doctype.", maxMCPBulkItems, maxMCPBulkWorkers, atomicLimit)),
+		mcp.WithDescription(fmt.Sprintf("Create multiple Frappe documents in one call (at most %d). Each element of the data array is an object of field values for one document. Returns per-item results with created names or error messages. Items are created in input order, one at a time, unless you set concurrency (up to %d) for items that do not depend on each other (no links between them, no tree parent among them); order is then not kept. Processing continues on individual failures. Set atomic to true for all or none: the items go to the site in one request and one database transaction (at most %d), so if any item is invalid nothing is created and the call fails with that item's error instead of a per-item report (a hook that commits, or a schema change such as a Custom Field, ends the transaction early). atomic cannot be combined with concurrency, and every item must be of the given doctype.", MaxMCPBulkItems, maxMCPBulkWorkers, atomicLimit)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithOpenWorldHintAnnotation(true),
@@ -809,7 +813,7 @@ func registerBulkCreate(s *server.MCPServer, env *mcpEnv) {
 
 // atomicLimit is the most items an atomic bulk_create takes: what insert_many
 // accepts, and no more than any bulk tool touches.
-var atomicLimit = min(maxMCPBulkItems, client.MaxInsertMany)
+var atomicLimit = min(MaxMCPBulkItems, client.MaxInsertMany)
 
 // atomicArg reads the optional atomic flag of bulk_create. A value that is
 // not a boolean is an error and never read as false: the caller asked for all
@@ -845,7 +849,7 @@ func atomicCreate(req mcp.CallToolRequest, doctype string, items []map[string]in
 
 func registerBulkUpdate(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_update",
-		mcp.WithDescription(fmt.Sprintf("Update multiple Frappe documents in one call (at most %d). Each element of the data array must include a \"name\" field identifying the document plus any fields to change. Returns per-item results. Items are updated in input order, one at a time, unless you set concurrency (up to %d) for items that do not depend on each other (no shared parent); order is then not kept and each document may be named only once. Processing continues on individual failures.", maxMCPBulkItems, maxMCPBulkWorkers)),
+		mcp.WithDescription(fmt.Sprintf("Update multiple Frappe documents in one call (at most %d). Each element of the data array must include a \"name\" field identifying the document plus any fields to change; an element may also carry the document's \"modified\" value as you read it (get_doc), and that item then fails, saving nothing, if someone saved the document since. Returns per-item results. Items are updated in input order, one at a time, unless you set concurrency (up to %d) for items that do not depend on each other (no shared parent); order is then not kept and each document may be named only once. Processing continues on individual failures.", MaxMCPBulkItems, maxMCPBulkWorkers)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -885,14 +889,14 @@ func registerBulkUpdate(s *server.MCPServer, env *mcpEnv) {
 		}
 		return bulkTool(len(items), workers, "updated", func(ctx context.Context, c *client.FrappeClient, i int) (string, error) {
 			_, err := c.UpdateDoc(ctx, doctype, names[i], payloads[i])
-			return names[i], err
+			return names[i], conflictError(err, doctype, names[i], fmt.Sprintf("modified %q", fmt.Sprint(payloads[i]["modified"])))
 		})
 	}))
 }
 
 func registerBulkDelete(s *server.MCPServer, env *mcpEnv) {
 	tool := mcp.NewTool("bulk_delete",
-		mcp.WithDescription(fmt.Sprintf("Permanently delete multiple Frappe documents in one call (at most %d). Provide document names as an array. Returns per-item results. Documents are deleted in the order given, one at a time (delete a document that links to another one first), unless you set concurrency (up to %d) for documents that are not linked to each other; order is then not kept and each may be named only once. Processing continues on individual failures. This action cannot be undone.", maxMCPBulkItems, maxMCPBulkWorkers)),
+		mcp.WithDescription(fmt.Sprintf("Permanently delete multiple Frappe documents in one call (at most %d). Provide document names as an array. Returns per-item results. Documents are deleted in the order given, one at a time (delete a document that links to another one first), unless you set concurrency (up to %d) for documents that are not linked to each other; order is then not kept and each may be named only once. Processing continues on individual failures. This action cannot be undone.", MaxMCPBulkItems, maxMCPBulkWorkers)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),

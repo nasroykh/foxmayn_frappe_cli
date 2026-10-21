@@ -73,29 +73,40 @@ func registerLifecycleTools(s *server.MCPServer, env *mcpEnv) {
 	registerBulkLifecycle(s, env)
 
 	overrides := jsonParam("data", `Optional object of fields to override in the copy, e.g. {"posting_date":"2026-10-01"}`)
+	sourceUnmodified := mcp.WithString("if_unmodified",
+		mcp.Description(`The source document's "modified" value as you read it (get_doc). If someone saved it since, nothing is created and the call fails: read it again and retry.`),
+	)
 	s.AddTool(docTool("amend_doc",
 		"Create the amendment of a cancelled document: a new draft linked by amended_from, named <name>-1 (an amendment of <name>-1 is <name>-2). Returns the new draft.",
-		false, false, overrides),
+		false, false, overrides, sourceUnmodified),
 		docHandler(env, func(req mcp.CallToolRequest, doctype, name string) (toolCall, error) {
 			data, err := objectArg(req, "data", false)
 			if err != nil {
 				return nil, err
 			}
+			pin, err := stringArg(req, "if_unmodified")
+			if err != nil {
+				return nil, err
+			}
 			return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
-				return c.AmendDoc(ctx, doctype, name, data)
+				return c.AmendDoc(ctx, doctype, name, data, pin)
 			}, nil
 		}))
 
 	s.AddTool(docTool("copy_doc",
 		"Duplicate a document like the desk's Duplicate: identity and \"no copy\" fields are left out, child rows are copied. Returns the new document.",
-		false, false, overrides),
+		false, false, overrides, sourceUnmodified),
 		docHandler(env, func(req mcp.CallToolRequest, doctype, name string) (toolCall, error) {
 			data, err := objectArg(req, "data", false)
 			if err != nil {
 				return nil, err
 			}
+			pin, err := stringArg(req, "if_unmodified")
+			if err != nil {
+				return nil, err
+			}
 			return func(ctx context.Context, c *client.FrappeClient) (interface{}, error) {
-				return c.DuplicateDoc(ctx, doctype, name, data)
+				return c.DuplicateDoc(ctx, doctype, name, data, pin)
 			}, nil
 		}))
 
@@ -182,8 +193,8 @@ func registerBulkLifecycle(s *server.MCPServer, env *mcpEnv) {
 		name, desc string
 		l          *lifecycleBulk
 	}{
-		{"bulk_submit", fmt.Sprintf("Submit multiple draft documents of a submittable DocType in one call (at most %d), docstatus 0 to 1: a submitted document can only be cancelled, not edited. Each document is read first, and one that is not a draft fails on its own. They are submitted one at a time, in the order given. Refused for DocTypes with an active Workflow (use apply_workflow). Returns per-item results. Processing continues on individual failures.", maxMCPBulkItems), bulkSubmit},
-		{"bulk_cancel", fmt.Sprintf("Cancel multiple submitted documents in one call (at most %d), docstatus 1 to 2. This cannot be undone; amend_doc makes a corrected copy. Each document is read first, and one that is not submitted fails on its own. They are cancelled one at a time, in the order given, so list submitted documents that link to another one first: they block its cancel. Refused for DocTypes with an active Workflow (use apply_workflow). Returns per-item results. Processing continues on individual failures.", maxMCPBulkItems), bulkCancel},
+		{"bulk_submit", fmt.Sprintf("Submit multiple draft documents of a submittable DocType in one call (at most %d), docstatus 0 to 1: a submitted document can only be cancelled, not edited. Each document is read first, and one that is not a draft fails on its own. They are submitted one at a time, in the order given. Refused for DocTypes with an active Workflow (use apply_workflow). Returns per-item results. Processing continues on individual failures.", MaxMCPBulkItems), bulkSubmit},
+		{"bulk_cancel", fmt.Sprintf("Cancel multiple submitted documents in one call (at most %d), docstatus 1 to 2. This cannot be undone; amend_doc makes a corrected copy. Each document is read first, and one that is not submitted fails on its own. They are cancelled one at a time, in the order given, so list submitted documents that link to another one first: they block its cancel. Refused for DocTypes with an active Workflow (use apply_workflow). Returns per-item results. Processing continues on individual failures.", MaxMCPBulkItems), bulkCancel},
 	} {
 		l := t.l
 		tool := mcp.NewTool(t.name,

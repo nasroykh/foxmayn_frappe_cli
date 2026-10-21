@@ -23,6 +23,7 @@ const DATA = new Set([
   "AP", "AS", "LB",
   // Models, tools and documents of the scripted assistant; what the tests type.
   "claude-sonnet-5-5", "get_doc", "update_doc", "ToDo", "TD-0001", "update the todo",
+  "bulk_update", "copy_doc", "TD-0002", "TD-0003", "close the todos in bulk", "copy the todo",
   // The read answer the mock gives (chat-message-actions) and its title.
   "What is TD-0001?", "Open ToDos", "Let me look that up. TD-0001 is a ToDo", "\"Call the supplier\"", "status Open",
   "assigned to you and due on 2026-10-12.",

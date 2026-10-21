@@ -512,4 +512,9 @@ func TestMCPUpdateDocIfUnmodified(t *testing.T) {
 	if d, _ := site.Doc("ToDo", "TD-1"); d["status"] != "Closed" {
 		t.Errorf("stale update applied: %v", d)
 	}
+	// A pin that is not a string is refused, never dropped unchecked.
+	mcpTErr(t, s, "update_doc", map[string]interface{}{"doctype": "ToDo", "name": "TD-1", "data": map[string]interface{}{"status": "Open"}, "if_unmodified": 1}, "if_unmodified: expected a string")
+	if d, _ := site.Doc("ToDo", "TD-1"); d["status"] != "Closed" {
+		t.Errorf("unpinned update applied: %v", d)
+	}
 }

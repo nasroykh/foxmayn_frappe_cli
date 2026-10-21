@@ -305,7 +305,12 @@
       "decline": "رفض",
       "field": "الحقل",
       "before": "قبل",
-      "after": "بعد"
+      "after": "بعد",
+      "source": "في الأصل",
+      "copy": "في المستند الجديد",
+      "copyDiffLabel": "الحقول التي يحددها الطلب",
+      "noOverrides": "لا يحدد الطلب أي حقل",
+      "docDiffLabel": "تغييرات الحقول في {{name}}"
     },
     "tool": {
       "running": "قيد التشغيل",

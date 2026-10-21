@@ -148,6 +148,25 @@ export const states: State[] = [
       await expect(page.locator("[data-slot=approval-card]").first()).toBeVisible({ timeout: 10_000 })
     },
   },
+  ...(
+    [
+      // bulk_update: the field changes of each document.
+      ["chat-approval-bulk", "close the todos in bulk"],
+      // copy_doc: the fields that differ from the original.
+      ["chat-approval-copy", "copy the todo"],
+    ] as const
+  ).map(([name, prompt]) => ({
+    name,
+    reach: async (page: Page) => {
+      await newConversation(page)
+      await dialog(page).locator("button[type=submit], [data-slot=button]").last().click()
+      await page.locator("section > header [data-slot=switch]").click()
+      await expect(page.locator("section > header [data-slot=switch]")).toHaveAttribute("aria-checked", "true")
+      await page.locator("#chat-input").fill(prompt)
+      await page.locator("#chat-input").press("Enter")
+      await expect(page.locator("[data-slot=approval-card] table").first()).toBeVisible({ timeout: 10_000 })
+    },
+  })),
   {
     name: "chat-message-actions",
     reach: async (page) => {
