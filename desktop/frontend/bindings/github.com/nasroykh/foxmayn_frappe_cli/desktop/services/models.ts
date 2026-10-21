@@ -225,15 +225,14 @@ export interface ChatApproval {
 
     /**
      * Diff lists the changed fields of an update_doc, or for a copy_doc or
-     * amend_doc the fields the new document takes from data instead of the
-     * source (Old is the source's value).
+     * amend_doc every field data sets in the new document (Old is the
+     * source's value; amend_doc's amended_from is the one ffc writes).
      */
     "diff"?: DiffField[] | null;
 
     /**
      * NoChanges is set for an update_doc whose data matches the document
-     * already, or a copy whose data changes no field of the source, so the
-     * UI can say so.
+     * already, or a copy_doc whose data sets no field, so the UI can say so.
      */
     "noChanges"?: boolean;
 
