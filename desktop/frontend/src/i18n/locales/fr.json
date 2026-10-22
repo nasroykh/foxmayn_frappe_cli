@@ -143,7 +143,8 @@
       "ffcYouHave": "Vous avez ffc {{current}}.",
       "updateFfc": "Mettre à jour ffc",
       "sourceCode": "Code source",
-      "reportProblem": "Signaler un problème"
+      "reportProblem": "Signaler un problème",
+      "support": "Soutenir le développement"
     }
   },
   "history": {

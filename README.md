@@ -80,6 +80,10 @@ The full index is [docs/README.md](docs/README.md).
 
 [`skills/`](skills/) holds agent skills for using ffc (start with `ffc-core`; then `ffc-setup`, `ffc-mcp`, `ffc-bulk-lifecycle`, `ffc-reports-api`, `ffc-files-collab`) and for working on this repository (`ffc-dev` and the `ffc-dev-*` skills). `make skills-init` links them into `.claude/`, `.cursor/` and `.agent/`.
 
+## Support
+
+ffc is free and stays free. If it saves you time, you can support its development on [Ko-fi](https://ko-fi.com/foxmayn). The first goal is code signing, so the desktop app installs on Windows and macOS without security warnings; then test servers and development tools.
+
 ## Contributing
 
 Issues and pull requests are welcome. Start with [Development](docs/development/README.md): `make build`, `make test`, `make lint`. Every new command or MCP tool ships with tests against the fake Frappe site in `internal/frappetest`.
