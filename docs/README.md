@@ -85,3 +85,4 @@ New here? Start with [Installation](getting-started/installation.md), then the [
 - [Repository](https://github.com/nasroykh/foxmayn_frappe_cli)
 - [Releases](https://github.com/nasroykh/foxmayn_frappe_cli/releases)
 - [Issues](https://github.com/nasroykh/foxmayn_frappe_cli/issues)
+- [Support development on Ko-fi](https://ko-fi.com/foxmayn)

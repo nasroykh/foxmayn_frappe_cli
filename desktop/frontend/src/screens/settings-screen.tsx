@@ -7,6 +7,7 @@ import {
   IconDeviceDesktop,
   IconDownload,
   IconFolderOpen,
+  IconHeart,
   IconMoon,
   IconRefresh,
   IconSun,
@@ -42,6 +43,7 @@ import { SiteAssistantSettings } from "@/screens/assistant/site-settings"
 import { WSLAlert } from "@/screens/wsl-alert"
 
 const REPO = "https://github.com/nasroykh/foxmayn_frappe_cli"
+const SUPPORT = "https://ko-fi.com/foxmayn"
 
 async function attempt(fn: () => Promise<unknown>) {
   try {
@@ -560,6 +562,10 @@ function AboutTab() {
         <Button variant="outline" onClick={() => attempt(() => backend.openWebsite(`${REPO}/issues`))}>
           <IconBug data-icon="inline-start" />
           {t("settings.about.reportProblem")}
+        </Button>
+        <Button variant="outline" onClick={() => attempt(() => backend.openWebsite(SUPPORT))}>
+          <IconHeart data-icon="inline-start" />
+          {t("settings.about.support")}
         </Button>
       </div>
     </div>
