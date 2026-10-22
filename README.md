@@ -82,7 +82,7 @@ The full index is [docs/README.md](docs/README.md).
 
 ## Support
 
-ffc is free and stays free. If it saves you time, you can support its development on [Ko-fi](https://ko-fi.com/foxmayn). The first goal is code signing, so the desktop app installs on Windows and macOS without security warnings; then test servers and development tools.
+ffc is free and stays free. If it saves you time, you can support its development on [Ko-fi](https://ko-fi.com/foxmayn). The first goal is code signing, so the desktop app installs on Windows and macOS without security warnings; then test servers and development tools. Already use Wise? You can also send through [Wise](https://wise.com/pay/me/nasreddiney2).
 
 ## Contributing
 
