@@ -664,6 +664,59 @@ func TestCmdGetSchemaMissingDocType(t *testing.T) {
 	cmdTFail(t, cmdTRun(t, s, "get-schema", "-d", "Nope"), "Nope")
 }
 
+// TestCmdGetSchemaDeskMeta: a user who may not read DocType records (403,
+// every user without System Manager) gets the desk meta of getdoctype, in
+// the shape a v16 site sends it: customizations applied, the desk's scripts
+// dropped, no Custom Field or Property Setter query. When getdoctype refuses
+// too (Frappe's answer to such a user for a DocType that does not exist),
+// the DocType read's error stands.
+func TestCmdGetSchemaDeskMeta(t *testing.T) {
+	s := cmdTSchemaSite(t)
+	denied := frappetest.Permission("User x@example.com does not have doctype access via role permission for document DocType")
+	s.Handle("GET /api/resource/DocType/Ticket", frappetest.ErrorHandler(denied))
+	s.Handle("GET /api/resource/DocType/Nope", frappetest.ErrorHandler(denied))
+	s.HandleMethod("frappe.desk.form.load.getdoctype", func(_ *http.Request, args map[string]interface{}) (interface{}, error) {
+		if args["doctype"] != "Ticket" {
+			return nil, frappetest.Permission("No permission for DocType")
+		}
+		return frappetest.Response{"docs": []interface{}{
+			map[string]interface{}{"doctype": "DocType", "name": "Ticket", "module": "Support", "issingle": 0, "istable": 0,
+				"__js": "frappe.ui.form.on('Ticket', {})", "__css": "", "__print_formats": []interface{}{},
+				"fields": []interface{}{
+					map[string]interface{}{"fieldname": "title", "label": "Title", "fieldtype": "Data", "reqd": 1, "idx": 1},
+					map[string]interface{}{"fieldname": "region", "label": "Region", "fieldtype": "Data", "is_custom_field": 1, "insert_after": "title", "idx": 2},
+					map[string]interface{}{"fieldname": "status", "label": "Status", "fieldtype": "Select", "options": "Open\nPending\nClosed", "idx": 3},
+				}},
+			map[string]interface{}{"doctype": "DocType", "name": "Ticket Item", "istable": 1, "fields": []interface{}{}},
+		}, "user_settings": "{}"}, nil
+	})
+
+	r := cmdTOK(t, cmdTRun(t, s, "--json", "get-schema", "-d", "Ticket"))
+	doc := cmdTObj(t, r)
+	cmdTEq(t, cmdTFieldNames(t, doc), "title", "region", "status")
+	if doc["_warnings"] != nil || doc["module"] != "Support" {
+		t.Fatalf("compact view wrong: %v", doc)
+	}
+	full := cmdTObj(t, cmdTOK(t, cmdTRun(t, s, "--json", "get-schema", "-d", "Ticket", "--full")))
+	for k := range full {
+		if strings.HasPrefix(k, "__") {
+			t.Fatalf("--full kept the desk key %s", k)
+		}
+	}
+	if full["doctype"] != "DocType" || full["name"] != "Ticket" {
+		t.Fatalf("--full: %v", full)
+	}
+	if n := len(s.RequestsTo("GET", "/api/resource/Custom Field")) + len(s.RequestsTo("GET", "/api/resource/Property Setter")); n != 0 {
+		t.Fatalf("customization queries: %d", n)
+	}
+
+	r = cmdTRun(t, s, "get-schema", "-d", "Nope")
+	cmdTFail(t, r, "read access to DocType")
+	if r.Code != exitPermission {
+		t.Fatalf("exit %d, want %d", r.Code, exitPermission)
+	}
+}
+
 // ─── list-doctypes / list-reports ────────────────────────────────────────────
 
 func TestCmdListDoctypes(t *testing.T) {

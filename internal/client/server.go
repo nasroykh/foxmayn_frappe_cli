@@ -290,6 +290,32 @@ func (c *FrappeClient) docTypeMeta(ctx context.Context, doctype string) (*DocTyp
 		AllowImport: truthy(d.AllowImport), Permissions: d.Permissions}, nil
 }
 
+// DeskMeta returns the meta of a DocType as the desk loads it through
+// frappe.desk.form.load.getdoctype: the DocType document with its Custom
+// Fields and Property Setters applied. Any desk user may load it, also one
+// who cannot read DocType records. The desk's scripts, styles and templates
+// (__js, __css, __list_js, ...) are dropped.
+func (c *FrappeClient) DeskMeta(ctx context.Context, doctype string) (map[string]interface{}, error) {
+	env, err := c.CallMethodFull(ctx, "frappe.desk.form.load.getdoctype", map[string]interface{}{"doctype": doctype}, true)
+	if err != nil {
+		return nil, err
+	}
+	docs, _ := env["docs"].([]interface{})
+	if len(docs) == 0 {
+		return nil, fmt.Errorf("unexpected response from getdoctype: no meta for %s", doctype)
+	}
+	meta, ok := docs[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected response from getdoctype: no meta for %s", doctype)
+	}
+	for k := range meta {
+		if strings.HasPrefix(k, "__") {
+			delete(meta, k)
+		}
+	}
+	return meta, nil
+}
+
 // isSystemUser reports what the User document says about user_type. known is
 // false when the field cannot be read: it has permission level 1, so only a
 // user who manages users sees it.

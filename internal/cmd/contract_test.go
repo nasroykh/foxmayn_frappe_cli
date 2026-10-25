@@ -90,7 +90,7 @@ func TestContract(t *testing.T) {
 	t.Run("lifecycle commands", func(t *testing.T) { contractLifecycleCLI(t, c, sc) })
 	t.Run("bulk submit and cancel", func(t *testing.T) { contractBulkLifecycle(t, c, sc) })
 	t.Run("bulk-create --atomic", func(t *testing.T) { contractBulkCreateAtomic(t, c, sc) })
-	t.Run("schema merges custom field and property setter", func(t *testing.T) { contractSchema(t, c) })
+	t.Run("schema merges custom field and property setter", func(t *testing.T) { contractSchema(t, c, sc) })
 	t.Run("cache and completion", func(t *testing.T) { contractCache(t, sc) })
 	t.Run("api passthrough", func(t *testing.T) { contractAPI(t, c, sc) })
 	t.Run("search and global search", func(t *testing.T) { contractSearch(t, c, sc) })
@@ -537,28 +537,52 @@ func contractLifecycle(t *testing.T, c *client.FrappeClient) {
 	}
 }
 
-func contractSchema(t *testing.T, c *client.FrappeClient) {
-	schema, warnings, err := fetchSchema(contractCtx(t), c, contractDT)
-	if err != nil {
-		t.Fatal(err)
+func contractSchema(t *testing.T, c *client.FrappeClient, sc *config.SiteConfig) {
+	check := func(who string, c *client.FrappeClient) {
+		schema, warnings, err := fetchSchema(contractCtx(t), c, contractDT)
+		if err != nil {
+			t.Fatalf("%s: %v", who, err)
+		}
+		if len(warnings) > 0 {
+			t.Errorf("%s: warnings: %v", who, warnings)
+		}
+		fields, _ := schema["fields"].([]interface{})
+		var order []string
+		labels := map[string]string{}
+		for _, f := range fields {
+			m := f.(map[string]interface{})
+			fn := fmt.Sprint(m["fieldname"])
+			order = append(order, fn)
+			labels[fn] = fmt.Sprint(m["label"])
+		}
+		if len(order) < 2 || order[0] != "title" || order[1] != "custom_note" {
+			t.Errorf("%s: field order = %v, want custom_note right after title", who, order)
+		}
+		if labels["title"] != "Heading" {
+			t.Errorf("%s: title label = %q, want the Property Setter value Heading", who, labels["title"])
+		}
+		for k := range schema {
+			if strings.HasPrefix(k, "__") {
+				t.Errorf("%s: desk key %s kept", who, k)
+			}
+		}
 	}
-	if len(warnings) > 0 {
-		t.Errorf("warnings: %v", warnings)
+	check("admin", c)
+
+	// A user without System Manager may not read DocType records, and gets
+	// 403 for a DocType that does not exist too; fetchSchema then loads the
+	// desk meta, which carries the same customizations.
+	uc := contractNonAdmin(t, c, sc)
+	ctx := contractCtx(t)
+	const missing = "FFC No Such DocType"
+	for _, dt := range []string{contractDT, missing} {
+		if _, err := uc.GetDoc(ctx, "DocType", dt); err == nil || httpStatus(err) != "403" {
+			t.Errorf("non-admin GetDoc DocType %s: %v, want 403", dt, err)
+		}
 	}
-	fields, _ := schema["fields"].([]interface{})
-	var order []string
-	labels := map[string]string{}
-	for _, f := range fields {
-		m := f.(map[string]interface{})
-		fn := fmt.Sprint(m["fieldname"])
-		order = append(order, fn)
-		labels[fn] = fmt.Sprint(m["label"])
-	}
-	if len(order) < 2 || order[0] != "title" || order[1] != "custom_note" {
-		t.Errorf("field order = %v, want custom_note right after title", order)
-	}
-	if labels["title"] != "Heading" {
-		t.Errorf("title label = %q, want the Property Setter value Heading", labels["title"])
+	check("non-admin", uc)
+	if _, _, err := fetchSchema(ctx, uc, missing); err == nil || httpStatus(err) != "403" {
+		t.Errorf("non-admin schema of a missing DocType: %v, want 403", err)
 	}
 }
 
