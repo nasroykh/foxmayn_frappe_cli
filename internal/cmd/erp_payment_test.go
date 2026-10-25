@@ -386,3 +386,59 @@ func TestERPPaymentBankAccountOverride(t *testing.T) {
 		t.Errorf("stderr = %q", r.Stderr)
 	}
 }
+
+// erpPBankSite answers a draft that pays into a Bank account, with the
+// account type and the default reference date get_payment_entry sets.
+func erpPBankSite(t *testing.T) *frappetest.Site {
+	t.Helper()
+	s := erpPSite(t, erpTV16)
+	s.HandleMethod(erpTPaymentMethod, func(*http.Request, map[string]interface{}) (interface{}, error) {
+		d := erpTPaymentDraft()
+		d["paid_to"], d["paid_to_account_type"], d["reference_date"] = "Bank - A", "Bank", "2026-10-25"
+		return d, nil
+	})
+	return s
+}
+
+// TestERPPaymentBankReference: ERPNext saves a bank payment only with a
+// reference number, which get_payment_entry does not take. Without
+// --reference-no the draft is printed with a warning and --create refuses
+// before writing; with it, reference_no is set on the draft (never sent to
+// the method) and inserted.
+func TestERPPaymentBankReference(t *testing.T) {
+	s := erpPBankSite(t)
+	r := cmdTOK(t, cmdTRun(t, s, "--json", "erp", "payment", "--against", erpPAgainst("Sales Invoice")))
+	cmdTHas(t, r.Stderr, `paid_to "Bank - A" is a Bank account`, "pass --reference-no (the cheque or transfer reference)")
+	if strings.Contains(r.Stderr, "--reference-date") {
+		t.Errorf("the draft has a reference date: %q", r.Stderr)
+	}
+
+	r = cmdTRun(t, s, "erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--create")
+	cmdTFail(t, r, "--reference-no")
+	if r.Code != exitValidation {
+		t.Errorf("exit %d, want %d", r.Code, exitValidation)
+	}
+	if w := erpTWrites(s); len(w) != 0 {
+		t.Fatalf("writes: %+v", w)
+	}
+
+	r = cmdTOK(t, cmdTRun(t, s, "--json", "erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--reference-no", " WIRE-2301 ", "--create"))
+	if strings.Contains(r.Stderr, "Bank account") {
+		t.Errorf("stderr = %q", r.Stderr)
+	}
+	posts := s.RequestsTo(http.MethodPost, "/api/resource/Payment Entry")
+	if len(posts) != 1 {
+		t.Fatalf("insert requests = %d", len(posts))
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal([]byte(posts[0].Body), &body); err != nil || body["reference_no"] != "WIRE-2301" {
+		t.Errorf("insert body = %s (%v)", posts[0].Body, err)
+	}
+	for _, req := range erpPMethodRequests(s) {
+		if req.Query.Has("reference_no") {
+			t.Errorf("reference_no sent to get_payment_entry: %v", req.Query)
+		}
+	}
+
+	cmdTFail(t, cmdTRun(t, s, "erp", "payment", "--against", erpPAgainst("Sales Invoice"), "--reference-no", " "), "--reference-no: provide a value")
+}

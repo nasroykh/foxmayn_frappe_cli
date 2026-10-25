@@ -110,7 +110,7 @@ func checkPayDoctype(label, doctype string) error {
 // buildPaymentOptions checks the optional inputs of a payment. An input that
 // was given and is blank or invalid is a usage error; one that was not given
 // is not sent.
-func buildPaymentOptions(in erpInput, amount, bankAccount, referenceDate erpOpt) (client.PaymentOptions, error) {
+func buildPaymentOptions(in erpInput, amount, bankAccount, referenceDate, referenceNo erpOpt) (client.PaymentOptions, error) {
 	var o client.PaymentOptions
 	var err error
 	if o.Amount, err = in.number("amount", "50 or 12.5", amount); err != nil {
@@ -122,6 +122,9 @@ func buildPaymentOptions(in erpInput, amount, bankAccount, referenceDate erpOpt)
 		}
 	}
 	if o.ReferenceDate, err = in.date("reference-date", referenceDate); err != nil {
+		return o, err
+	}
+	if o.ReferenceNo, err = in.text("reference-no", referenceNo); err != nil {
 		return o, err
 	}
 	return o, nil
@@ -238,11 +241,14 @@ func buildPartyOptions(in erpInput, customer, supplier, company, doctype, date e
 	return o, nil
 }
 
-// paymentWarnings are the notes on a Payment Entry draft: gap is the missing
-// bank or cash account (also the reason a draft cannot be saved), and the
-// bank account override.
+// paymentWarnings are the notes on a Payment Entry draft: gap is why the
+// draft cannot be saved (no bank or cash account, or a bank payment without
+// its reference), and the bank account override.
 func paymentWarnings(in erpInput, draft map[string]interface{}, wantBank string) (warnings []string, gap string) {
-	if gap = paymentAccountGap(in, draft); gap != "" {
+	if gap = paymentAccountGap(in, draft); gap == "" {
+		gap = paymentReferenceGap(in, draft)
+	}
+	if gap != "" {
 		warnings = append(warnings, gap)
 	}
 	if w := bankAccountOverride(in, draft, wantBank); w != "" {
@@ -269,6 +275,34 @@ func bankAccountOverride(in erpInput, draft map[string]interface{}, want string)
 		return ""
 	}
 	return fmt.Sprintf("%s %q was not used: the draft has %s %q (the Mode of Payment of the document takes precedence over %s)", in.name("bank-account"), want, field, got, in.name("bank-account"))
+}
+
+// paymentReferenceGap says what is missing when the draft pays into or from
+// a Bank account without a reference number or date: ERPNext saves such a
+// Payment Entry only with both ("Reference No and Reference Date is mandatory
+// for Bank transaction"; the bank side is paid_to for Receive, else
+// paid_from, as in validate_transaction_reference), and get_payment_entry
+// takes no reference number. The account type comes with the draft.
+func paymentReferenceGap(in erpInput, draft map[string]interface{}) string {
+	side := "paid_from"
+	if draft["payment_type"] == "Receive" {
+		side = "paid_to"
+	}
+	if draft[side+"_account_type"] != "Bank" {
+		return ""
+	}
+	blank := func(f string) bool { v, _ := draft[f].(string); return strings.TrimSpace(v) == "" }
+	var missing []string
+	if blank("reference_no") {
+		missing = append(missing, in.name("reference-no")+" (the cheque or transfer reference)")
+	}
+	if blank("reference_date") {
+		missing = append(missing, in.name("reference-date"))
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s %q is a Bank account: ERPNext saves a bank payment only with its reference number and date; pass %s", side, draft[side], strings.Join(missing, " and "))
 }
 
 // paymentAccountGap says what is missing when the draft has no bank or cash

@@ -692,3 +692,38 @@ func TestMCPERPMultiSite(t *testing.T) {
 	args["site"] = "b"
 	mcpTOK(t, s, "erp_item", args)
 }
+
+// TestMCPERPPaymentBankReference: reference_no is set on the draft; without
+// it a bank payment comes back with the reason it cannot be saved, naming
+// the bank side (paid_from for Pay) and the argument, not a flag.
+func TestMCPERPPaymentBankReference(t *testing.T) {
+	site := erpPSite(t, erpTV16)
+	site.HandleMethod(erpTPaymentMethod, func(_ *http.Request, a map[string]interface{}) (interface{}, error) {
+		d := erpTPaymentDraft()
+		d["payment_type"], d["paid_from"], d["paid_from_account_type"], d["paid_to"] = "Pay", "Bank - A", "Bank", "Creditors - A"
+		if v, ok := a["reference_date"]; ok {
+			d["reference_date"] = v // as get_payment_entry does
+		}
+		return d, nil
+	})
+	s := erpMCP(t, site, nil)
+	args := map[string]interface{}{"against_doctype": "Purchase Invoice", "against_name": "SRC-1"}
+	res := erpMCPJSON(t, s, "erp_payment", args)
+	w, _ := res["warnings"].([]interface{})
+	if len(w) != 1 || !strings.Contains(fmt.Sprint(w[0]), `paid_from "Bank - A" is a Bank account`) ||
+		!strings.Contains(fmt.Sprint(w[0]), "pass reference_no (the cheque or transfer reference) and reference_date") || strings.Contains(fmt.Sprint(w[0]), "--") {
+		t.Errorf("warnings = %v", w)
+	}
+
+	args["reference_no"], args["reference_date"] = "CHQ-7", "2026-10-25"
+	res = erpMCPJSON(t, s, "erp_payment", args)
+	if d := erpMCPDraft(t, res); d["reference_no"] != "CHQ-7" || res["warnings"] != nil {
+		t.Errorf("result = %v", res)
+	}
+	if q := erpPMethodRequests(site)[1].Query; q.Has("reference_no") || q.Get("reference_date") != "2026-10-25" {
+		t.Errorf("query = %v", q)
+	}
+	if w := erpTWrites(site); len(w) != 0 {
+		t.Errorf("writes: %+v", w)
+	}
+}

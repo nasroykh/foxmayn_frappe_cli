@@ -143,6 +143,10 @@ type PaymentOptions struct {
 	Amount        string // party_amount: a plain positive decimal, sent as text (Frappe coerces it to a number)
 	BankAccount   string // bank_account: an Account of the company
 	ReferenceDate string // reference_date: YYYY-MM-DD
+	// ReferenceNo is not an argument of get_payment_entry: it is set as
+	// reference_no on the draft the method answers (a Payment Entry into or
+	// from a Bank account is saved only with one).
+	ReferenceNo string
 }
 
 // PaymentDraft builds an unsaved Payment Entry against a document (dt, dn).
@@ -159,7 +163,11 @@ func (c *FrappeClient) PaymentDraft(ctx context.Context, method, doctype, name s
 	if o.ReferenceDate != "" {
 		args["reference_date"] = o.ReferenceDate
 	}
-	return c.draftDoc(ctx, method, args)
+	draft, err := c.draftDoc(ctx, method, args)
+	if err == nil && o.ReferenceNo != "" {
+		draft["reference_no"] = o.ReferenceNo
+	}
+	return draft, err
 }
 
 // InsertableCopy returns a copy of a mapped document that can be inserted:

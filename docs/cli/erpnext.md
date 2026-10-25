@@ -67,6 +67,7 @@ Makes a Payment Entry against an invoice or an order, as the desk's Create > Pay
 | `--amount` | Pay this much instead of the outstanding amount. A positive number. |
 | `--bank-account` | The bank or cash Account to pay from or into. Default: the Company's default bank account, else its default cash account. A Mode of Payment set on the document takes precedence (see below). |
 | `--reference-date` | The reference date of the payment, `YYYY-MM-DD`. Default: today. |
+| `--reference-no` | The cheque or transfer reference. ERPNext requires it for a payment into or from a Bank account (below). |
 | `--create` | Save the draft as a new Payment Entry. |
 | `--submit` | Save and submit it. Implies `--create`. |
 | `--keys` | Keys to keep in the output, e.g. `name,docstatus`. |
@@ -86,8 +87,11 @@ ERPNext's refusals reach the usual [exit codes](exit-codes.md):
 | No right to create Payment Entries or to read the document | 5 |
 | The document does not exist, or ERPNext is not installed | 4 |
 | No bank or cash account for the Company (below) | 6 |
+| A payment into or from a Bank account without `--reference-no` (below) | 6 |
 
 **No bank or cash account.** When the Company has no default bank or cash account and its chart of accounts has not exactly one account of either type, ERPNext does not throw: it answers a draft whose `paid_from` or `paid_to` is empty. `erp payment` prints that draft with a warning on stderr; with `--create` or `--submit` it refuses (exit 6) before writing anything. Set the Company's default bank or cash account, or pass `--bank-account`.
+
+**A Bank account needs a reference number.** ERPNext saves a Payment Entry into (Receive) or from (Pay) an account of type Bank only with a reference number and date ("Reference No and Reference Date is mandatory for Bank transaction"); a Cash account needs neither. `get_payment_entry` takes no reference number, so `--reference-no` is set on the draft ERPNext answers. Without it, `erp payment` prints the draft with a warning on stderr, and `--create` or `--submit` refuses (exit 6) before writing anything. The reference date is already filled in (today, or `--reference-date`).
 
 **A Mode of Payment on the document overrides `--bank-account`.** When the invoice or order has a `mode_of_payment`, ERPNext uses that mode's account for the Company and ignores `bank_account`. After the draft comes back, `erp payment` compares the account on the bank side (`paid_to` for Receive, `paid_from` for Pay) with the one you gave and prints a warning on stderr naming both when they differ; the draft is still printed and `--create` still works.
 
