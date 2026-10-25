@@ -18,6 +18,7 @@ var (
 	epAmount        string
 	epBankAccount   string
 	epReferenceDate string
+	epReferenceNo   string
 	epCreate        bool
 	epSubmit        bool
 	epKeys          string
@@ -42,14 +43,20 @@ give are sent; ERPNext fills in the rest:
                     default bank, else cash, account). A Mode of Payment set
                     on the document overrides it; a warning says so
   --reference-date  the date the payment is made for (YYYY-MM-DD, default today)
+  --reference-no    the cheque or transfer reference, which ERPNext requires
+                    for a payment into or from a Bank account (set on the
+                    draft: get_payment_entry takes none)
 
 A Sales Order or Purchase Order that is already fully billed is refused by
 ERPNext (exit 6). So is a draft that has no bank or cash account: set the
-Company's default bank or cash account, or pass --bank-account.
+Company's default bank or cash account, or pass --bank-account. A bank
+payment without --reference-no is printed with a warning, and --create
+refuses it (exit 6) before writing.
 
 Examples:
   ffc erp payment --against "Sales Invoice:ACC-SINV-2026-00001"
   ffc erp payment --against "Sales Invoice:ACC-SINV-2026-00001" --amount 50 --create
+  ffc erp payment --against "Sales Invoice:ACC-SINV-2026-00001" --reference-no WIRE-2301 --submit
   ffc erp payment --against "Purchase Invoice:ACC-PINV-2026-00001" --bank-account "Bank Account - ABC" --submit --keys name,docstatus
 `,
 	Args: cobra.NoArgs,
@@ -95,7 +102,7 @@ var plainAmount = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]+)?$`)
 // paymentOptions reads the optional flags. A flag that was given and is
 // empty or invalid is a usage error; one that was not given is not sent.
 func paymentOptions(cmd *cobra.Command) (client.PaymentOptions, error) {
-	return buildPaymentOptions(erpInput{}, flagOpt(cmd, "amount", epAmount), flagOpt(cmd, "bank-account", epBankAccount), flagOpt(cmd, "reference-date", epReferenceDate))
+	return buildPaymentOptions(erpInput{}, flagOpt(cmd, "amount", epAmount), flagOpt(cmd, "bank-account", epBankAccount), flagOpt(cmd, "reference-date", epReferenceDate), flagOpt(cmd, "reference-no", epReferenceNo))
 }
 
 // paymentDraft builds the unsaved Payment Entry (a GET) and the notes about
@@ -149,6 +156,7 @@ func init() {
 	f.StringVar(&epAmount, "amount", "", "Amount to pay (default: the outstanding amount)")
 	f.StringVar(&epBankAccount, "bank-account", "", "Bank or cash Account to pay from or into (default: the Company's default; a Mode of Payment on the document overrides it)")
 	f.StringVar(&epReferenceDate, "reference-date", "", "Reference date, YYYY-MM-DD (default: today)")
+	f.StringVar(&epReferenceNo, "reference-no", "", "Cheque or transfer reference (required by ERPNext for a Bank account)")
 	f.BoolVar(&epCreate, "create", false, "Save the draft as a new Payment Entry")
 	f.BoolVar(&epSubmit, "submit", false, "Save and submit it (implies --create)")
 	f.StringVar(&epKeys, "keys", "", "Comma-separated keys to include in data output, e.g. name,docstatus")

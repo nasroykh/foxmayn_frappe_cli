@@ -364,6 +364,46 @@ func contractERPPayment(t *testing.T, c *client.FrappeClient, sc *config.SiteCon
 		t.Fatalf("outstanding_amount = %v after a plain payment, want %v", got, before)
 	}
 
+	// Into a Bank account: the draft names the account type; ERPNext saves
+	// it only with a reference number, which get_payment_entry does not
+	// take; --create refuses without --reference-no and saves with it. The
+	// entry stays a draft (no ledger entries), so it and the account go.
+	bank := contractBankAccount(t, c, company)
+	r = runFFC(t, cfg, "", "--json", "--timeout", "2m", "erp", "payment", "--against", against, "--bank-account", bank)
+	if r.Err != nil {
+		t.Fatalf("erp payment into a bank: %v\n%s", r.Err, r.Stderr)
+	}
+	var bankDraft map[string]interface{}
+	if err := json.Unmarshal([]byte(r.Stdout), &bankDraft); err != nil || bankDraft["paid_to"] != bank || bankDraft["paid_to_account_type"] != "Bank" ||
+		!strings.Contains(r.Stderr, "--reference-no") {
+		t.Fatalf("bank draft = %s (%v), stderr %q", r.Stdout, err, r.Stderr)
+	}
+	if made, err := c.CreateDoc(ctx, "Payment Entry", client.InsertableCopy(bankDraft)); err == nil || httpStatus(err) != "417" {
+		if name, _ := docName(made["name"]); name != "" {
+			_ = c.DeleteDoc(ctx, "Payment Entry", name)
+		}
+		t.Errorf("a bank payment without a reference number: %v, want 417", err)
+	}
+	r = runFFC(t, cfg, "", "erp", "payment", "--against", against, "--bank-account", bank, "--create")
+	if r.Code != exitValidation || paymentsOf() != 0 {
+		t.Errorf("--create without --reference-no: exit %d (%v), %d Payment Entry", r.Code, r.Err, paymentsOf())
+	}
+	r = runFFC(t, cfg, "", "--json", "--timeout", "2m", "erp", "payment", "--against", against, "--bank-account", bank, "--reference-no", "FFC-CONTRACT-1", "--create", "--keys", "name,reference_no,docstatus")
+	var saved struct {
+		Name        string      `json:"name"`
+		ReferenceNo string      `json:"reference_no"`
+		DocStatus   json.Number `json:"docstatus"`
+	}
+	_ = json.Unmarshal([]byte(r.Stdout), &saved)
+	if saved.Name != "" {
+		if err := c.DeleteDoc(ctx, "Payment Entry", saved.Name); err != nil {
+			t.Errorf("deleting %s: %v", saved.Name, err)
+		}
+	}
+	if r.Err != nil || saved.ReferenceNo != "FFC-CONTRACT-1" || saved.DocStatus != "0" {
+		t.Fatalf("--reference-no --create: %v %s\n%s", r.Err, r.Stdout, r.Stderr)
+	}
+
 	// --create --submit: saved, submitted, linked to the invoice.
 	r = runFFC(t, cfg, "", "--json", "--timeout", "2m", "erp", "payment", "--against", against, "--bank-account", cash, "--reference-date", today, "--submit", "--keys", "name,docstatus")
 	var made struct {
@@ -573,4 +613,31 @@ func contractERPLookups(t *testing.T, c *client.FrappeClient, sc *config.SiteCon
 	if r.Err == nil || r.Code != exitUsage || !strings.Contains(r.Err.Error(), "supported:") {
 		t.Errorf("unsupported DocType: exit %d, %v", r.Code, r.Err)
 	}
+}
+
+// contractBankAccount makes a leaf Bank account under the Company's Bank
+// group (a chart need not have a leaf one) and deletes it when the test
+// ends, after what the test made with it.
+func contractBankAccount(t *testing.T, c *client.FrappeClient, company string) string {
+	t.Helper()
+	ctx := contractCtx(t)
+	rows, err := c.GetList(ctx, "Account", client.ListOptions{Fields: []string{"name"},
+		Filters: fmt.Sprintf(`{"company":%q,"account_type":"Bank","is_group":1}`, company), Limit: 1})
+	if err != nil || len(rows) == 0 {
+		t.Fatalf("no Bank group account in %s: %v", company, err)
+	}
+	doc, err := c.CreateDoc(ctx, "Account", map[string]interface{}{
+		"account_name": fmt.Sprintf("FFC Contract Bank %d", time.Now().UnixNano()), "parent_account": rows[0]["name"],
+		"company": company, "account_type": "Bank", "is_group": 0,
+	})
+	if err != nil {
+		t.Fatalf("creating a Bank account: %v", err)
+	}
+	name, _ := docName(doc["name"])
+	t.Cleanup(func() {
+		if err := c.DeleteDoc(contractCtx(t), "Account", name); err != nil {
+			t.Logf("deleting Account %s: %v", name, err)
+		}
+	})
+	return name
 }

@@ -194,13 +194,14 @@ func registerERPTools(s *server.MCPServer, env *mcpEnv) {
 	}))
 
 	s.AddTool(mcp.NewTool("erp_payment",
-		mcp.WithDescription("Make a Payment Entry against a Sales Invoice, Sales Order, Purchase Invoice, Purchase Order or Dunning, as the desk's Create > Payment button does: ERPNext picks the party account, the bank or cash account, the payment type and the amount still outstanding. ERPNext 15 or 16. Returns {draft, warnings?}: an UNSAVED Payment Entry, nothing is written. Save it with create_doc (doctype 'Payment Entry', data = draft), then submit_doc. warnings says when the draft has no bank or cash account (set the Company's default or pass bank_account; the insert would fail) or when bank_account was not used because the document's Mode of Payment takes precedence. An order that is already fully billed is refused."),
+		mcp.WithDescription("Make a Payment Entry against a Sales Invoice, Sales Order, Purchase Invoice, Purchase Order or Dunning, as the desk's Create > Payment button does: ERPNext picks the party account, the bank or cash account, the payment type and the amount still outstanding. ERPNext 15 or 16. Returns {draft, warnings?}: an UNSAVED Payment Entry, nothing is written. Save it with create_doc (doctype 'Payment Entry', data = draft), then submit_doc. warnings says when the draft has no bank or cash account (set the Company's default or pass bank_account; the insert would fail), when it pays into or from a Bank account without reference_no (the insert would fail: pass reference_no, the cheque or transfer reference, or set reference_no in the draft), or when bank_account was not used because the document's Mode of Payment takes precedence. An order that is already fully billed is refused."),
 		ro, idem, open,
 		mcp.WithString("against_doctype", mcp.Required(), mcp.Description("Sales Invoice, Sales Order, Purchase Invoice, Purchase Order or Dunning")),
 		mcp.WithString("against_name", mcp.Required(), mcp.Description("Name of the document to pay")),
 		mcp.WithNumber("amount", mcp.Description("Pay this much instead of the outstanding amount (a positive number)")),
 		mcp.WithString("bank_account", mcp.Description("Bank or cash Account to pay from or into (default: the Company's default)")),
 		mcp.WithString("reference_date", mcp.Description("The date the payment is made for, YYYY-MM-DD (default today)")),
+		mcp.WithString("reference_no", mcp.Description("Cheque or transfer reference, set as reference_no on the draft; ERPNext requires it for a Bank account")),
 	), toolHandler(env, func(req mcp.CallToolRequest) (toolCall, error) {
 		dt, err := nameArg(req, "against_doctype", true)
 		if err != nil {
@@ -218,11 +219,11 @@ func registerERPTools(s *server.MCPServer, env *mcpEnv) {
 		if err != nil {
 			return nil, err
 		}
-		o, err := erpOptArgs(req, "bank_account", "reference_date")
+		o, err := erpOptArgs(req, "bank_account", "reference_date", "reference_no")
 		if err != nil {
 			return nil, err
 		}
-		opts, err := buildPaymentOptions(erpArgs, amount, o[0], o[1])
+		opts, err := buildPaymentOptions(erpArgs, amount, o[0], o[1], o[2])
 		if err != nil {
 			return nil, err
 		}
