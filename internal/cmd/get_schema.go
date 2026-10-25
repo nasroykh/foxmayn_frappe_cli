@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -152,8 +154,24 @@ func schemaTableRows(doc map[string]interface{}) []map[string]interface{} {
 // DocType plus Custom Fields and every Property Setter override. Custom Field
 // and Property Setter reads are best-effort — a user without read access to
 // them still gets the base schema, with a warning explaining what is missing.
+// A user who may not read DocType records at all (only administrators can)
+// gets the desk's meta instead, which has the customizations applied; for
+// such a user Frappe answers 403 for a DocType that does not exist too.
 func fetchSchema(ctx context.Context, c *client.FrappeClient, doctype string) (map[string]interface{}, []string, error) {
 	doc, err := c.GetDoc(ctx, "DocType", doctype)
+	var denied *client.APIError
+	if errors.As(err, &denied) && denied.Status == http.StatusForbidden {
+		client.DebugNote(fmt.Sprintf("DocType %q is not readable, loading the desk meta instead", doctype))
+		meta, merr := c.DeskMeta(ctx, doctype)
+		var api *client.APIError
+		if errors.As(merr, &api) && api.Status == http.StatusForbidden {
+			return nil, nil, err
+		}
+		if merr != nil {
+			return nil, nil, merr
+		}
+		return meta, nil, nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}

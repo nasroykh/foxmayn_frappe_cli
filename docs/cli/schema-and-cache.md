@@ -34,7 +34,7 @@ ffc get-schema -d "Sales Invoice" --refresh                # skip the local cach
 | `--full` | The complete, unfiltered response (JSON only). Always fetched from the site. |
 | `--refresh` | Fetch the schema from the site instead of the cache. |
 
-`--json` returns a compact view: meaningful DocType properties and field attributes, without zero values and internal metadata. Custom Fields and Property Setters (Customize Form changes) are merged in.
+`--json` returns a compact view: meaningful DocType properties and field attributes, without zero values and internal metadata. Custom Fields and Property Setters (Customize Form changes) are merged in. Only administrators may read DocType records; any other user gets the same view from the meta the desk loads, and `--full` then returns that meta (without the desk's scripts and templates).
 
 **Caching.** The compact schema is cached per site and login for one hour. A repeat call prints the same output without a request. A cache hit does not check your credentials or that the DocType still exists: a revoked key or a deleted DocType shows up only when the entry expires or with `--refresh`. Use `--refresh` right after a Customize Form change. `--debug` says when an answer came from the cache.
 
