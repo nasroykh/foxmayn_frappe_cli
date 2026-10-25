@@ -12,6 +12,25 @@ A command line, an MCP server and a desktop app for Frappe and ERPNext sites.
 - **`ffc mcp`** lets AI assistants (Claude Desktop, Claude Code, Cursor, VS Code, Codex) use your sites, with per-site limits, confirmations and an audit log.
 - **Foxmayn Frappe Desktop** (Windows and macOS) adds sites, chats with them through its Assistant and connects AI apps, without the terminal.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-approval-dark.png">
+  <img alt="Foxmayn Frappe Desktop: the Assistant proposes an update to a ToDo and waits on a card that shows each field before and after, with Approve and Decline" src="docs/images/desktop-approval-light.png">
+</picture>
+
+<sub>The Desktop Assistant in "Ask before changes" mode: nothing is written until you approve the card.</sub>
+
+## Safety
+
+An AI assistant connected to an ERP should not be able to surprise you. ffc and the desktop app act with your own Frappe user's permissions and only ever narrow them:
+
+- **Read-only** by default in the desktop app, and one flag (`--read-only`) or one config key for any AI client.
+- **Per-site policy:** allow or deny tools, DocTypes and server methods. Users, permissions, scripts and settings stay read-only unless you list them.
+- **Approvals:** ffc asks before deletes, cancels, workflow actions and shares, through any AI client that can ask (`confirm: always` refuses them in clients that cannot). In the desktop app's "Ask before changes" mode every change waits on a card that shows the fields before and after, and an update is refused if the document changed on the site since you saw it.
+- **Audit log:** every tool call, allowed or refused, is one JSON line on your machine.
+- **Dry runs:** CLI commands that write accept `--dry-run` and print what they would send.
+
+Details and limits: [MCP safety](docs/mcp/safety.md) · [Desktop approvals](docs/desktop/using.md#read-only-or-ask-before-changes).
+
 ## Install
 
 **Linux and macOS**
@@ -30,7 +49,7 @@ Or with a package manager: `brew install nasroykh/tap/ffc` (macOS, Linux), or `s
 
 Both scripts download the latest release for your platform and check its SHA-256 checksum. Manual downloads, building from source, signature checks, updating (`ffc update`) and uninstalling: [Installation](docs/getting-started/installation.md).
 
-**Desktop app:** beta builds are not signed yet, so install them from a terminal to skip the macOS and Windows warnings (the scripts check the download):
+**Desktop app (beta):** builds are not code-signed yet ([help fund signing](#support)), so a browser download shows a Windows SmartScreen or macOS Gatekeeper warning. The install scripts download the release themselves and check its SHA-256 checksum (and its release signature on macOS) before installing:
 
 ```bash
 # macOS
