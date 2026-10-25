@@ -12,12 +12,9 @@ A command line, an MCP server and a desktop app for Frappe and ERPNext sites.
 - **`ffc mcp`** lets AI assistants (Claude Desktop, Claude Code, Cursor, VS Code, Codex) use your sites, with per-site limits, confirmations and an audit log.
 - **Foxmayn Frappe Desktop** (Windows and macOS) adds sites, chats with them through its Assistant and connects AI apps, without the terminal.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/desktop-approval-dark.png">
-  <img alt="Foxmayn Frappe Desktop: the Assistant proposes an update to a ToDo and waits on a card that shows each field before and after, with Approve and Decline" src="docs/images/desktop-approval-light.png">
-</picture>
+<img width="768" alt="Foxmayn Frappe Desktop: asked which customers are more than 30 days late, the Assistant runs the Accounts Receivable report and lists four customers; with Ask before changes on, it is asked for a follow-up task for each, shows a card for the four ToDos and creates them once Approve is clicked" src="docs/images/desktop-assistant.gif">
 
-<sub>The Desktop Assistant in "Ask before changes" mode: nothing is written until you approve the card.</sub>
+<sub>A real run of the Desktop Assistant (Claude Opus 5.5) on a demo ERPNext site, waits shown at 4× speed. With "Ask before changes" on, nothing is written until you approve the card.</sub>
 
 ## Safety
 
